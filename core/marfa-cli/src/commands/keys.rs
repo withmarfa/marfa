@@ -158,11 +158,14 @@ pub struct KeyCreateArgs {
     /// What the key is for.
     #[arg(long)]
     pub label: String,
-    /// The source every row written under the key is stamped with.
+    /// The key's own source, which a row written under the key is keyed by
+    /// and stamped with unless the write names one the key claims.
     #[arg(long)]
     pub source: String,
     #[command(flatten)]
     pub maps: PermissionMapArgs,
+    #[command(flatten)]
+    pub claims: ClaimArgs,
     /// The tier a write under the key lands at when it names none.
     #[arg(long)]
     pub default_tier: Option<Tier>,
@@ -183,9 +186,35 @@ pub struct KeyUpdateArgs {
     pub label: Option<String>,
     #[command(flatten)]
     pub maps: PermissionMapArgs,
+    #[command(flatten)]
+    pub claims: ClaimArgs,
     /// The tier a write under the key lands at when it names none.
     #[arg(long)]
     pub default_tier: Option<Tier>,
+}
+
+/// The sources a key may name on a write besides its own. Named, they are
+/// all it claims; left unnamed on a mint that names no map either, the key
+/// takes the caller's claims, as it takes the caller's maps.
+#[derive(Debug, Default, Args)]
+pub struct ClaimArgs {
+    /// A source a write under the key may name, so its rows are keyed by it.
+    /// Repeatable.
+    #[arg(long = "claim", value_name = "SOURCE")]
+    pub claims: Vec<String>,
+    /// Claim no source besides the key's own, asked for out loud.
+    #[arg(long, conflicts_with = "claims")]
+    pub no_claims: bool,
+}
+
+impl ClaimArgs {
+    fn apply(&self, body: &mut Map<String, Value>) {
+        if self.no_claims {
+            body.insert("sources".into(), json!([]));
+        } else if !self.claims.is_empty() {
+            body.insert("sources".into(), json!(self.claims));
+        }
+    }
 }
 
 pub fn bootstrap_request() -> Request {
@@ -201,6 +230,7 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     body.insert("label".into(), Value::String(args.label.clone()));
     body.insert("source".into(), Value::String(args.source.clone()));
     args.maps.apply(&mut body)?;
+    args.claims.apply(&mut body);
     if args.no_permissions {
         // Naming the permission family with nothing is what asks for a key
         // that holds nothing: the door gives every family left unnamed
@@ -226,6 +256,7 @@ pub fn update_request(args: &KeyUpdateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     insert_opt(&mut body, "label", args.label.clone());
     args.maps.apply(&mut body)?;
+    args.claims.apply(&mut body);
     insert_opt(
         &mut body,
         "default_tier",

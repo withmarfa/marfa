@@ -162,6 +162,9 @@ export interface ApiKeyRequest {
   default_tier?: "library" | "feed";
   /** Only an operator key can mint another, and it holds no permissions. */
   is_operator?: boolean;
+  /** The sources the key may name on a write besides its own; omitted
+   *  takes the creator's when no map is named either. */
+  sources?: readonly string[];
 }
 
 /** The one account behind the instance's sign-in surface. */
@@ -184,6 +187,8 @@ export interface ApiKeyResponse {
   permissions?: string[];
   default_tier?: "library" | "feed";
   is_operator?: boolean;
+  sources?: string[];
+  oauth_client_id?: string;
   created_at: string;
   last_used_at?: string | null;
 }
@@ -300,6 +305,9 @@ export interface MergePolicy {
  * has been named a reason it cannot act on.
  */
 export interface ConflictSnapshot {
+  /** The row the snapshot is of: the only way a create that named a natural
+   *  key learns which row refused it. */
+  id: string;
   version: number;
   properties: Record<string, unknown>;
   tier: "library" | "feed";

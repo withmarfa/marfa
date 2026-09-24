@@ -363,6 +363,11 @@ export function authMiddleware(storage: Storage, salt: string) {
         id: oauthToken.id,
         label: `oauth:${grantHandle}`,
         source: `oauth:${grantHandle}`,
+        // **A sign-in claims no source beyond its own.** A claim is granted
+        // by a key's creator, and a grant is consent to scopes, none of
+        // which names a source, so there is nothing an app was given that
+        // a claim could come from.
+        sources: [],
         default_tier: "library",
         // **An operator key is never derivable from a sign-in.** Running the
         // instance sits outside the permission model, so no consent screen can
@@ -441,7 +446,8 @@ export function authMiddleware(storage: Storage, salt: string) {
 // ---------------------------------------------------------------------------
 
 /**
- * Credential `source` prefixes a caller may not name for itself.
+ * Credential `source` prefixes a caller may not name for itself, as a key's
+ * own source or as one it claims.
  *
  * A caller-supplied `source` is free text, and two readers give it a
  * meaning, so the reservation covers both.
@@ -452,11 +458,11 @@ export function authMiddleware(storage: Storage, salt: string) {
  * shape would read later as a grant it has no binding to.
  *
  * `connector:` is read as provenance. `itemProvenanceSource` stamps a
- * credential's source onto every row it writes, so a minted key
- * carrying the prefix would put the mark of a connector on rows a
- * caller wrote by hand. The connector registry (`connectors.md`) is
- * where a connector is declared; a credential source is not, and the
- * reservation is what keeps the two from being confusable.
+ * credential's source, or one it claims, onto every row it writes, so a
+ * minted key carrying or claiming the prefix would put the mark of a
+ * connector on rows a caller wrote by hand. The connector registry
+ * (`connectors.md`) is where a connector is declared; a credential source
+ * is not, and the reservation is what keeps the two from being confusable.
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",
@@ -720,14 +726,65 @@ export function requireTypeAccess(
 }
 
 /**
- * The `source` an item written by this credential is stamped with: the
- * credential's own `source`, which is immutable for the credential's life
- * and therefore a stable provenance identity.
+ * Write access to a row a natural key resolved, refused without naming the
+ * row where the credential may not read its type.
+ *
+ * **A key learns nothing about a row it may not read.** A natural key names
+ * a row by the source and `source_id` the caller chose, so a key sharing a
+ * source with another (`keys-and-oauth.md` 34) reaches rows of types it holds
+ * nothing on, and the refusal it gets is all it learns: that its key is
+ * taken, which it needs, and not the row's id or any field of it, its type
+ * included. `requireTypeAccess` names the type it refuses, which is right
+ * where the caller named it and a disclosure where a key resolved it.
+ */
+export function requireResolvedRowWrite(
+  c: Context<AppEnv>,
+  row: { type: string },
+): void {
+  if (!mayReadResolvedRow(c, row)) {
+    throw new MarfaError(
+      ErrorCode.TYPE_NOT_PERMITTED,
+      "The natural key resolves a row of a type this credential may not reach",
+    );
+  }
+  requireTypeAccess(c, row.type, "write");
+}
+
+/** Whether the credential may read a row a natural key resolved. */
+export function mayReadResolvedRow(
+  c: Context<AppEnv>,
+  row: { type: string },
+): boolean {
+  return mayReadType(checkAuth(c.get("apiKey")), row.type);
+}
+
+/**
+ * The `source` an item written by this credential is keyed by and stamped
+ * with, given the one the write names.
+ *
+ * A write naming none, or the credential's own, takes the credential's own.
+ * A write naming one of the credential's claimed `sources` takes that one,
+ * which is what lets two keys present one natural key: two devices enrolled
+ * with their own keys, both claiming a folder's source, write the same file
+ * as the same row. Anything else is refused rather than stamped, because a
+ * row's source is its provenance and the half of its natural key a caller
+ * does not choose freely: a named source nobody gave this credential would
+ * let any key write rows that read as another's, and upsert onto them.
+ *
+ * The one resolution both create doors use, so a single create and a bulk
+ * entry cannot disagree about what a body may name.
  */
 export function itemProvenanceSource(
   key: ApiKey | undefined,
+  named?: string,
 ): string | undefined {
-  return key?.source;
+  if (named === undefined || named === key?.source) return key?.source;
+  if (key?.sources?.includes(named) === true) return named;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `This credential may not write under the source "${named}". A write names its own credential's source or one that credential claims.`,
+    { source: named },
+  );
 }
 
 /**

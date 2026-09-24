@@ -18,16 +18,40 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-describe("stamped, non-forgeable fields", () => {
-  it("source: server stamps the credential source, client value is ignored", async () => {
-    const r = await client.createItem({
+describe("a source the key was not given", () => {
+  it("source: a body naming a source the key does not claim is refused, naming it", async () => {
+    const refused = await client.createItem({
       ...createNote(),
       source: "forged-source-value",
     });
-    expect(r.ok).toBe(true);
-    trackItem(ctx, r.data.item.id);
-    expect(r.data.item.source).toBe(ctx.source);
-    expect(r.data.item.source).not.toBe("forged-source-value");
+    expect(
+      refused.status,
+      "a body naming a source its key was never given was written, so any key can write rows that read as another's",
+    ).toBe(403);
+    expect(
+      refused.error?.error.code,
+      "the refusal is not the one a permission the caller lacks answers",
+    ).toBe("forbidden");
+    expect(
+      refused.error?.error.details?.source,
+      "the refusal does not name the source the body named",
+    ).toBe("forged-source-value");
+
+    // The witness. The same body naming the key's own source is written and
+    // stamped with it, so the refusal is the source and not the body.
+    const own = await client.createItem({
+      ...createNote(),
+      source: ctx.source,
+    });
+    expect(
+      own.status,
+      "the same body naming the key's own source was refused, so the refusal above says nothing about the source",
+    ).toBe(201);
+    trackItem(ctx, own.data.item.id);
+    expect(
+      own.data.item.source,
+      "a body naming the key's own source was stamped with another",
+    ).toBe(ctx.source);
   });
 });
 
@@ -69,7 +93,7 @@ describe("client-supplied verbatim fields (preserved without validation)", () =>
   });
 });
 
-describe("fields the wire no longer declares", () => {
+describe("a field the wire does not declare", () => {
   it("device: no such field ships, and a body naming one stores nothing", async () => {
     // **Stripped rather than refused, and that is the create door's rule
     // rather than this field's.** The create body is `z.object`, so Zod
@@ -126,7 +150,7 @@ describe("fields the wire no longer declares", () => {
     expect(errors?.some((e) => e.message.includes("device"))).toBe(true);
   });
 
-  it("device: the filter grammar no longer knows the name", async () => {
+  it("device: the filter grammar does not know the name", async () => {
     // A name the grammar does not hold is refused rather than resolved
     // as a property, which is the half worth a case of its own: a filter
     // that resolved to a property nothing carries would answer an empty

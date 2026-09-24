@@ -12,6 +12,7 @@ import {
 import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
+  SERVED_SOURCE,
   headRead,
   itemsPage,
   typeCatalog,
@@ -281,6 +282,13 @@ export interface FolderHarness {
 }
 
 /**
+ * The source a fixture's folder is keyed by where it names none: the one
+ * `wireItem` stamps a served row with, so a row the hydration served is one
+ * this folder's natural key reaches.
+ */
+export const FOLDER_SOURCE = SERVED_SOURCE;
+
+/**
  * A folder on a scripted server, added and hydrated.
  *
  * `rows` seeds what the hydration answers, so a fixture about an item
@@ -289,7 +297,12 @@ export interface FolderHarness {
 export async function folderHarness(
   label: string,
   options: {
-    slice?: FolderSlice;
+    slice?: Omit<FolderSlice, "source"> & { source?: string };
+    /**
+     * Another harness's server, for two folders on one server, and the key
+     * this folder's machine holds.
+     */
+    sharing?: { server: ScriptedServer; key: string };
     head?: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
     /** Skip the hydration, for the cases that are about a folder before one. */
@@ -306,7 +319,7 @@ export async function folderHarness(
     events?: Responder[];
   } = {},
 ): Promise<FolderHarness> {
-  const server = await ScriptedServer.start();
+  const server = options.sharing?.server ?? (await ScriptedServer.start());
   const dir = join(
     mkdtempSync(join(tmpdir(), `marfa-folder-${label}-`)),
     "notes",
@@ -314,15 +327,19 @@ export async function folderHarness(
   const folder = new CliFolder(dir, {
     binary: requireBinary(),
     url: server.url,
-    key: KEY,
+    key: options.sharing?.key ?? KEY,
   });
-  const slice = options.slice ?? {
-    types: ["core.note"],
-    defaultType: "core.note",
+  const slice: FolderSlice = {
+    source: FOLDER_SOURCE,
+    ...(options.slice ?? {
+      types: ["core.note"],
+      defaultType: "core.note",
+    }),
   };
   const stop = async (): Promise<void> => {
     const unscripted = [...server.unmatchedRequests];
-    await server.stop();
+    // A shared server is its owner's to stop.
+    if (options.sharing === undefined) await server.stop();
     if (unscripted.length > 0) {
       throw new Error(
         `the folder went to a door no answer was scripted for, and read the 501 as a refusal: ${unscripted.join(", ")}`,
@@ -336,7 +353,11 @@ export async function folderHarness(
       `the fixture could not make a folder: ${JSON.stringify(added.refusal)}`,
     );
   }
-  scriptHydration(server, { head: options.head ?? "1", rows: options.rows });
+  // A shared server's doors are its owner's; a second folder hydrates from
+  // what the owner scripted, and sees the rows the owner's fixture adds.
+  if (options.sharing === undefined) {
+    scriptHydration(server, { head: options.head ?? "1", rows: options.rows });
+  }
   if (options.events !== undefined) {
     server.answer("GET", "/events", ...options.events);
   }

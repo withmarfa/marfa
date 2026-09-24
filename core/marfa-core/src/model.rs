@@ -391,9 +391,18 @@ pub struct Draft {
 impl Draft {
     /// The body this create sends, which is the caller's fields and nothing
     /// the device decided for itself.
+    ///
+    /// **The id minted here goes only on a create with no natural key**
+    /// (`queue-and-verdicts.md` 38). The server resolves a create carrying a
+    /// `source_id` by its key, onto a row it holds or into one it mints, and
+    /// refuses a body `id` that is not the row the key resolves. The minted
+    /// id names the copy's row until the answer names the server's. An id
+    /// the caller named is theirs, and goes as named.
     pub(crate) fn payload(&self, id: &str) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
-        body.insert("id".into(), Value::String(id.to_string()));
+        if self.id.is_some() || self.source_id.is_none() {
+            body.insert("id".into(), Value::String(id.to_string()));
+        }
         body.insert("type".into(), Value::String(self.r#type.clone()));
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         // The tags are not here. A tag is its own write
@@ -423,15 +432,14 @@ impl Draft {
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 
-    /// The create a queued body describes, and the id it names: the row a
-    /// copy holds again for a create still waiting when a hydration has
-    /// cleared it (`queue-and-verdicts.md` 35).
-    pub(crate) fn from_payload(body: &str) -> std::result::Result<(String, Draft), CoreError> {
+    /// The create a queued body describes: the row a copy holds again, under
+    /// the id its queue row names, for a create still waiting when a
+    /// hydration has cleared it (`queue-and-verdicts.md` 35). The body is no
+    /// place to read the id from, because a create carrying a natural key
+    /// sends none.
+    pub(crate) fn from_payload(body: &str) -> std::result::Result<Draft, CoreError> {
         let body: Value = serde_json::from_str(body)?;
         let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_string);
-        let id = text("id").ok_or_else(|| {
-            CoreError::Store("a queued create carries no id, so its row cannot be held".into())
-        })?;
         let draft = Draft {
             r#type: text("type").unwrap_or_default(),
             properties: body
@@ -445,7 +453,7 @@ impl Draft {
             occurred_at: text("occurred_at"),
             ..Default::default()
         };
-        Ok((id, draft))
+        Ok(draft)
     }
 
     /// The row the working copy holds until the server answers.
@@ -1116,6 +1124,37 @@ mod tests {
             queued_at: "2026-01-01T00:00:00Z".into(),
             answered_at: None,
         }
+    }
+
+    /// The id minted here goes on a create with no natural key, never on one
+    /// carrying a `source_id`, and an id the caller named goes as named.
+    #[test]
+    fn a_create_carrying_a_natural_key_names_no_minted_id() {
+        let body = |draft: &Draft| -> Value {
+            let id = draft.id.clone().unwrap_or_else(|| "minted".into());
+            serde_json::from_str(&draft.payload(&id).unwrap()).unwrap()
+        };
+        let plain = Draft {
+            r#type: "core.note".into(),
+            ..Default::default()
+        };
+        assert_eq!(body(&plain)["id"], "minted");
+        let keyed = Draft {
+            source_id: Some("note.md".into()),
+            ..plain.clone()
+        };
+        assert!(body(&keyed).get("id").is_none());
+        assert_eq!(body(&keyed)["source_id"], "note.md");
+        let named = Draft {
+            id: Some("named".into()),
+            ..keyed.clone()
+        };
+        assert_eq!(body(&named)["id"], "named");
+        // Held again from its body with nothing lost but the id, which the
+        // queue row carries.
+        let held = Draft::from_payload(&keyed.payload("minted").unwrap()).unwrap();
+        assert_eq!(held.source_id.as_deref(), Some("note.md"));
+        assert_eq!(held.r#type, "core.note");
     }
 
     /// Each of the six read with what it carries, and nothing for a write

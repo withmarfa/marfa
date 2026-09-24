@@ -18,6 +18,11 @@ pub enum FoldersCommand {
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
+        /// The source every item this folder creates is keyed by. Name the
+        /// same one on every machine that holds this folder, so one file is
+        /// one item on all of them.
+        #[arg(long)]
+        source: String,
         /// The types this folder holds.
         #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
         types: Vec<String>,
@@ -72,6 +77,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
     match command {
         FoldersCommand::Add {
             dir,
+            source,
             types,
             tier,
             default_type,
@@ -79,6 +85,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             tags,
         } => {
             let slice = Slice {
+                source,
                 default_type: default_type
                     .unwrap_or_else(|| types.first().cloned().unwrap_or_default()),
                 types,
@@ -127,13 +134,16 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 }),
                 json,
                 || {
-                    format!(
-                        "{}\nsent {}, held {}\n{} file(s) written",
+                    let mut lines = vec![
                         describe_scan(&scanned),
-                        drained.sent,
-                        drained.held,
+                        format!("sent {}, held {}", drained.sent, drained.held),
+                    ];
+                    lines.extend(output::unclaimed(&drained));
+                    lines.push(format!(
+                        "{} file(s) written",
                         pulled.written + pulled.rewritten
-                    )
+                    ));
+                    lines.join("\n")
                 },
             )
         }
@@ -215,12 +225,26 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         report.missing,
         report.deleted,
         report.skipped,
-        // Named only when it happened, because it is rare and it is
-        // the write a line of the other seven does not account for.
-        if report.parked > 0 {
-            format!("; {} moved off a contested name and back", report.parked)
-        } else {
-            String::new()
-        }
+        // Each named only when it happened, because each is rare and a
+        // line of the other seven does not account for it.
+        [
+            (report.parked, "moved off a contested name and back"),
+            (
+                report.requeued,
+                "queued again because the item it was bound to is gone",
+            ),
+            (
+                report.lost,
+                "bound to an item that is gone and unchanged since, so not sent",
+            ),
+            (
+                report.overwrote,
+                "sent over another device's content, which this one never read; the last writer wins and the other version stays in the item's history",
+            ),
+        ]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, what)| format!("; {count} {what}"))
+        .collect::<String>()
     )
 }

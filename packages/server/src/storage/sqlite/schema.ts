@@ -162,6 +162,12 @@ export const apiKeys = sqliteTable(
     key_hash: text("key_hash").notNull().unique(),
     label: text("label").notNull(),
     source: text("source").notNull(),
+    /**
+     * The sources a write by this key may name besides its own, as a JSON
+     * array of strings. Not unique across keys, unlike `source`: two keys
+     * claiming one source is how two devices present one natural key.
+     */
+    sources: text("sources").notNull().default("[]"),
     default_tier: text("default_tier").notNull().default("library"),
     is_operator: integer("is_operator", { mode: "boolean" })
       .notNull()
@@ -247,7 +253,8 @@ export const apiKeys = sqliteTable(
         ${table.metadata_permissions} = '{}' AND
         ${table.extension_permissions} = '{}' AND
         ${table.profile_permissions} = '{}' AND
-        ${table.permissions} = '[]')`,
+        ${table.permissions} = '[]' AND
+        ${table.sources} = '[]')`,
     ),
   ],
 );
@@ -974,7 +981,7 @@ export const housekeeping = sqliteTable("housekeeping", {
 export const connectors = sqliteTable("connectors", {
   id: text("id").primaryKey(),
   key_id: text("key_id").notNull().unique(),
-  /** The key's source when it registered, the name its writes carry. */
+  /** The key's own source when it registered, which its writes carry unless they name a claim. */
   source: text("source").notNull(),
   name: text("name").notNull(),
   description: text("description"),

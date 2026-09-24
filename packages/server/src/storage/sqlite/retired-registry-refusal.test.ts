@@ -155,6 +155,21 @@ describe("a retired registry table is refused on open", () => {
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
+  it("refuses an api_keys that predates the sources column", async () => {
+    // Added rather than renamed, and refused for the same reason: the column
+    // is read by the bearer middleware, so an old table opened silently
+    // answers every authenticated request with a 500.
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(
+      "CREATE TABLE api_keys (id TEXT PRIMARY KEY, is_operator INTEGER, permissions TEXT NOT NULL)",
+    );
+    seed.close();
+
+    await expect(createConnection(path)).rejects.toThrow(/no sources/);
+    await expect(createConnection(path)).rejects.toThrow(path);
+  });
+
   it("refuses a types table that predates the owner_connector rename", async () => {
     // The second unindexed column, and it fails later than the api_keys one
     // rather than louder. `idx_types_origin` is the only index on this

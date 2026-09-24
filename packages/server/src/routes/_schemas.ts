@@ -286,7 +286,12 @@ export const BulkResultEntrySchema = z
   .object({
     index: z.number().int(),
     outcome: BulkResultOutcomeEnum,
-    id: z.string().optional(),
+    id: z
+      .string()
+      .optional()
+      .describe(
+        "The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row.",
+      ),
     reason: z.string().optional(),
     error: BulkEntryErrorSchema.optional(),
   })
@@ -437,6 +442,12 @@ export const KeyResponseSchema = z
     key: z.string(),
     label: z.string(),
     source: z.string(),
+    sources: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.",
+      ),
     permissions: z.array(PermissionEnum).optional(),
     oauth_client_id: z.string().optional(),
     default_tier: TierEnum,
@@ -445,9 +456,8 @@ export const KeyResponseSchema = z
     extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
     edge_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
     metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-    // Declared because the handler already sends it. The fifth family arrived
-    // with the permission model and this schema did not follow, so the published
-    // shape was short of a field every mint returns.
+    // Declared because the handler sends it: a field every mint returns and
+    // the published shape omits is one a generated client cannot read.
     profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
     enforcement_override: EnforcementOverrideSchema.optional(),
     created_at: z.string(),

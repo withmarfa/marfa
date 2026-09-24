@@ -23,6 +23,7 @@ pub struct CreateItemRequest {
     pub state: Option<String>,
     #[serde(rename = "occurred_at", skip_serializing_if = "Option::is_none")]
     pub occurred_at: Option<String>,
+    /// The source this row is keyed by and stamped with. Omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else is refused `403 forbidden`. A row's source never moves afterwards.
     #[serde(rename = "source", skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(rename = "source_id", skip_serializing_if = "Option::is_none")]

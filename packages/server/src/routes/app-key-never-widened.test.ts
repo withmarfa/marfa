@@ -188,6 +188,34 @@ describe("editing a key an app made", () => {
     expect(body.error.message).toContain("handle");
   });
 
+  it("refuses a source it does not already claim, and allows dropping one it does", async () => {
+    // The editor is the operator key, which may grant any source, so the
+    // refusal is the key's ceiling and not the editor's.
+    const { id } = await seedKey("app-claims", {
+      oauth_client_id: "client-notes",
+      sources: ["notes-folder"],
+    });
+    const widened = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: ctx.operatorKey,
+      body: { sources: ["notes-folder", "elsewhere"] },
+    });
+    expect(widened.status).toBe(403);
+    const body = (await widened.json()) as {
+      error: { message: string; details?: { source?: string } };
+    };
+    expect(body.error.message).toContain("created by an app");
+    expect(body.error.details?.source).toBe("elsewhere");
+
+    const narrowed = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: ctx.operatorKey,
+      body: { sources: [] },
+    });
+    expect(narrowed.status).toBe(200);
+    expect(((await narrowed.json()) as { sources: string[] }).sources).toEqual(
+      [],
+    );
+  });
+
   it("refuses the operator key too, because the rule is the key's", async () => {
     const id = await seedAppKey();
     // The operator key is the credential with nothing above it: it reaches

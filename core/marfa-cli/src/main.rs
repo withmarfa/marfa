@@ -536,6 +536,8 @@ mod tests {
             "folders",
             "add",
             "notes",
+            "--source",
+            "notes",
             "--types",
             "core.note,core.file",
             "--tag",
@@ -545,8 +547,15 @@ mod tests {
         .command
         {
             Command::Folders {
-                command: FoldersCommand::Add { types, tags, .. },
+                command:
+                    FoldersCommand::Add {
+                        source,
+                        types,
+                        tags,
+                        ..
+                    },
             } => {
+                assert_eq!(source, "notes");
                 assert_eq!(types, vec!["core.note", "core.file"]);
                 assert_eq!(tags, vec!["inbox"]);
             }

@@ -33,6 +33,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     id: row.id,
     label: row.label,
     source: row.source,
+    sources: safeJsonParse<string[]>(row.sources, [], "key sources"),
     default_tier: row.default_tier as Tier,
     is_operator: row.is_operator,
     // Narrowed to the literals this build knows, because the column is text
@@ -111,7 +112,7 @@ export class SqliteKeyStore implements KeyStore {
     if (collision) {
       throw new MarfaError(
         ErrorCode.CONFLICT,
-        `Source display name "${input.source}" is already in use`,
+        `Source "${input.source}" is already another key's own`,
         { source: input.source },
       );
     }
@@ -122,6 +123,7 @@ export class SqliteKeyStore implements KeyStore {
       key_hash: keyHash,
       label: input.label,
       source: input.source,
+      sources: JSON.stringify(input.sources ?? []),
       default_tier: input.default_tier ?? "library",
       is_operator: input.is_operator ?? false,
       permissions: JSON.stringify(input.permissions ?? []),
@@ -142,6 +144,7 @@ export class SqliteKeyStore implements KeyStore {
       id: row.id,
       label: row.label,
       source: row.source,
+      sources: input.sources ?? [],
       default_tier: row.default_tier,
       is_operator: row.is_operator,
       permissions: input.permissions ?? [],
@@ -189,6 +192,8 @@ export class SqliteKeyStore implements KeyStore {
 
     const patch: Partial<typeof apiKeys.$inferInsert> = {};
     if (input.label !== undefined) patch.label = input.label;
+    if (input.sources !== undefined)
+      patch.sources = JSON.stringify(input.sources);
     if (input.default_tier !== undefined)
       patch.default_tier = input.default_tier;
     if (input.type_permissions !== undefined)

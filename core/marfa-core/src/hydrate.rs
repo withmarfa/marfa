@@ -145,7 +145,13 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> 
     for row in &waiting {
         match row.kind {
             WriteKind::CreateItem => {
-                let (id, draft) = Draft::from_payload(&store::payload_of(conn, &row.id)?)?;
+                let draft = Draft::from_payload(&store::payload_of(conn, &row.id)?)?;
+                let Some(id) = row.item_id.clone() else {
+                    return Err(CoreError::Store(format!(
+                        "the queued create {} names no item, so its row cannot be held",
+                        row.id
+                    )));
+                };
                 if !store::item_held(conn, &id)? {
                     let mut wire = draft.wire(&id);
                     if draft.occurred_at.is_none() {

@@ -130,9 +130,11 @@ the fourth is yours. An unset `MARFA_OPERATOR_KEY` throws in
 `MARFA_API_KEY` is the key the suite provisions with. It holds no content
 permissions itself, but a key it mints naming no permission maps carries the
 whole dataset, and that is how each test file gets its own key, with a
-`source` unique to that file. The server stamps `source` from the credential,
-so every row a file writes is attributable to it and to nothing else, and
-teardown revokes the file's key through the provisioning key.
+`source` unique to that file. The server stamps each row with the
+credential's `source`, or with one its key claims when the write names it, and
+a file builds any claim from its own source, so every row a file writes is
+attributable to it and to nothing else. Teardown revokes the file's keys
+through the provisioning key.
 
 Each load suite seeds its own corpus under its own credential, measures, and
 deletes what it created.

@@ -19,7 +19,7 @@ export interface paths {
         put?: never;
         /**
          * Create an item
-         * @description Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.
+         * @description Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version and `source`: the credential's own, or one the credential's key claims when the body names it, and a body naming any other source is refused `403 forbidden` with `details.source`. Passing a `source_id` that already exists under that source upserts the existing item and returns 200 instead of 201, whichever credential wrote it, so two keys claiming one source share its natural keys. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.
          */
         post: operations["createItem"];
         delete?: never;
@@ -239,7 +239,7 @@ export interface paths {
         put?: never;
         /**
          * Bulk upsert items
-         * @description Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.
+         * @description Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.
          *
          *     An entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.
          *
@@ -940,9 +940,11 @@ export interface paths {
          *
          *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.
          *
-         *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.
+         *     `source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.
          *
-         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
+         *     The operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.
+         *
+         *     On a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it — and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.
          */
         post: operations["createKey"];
         delete?: never;
@@ -970,7 +972,7 @@ export interface paths {
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.
+         * @description Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -1371,6 +1373,7 @@ export interface components {
             message: string;
         };
         ConflictSnapshot: {
+            id: string;
             version: number;
             properties: {
                 [key: string]: unknown;
@@ -1592,6 +1595,7 @@ export interface components {
         BulkResultEntry: {
             index: number;
             outcome: components["schemas"]["BulkResultOutcome"];
+            /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row. */
             id?: string;
             reason?: string;
             error?: components["schemas"]["BulkEntryError"];
@@ -2294,6 +2298,8 @@ export interface components {
             key: string;
             label: string;
             source: string;
+            /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
+            sources?: string[];
             permissions?: components["schemas"]["Permission"][];
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"];
@@ -2345,6 +2351,8 @@ export interface components {
             id: string;
             label: string;
             source: string;
+            /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
+            sources?: string[];
             /** @description The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds. */
             permissions?: components["schemas"]["Permission"][];
             /** @description The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly. */
@@ -2609,7 +2617,7 @@ export interface operations {
                 type?: string;
                 /** @description Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. `any` returns every state in one pass, which a resuming client needs in order to see a row leave the active state. */
                 state?: string;
-                /** @description Filter by source credential */
+                /** @description Narrow to rows stamped with this `source`. */
                 source?: string;
                 /** @description Tier slice; omit or `all` returns both */
                 tier?: "library" | "feed" | "all";
@@ -2754,6 +2762,7 @@ export interface operations {
                     id?: string;
                     state?: string;
                     occurred_at?: string;
+                    /** @description The source this row is keyed by and stamped with. Omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else is refused `403 forbidden`. A row's source never moves afterwards. */
                     source?: string;
                     source_id?: string;
                     /** @description Optional, and meaningful on one path: a `source_id` resolving a live row makes this write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. Everywhere else it is ignored, because nothing is overwritten — a genuine create has no version to have read, and a repeated `id` or a natural key resolving a trashed row is acknowledged rather than written. */
@@ -2769,7 +2778,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (stamped from the credential) and request `source_id` resolve a live item, and it is updated in place — an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted. */
+            /** @description The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (the credential's own, or one its key claims that the body names) and request `source_id` resolve a live item, and it is updated in place — an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -2830,7 +2839,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Forbidden */
+            /** @description `forbidden`: the body named a `source` the credential's key does not claim, named in `details.source`, or a source allow-list excludes the source. `type_not_permitted` and `edge_permission_denied`: the credential holds no write on the item's type or on an inline edge's type, or on the type of the row the natural key resolves; where it may not read that type, the refusal names nothing of the row. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4683,6 +4692,7 @@ export interface operations {
                         state?: components["schemas"]["ItemState"];
                         tier?: components["schemas"]["Tier"];
                         occurred_at?: string;
+                        /** @description The source this entry's row is keyed by and stamped with, resolved as `POST /items` resolves it: omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else refuses the entry `forbidden`. */
                         source?: string;
                         source_id?: string;
                         /** @description The version this entry was based on, where it resolves a row that already exists. Optional, as on `POST /items`: an entry creating a row it has never read has no version to name. A stale one is refused like every other per-entry refusal here — the page rolls back under the default `atomic`, carrying `version_conflict` in `details.code`, or it is that entry's own `errored` outcome when `atomic` is false. */
@@ -4745,7 +4755,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Write access denied for one of the item types. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix. */
+            /** @description Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10136,6 +10146,8 @@ export interface operations {
                 "application/json": {
                     label: string;
                     source: string;
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused. */
+                    sources?: string[];
                     permissions?: components["schemas"]["Permission"][];
                     default_tier?: components["schemas"]["Tier"];
                     is_operator?: boolean;
@@ -10173,7 +10185,7 @@ export interface operations {
                     "application/json": components["schemas"]["KeyResponse"];
                 };
             };
-            /** @description Body named a reserved `source`, or the bootstrap secret was refused. */
+            /** @description Body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10203,7 +10215,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`. */
+            /** @description Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`, and a claimed source the caller may not grant in `details.source`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10218,7 +10230,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description The `source` is already claimed by another key. One source, one key: the natural key `(source, source_id)` is what makes a second write from the same process the same row. */
+            /** @description The `source` is already another unrevoked key's own, named in `details.source`: no two unrevoked keys hold one source as their own. Keys that claim it in `sources` write under it too, so a row's source does not name the key that wrote it, and two keys share a natural key by both claiming a source in `sources`. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10424,6 +10436,8 @@ export interface operations {
                 "application/json": {
                     label?: string;
                     default_tier?: components["schemas"]["Tier"];
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused. */
+                    sources?: string[];
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
                     };
@@ -10492,7 +10506,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `keys.mint` required, unless the caller is the operator key */
+            /** @description `keys.mint` required, unless the caller is the operator key; or the edit reaches past what the caller holds, or past what a key an app made already holds. A missing permission is named in `details.required_scope`, and a claimed source that may not be granted in `details.source`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11380,7 +11394,7 @@ export interface operations {
                 type?: string;
                 /** @description Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass. */
                 state?: string;
-                /** @description Filter by source credential */
+                /** @description Narrow to rows stamped with this `source`. */
                 source?: string;
                 /** @description Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time. */
                 occurred_after?: string;

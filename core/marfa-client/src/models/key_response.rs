@@ -21,6 +21,9 @@ pub struct KeyResponse {
     pub label: String,
     #[serde(rename = "source")]
     pub source: String,
+    /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
+    #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
+    pub sources: Option<Vec<String>>,
     #[serde(rename = "permissions", skip_serializing_if = "Option::is_none")]
     pub permissions: Option<Vec<models::Permission>>,
     #[serde(rename = "oauth_client_id", skip_serializing_if = "Option::is_none")]
@@ -76,6 +79,7 @@ impl KeyResponse {
             key,
             label,
             source,
+            sources: None,
             permissions: None,
             oauth_client_id: None,
             default_tier,

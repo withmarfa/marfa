@@ -68,7 +68,10 @@ const exportRoute = createRoute({
         .describe(
           `Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. \`${ALL_STATES}\` adds the bin, in one pass.`,
         ),
-      source: z.string().optional().describe("Filter by source credential"),
+      source: z
+        .string()
+        .optional()
+        .describe("Narrow to rows stamped with this `source`."),
       occurred_after: z
         .string()
         .optional()

@@ -41,7 +41,7 @@ const ConnectorSchema = z
   .object({
     id: z.string(),
     key_id: z.string(),
-    /** The key's source, the name its writes carry. */
+    /** The key's own source, which its writes carry unless they name a claim. */
     source: z.string(),
     name: z.string(),
     description: z.string().nullable(),

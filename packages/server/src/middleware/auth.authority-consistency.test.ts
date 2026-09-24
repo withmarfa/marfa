@@ -1,10 +1,9 @@
 /**
- * Regression suite for authority checks that were hand-rolled instead of
- * going through the shared auth helpers.
+ * Authority checks that go through the shared auth helpers.
  *
- * Every route that spelled a gate itself rather than asking the shared
- * predicate drifted from it, readmitting exactly the credential the gate
- * exists to exclude on surfaces whose lookups are unfenced.
+ * A route that spells a gate itself rather than asking the shared predicate
+ * drifts from it, and readmits exactly the credential the gate exists to
+ * exclude on surfaces whose lookups are unfenced.
  *
  * Each site is covered twice: the credential that must be refused, and a
  * control proving the legitimate caller still gets through.
@@ -21,7 +20,7 @@ import {
 } from "../test-utils.js";
 
 // ---------------------------------------------------------------------------
-// Unit — the predicates the routes now share
+// Unit — the predicates the routes share
 // ---------------------------------------------------------------------------
 
 describe("isReservedCredentialSource", () => {
@@ -41,7 +40,7 @@ describe("isReservedCredentialSource", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration
+// Through the routes
 // ---------------------------------------------------------------------------
 
 let ctx: TestContext;
@@ -98,10 +97,6 @@ async function seedConnection(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// /keys — list / revoke / update
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
 // POST /keys — the reserved source prefixes
 // ---------------------------------------------------------------------------
 
@@ -128,14 +123,12 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
 
   it("refuses the connector prefix itself", async () => {
     // A minted credential must not be able to claim connector provenance:
-    // `itemProvenanceSource` stamps a credential's source onto every row
-    // it writes, so a key minted with this source would put the mark of
-    // the connector registry on rows a caller wrote by hand.
+    // `itemProvenanceSource` stamps a credential's own source onto every row
+    // it writes that names no other, so a key minted with this source would
+    // put the mark of the connector registry on rows a caller wrote by hand.
     //
-    // This is the door-level cover the family lacked. The `oauth:` case above
-    // was the only one, so removing `connector:` from the reserved list
-    // reddened a single assertion in the whole suite, and the integration
-    // test beside it posts an `oauth:` source rather than this one.
+    // Asked of this prefix as well as `oauth:` above, because each is its own
+    // entry in the reserved list and a test of one does not hold the other.
     const caller = await mintKey({ permissions: ["keys.mint"] });
     const source = "connector:acme/thing";
 
@@ -198,10 +191,10 @@ describe("extensions — the reserved namespaces are nobody's", () => {
       type: "core.note",
       properties: { body: "reserved-control" },
     });
-    // The gate used to admit the operator tier and then ask the namespace
-    // map. The operator key holds no map at all, and the namespace is closed
-    // to every credential anyway: the platform writes it through the storage
-    // layer as it writes a `system.*` row.
+    // The operator key holds no map at all, so a gate that admitted its tier
+    // and then asked the namespace map would answer from nothing. The
+    // namespace is closed to every credential anyway: the platform writes it
+    // through the storage layer as it writes a `system.*` row.
     const res = await request(
       ctx.app,
       "PUT",

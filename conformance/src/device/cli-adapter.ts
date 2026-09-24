@@ -273,6 +273,26 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Status>(["status"]);
   }
 
+  /**
+   * A device command as a person at a terminal runs it, without `--json`,
+   * for the lines the binary prints for a person rather than the document
+   * it prints for a program.
+   */
+  async text(args: string[]): Promise<Outcome<string>> {
+    return this.invokeText([
+      "device",
+      "--db",
+      this.options.store,
+      ...args,
+      ...this.server(),
+    ]);
+  }
+
+  /** A command at the binary's root, without `--json`. */
+  async rootText(args: string[]): Promise<Outcome<string>> {
+    return this.invokeText([...args, ...this.server()]);
+  }
+
   /** An operation the binary offers no command for at all, for the refusal statements. */
   async attempt(args: string[]): Promise<Outcome<unknown>> {
     return this.json<unknown>(args);
@@ -300,11 +320,11 @@ export class CliDevice implements DeviceUnderTest {
    * the store for every case after it, and they would fail as the rule rather
    * than as the leak.
    */
-  hold(args: string[], at: "device" | "root" = "device"): HeldCommand {
+  hold(args: string[], at: "device" | "root" | "text" = "device"): HeldCommand {
     const child = spawn(
       this.options.binary,
       [
-        ...(at === "device" ? this.prefix() : ["--json"]),
+        ...(at === "device" ? this.prefix() : at === "root" ? ["--json"] : []),
         ...args,
         ...this.server(),
       ],
@@ -589,6 +609,8 @@ export class CliDevice implements DeviceUnderTest {
 
 /** What `folders add` is given. */
 export interface FolderSlice {
+  /** The source the folder's rows are keyed by (`folders.md` 10). */
+  source: string;
   types: string[];
   tier?: Tier;
   defaultType?: string;
@@ -606,6 +628,16 @@ export interface ScanReport {
   skipped: number;
   /** Items moved off a contested name and back (`folders.md` 24). */
   parked: number;
+  /** Files bound to a row the copy lost, queued again because they changed
+   *  or moved (`folders.md` 30). Counted in `created` too. */
+  requeued: number;
+  /** Files bound to a row the copy lost and unchanged since, so nothing was
+   *  sent (`folders.md` 30). */
+  lost: number;
+  /** Files sent as an edit over content another device made and this one
+   *  never read, the last writer winning (`folders.md` 13). Counted in
+   *  `updated` too. */
+  overwrote: number;
 }
 
 export interface PullReport {
@@ -661,7 +693,15 @@ export class CliFolder {
   }
 
   async add(slice: FolderSlice): Promise<Outcome<unknown>> {
-    const args = ["folders", "add", this.dir, "--types", slice.types.join(",")];
+    const args = [
+      "folders",
+      "add",
+      this.dir,
+      "--source",
+      slice.source,
+      "--types",
+      slice.types.join(","),
+    ];
     if (slice.tier !== undefined) args.push("--tier", slice.tier);
     if (slice.defaultType !== undefined)
       args.push("--default-type", slice.defaultType);
@@ -710,6 +750,21 @@ export class CliFolder {
       url: this.options.url,
       key: this.options.key,
     }).hold(["folders", "watch", this.dir], "root");
+  }
+
+  /** A watch left running that prints for a person, not a program. */
+  watchText(): HeldCommand {
+    return new CliDevice({
+      binary: this.options.binary,
+      store: this.store,
+      url: this.options.url,
+      key: this.options.key,
+    }).hold(["folders", "watch", this.dir], "text");
+  }
+
+  /** A push, printed for a person. */
+  async pushText(): Promise<Outcome<string>> {
+    return this.device().rootText(["folders", "push", this.dir]);
   }
 
   private server(): string[] {

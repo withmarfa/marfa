@@ -52,16 +52,14 @@ describe("type-scoped access control (type_permissions)", () => {
       "*": "none",
     });
 
-    const note = await scoped.createItem(createNote({ source: ctx.source }));
+    const note = await scoped.createItem(createNote());
     expect(note.ok).toBe(true);
     trackItem(ctx, note.data.item.id);
 
     const fetched = await scoped.getItem(note.data.item.id);
     expect(fetched.ok).toBe(true);
 
-    const bookmark = await scoped.createItem(
-      createBookmark({ source: ctx.source }),
-    );
+    const bookmark = await scoped.createItem(createBookmark());
     expect(bookmark.ok).toBe(false);
     expect(bookmark.status).toBe(403);
     expect(bookmark.error?.error.code).toBe("type_not_permitted");
@@ -89,17 +87,13 @@ describe("type-scoped access control (type_permissions)", () => {
     const readNote = await scoped.getItem(adminNote.data.item.id);
     expect(readNote.ok).toBe(true);
 
-    const writeNote = await scoped.createItem(
-      createNote({ source: ctx.source }),
-    );
+    const writeNote = await scoped.createItem(createNote());
     expect(writeNote.ok).toBe(false);
     expect(writeNote.status).toBe(403);
     expect(writeNote.error?.error.code).toBe("type_not_permitted");
 
     // `write` implies read.
-    const bookmark = await scoped.createItem(
-      createBookmark({ source: ctx.source }),
-    );
+    const bookmark = await scoped.createItem(createBookmark());
     expect(bookmark.ok).toBe(true);
     trackItem(ctx, bookmark.data.item.id);
 
@@ -112,13 +106,11 @@ describe("type-scoped access control (type_permissions)", () => {
       "*": "write",
     });
 
-    const note = await scoped.createItem(createNote({ source: ctx.source }));
+    const note = await scoped.createItem(createNote());
     expect(note.ok).toBe(true);
     trackItem(ctx, note.data.item.id);
 
-    const bookmark = await scoped.createItem(
-      createBookmark({ source: ctx.source }),
-    );
+    const bookmark = await scoped.createItem(createBookmark());
     expect(bookmark.ok).toBe(true);
     trackItem(ctx, bookmark.data.item.id);
 
@@ -134,7 +126,7 @@ describe("type-scoped access control (type_permissions)", () => {
     const list = await scoped.listItems({ limit: 1 });
     expect(list.ok).toBe(true);
 
-    const note = await scoped.createItem(createNote({ source: ctx.source }));
+    const note = await scoped.createItem(createNote());
     expect(note.ok).toBe(false);
     expect(note.status).toBe(403);
     expect(note.error?.error.code).toBe("type_not_permitted");
@@ -145,14 +137,12 @@ describe("type-scoped access control (type_permissions)", () => {
       "core.note": "write",
     });
 
-    const note = await scoped.createItem(createNote({ source: ctx.source }));
+    const note = await scoped.createItem(createNote());
     expect(note.ok).toBe(true);
     trackItem(ctx, note.data.item.id);
 
     // Bookmark is not listed — implicit none.
-    const bookmark = await scoped.createItem(
-      createBookmark({ source: ctx.source }),
-    );
+    const bookmark = await scoped.createItem(createBookmark());
     expect(bookmark.ok).toBe(false);
     expect(bookmark.status).toBe(403);
     expect(bookmark.error?.error.code).toBe("type_not_permitted");
@@ -170,9 +160,7 @@ describe("type-scoped access control (type_permissions)", () => {
     const readNote = await scoped.getItem(note.data.item.id);
     expect(readNote.ok).toBe(true);
 
-    const writeNote = await scoped.createItem(
-      createNote({ source: ctx.source }),
-    );
+    const writeNote = await scoped.createItem(createNote());
     expect(writeNote.ok).toBe(false);
     expect(writeNote.status).toBe(403);
     expect(writeNote.error?.error.code).toBe("type_not_permitted");

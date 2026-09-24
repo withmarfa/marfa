@@ -49,8 +49,8 @@ afterAll(async () => {
 });
 
 /**
- * A writer identified by a specific `source`. `source` is credential-stamped
- * and not forgeable, so a distinct source means a distinct credential.
+ * A writer identified by a specific `source`: a write naming none is stamped
+ * with its credential's own, so a distinct source is a distinct credential.
  */
 async function clientWithSource(
   label: string,
@@ -232,11 +232,10 @@ describe("strict_mode lever", () => {
   });
 
   it("strict-on rejects the same unknown property through the bulk door, on both halves of an upsert", async () => {
-    // The door built for volume, reachable by any working key, and it
-    // reached `storage.items.create` and `storage.items.update` directly
-    // — where validation runs loose whatever the lever says. So the
-    // control `POST /items` enforces was a different door away, on both
-    // the rows this page creates and the rows it updates.
+    // The door built for volume, reachable by any working key, writes
+    // through a store whose validation runs loose whatever the lever says,
+    // so the control `POST /items` enforces is one this door has to ask
+    // for itself, on both the rows a page creates and the rows it updates.
     await setConfig({
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
@@ -313,9 +312,9 @@ describe("strict_mode lever", () => {
   });
 
   it("strict-on rejects the same unknown property through the update door", async () => {
-    // `PATCH /items/{id}` validated loosely too, so a row created under
-    // the lever could be given the property it was refused at creation,
-    // one request later.
+    // An update door that validated loosely would let a row created under
+    // the lever be given the property it was refused at creation, one
+    // request later.
     await setConfig({
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
@@ -526,6 +525,91 @@ describe("source_allowlist lever", () => {
     });
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
+  });
+
+  it("asks it of every bulk entry, under the source the entry resolves to", async () => {
+    // A key whose own source is listed and which claims one that is not.
+    // The lever reads the source a write resolves to, so a claim is no way
+    // past it on either create door.
+    const own = `${ctx.source}-bulk-own`;
+    const claimed = `${ctx.source}-bulk-claimed`;
+    await setConfig({
+      enforcement: {
+        source_allowlist: { types: ["core.note"], sources: [own] },
+      },
+    });
+    const minted = await getOperatorClient().createKey({
+      label: "allowlist-bulk",
+      source: own,
+      sources: [claimed],
+      permissions: [],
+      type_permissions: { "*": "write" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const entry = (source: string, sourceId: string) => ({
+      type: "core.note",
+      properties: { body: `under ${source}` },
+      source,
+      source_id: sourceId,
+    });
+
+    // The single create refuses the claimed source the list does not name.
+    const single = await writer.createItem(entry(claimed, `${claimed}-single`));
+    expect(single.status).toBe(403);
+    expect(single.error?.error.details).toMatchObject({
+      type: "core.note",
+      source: claimed,
+      allowed: [own],
+    });
+
+    const refused = await writer.bulkItems({
+      items: [entry(claimed, `${claimed}-bulk`)],
+      atomic: false,
+    });
+    expect(refused.ok, JSON.stringify(refused.error)).toBe(true);
+    expect(
+      refused.data.results[0]?.outcome,
+      "a bulk entry wrote under a source the allow-list excludes, which the single create beside it refuses",
+    ).toBe("errored");
+    expect(refused.data.results[0]?.error?.code).toBe("forbidden");
+    expect(refused.data.results[0]?.error?.details).toMatchObject({
+      type: "core.note",
+      source: claimed,
+      allowed: [own],
+    });
+    for (const result of refused.data.results) {
+      if (result.id !== undefined) trackItem(ctx, result.id);
+    }
+
+    // Atomic, the page rolls back with the permission's status, and the
+    // entry before the refused one is gone with it.
+    const rolled = await writer.bulkItems({
+      items: [entry(own, `${own}-atomic`), entry(claimed, `${claimed}-atomic`)],
+    });
+    expect(rolled.status).toBe(403);
+    expect(rolled.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(rolled.error?.error.details?.code).toBe("forbidden");
+    const listed = await writer.listItems({ source: own, limit: 100 });
+    expect(listed.ok).toBe(true);
+    expect(
+      listed.data.data.map((item) => item.source_id),
+      "the rolled-back page left a row behind",
+    ).not.toContain(`${own}-atomic`);
+
+    // The witness: the same entry under the key's own source, which the
+    // list names, lands.
+    const landed = await writer.bulkItems({
+      items: [entry(own, `${own}-bulk`)],
+      atomic: false,
+    });
+    expect(landed.ok, JSON.stringify(landed.error)).toBe(true);
+    expect(landed.data.results[0]?.outcome).toBe("created");
+    trackItem(ctx, landed.data.results[0]!.id!);
   });
 });
 

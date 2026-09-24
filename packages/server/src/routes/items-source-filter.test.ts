@@ -6,8 +6,8 @@
  * query reaches an unapproved row of a listed type: the lever is decided per
  * row, from the row's own type, so a bare listing, an ancestor wildcard and a
  * filter on some other axis all narrow identically. Keying it off `?type=`
- * instead made the control optional from the caller's side — the tests below
- * are the shapes that walked through it.
+ * would make the control optional from the caller's side, and the tests below
+ * are the shapes that would walk through it.
  *
  * The other half is that the lever stays per-type. A fix that narrowed the
  * whole result set would pass every test above and still be wrong, so an
@@ -29,8 +29,8 @@ let trustedKey: string;
 let untrustedKey: string;
 
 /**
- * Credentials stamp `source` onto every item they write, so "an item from an
- * untrusted source" means "an item written by a second credential".
+ * A write naming no source is stamped with its credential's own, so "an item
+ * from an untrusted source" is an item written by a second credential.
  */
 async function mintWorkingKey(source: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
@@ -40,8 +40,6 @@ async function mintWorkingKey(source: string): Promise<string> {
       label: `source-filter-${source}`,
       source,
       permissions: [...PERMISSIONS],
-      // The rank this fixture carried admitted it past its own map, so the
-      // map has to say what the rank granted silently.
       type_permissions: { "*": "write" },
       default_tier: "library",
       is_operator: false,

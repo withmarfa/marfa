@@ -17,6 +17,7 @@ pub struct BulkResultEntry {
     pub index: i32,
     #[serde(rename = "outcome")]
     pub outcome: models::BulkResultOutcome,
+    /// The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row.
     #[serde(rename = "id", skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     #[serde(rename = "reason", skip_serializing_if = "Option::is_none")]

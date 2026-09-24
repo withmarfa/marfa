@@ -227,8 +227,26 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
         if let Some(stopped) = &drain.stopped {
             lines.push(stopped.clone());
         }
+        lines.extend(unclaimed(drain));
         lines.join("\n")
     })
+}
+
+/// One line per source the server said this credential's key does not
+/// claim (`queue-and-verdicts.md` 40). The verdicts say `credential_refused`,
+/// which alone reads as a key that has stopped working; this says which
+/// claim is missing and what happens once it is granted.
+pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
+    drain
+        .unclaimed_sources
+        .iter()
+        .map(|source| {
+            format!(
+                "this credential's key does not claim the source {source}, so every create naming it is blocked; \
+                 they go on the first drain after the key claims it"
+            )
+        })
+        .collect()
 }
 
 // The direct surface prints the server's answer as it came. Under `--json`

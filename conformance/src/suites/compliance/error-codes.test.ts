@@ -212,9 +212,7 @@ describe("error codes", () => {
         apiKey: keyResp.data.key,
       });
 
-      const noteResp = await scopedClient.createItem(
-        createNote({ source: ctx.source }),
-      );
+      const noteResp = await scopedClient.createItem(createNote());
       expect(noteResp.status).toBe(403);
       expect(noteResp.error?.error.code).toBe("type_not_permitted");
     });

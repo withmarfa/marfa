@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
-import type { ConflictResponse, TestContext } from "../../client/types.js";
+import type {
+  AncestorUnavailableResponse,
+  ConflictResponse,
+  TestContext,
+} from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -568,6 +572,12 @@ describe("a create that resolves an existing row", () => {
     // that the refusal did not already have the answer for.
     const body = refused.error as unknown as ConflictResponse;
     expect(body.error.status).toBe(409);
+    // The request named a key and not an id, so the envelope is the only
+    // place a queued client learns which row refused it.
+    expect(
+      body.current.id,
+      "the refusal did not name the row the natural key resolved in current.id",
+    ).toBe(id);
     expect(body.current.version).toBe(advanced.data.item.version);
     expect(body.current.properties.title).toBe("moved on");
     expect(body.ancestor.version).toBe(staleVersion);
@@ -643,6 +653,15 @@ describe("a create that resolves an existing row", () => {
     });
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("ancestor_unavailable");
+    // Named by the row, because the create named only the key: a device
+    // that read nothing has to learn which row is there before it can hold
+    // it rather than a second copy of it (`queue-and-verdicts.md` 39).
+    const envelope = refused.error as unknown as AncestorUnavailableResponse;
+    expect(
+      envelope.current.id,
+      "the refusal did not name the row the natural key resolved in current.id",
+    ).toBe(created.data.item.id);
+    expect(envelope.current.version).toBe(1);
 
     const after = await client.getItem(created.data.item.id);
     expect(after.ok).toBe(true);

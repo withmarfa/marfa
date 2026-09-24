@@ -139,6 +139,9 @@ export interface DrainReport {
   /** Why the drain stopped before the queue was empty. Only a refused
    *  credential ends a pass early (`queue-and-verdicts.md` 20). */
   stopped: string | null;
+  /** The sources the server said the credential's key does not claim, where
+   *  a create naming one was refused for it (`queue-and-verdicts.md` 40). */
+  unclaimed_sources: string[];
   /** The longest `Retry-After` the server asked for this pass. */
   retry_after_seconds: number | null;
 }

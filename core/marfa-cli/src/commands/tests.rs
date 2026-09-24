@@ -427,6 +427,50 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
     })
     .unwrap();
     assert_eq!(body(&operator)["is_operator"], true);
+    let claiming = keys::create_request(&keys::KeyCreateArgs {
+        label: "folder".into(),
+        source: "laptop-2".into(),
+        claims: keys::ClaimArgs {
+            claims: vec!["notes".into(), "photos".into()],
+            no_claims: false,
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&claiming)["sources"], json!(["notes", "photos"]));
+    let claiming_none = keys::create_request(&keys::KeyCreateArgs {
+        label: "plain".into(),
+        source: "laptop-3".into(),
+        claims: keys::ClaimArgs {
+            claims: vec![],
+            no_claims: true,
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&claiming_none)["sources"], json!([]));
+    // Unnamed, the field is left out, so the mint takes the caller's claims.
+    assert_eq!(body(&inherited).get("sources"), None);
+    let reclaimed = keys::update_request(&keys::KeyUpdateArgs {
+        id: "k".into(),
+        claims: keys::ClaimArgs {
+            claims: vec!["notes".into()],
+            no_claims: false,
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&reclaimed), &json!({ "sources": ["notes"] }));
+    let unclaimed = keys::update_request(&keys::KeyUpdateArgs {
+        id: "k".into(),
+        claims: keys::ClaimArgs {
+            claims: vec![],
+            no_claims: true,
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(body(&unclaimed), &json!({ "sources": [] }));
     assert_eq!(keys::revoke_request("k").method, Method::Delete);
     assert_eq!(keys::bootstrap_request().path(), "/keys");
 }

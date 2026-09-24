@@ -39,7 +39,7 @@ describe("type-scoped permissions", () => {
       apiKey: keyResp.data.key,
     });
 
-    const bookmark = createBookmark({ source: ctx.source });
+    const bookmark = createBookmark();
     const r = await scopedClient.createItem(bookmark);
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
@@ -59,7 +59,7 @@ describe("type-scoped permissions", () => {
       apiKey: keyResp.data.key,
     });
 
-    const note = createNote({ source: ctx.source });
+    const note = createNote();
     const r = await scopedClient.createItem(note);
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("type_not_permitted");
@@ -80,12 +80,12 @@ describe("type-scoped permissions", () => {
       apiKey: keyResp.data.key,
     });
 
-    const note = createNote({ source: ctx.source });
+    const note = createNote();
     const r1 = await scopedClient.createItem(note);
     expect(r1.ok).toBe(true);
     trackItem(ctx, r1.data.item.id);
 
-    const bookmark = createBookmark({ source: ctx.source });
+    const bookmark = createBookmark();
     const r2 = await scopedClient.createItem(bookmark);
     expect(r2.ok).toBe(true);
     trackItem(ctx, r2.data.item.id);
@@ -106,7 +106,7 @@ describe("type-scoped permissions", () => {
     });
 
     // `none` overrides the `*` wildcard for this specific type.
-    const bookmark = createBookmark({ source: ctx.source });
+    const bookmark = createBookmark();
     const r = await scopedClient.createItem(bookmark);
     expect(r.ok).toBe(false);
     expect(r.status).toBe(403);
@@ -176,7 +176,7 @@ describe("type-scoped permissions", () => {
       apiKey: keyResp.data.key,
     });
 
-    const bookmark = createBookmark({ source: ctx.source });
+    const bookmark = createBookmark();
     const r = await scopedClient.createItem(bookmark);
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("type_not_permitted");

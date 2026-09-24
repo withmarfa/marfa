@@ -50,6 +50,8 @@ import {
   requirePermission,
   requireAuth,
   requireTypeAccess,
+  requireResolvedRowWrite,
+  mayReadResolvedRow,
   requireEdgePermission,
   mayWriteReserved,
   requireDeclaredTypeMatches,
@@ -60,6 +62,7 @@ import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
+import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
@@ -104,13 +107,17 @@ const BulkInputItemSchema = z.object({
    *  refused further down by `validateTransition`, which gives each type
    *  its own answer — and that is the gate `POST /items` uses, where the
    *  same create in `revoked` on a `system.*` type succeeds. A narrower
-   *  enum here refused it before the graph was consulted, so the two
-   *  create doors disagreed. */
+   *  enum here would refuse it before the graph is consulted, and the two
+   *  create doors would disagree. */
   state: ItemStateEnum.optional(),
   tier: TierEnum.optional(),
   occurred_at: z.string().optional(),
-  /** Ignored on the wire — server stamps `source` from the credential. */
-  source: z.string().optional(),
+  source: z
+    .string()
+    .optional()
+    .describe(
+      "The source this entry's row is keyed by and stamped with, resolved as `POST /items` resolves it: omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else refuses the entry `forbidden`.",
+    ),
   source_id: z.string().optional(),
   /** The version this entry was based on, where it resolves a row that
    *  already exists. Optional for the same reason it is optional on
@@ -135,10 +142,9 @@ const BulkInputItemSchema = z.object({
 });
 
 // The request shape is `BulkActionInputSchema`, declared once in the
-// bulk-action module and imported here. The filter half was deduped
-// first and the envelope around it was left behind, which is the same
-// two-declarations-of-one-thing that let `dry_run` and `max_items` drift
-// out of step with the copy the specification is generated from.
+// bulk-action module and imported here, envelope and filter alike: two
+// declarations of one thing let `dry_run` and `max_items` drift out of
+// step with the copy the specification is generated from.
 
 // ---------------------------------------------------------------------------
 // Route definitions
@@ -151,7 +157,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -216,7 +222,7 @@ const bulkRoute = createRoute({
         },
       },
       description:
-        "Write access denied for one of the item types. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
+        "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
     },
   },
 });
@@ -342,8 +348,8 @@ const bulkActionStatusRoute = createRoute({
 // top of each chunk and stops when it finds it canceled, but there is no
 // read after the last chunk and `complete()` carries no status guard, so
 // a cancel landing in the final chunk is overwritten. Describing what
-// happens to the work afterwards would be the same unkeepable promise
-// this door's prose was rewritten to drop.
+// happens to the work afterwards would be a promise this door cannot
+// keep.
 const bulkActionCancelRoute = createRoute({
   method: "delete",
   path: "/bulk-actions/jobs/{id}",
@@ -418,9 +424,8 @@ interface BulkItemResult {
  * The row travels beside the wire object rather than inside it, exactly as
  * `processBulkEdge` returns its `created` / `updated`. It exists so the
  * publish loop does not read back what the batch just wrote, and it must
- * not reach the response: five thousand entries each carrying a full item,
- * on the endpoint this change was making cheaper, would more than undo the
- * saving. Keeping it out of `BulkItemResult` is what makes that structural
+ * not reach the response: five thousand entries each carrying a full item
+ * would cost more than the read it saves. Keeping it out of `BulkItemResult` is what makes that structural
  * rather than a thing to remember at the boundary.
  */
 interface ProcessedBulkItem {
@@ -448,7 +453,17 @@ async function processBulkItem(
   index: number,
   options: {
     mode: "upsert" | "create_only";
-    stampedSource: string | undefined;
+    /**
+     * The source an entry's row is keyed by and stamped with, given the one
+     * it names and the entry's type: `itemProvenanceSource` over the
+     * caller's credential, then the type's source allow-list. Throws the
+     * entry's refusal for a source the credential does not claim or the
+     * list excludes.
+     */
+    resolveSource: (
+      named: string | undefined,
+      type: string,
+    ) => string | undefined;
     /**
      * Whether the caller has already opened the batch transaction (atomic
      * mode) or runs each item bare (best-effort mode). `applyInlineEdges`
@@ -517,6 +532,15 @@ async function processBulkItem(
       raw: { properties?: Record<string, unknown> },
     ) => void;
     /**
+     * Whether the credential may read a row an entry resolved.
+     *
+     * A key learns nothing about a row it may not read: an entry whose
+     * natural key a row of such a type holds is told the key is taken, and
+     * not the row's id. `checkUpdate` refuses such a row without naming it;
+     * this is for the answers that are not refusals.
+     */
+    mayRead: (existing: Item) => boolean;
+    /**
      * The edge half of the dual gate, mirroring `requireEdgePermission` on
      * `POST /edges` and on `POST /items` with an inline `edges` payload.
      * Edge writes need write on the source item's type AND on the edge
@@ -558,11 +582,12 @@ async function processBulkItem(
 
   const {
     mode,
-    stampedSource,
+    resolveSource,
     atomic,
     retype,
     checkWrite,
     checkUpdate,
+    mayRead,
     checkEdgeWrite,
     recordEdgeChanges,
   } = options;
@@ -589,8 +614,13 @@ async function processBulkItem(
     );
   };
 
+  // Resolved before the natural-key lookup below, which runs under it, and
+  // beside the write gate, because both are verdicts on what the entry asks
+  // for rather than on the row it lands on.
+  let stampedSource: string | undefined;
   try {
     checkWrite(raw);
+    stampedSource = resolveSource(raw.source, raw.type);
   } catch (err) {
     if (isEntryVerdict(err)) {
       return {
@@ -634,7 +664,14 @@ async function processBulkItem(
   let existing: Item | null = null;
   let matchedBy: "source_id" | "id" | null = null;
   if (stampedSource && sourceId) {
-    existing = await storage.items.findBySourceId(stampedSource, sourceId);
+    // Trashed rows included, as `POST /items` looks the key up. Hiding them
+    // sends an entry naming a trashed row's key to the create below, which
+    // the store refuses as a duplicate, and under the default `atomic` one
+    // deleted row rolls back every page that re-syncs it.
+    existing = await storage.items.findBySourceIdIncludingTrashed(
+      stampedSource,
+      sourceId,
+    );
     if (existing) matchedBy = "source_id";
   }
   // Fall back to primary-id lookup when no (source, source_id) match was
@@ -660,15 +697,48 @@ async function processBulkItem(
     if (existing) matchedBy = "id";
   }
 
-  // create_only: existing match → skipped. No writes.
+  // create_only: existing match → skipped. No writes. The id is named
+  // where the entry named it, or where its key may read the row; otherwise
+  // the entry learns only that its key is taken.
   if (existing && mode === "create_only") {
     return {
       result: {
         index,
         outcome: "skipped",
-        id: existing.id,
+        ...((matchedBy === "id" || mayRead(existing)) && { id: existing.id }),
         reason: matchedBy === "id" ? "duplicate_id" : "duplicate_source",
       },
+    };
+  }
+
+  // **A natural key resolving a trashed row is acknowledged, not written**,
+  // as `POST /items` acknowledges it: the person deleted the row, and a
+  // re-sync reviving it would overturn that silently. The id fallback above
+  // reads live rows only in this mode, so only the natural key lands here.
+  // Gated as the single door gates it, on the row's type, before the entry
+  // discloses the row's id.
+  if (existing?.state === "trashed") {
+    try {
+      checkUpdate(existing, { properties: raw.properties });
+      if (!retype) requireDeclaredTypeMatches(raw.type, existing);
+    } catch (err) {
+      if (isEntryVerdict(err)) {
+        return {
+          result: {
+            index,
+            outcome: "errored",
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.details && { details: err.details }),
+            },
+          },
+        };
+      }
+      throw err;
+    }
+    return {
+      result: { index, outcome: "skipped", id: existing.id, reason: "trashed" },
     };
   }
 
@@ -678,21 +748,40 @@ async function processBulkItem(
     // Authorize against the row about to be overwritten. The entry's own
     // `type` is not what is being written — it describes a create that is
     // no longer happening — so it is checked for agreement rather than
-    // used.
+    // used. Refused apart from the checks after it, and without the row's
+    // id: a key that may not write the row learns only that its key is
+    // taken.
     try {
       checkUpdate(existing, { properties: raw.properties });
+    } catch (err) {
+      if (isEntryVerdict(err)) {
+        return {
+          result: {
+            index,
+            outcome: "errored",
+            error: {
+              code: err.code,
+              message: err.message,
+              ...(err.details && { details: err.details }),
+            },
+          },
+        };
+      }
+      throw err;
+    }
+    try {
       // Both resolutions above land here, and neither used the entry's
       // `type` to get here: the natural key ignores it, and the id
-      // fallback ignores it too. Declaring one type and resolving another
-      // was merged in silently, per entry, inside a page of thousands.
-      // Same guard the single-item door runs.
+      // fallback ignores it too. Without this, declaring one type and
+      // resolving another would merge silently, per entry, inside a page
+      // of thousands. Same guard the single-item door runs.
       //
       // Blast radius differs from the single-item doors and it is worth
       // knowing which mode you are in. `atomic` defaults to true, so one
-      // refused entry rolls the page back as `bulk_atomic_rollback`, a
-      // 400 carrying this refusal in `details.code` rather than the 409
-      // the other doors answer with. That is this route's established
-      // answer to any per-entry refusal rather than something new here.
+      // refused entry rolls the page back as `bulk_atomic_rollback`
+      // carrying this refusal in `details.code`, at `400` rather than the
+      // `409` the other doors answer with: a rollback takes `403` for a
+      // permission the caller lacks and `400` for everything else.
       //
       // **Which code depends on which resolution got here.** An entry the
       // natural key resolved named no id, so the declaration is the
@@ -720,10 +809,8 @@ async function processBulkItem(
       // one being left, and both are already held: `checkUpdate` above
       // covers the row's own type, and every entry's declared type is
       // authorized by the `checkWrite` at the top of this function,
-      // before resolution. Repeating it here read as belt and braces and
-      // was dead code — the door refuses `user.dest_log` to a caller
-      // without it whether or not the re-type arm asks again. The test
-      // pins the outcome rather than this call site, so the guarantee
+      // before resolution, so asking again here could refuse nothing. The
+      // test pins the outcome rather than a call site, so the guarantee
       // survives that gate moving.
     } catch (err) {
       if (isEntryVerdict(err)) {
@@ -806,10 +893,10 @@ async function processBulkItem(
         // because that is the first thing the store does with it: it drops a
         // `null` on any field the type does not require, so a body clearing an
         // optional field writes nothing for it. Judging the raw payload
-        // validated a row carrying that `null` while the store wrote the old
-        // value — which is exactly the shape a connector's re-sync sends,
-        // and it is the difference between predicting the write and
-        // approximating it. `existing.type` rather than the destination for
+        // would validate a row carrying that `null` while the store keeps
+        // the stored value — which is exactly the shape a connector's
+        // re-sync sends, and it is the difference between predicting the
+        // write and approximating it. `existing.type` rather than the destination for
         // the same reason: the store resolves against the row's own type.
         resolveIncomingProperties(existing.type, raw.properties, false) ?? {},
         false,
@@ -910,8 +997,7 @@ async function processBulkItem(
     };
   }
 
-  // No match → create. Stamp source from credential; caller-supplied source
-  // is ignored on the wire (preserves /import non-forgeability contract).
+  // No match → create, under the source resolved above.
   try {
     assertTierApplicable(raw.type, raw.tier);
     // The same question `POST /items` asks, and it has to be asked here for
@@ -1024,7 +1110,7 @@ export function bulkRoutes(storage: Storage) {
     // operation reached through different doors: the row's real type
     // decides the type gate.
     const checkUpdate = (existing: Item): void => {
-      requireTypeAccess(c, existing.type, "write");
+      requireResolvedRowWrite(c, existing);
     };
     // The edge half of the dual gate. Same call the direct routes make,
     // so the three doors that accept an inline `edges` payload agree.
@@ -1055,15 +1141,21 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    const stampedSource = itemProvenanceSource(c.get("apiKey"));
-
-    // The instance's enforcement levers, read once for the page. The
-    // strict-mode half is what each entry is held to below; the read is
-    // one row and the answer cannot change inside a batch.
+    // The instance's enforcement levers, read once for the page: the read
+    // is one row and the answer cannot change inside a batch.
     const enforcement = resolveEnforcement(
       await readInstanceConfig(storage.settings),
       c.get("apiKey"),
     );
+    const resolveSource = (
+      named: string | undefined,
+      type: string,
+    ): string | undefined => {
+      const source = itemProvenanceSource(c.get("apiKey"), named);
+      const notAllowed = sourceAllowlistRefusal(enforcement, type, source);
+      if (notAllowed) throw notAllowed;
+      return source;
+    };
 
     if (items.length === 0) {
       return c.json(
@@ -1075,11 +1167,15 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    // In atomic mode, pre-validate what can be checked without a database
-    // round trip before any writing starts. The store rolls back for real,
-    // so this is belt and braces rather than the mechanism. It is kept
-    // because refusing a malformed type or instant before touching the
-    // database gives the caller the reason rather than a rollback.
+    // In atomic mode, judge what every entry names before any entry is
+    // looked up. The transaction below is what undoes a refused page; this
+    // pass decides which refusal the page answers with. Nothing here reads
+    // an item row, so a page carrying an entry its key may not write, or
+    // naming a source its key does not claim, is refused for that entry
+    // whatever rows the store holds. Left to the per-entry pass, a stale
+    // entry ahead of it would answer first, as a `400`, and the caller would
+    // re-read its body over a refusal whose cause is a permission it lacks
+    // (`items.md` 31).
     if (atomic) {
       for (const [i, raw] of items.entries()) {
         if (!isValidTypeIdentifier(raw.type)) {
@@ -1100,14 +1196,11 @@ export function bulkRoutes(storage: Storage) {
         // **Before the write gate, because the single door asks it
         // first.** The two are parameterized over one table in
         // `item-state-doors.test.ts` precisely so they cannot answer one
-        // request differently, and while a rollback was a `400` whatever
-        // refused it the disagreement was invisible: an entry naming a
-        // state its type's lifecycle cannot reach hit the write gate here
-        // and the state gate there, and both came back `400`. Now that a
-        // rolled-back permission refusal carries the permission's status,
-        // the same request would answer `403` on this door and `400` on
-        // the other, which is the caller-facing disagreement the table
-        // exists to stop.
+        // request differently. A rolled-back permission refusal carries the
+        // permission's status, so an entry naming a state its type's
+        // lifecycle cannot reach, of a type the caller may not write, would
+        // otherwise answer `403` on this door and `400` on the other, which
+        // is the caller-facing disagreement the table exists to stop.
         //
         // **Only for an entry that can be nothing but a create**, which is
         // one naming neither an `id` nor a `source_id`. An entry carrying
@@ -1130,10 +1223,12 @@ export function bulkRoutes(storage: Storage) {
             });
           }
         }
-        // Authorize the write up-front so an unauthorized type aborts the
-        // batch before any row lands (SQLite can't roll back async txns).
+        // Authorize the write, and the source it names, before any entry
+        // is looked up: the same two verdicts the per-entry path reaches,
+        // asked here so they answer ahead of any refusal a row decides.
         try {
           checkWrite(raw);
+          resolveSource(raw.source, raw.type);
         } catch (err) {
           if (isEntryVerdict(err)) {
             throw bulkAtomicRollback(i, {
@@ -1152,11 +1247,12 @@ export function bulkRoutes(storage: Storage) {
       for (const [i, raw] of items.entries()) {
         const processed = await processBulkItem(storage, raw, i, {
           mode,
-          stampedSource,
+          resolveSource,
           atomic,
           retype,
           checkWrite,
           checkUpdate,
+          mayRead: (existing) => mayReadResolvedRow(c, existing),
           checkEdgeWrite,
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
           enforcement,
@@ -1197,9 +1293,8 @@ export function bulkRoutes(storage: Storage) {
     // downstream of the log, not whether the row is logged.
     //
     // The rows come from the batch that wrote them rather than from a
-    // second read: re-reading each item and its metadata put two queries
-    // per row on a door that accepts five thousand of them, a cost the
-    // old opt-in default kept out of sight.
+    // second read: re-reading each item and its metadata would put two
+    // queries per row on a door that accepts five thousand of them.
     const published = processed.filter(
       (p): p is ProcessedBulkItem & { item: Item } =>
         p.item !== undefined &&

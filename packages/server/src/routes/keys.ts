@@ -71,9 +71,39 @@ export function assertUnreservedSource(source: string): void {
   );
 }
 
+/**
+ * Refuse a claim under a prefix no key may hold, for the reason
+ * `assertUnreservedSource` refuses one as a key's own: a claimed source is
+ * stamped on rows exactly as an own one is, so the reservation that keeps a
+ * connector's mark off hand-written rows has to cover both.
+ *
+ * Asked of every caller, the operator key included. The operator may grant
+ * any source a key can hold, and these are the ones no key can.
+ */
+function assertUnreservedSources(sources: readonly string[] | undefined): void {
+  const reserved = sources?.find(isReservedCredentialSource);
+  if (reserved === undefined) return;
+  throw new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `\`sources\` may not claim "${reserved}": a source starting with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} names an identity no key can hold.`,
+    { source: reserved },
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
+
+/**
+ * The sources a key claims besides its own, as the two writing doors take
+ * them. Trimmed and bounded as `source` is, so a claim can be anything a
+ * key's own source could be and a write names both the same way.
+ */
+const SourcesSchema = z
+  .array(z.string().trim().min(1, "a claimed source is not empty").max(200))
+  .describe(
+    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused.",
+  );
 
 const EdgePermissionsSchema = z
   .record(z.string(), PermissionLevelEnum)
@@ -85,6 +115,12 @@ const ApiKeySchema = z
     id: z.string(),
     label: z.string(),
     source: z.string(),
+    sources: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.",
+      ),
     permissions: z
       .array(PermissionEnum)
       .optional()
@@ -131,7 +167,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry or permission on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
+    "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\n`source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it — and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
 
   security: [{ bearerAuth: [] }],
   request: {
@@ -147,10 +183,11 @@ const createKeyRoute = createRoute({
         "application/json": {
           schema: z.strictObject({
             label: z.string().min(1, "label is required"),
-            source: z
-              .string()
-              .min(1, "source display name is required")
-              .max(200),
+            // Trimmed before it is measured, so a source of spaces is refused
+            // here rather than stored empty, where the natural-key lookup
+            // reads it as no source at all and a repeated create collides.
+            source: z.string().trim().min(1, "source is required").max(200),
+            sources: SourcesSchema.optional(),
             permissions: z.array(PermissionEnum).optional(),
             default_tier: TierEnum.optional(),
             is_operator: z.boolean().optional(),
@@ -191,7 +228,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Body named a reserved `source`, or the bootstrap secret was refused.",
+        "Body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused.",
     },
     401: {
       content: {
@@ -208,7 +245,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`.",
+        "Caller does not hold `keys.mint`, asked for reach its own credential does not cover, asked to give reach to an operator key, or asked to mint an operator key without being one. A missing permission is named in `details.required_scope`, and a claimed source the caller may not grant in `details.source`.",
     },
     409: {
       content: {
@@ -217,7 +254,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "The `source` is already claimed by another key. One source, one key: the natural key `(source, source_id)` is what makes a second write from the same process the same row.",
+        "The `source` is already another unrevoked key's own, named in `details.source`: no two unrevoked keys hold one source as their own. Keys that claim it in `sources` write under it too, so a row's source does not name the key that wrote it, and two keys share a natural key by both claiming a source in `sources`.",
     },
   },
 });
@@ -340,6 +377,7 @@ function requireKeysMintOrOperator(c: Context<AppEnv>): void {
 const UpdateKeyBodySchema = z.strictObject({
   label: z.string().min(1).optional(),
   default_tier: TierEnum.optional(),
+  sources: SourcesSchema.optional(),
   type_permissions: z.record(z.string(), TypePermissionLevelEnum).optional(),
   extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
   edge_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
@@ -364,7 +402,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+    "Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -409,7 +447,7 @@ const updateKeyRoute = createRoute({
         },
       },
       description:
-        "`keys.mint` required, unless the caller is the operator key",
+        "`keys.mint` required, unless the caller is the operator key; or the edit reaches past what the caller holds, or past what a key an app made already holds. A missing permission is named in `details.required_scope`, and a claimed source that may not be granted in `details.source`.",
     },
     404: {
       content: {
@@ -517,16 +555,21 @@ function refuseSessionReachAboveGrant(
 }
 
 /**
- * The first thing a request names that an operator key may not hold, or
- * `null` if it names nothing at all.
+ * The first thing a request names that an operator key may not hold, with
+ * the detail its refusal carries, or `null` if it names nothing at all.
  *
  * A `none` entry is a denial rather than a request, so it names nothing and
  * is skipped, exactly as the creator ceiling skips it.
+ *
+ * Each refusal carries what its sibling refusals on this route carry:
+ * `required_scope` for a permission and `source` for a claim. A map entry
+ * names no scope literal, so it carries neither.
  */
 function firstReachOnAnOperatorKey(
   requested: RequestedReach,
   permissions: Permission[] | undefined,
-): string | null {
+  sources: readonly string[] | undefined,
+): { named: string; details?: Record<string, unknown> } | null {
   const maps = [
     ["type", requested.type_permissions],
     ["edge", requested.edge_permissions],
@@ -537,10 +580,18 @@ function firstReachOnAnOperatorKey(
   for (const [axis, map] of maps) {
     for (const [name, level] of Object.entries(map ?? {})) {
       if (level === "none") continue;
-      return `${axis} ${name}: ${level}`;
+      return { named: `${axis} ${name}: ${level}` };
     }
   }
-  return permissions?.[0] ?? null;
+  const permission = permissions?.[0];
+  if (permission !== undefined) {
+    return { named: permission, details: { required_scope: permission } };
+  }
+  const source = sources?.[0];
+  if (source !== undefined) {
+    return { named: `the source "${source}"`, details: { source } };
+  }
+  return null;
 }
 
 /**
@@ -558,25 +609,21 @@ function firstReachOnAnOperatorKey(
  * for an operator caller naming `is_operator: true`. `PATCH /keys/{id}` is the
  * same door a moment later, addressing an operator row.
  *
- * Bootstrap does not need this. It forces every family empty already, having
- * no creator to derive from and no caller to refuse.
+ * Bootstrap asks it of the claims alone, and forces the permission families
+ * empty instead, having no creator to derive them from.
  */
 function refuseReachOnAnOperatorKey(
   requested: RequestedReach,
   permissions: Permission[] | undefined,
+  sources: readonly string[] | undefined,
 ): void {
-  const named = firstReachOnAnOperatorKey(requested, permissions);
-  if (named === null) return;
-  const message = `An operator key holds no permissions, so it cannot be given ${named}. Mint a working key with POST /keys and grant it there.`;
-  // `required_scope` is attached where there is a scope to name, as every
-  // sibling refusal on this route does. A map entry names no scope literal,
-  // so `named` is a permission exactly when the maps named nothing.
-  if (named === permissions?.[0]) {
-    throw new MarfaError(ErrorCode.FORBIDDEN, message, {
-      required_scope: named,
-    });
-  }
-  throw new MarfaError(ErrorCode.FORBIDDEN, message);
+  const first = firstReachOnAnOperatorKey(requested, permissions, sources);
+  if (first === null) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `An operator key holds nothing, so it cannot be given ${first.named}. Mint a working key with POST /keys and grant it there.`,
+    first.details,
+  );
 }
 
 /**
@@ -656,6 +703,97 @@ function refuseKeyReachAboveCreator(
 }
 
 /**
+ * The first source in `requested` that `holder` may not grant: neither its
+ * own source nor one it claims. `null` when it may grant every one.
+ *
+ * Asked in the order the request names them, so a refusal names the first
+ * source past the ceiling rather than the first the caller happens to hold.
+ */
+function firstUngrantableSource(
+  holder: ApiKey,
+  requested: readonly string[] | undefined,
+): string | null {
+  for (const source of requested ?? []) {
+    if (source === holder.source) continue;
+    if (holder.sources?.includes(source) === true) continue;
+    return source;
+  }
+  return null;
+}
+
+/**
+ * Refuse a key naming a claim its caller does not hold, on a mint and on an
+ * edit alike.
+ *
+ * **A claim is reach, and it is clamped the way the maps are.** A source a
+ * key claims is one its writes may be keyed by, and a create keyed by a
+ * source lands on the row another key wrote under the same natural key:
+ * handing a claim out is handing out every natural key under that source.
+ * So a working key may pass on only what it could write under itself, its
+ * own source and its own claims.
+ *
+ * **The operator key is exempt, and for a reason the map ceiling does not
+ * share.** It claims nothing and writes nothing, so measured against itself
+ * it could grant no claim at all, and a claim has to start somewhere: the
+ * operator granting one is how two devices come to share a folder's source.
+ * A signed-in app is measured like any key, against what its token claims,
+ * which is nothing beyond its own source, and that one is reserved.
+ */
+function refuseSourcesAboveCaller(
+  caller: ApiKey | undefined,
+  requested: readonly string[] | undefined,
+): void {
+  if (caller === undefined || caller.is_operator) return;
+  const beyond = firstUngrantableSource(caller, requested);
+  if (beyond === null) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `This credential does not claim the source "${beyond}", so it cannot give a key a source it may not write under itself.`,
+    { source: beyond },
+  );
+}
+
+/**
+ * Refuse a key whose own source other keys claim, where the caller could not
+ * grant that claim.
+ *
+ * A key writes under its own source as surely as under a claim, so naming
+ * as a new key's own a source another key claims hands it every natural key
+ * under that source, and leaves it able to grant the source onward as its
+ * own. Held to the claim ceiling for that reason, or a caller refused a
+ * claim could take it in the same request by naming it as the source
+ * instead.
+ *
+ * **It bounds one mint, not a caller holding `keys.mint`.** That permission
+ * edits and revokes any key, so its holder can narrow or revoke the
+ * claimants first and mint afterwards, as it can give a revoked key's own
+ * source to a new key. What this refuses is the single request that would do
+ * it silently, which is also the one a device enrolled with its folder's
+ * source as its own would make by mistake.
+ *
+ * Asked only where the caller could not grant the source, so an ordinary
+ * mint costs no read. The listing is the live keys, because a revoked or
+ * expired key's claim writes nothing.
+ */
+async function refuseOwnSourceClaimedElsewhere(
+  storage: Storage,
+  caller: ApiKey | undefined,
+  source: string,
+): Promise<void> {
+  if (caller === undefined || caller.is_operator) return;
+  if (firstUngrantableSource(caller, [source]) === null) return;
+  const claimed = (await storage.keys.list()).some(
+    (key) => key.sources?.includes(source) === true,
+  );
+  if (!claimed) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `Another key claims the source "${source}" and this credential does not, so it cannot mint a key that writes under it as its own.`,
+    { source },
+  );
+}
+
+/**
  * Refuse an edit that widens a key an app made.
  *
  * A key minted through a sign-in carries the app that minted it, and the
@@ -685,6 +823,7 @@ function refuseWideningAnAppsKey(
   existing: ApiKey,
   requested: RequestedReach,
   requestedPermissions: Permission[] | undefined,
+  requestedSources: readonly string[] | undefined,
 ): void {
   if (existing.oauth_client_id === undefined) return;
 
@@ -720,6 +859,15 @@ function refuseWideningAnAppsKey(
       { required_scope: beyond },
     );
   }
+
+  const unclaimed = firstUngrantableSource(existing, requestedSources);
+  if (unclaimed !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not claim the source "${unclaimed}". Narrow it, or create a key of your own.`,
+      { source: unclaimed },
+    );
+  }
 }
 
 /**
@@ -745,9 +893,9 @@ function refuseWideningAnAppsKey(
  * The check is a read of the key table rather than a flag, because a throw
  * carries no reliable account of what committed before it.
  *
- * A failure to release is swallowed. It leaves the instance no worse than
- * before this wrapper existed, and replacing the caller's error with a
- * cleanup's would hide what actually went wrong.
+ * A failure to release is swallowed. It leaves the claim standing, which is
+ * where a failure with no release would leave it, and replacing the caller's
+ * error with a cleanup's would hide what actually went wrong.
  *
  * A non-bootstrap call passes straight through, because there is no claim to
  * give back.
@@ -835,7 +983,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     // concurrent unauthenticated POST /keys against a fresh DB both pass
     // the middleware gate (which reads the sentinel non-atomically); only
     // the caller whose INSERT-ON-CONFLICT-DO-NOTHING returns a row gets to
-    // mint. Everyone else falls through to requireOperatorKey and receives 401.
+    // mint. Everyone else is refused 401 here.
     if (isBootstrap) {
       const claimed = await storage.settings.claim("bootstrapped", "true");
       if (!claimed) {
@@ -859,6 +1007,11 @@ export function keyRoutes(storage: Storage, salt: string) {
     // key exists, the two agree — either both stand, or neither has moved.
     return await withBootstrapRelease(isBootstrap, storage, async () => {
       assertUnreservedSource(body.source);
+      // Once, so a claim named twice is stored once and every ceiling below
+      // reads the list the row will hold.
+      const requestedSources =
+        body.sources === undefined ? undefined : [...new Set(body.sources)];
+      assertUnreservedSources(requestedSources);
 
       // **The default for a session is a key like the session.** An OAuth caller
       // that names no permission maps gets the ones its own grant projects, which
@@ -922,7 +1075,18 @@ export function keyRoutes(storage: Storage, salt: string) {
       // message implying that a creator holding it could pass it on, which
       // for this tier is exactly what is not true.
       if (!isBootstrap && mintsOperatorKey) {
-        refuseReachOnAnOperatorKey(requested, requestedPermissions);
+        refuseReachOnAnOperatorKey(
+          requested,
+          requestedPermissions,
+          requestedSources,
+        );
+      }
+      // The key bootstrap mints is an operator key too, and a claim named on
+      // it is refused as on any other rather than dropped. Inside the claim's
+      // window, so the refusal gives the claim back and the secret still
+      // mints.
+      if (isBootstrap) {
+        refuseReachOnAnOperatorKey({}, undefined, requestedSources);
       }
 
       // The operator key is not clamped, because its own set is empty and it
@@ -939,12 +1103,11 @@ export function keyRoutes(storage: Storage, salt: string) {
           );
         }
       }
-      // Forced empty for an operator mint, because the guard above measures
-      // the request and this line writes the derive. A body naming nothing
-      // takes the creator's whole set, and on an instance that ran the build
-      // where an operator key could be widened, that set is whatever somebody
-      // gave it: the mint would copy an escalation forward through a request
-      // that named nothing at all.
+      // Forced empty for an operator mint: an operator key holds nothing on
+      // any axis, which `api_keys_operator_holds_nothing` enforces on the
+      // row, and the guard above measures only what the request named, so a
+      // body naming nothing, which takes a creator's whole set, would
+      // otherwise derive permissions the row may not hold.
       const permissions = mintsOperatorKey
         ? []
         : seedsFromOperator
@@ -964,14 +1127,20 @@ export function keyRoutes(storage: Storage, salt: string) {
       } else if (!isBootstrap && callerKey) {
         refuseKeyReachAboveCreator(callerKey, requested);
       }
+      // A session reaches here with its synthetic key as `callerKey`, so it
+      // is held to the same question as a key, against what its token
+      // claims. Both ceilings exempt the operator key themselves, and a
+      // missing `callerKey`, which is bootstrap, so every mint asks them.
+      refuseSourcesAboveCaller(callerKey, requestedSources);
+      await refuseOwnSourceClaimedElsewhere(storage, callerKey, body.source);
 
       // **A body naming no reach at all takes the creator's whole set; a body
       // naming any family gets only what it named.** One rule, and the second
       // half of it is deliberate: naming a narrow type map and receiving the
       // creator's edges for free would be a key wider than the request, which is
       // a different failure from a key wider than the creator and just as
-      // unwanted. Asking all five families is what makes "named nothing"
-      // unambiguous.
+      // unwanted. Asking all five families and the claims is what makes
+      // "named nothing" unambiguous.
       //
       // Deriving is what stops the other shape — a credential holding every
       // permission and unable to read a row, which is what an empty default
@@ -982,7 +1151,8 @@ export function keyRoutes(storage: Storage, salt: string) {
         body.edge_permissions === undefined &&
         body.metadata_permissions === undefined &&
         body.extension_permissions === undefined &&
-        body.profile_permissions === undefined;
+        body.profile_permissions === undefined &&
+        requestedSources === undefined;
       const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
       const seed = seedsFromOperator && namesNoReach ? EVERY_TYPE : undefined;
       // **An operator mint takes nothing on any axis, the content maps
@@ -1016,6 +1186,12 @@ export function keyRoutes(storage: Storage, salt: string) {
           creator?.extension_permissions ??
           body.extension_permissions ??
           {});
+      // No seed here: the operator claims nothing and there is no wildcard
+      // source, so a working key it mints naming nothing claims nothing
+      // either, and a claim is always one somebody named.
+      const sources = holdsNothing
+        ? []
+        : (creator?.sources ?? requestedSources ?? []);
 
       const rawKey = generateRawKey();
       const keyHash = hashApiKey(rawKey, salt);
@@ -1027,7 +1203,8 @@ export function keyRoutes(storage: Storage, salt: string) {
       const stored = await storage.keys.create(
         {
           label: body.label.trim(),
-          source: body.source.trim(),
+          source: body.source,
+          sources,
           default_tier: body.default_tier,
           is_operator: mintsOperatorKey,
           permissions,
@@ -1077,6 +1254,7 @@ export function keyRoutes(storage: Storage, salt: string) {
           key: rawKey,
           label: stored.label,
           source: stored.source,
+          sources: stored.sources,
           default_tier: stored.default_tier,
           is_operator: stored.is_operator,
           permissions: stored.permissions,
@@ -1111,10 +1289,9 @@ export function keyRoutes(storage: Storage, salt: string) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
-    // **The answer is what happened, not what was asked for.** Before this
-    // the door reached the store with any id at all and was told ok whatever
-    // came back — which is how a production key was revoked twice by the
-    // wrong id, twice successfully, and stayed live both times.
+    // **The answer is what happened, not what was asked for.** A door told ok
+    // whatever the store did would answer a revoke of the wrong id as a
+    // success, and the key meant would stay live with nothing saying so.
     const outcome = await storage.keys.revoke(id);
     if (outcome !== "revoked") {
       throw new MarfaError(
@@ -1157,6 +1334,10 @@ export function keyRoutes(storage: Storage, salt: string) {
       );
     }
 
+    const requestedSources =
+      body.sources === undefined ? undefined : [...new Set(body.sources)];
+    assertUnreservedSources(requestedSources);
+
     const existing = await storage.keys.get(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
@@ -1185,7 +1366,12 @@ export function keyRoutes(storage: Storage, salt: string) {
     // Before the caller's own ceiling, because it is the more specific answer:
     // a caller who both lacks the reach and is editing an app's key is better
     // told that this key can never hold more than told what it does not hold.
-    refuseWideningAnAppsKey(existing, requestedReach, requestedPermissions);
+    refuseWideningAnAppsKey(
+      existing,
+      requestedReach,
+      requestedPermissions,
+      requestedSources,
+    );
 
     if (c.get("authType") === "oauth") {
       refuseSessionReachAboveGrant(
@@ -1195,6 +1381,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     } else {
       refuseKeyReachAboveCreator(key, requestedReach);
     }
+    refuseSourcesAboveCaller(key, requestedSources);
 
     // An operator row holds nothing, its own row included, which is the
     // shortest path there is from the instance tier to reach over everything.
@@ -1205,15 +1392,19 @@ export function keyRoutes(storage: Storage, salt: string) {
     // place to find out.
     const targetHoldsNothing = existing.is_operator;
     if (targetHoldsNothing) {
-      refuseReachOnAnOperatorKey(requestedReach, requestedPermissions);
+      refuseReachOnAnOperatorKey(
+        requestedReach,
+        requestedPermissions,
+        requestedSources,
+      );
     }
     const writtenReach = targetHoldsNothing
       ? nothingWhereNamed(requestedReach)
       : requestedReach;
 
-    // **The permissions are clamped here too, and were not.** They are
-    // editable through this door like any other family, so a key holding one
-    // permission could have given itself every other one in the set.
+    // **The permissions are clamped here too.** They are editable through
+    // this door like any other family, so without it a key holding one
+    // permission could give itself every other one in the set.
     if (requestedPermissions !== undefined && !key.is_operator) {
       const held = key.permissions ?? [];
       const beyond = requestedPermissions.find(
@@ -1231,6 +1422,10 @@ export function keyRoutes(storage: Storage, salt: string) {
     const updated = await storage.keys.update(id, {
       label: body.label,
       default_tier: body.default_tier,
+      // Needs no forcing on an operator row, for the reason the permissions
+      // below need none: a claim is never a denial, so the guard above has
+      // already refused any list but the empty one.
+      sources: requestedSources,
       type_permissions: writtenReach.type_permissions,
       extension_permissions: writtenReach.extension_permissions,
       edge_permissions: writtenReach.edge_permissions,
@@ -1260,6 +1455,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         id: updated.id,
         label: updated.label,
         source: updated.source,
+        sources: updated.sources,
         default_tier: updated.default_tier,
         is_operator: updated.is_operator,
         permissions: updated.permissions,
@@ -1271,12 +1467,10 @@ export function keyRoutes(storage: Storage, salt: string) {
         profile_permissions: updated.profile_permissions,
         enforcement_override: updated.enforcement_override,
         created_at: updated.created_at,
-        // Sent because it can be. Unlike the create routes, where the field
-        // was declared and no key a door mints could ever carry one, any key
-        // is patchable — a stamped row included. A caller updating a credential's
-        // permissions asked for the key, and when it stops working is part of
-        // the key, so the honest fix was to make the handler match the
-        // declaration rather than the other way round.
+        // Sent here and not by the mint, because no key a door mints carries
+        // one while any key is patchable, a stamped row included. A caller
+        // updating a credential asked for the key, and when it stops working
+        // is part of the key.
         expires_at: updated.expires_at,
         last_used_at: updated.last_used_at,
       },

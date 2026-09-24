@@ -26,7 +26,7 @@ pub struct ExportDataParams {
     pub r#type: Option<String>,
     /// Filter by item state. Omitting the parameter exports every state except trashed: an export is a copy of the corpus rather than a listing, and the archive it writes is what a restore reads back, so it does not take the listing grammar's active-state default. `any` adds the bin, in one pass.
     pub state: Option<String>,
-    /// Filter by source credential
+    /// Narrow to rows stamped with this `source`.
     pub source: Option<String>,
     /// Include only items whose own time — `occurred_at`, falling back to `created_at` — is strictly after this. Not the modification time.
     pub occurred_after: Option<String>,

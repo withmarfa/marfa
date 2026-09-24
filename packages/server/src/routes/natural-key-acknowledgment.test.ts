@@ -6,34 +6,34 @@
  * nothing is published, because reviving the row would overturn a deletion
  * the user chose and refusing forever wedges the connector on one item.
  *
- * **The acknowledgment is right and what it hands back was never decided.**
- * It sat above every gate on the resolved row, so the answer to "what may a
- * caller learn here" was whatever the position of a `return` produced. Three
- * axes live under that question and they do not have the same answer:
+ * **What the acknowledgment hands back is decided per axis**, because an
+ * answer placed by where a `return` sits among the resolved row's gates is
+ * no decision at all. Three axes live under "what may a caller learn here",
+ * and they do not have the same answer:
  *
  *  - **The row itself: yes.** Everything the natural key bounds is already
- *    the caller's own. `source` is stamped from its credential and cannot be
- *    chosen, and it supplied the `source_id`. Seeing a row it addressed by
- *    a key only its own source can
- *    resolve tells it nothing it could not have written.
+ *    the caller's own. `source` is its credential's own or one its key
+ *    claims, and cannot be chosen past those, and it supplied the
+ *    `source_id`. Seeing a row it addressed by a key only a source it may
+ *    write under can resolve tells it nothing it could not have written.
  *  - **The extension namespaces: no.** That axis is not bounded by the
  *    natural key at all. `extension_permissions` are per credential, so a
  *    row can carry namespaces the caller holds nothing on — written by a
- *    a person, by another tool, or by a sibling Connection of the same
+ *    person, by another tool, or by a sibling Connection of the same
  *    connector, all of which share the source that resolved it.
  *  - **The type: no.** The natural key resolves on the credential's stamped
  *    `source`, which outlives any narrowing of what that credential may
  *    write, so a credential whose `type_permissions` are cut back still
- *    reaches every row it wrote before the cut. The update branch below
- *    refuses those on the resolved row's type; the acknowledgment above it
- *    did not, so the two branches disagreed about who may address one row.
+ *    reaches every row it wrote before the cut. The update branch refuses
+ *    those on the resolved row's type, and the acknowledgment has to refuse
+ *    them too, or the two branches disagree about who may address one row.
  *
- * The narrowing is modeled by editing the credential that wrote the row,
- * because nothing else can reach it: `source` is unique among
- * unrevoked credentials, so no second credential resolves the same natural
- * key. Cutting that one credential's permission map produces the state the
- * resolved-row gates exist for, a reachable row the caller may no longer
- * write.
+ * The narrowing is modeled by editing the credential that wrote the row.
+ * A second key claiming the row's source reaches it as well, and
+ * `compliance/claimed-sources.test.ts` drives that path through the bulk
+ * door; cutting one credential's permission map is the shorter way to the
+ * state the resolved-row gates exist for, a reachable row the caller may no
+ * longer write.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {

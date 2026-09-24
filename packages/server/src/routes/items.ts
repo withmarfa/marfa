@@ -18,7 +18,6 @@ import {
   hasBoundedLifecycle,
   softDeleteState,
   resolveEnforcement,
-  getSourceAllowlist,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type {
@@ -41,6 +40,7 @@ import {
   requireAuth,
   requirePermission,
   requireTypeAccess,
+  requireResolvedRowWrite,
   itemProvenanceSource,
   requireDeclaredTypeMatches,
   checkTypeAccess,
@@ -70,6 +70,7 @@ import {
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
+import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
@@ -120,6 +121,9 @@ const EDGE_SHORTHAND_KEY = /^(edge|backref)\[([^\]]+)\]$/;
 
 const ConflictSnapshotSchema = z
   .object({
+    // The row, because a create names a natural key and not an id: refused
+    // here, it learns which row the key resolved from this and nothing else.
+    id: z.string(),
     version: z.number(),
     properties: z.record(z.string(), z.unknown()),
     // The version check covers these three beside the properties, so a
@@ -233,7 +237,7 @@ const createItemRoute = createRoute({
   tags: ["Items"],
   summary: "Create an item",
   description:
-    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
+    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version and `source`: the credential's own, or one the credential's key claims when the body names it, and a body naming any other source is refused `403 forbidden` with `details.source`. Passing a `source_id` that already exists under that source upserts the existing item and returns 200 instead of 201, whichever credential wrote it, so two keys claiming one source share its natural keys. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -245,7 +249,12 @@ const createItemRoute = createRoute({
             id: z.string().optional(),
             state: z.string().optional(),
             occurred_at: z.string().optional(),
-            source: z.string().optional(),
+            source: z
+              .string()
+              .optional()
+              .describe(
+                "The source this row is keyed by and stamped with. Omitted, or naming the credential's own, takes the credential's; naming one of its key's `sources` takes that one; anything else is refused `403 forbidden`. A row's source never moves afterwards.",
+              ),
             source_id: z.string().optional(),
             version: z
               .number()
@@ -276,7 +285,8 @@ const createItemRoute = createRoute({
       description:
         "The request resolved an item that already exists, by one of two " +
         "keys, and there are three answers. **Natural-key upsert:** both " +
-        "`source` (stamped from the credential) and request `source_id` " +
+        "`source` (the credential's own, or one its key claims that the " +
+        "body names) and request `source_id` " +
         "resolve a live item, and it is updated in " +
         "place — an idempotent re-sync of the upstream entry. " +
         "**Acknowledged re-sync:** the same natural key resolves an item " +
@@ -331,7 +341,8 @@ const createItemRoute = createRoute({
           ]),
         },
       },
-      description: "Forbidden",
+      description:
+        "`forbidden`: the body named a `source` the credential's key does not claim, named in `details.source`, or a source allow-list excludes the source. `type_not_permitted` and `edge_permission_denied`: the credential holds no write on the item's type or on an inline edge's type, or on the type of the row the natural key resolves; where it may not read that type, the refusal names nothing of the row.",
     },
     409: {
       content: {
@@ -431,7 +442,10 @@ const listItemsRoute = createRoute({
         .describe(
           `Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. \`${ALL_STATES}\` returns every state in one pass, which a resuming client needs in order to see a row leave the active state.`,
         ),
-      source: z.string().optional().describe("Filter by source credential"),
+      source: z
+        .string()
+        .optional()
+        .describe("Narrow to rows stamped with this `source`."),
       tier: z
         .enum(["library", "feed", "all"])
         .optional()
@@ -724,7 +738,7 @@ const updateItemRoute = createRoute({
              *  Last-writer-wins like `tier`. */
             occurred_at: z.string().optional(),
             /** Repoint at a new natural-key identifier under the item's
-             *  `source` (the server-stamped value, not the caller's). The
+             *  own `source`, which this door never moves. The
              *  `(source, source_id)` tuple is
              *  unique — the server returns 409 `source_id_conflict`
              *  if another item already holds the target value. Idempotent
@@ -1305,32 +1319,19 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    // Schema-enforcement levers: source allow-list, strict-mode, and
-    // custom sources. Off by default; enabled per type via the instance
-    // config or per-credential override.
+    // The enforcement levers: off by default, and set per type by the
+    // instance config or a credential's own override.
     const instanceConfig = await readInstanceConfig(storage.settings);
     const enforcement = resolveEnforcement(instanceConfig, c.get("apiKey"));
 
-    // source is non-forgeable: always stamped from the credential.
-    // tier falls back to the credential default when absent.
-    // Final fallback is `tier: "library"` — the curated layer is the
-    // intended default when neither caller nor credential expresses intent.
+    // The source the row is keyed by and stamped with: the credential's
+    // own, or one its key claims that the body names. A named source it
+    // does not claim is refused here, and so is one the type's allow-list
+    // excludes, both ahead of the natural-key lookup that runs under it.
     const credential = c.get("apiKey");
-    const stampedSource = itemProvenanceSource(credential);
-
-    // Source allow-list: when configured for this type, the credential's
-    // source must appear in the allowed list.
-    const allowedSources = getSourceAllowlist(enforcement, type);
-    if (
-      allowedSources !== null &&
-      (stampedSource === undefined || !allowedSources.includes(stampedSource))
-    ) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `Source "${stampedSource ?? "(unknown)"}" is not in the allow-list for type ${type}`,
-        { type, source: stampedSource, allowed: allowedSources },
-      );
-    }
+    const stampedSource = itemProvenanceSource(credential, body.source);
+    const notAllowed = sourceAllowlistRefusal(enforcement, type, stampedSource);
+    if (notAllowed) throw notAllowed;
 
     // Strict-mode lever: when configured for this type, unknown properties
     // are rejected. Storage's own validateProperties runs in loose mode
@@ -1362,6 +1363,10 @@ export function itemRoutes(storage: Storage) {
     // `library` either way and no tier is not a representable state. Whether
     // that matters depends on whether anything reads a system row's tier as a
     // surfacing decision, which is a schema question rather than this door's.
+    //
+    // Otherwise the body's tier, then the credential's default, then
+    // `library`: the curated layer is the default when neither the caller
+    // nor the credential says.
     const isSystemTypeWrite = hasBoundedLifecycle(type);
     const tierValue: "library" | "feed" | undefined = isSystemTypeWrite
       ? undefined
@@ -1399,9 +1404,9 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // Natural-key upsert. When both `source` (stamped from the credential)
-    // and request `source_id` are present, look up an existing non-trashed
-    // row by (source, source_id). If one matches,
+    // Natural-key upsert. When both `source` (resolved above) and request
+    // `source_id` are present, look up an existing row by
+    // (source, source_id). If one matches,
     // short-circuit to update so `POST /items` is idempotent on re-sync —
     // the contract that lets inbound connector handlers recover from
     // whole-batch retries (createItem-success / cursor-write-fail) without
@@ -1446,25 +1451,28 @@ export function itemRoutes(storage: Storage) {
         // and not others, and only the ones it bounds are safe to answer on:
         //
         //  - The row itself is disclosed, because every part of reaching it
-        //    is already the caller's own. `source` is stamped from the
-        //    credential and cannot be chosen, and the `source_id` came from
-        //    this request.
+        //    is already the caller's own. `source` is the credential's own
+        //    or one its key was given to write under, and cannot be chosen
+        //    past those, and the `source_id` came from this request.
         //  - The extension namespaces are NOT, because that axis is not
         //    bounded by the natural key. `extension_permissions` are per
         //    credential, so a row can carry namespaces this caller holds
         //    nothing on — written by a person or by another tool. Hence the
         //    same filter the other eleven sites in this file use.
         //  - The type is NOT either, and that is a gate rather than a
-        //    filter. A credential's `source` is stable for its life, so a
-        //    credential whose type map has since narrowed still resolves
-        //    rows whose type it has lost. The update branch below refuses
+        //    filter. A source outlives any one credential's type map, so a
+        //    credential whose map has since narrowed, or another key
+        //    claiming the same source, still resolves rows whose type it
+        //    does not hold. The update branch below refuses
         //    those on the resolved row's type; refusing here too is what
         //    makes the two branches agree about who may address one row,
         //    instead of the answer depending on whether the user happened
         //    to have trashed it.
         //
-        // Gate before disclosing, so a refusal cannot be read off the body.
-        requireTypeAccess(c, existing.type, "write");
+        // Gate before disclosing, so a refusal cannot be read off the body,
+        // and a key that may not read the row learns only that its key is
+        // taken.
+        requireResolvedRowWrite(c, existing);
         // A write never re-types the row it lands on, and an
         // acknowledgment is a write's answer, so a body naming another
         // type is refused here as the route's 409 description says.
@@ -1483,16 +1491,17 @@ export function itemRoutes(storage: Storage) {
         // another. These are the gates `PATCH /items/{id}` runs; running
         // them here is what makes the two doors agree. The create path
         // below keeps authorizing the claim, because there the claim is
-        // the row.
-        requireTypeAccess(c, existing.type, "write");
-        // No check on the row's own `source` here, and none is owed: a
-        // source records which credential wrote a row and decides
-        // nothing about who may write it next.
-        //
-        // The lookup could not reach another credential's row in any
-        // case. `stampedSource` is the caller's own `source` and
-        // `findBySourceIdIncludingTrashed` keys on it, so a row resolved
-        // here carries this credential's source by construction.
+        // the row. Refused without naming the row where the key may not
+        // read it, so every envelope below, the conditional upsert's `409`
+        // with its snapshot and id among them, reaches only a key that
+        // may write the row it describes.
+        requireResolvedRowWrite(c, existing);
+        // No check on the row's own `source` here, and none is owed. The
+        // lookup keyed on `stampedSource`, so the row carries a source
+        // this credential may write under by construction: its own, or
+        // one its key claims. A row another credential wrote under a
+        // shared claim is exactly the row a second device must land on,
+        // which is what the claim is for.
 
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
@@ -2491,6 +2500,7 @@ export function itemRoutes(storage: Storage) {
             current.properties,
             body.version,
             {
+              id: current.id,
               tier: current.tier ?? "library",
               occurred_at: current.occurred_at,
               source_id: current.source_id ?? null,

@@ -169,7 +169,7 @@ read_key() {
 # Bootstrap answers with the operator key, which holds no permissions because
 # running the instance sits outside the permission model; the operator mints
 # the key that works. Two source names, because the server refuses a second
-# key under a source display name already in use.
+# key naming as its own a source another key already holds.
 bootstrap="$(mint "${secret}" core-proof-operator)"
 operator="$(read_key <<<"${bootstrap}")"
 [[ -n "${operator}" ]] || fail "bootstrap did not mint an operator key: ${bootstrap}"

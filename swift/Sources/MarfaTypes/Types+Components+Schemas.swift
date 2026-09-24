@@ -663,6 +663,8 @@ extension Components {
         }
         /// - Remark: Generated from `#/components/schemas/ConflictSnapshot`.
         public struct ConflictSnapshot: Codable, Hashable, Sendable {
+            /// - Remark: Generated from `#/components/schemas/ConflictSnapshot/id`.
+            public var id: Swift.String
             /// - Remark: Generated from `#/components/schemas/ConflictSnapshot/version`.
             public var version: Swift.Double
             /// - Remark: Generated from `#/components/schemas/ConflictSnapshot/properties`.
@@ -694,18 +696,21 @@ extension Components {
             /// Creates a new `ConflictSnapshot`.
             ///
             /// - Parameters:
+            ///   - id:
             ///   - version:
             ///   - properties:
             ///   - tier:
             ///   - occurredAt:
             ///   - sourceId:
             public init(
+                id: Swift.String,
                 version: Swift.Double,
                 properties: Components.Schemas.ConflictSnapshot.PropertiesPayload,
                 tier: Components.Schemas.Tier,
                 occurredAt: Swift.String,
                 sourceId: Swift.String? = nil
             ) {
+                self.id = id
                 self.version = version
                 self.properties = properties
                 self.tier = tier
@@ -713,6 +718,7 @@ extension Components {
                 self.sourceId = sourceId
             }
             public enum CodingKeys: String, CodingKey {
+                case id
                 case version
                 case properties
                 case tier
@@ -2078,6 +2084,8 @@ extension Components {
             public var index: Swift.Int
             /// - Remark: Generated from `#/components/schemas/BulkResultEntry/outcome`.
             public var outcome: Components.Schemas.BulkResultOutcome
+            /// The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row.
+            ///
             /// - Remark: Generated from `#/components/schemas/BulkResultEntry/id`.
             public var id: Swift.String?
             /// - Remark: Generated from `#/components/schemas/BulkResultEntry/reason`.
@@ -2089,7 +2097,7 @@ extension Components {
             /// - Parameters:
             ///   - index:
             ///   - outcome:
-            ///   - id:
+            ///   - id: The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved a row of a type the credential may not read: the entry learns that its key is taken and nothing of the row.
             ///   - reason:
             ///   - error:
             public init(
@@ -6766,6 +6774,10 @@ extension Components {
             public var label: Swift.String
             /// - Remark: Generated from `#/components/schemas/KeyResponse/source`.
             public var source: Swift.String
+            /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
+            ///
+            /// - Remark: Generated from `#/components/schemas/KeyResponse/sources`.
+            public var sources: [Swift.String]?
             /// - Remark: Generated from `#/components/schemas/KeyResponse/permissions`.
             public var permissions: [Components.Schemas.Permission]?
             /// - Remark: Generated from `#/components/schemas/KeyResponse/oauth_client_id`.
@@ -6887,6 +6899,7 @@ extension Components {
             ///   - key:
             ///   - label:
             ///   - source:
+            ///   - sources: The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
             ///   - permissions:
             ///   - oauthClientId:
             ///   - defaultTier:
@@ -6904,6 +6917,7 @@ extension Components {
                 key: Swift.String,
                 label: Swift.String,
                 source: Swift.String,
+                sources: [Swift.String]? = nil,
                 permissions: [Components.Schemas.Permission]? = nil,
                 oauthClientId: Swift.String? = nil,
                 defaultTier: Components.Schemas.Tier,
@@ -6921,6 +6935,7 @@ extension Components {
                 self.key = key
                 self.label = label
                 self.source = source
+                self.sources = sources
                 self.permissions = permissions
                 self.oauthClientId = oauthClientId
                 self.defaultTier = defaultTier
@@ -6939,6 +6954,7 @@ extension Components {
                 case key
                 case label
                 case source
+                case sources
                 case permissions
                 case oauthClientId = "oauth_client_id"
                 case defaultTier = "default_tier"
@@ -7076,6 +7092,10 @@ extension Components {
             public var label: Swift.String
             /// - Remark: Generated from `#/components/schemas/ApiKey/source`.
             public var source: Swift.String
+            /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
+            ///
+            /// - Remark: Generated from `#/components/schemas/ApiKey/sources`.
+            public var sources: [Swift.String]?
             /// The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.
             ///
             /// - Remark: Generated from `#/components/schemas/ApiKey/permissions`.
@@ -7204,6 +7224,7 @@ extension Components {
             ///   - id:
             ///   - label:
             ///   - source:
+            ///   - sources: The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
             ///   - permissions: The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.
             ///   - oauthClientId: The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.
             ///   - defaultTier:
@@ -7221,6 +7242,7 @@ extension Components {
                 id: Swift.String,
                 label: Swift.String,
                 source: Swift.String,
+                sources: [Swift.String]? = nil,
                 permissions: [Components.Schemas.Permission]? = nil,
                 oauthClientId: Swift.String? = nil,
                 defaultTier: Components.Schemas.Tier,
@@ -7238,6 +7260,7 @@ extension Components {
                 self.id = id
                 self.label = label
                 self.source = source
+                self.sources = sources
                 self.permissions = permissions
                 self.oauthClientId = oauthClientId
                 self.defaultTier = defaultTier
@@ -7256,6 +7279,7 @@ extension Components {
                 case id
                 case label
                 case source
+                case sources
                 case permissions
                 case oauthClientId = "oauth_client_id"
                 case defaultTier = "default_tier"

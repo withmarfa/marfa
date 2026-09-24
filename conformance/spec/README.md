@@ -34,7 +34,7 @@ A statement is a sentence about observable behavior, followed by its citations. 
 
 ## What the fixtures run against
 
-The server's half runs against one locally booted server on SQLite, one dataset. Each fixture file mints its own key through the provisioning key with a `source` unique to the file, and every row it writes is stamped with that source. The operator-only doors run as the operator key.
+The server's half runs against one locally booted server on SQLite, one dataset. Each fixture file mints its own key through the provisioning key with a `source` unique to the file, and every row it writes is stamped with that source or with one built from it that the file's own keys claim. The operator-only doors run as the operator key.
 
 The device's half runs against a scripted server the fixture controls, because the verdicts a device has to reach include failures the real server cannot be asked for: a dropped connection, a server at rest, a spent credential, a retry ceiling. Each device chapter lists what the real server cannot produce and why, and `src/suites/device/fidelity.test.ts` asserts that every answer the scripted server gives which the real server _can_ produce matches the real one's.
 
@@ -42,4 +42,4 @@ The device's half runs against a scripted server the fixture controls, because t
 
 - Enrichment and OCR are switched off for a run; no statement covers what the sweeper does to a file item after the fact.
 - Rate limiting is switched off for a run, because a run that mints and revokes one key per file would spend the key doors' allowance on its own housekeeping. What that allowance is, and what a caller past it is told, is `keys-and-oauth.md` 33, asserted against a server booted with the limiter on. The caps on every other path group are the server's own numbers and no statement covers them.
-- The boot mint. A fresh instance mints its first key once through `POST /keys` with the one-time secret printed in its boot log as the bearer token; the answer is one key, the operator key, which is also what the suite provisions with. `scripts/marfa-server.ts` performs it and `src/utils/target.test.ts` pins how the answer is read; no fixture repeats it, because the secret is consumed by the first mint.
+- The boot mint. A fresh instance mints its first key once through `POST /keys` with the one-time secret printed in its boot log as the bearer token; the answer is one key, the operator key, which is also what the suite provisions with. `scripts/marfa-server.ts` performs it and `src/utils/target.test.ts` pins how the answer is read; no fixture repeats it, because the secret is consumed by the first mint. A boot mint naming `sources` is refused `403 forbidden` as a mint of any operator key is, and the secret still mints afterwards; `packages/server/src/routes/keys.test.ts` asserts it.

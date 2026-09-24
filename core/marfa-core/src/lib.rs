@@ -324,7 +324,15 @@ impl Core {
         // missing server would tell it the wrong thing about why it may
         // not write.
         self.lock.refuse_unless_writer()?;
-        drain::drain(self, self.http()?)
+        drain::drain(self, self.http()?, drain::Asked::Now)
+    }
+
+    /// The same, as a folder left watching drains: a source the key was
+    /// found not to claim a moment ago is not asked about again until
+    /// `drain::UNCLAIMED_RETRY` has passed (`queue-and-verdicts.md` 40).
+    pub fn drain_paced(&self) -> Result<DrainReport> {
+        self.lock.refuse_unless_writer()?;
+        drain::drain(self, self.http()?, drain::Asked::Paced)
     }
 
     /// Sends a blocked or dead row again, under a fresh idempotency key
@@ -390,7 +398,20 @@ impl Core {
         store::refuse_unless_hydrated(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         let tx = conn.transaction()?;
-        let queued = queue_update(&tx, &catalog, id, edit, &[])?;
+        let queued = queue_update(&tx, &catalog, id, edit, &[], Based::OnHeld)?;
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// Queues an update based on a version the copy read before the one it
+    /// holds now, which the server merges against what was read.
+    pub(crate) fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        let tx = conn.transaction()?;
+        let queued = queue_update(&tx, &catalog, id, edit, &[], Based::AsRead)?;
         tx.commit()?;
         Ok(queued)
     }
@@ -443,7 +464,7 @@ impl Core {
             });
         }
         // The create and nothing else, for the reason `update_item` gives.
-        let depends_on = store::unanswered_creates_for_item(&conn, id)?;
+        let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         store::set_item_state(&tx, id, state)?;
         let queued = store::enqueue(
@@ -501,7 +522,7 @@ impl Core {
             )));
         }
         let payload = edit.payload(base)?;
-        let depends_on = store::unanswered_for_edge(&conn, id)?;
+        let depends_on = store::untaken_for_edge(&conn, id)?;
         let mut next = held.clone();
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
@@ -539,7 +560,7 @@ impl Core {
                 message: format!("{id} is not an edge this copy holds"),
             });
         };
-        let depends_on = store::unanswered_for_edge(&conn, id)?;
+        let depends_on = store::untaken_for_edge(&conn, id)?;
         // **The type travels with the write.** Reconciling a refused delete
         // means reading the server's edges for this source, and that read is
         // by type — but the local row is gone by then, because a delete
@@ -607,7 +628,7 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         }
-        let depends_on = store::unanswered_creates_for_item(&conn, id)?;
+        let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         apply(&tx)?;
         let queued = store::enqueue(
@@ -691,7 +712,7 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         }
-        let depends_on = store::unanswered_creates_for_item(&conn, id)?;
+        let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = store::enqueue(
             &tx,
@@ -744,12 +765,20 @@ impl Core {
         id: &str,
         path: &Path,
         edit: &Edit,
+        based: Based,
     ) -> Result<QueuedWrite> {
         let mime_type = blob::mime_type_for(path, None);
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             let mut edit = edit.clone();
             name_bytes(&mut edit.properties, hash, &mime_type);
-            queue_update(tx, catalog, id, &edit, std::slice::from_ref(&upload.id))
+            queue_update(
+                tx,
+                catalog,
+                id,
+                &edit,
+                std::slice::from_ref(&upload.id),
+                based,
+            )
         })
     }
 
@@ -971,7 +1000,9 @@ impl Core {
 /// The id is minted here rather than left to the server, because a row a
 /// caller has been told was queued has to be readable locally before anyone
 /// has answered for it (`queue-and-verdicts.md` 31), and a row with no id
-/// cannot be read by one.
+/// cannot be read by one. It is sent only on a create carrying no natural
+/// key: one carrying a `source_id` goes without it and the server names the
+/// row, and the copy moves onto that name when the answer comes (38).
 ///
 /// The version is optional on a create and carried when given
 /// (`queue-and-verdicts.md` 2): where the natural key resolves a live row the
@@ -1039,8 +1070,19 @@ fn queue_create(
     Ok(queued)
 }
 
+/// Which version an update may be based on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Based {
+    /// The version the copy holds now.
+    OnHeld,
+    /// That version or an earlier one the caller read, which the server
+    /// merges the write against.
+    AsRead,
+}
+
 /// An update, applied to the copy and queued in the caller's transaction,
-/// waiting on `after` as well as on the row's own unanswered create.
+/// waiting on `after` as well as on the row's own create while the server has
+/// not taken it.
 ///
 /// **The version is required** (`queue-and-verdicts.md` 2). An update with
 /// none is refused here rather than sent, because a version-less update is a
@@ -1056,6 +1098,7 @@ fn queue_update(
     id: &str,
     edit: &Edit,
     after: &[String],
+    based: Based,
 ) -> Result<QueuedWrite> {
     let Some(held) = store::item_by_id(tx, id)? else {
         return Err(CoreError::NotFound {
@@ -1071,8 +1114,11 @@ fn queue_update(
     // The version the caller read, against the row as it stands. A caller
     // editing a row the copy has since replaced is editing something they
     // have not seen, and sending it would be a write based on a version that
-    // was never theirs.
-    if base != held.version {
+    // was never theirs. A caller saying which earlier version it read is the
+    // exception: the server merges its write against that version, so what
+    // came in since is kept rather than overwritten.
+    let read_earlier = based == Based::AsRead && base > 0 && base <= held.version;
+    if base != held.version && !read_earlier {
         return Err(CoreError::Invalid(format!(
             "the update to {id} is based on version {base} and this copy holds version {}; read it again",
             held.version
@@ -1102,7 +1148,7 @@ fn queue_update(
     // never accepted, not about a sibling write that failed for its own
     // reasons. The queue drains in order, so ordering needs no dependency
     // to hold it.
-    let mut depends_on = store::unanswered_creates_for_item(tx, id)?;
+    let mut depends_on = store::untaken_creates_for_item(tx, id)?;
     for waited in after {
         if !depends_on.contains(waited) {
             depends_on.push(waited.clone());
@@ -1138,7 +1184,7 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
     let payload = draft.payload(&id)?;
     let mut depends_on: Vec<String> = Vec::new();
     for endpoint in [&draft.source_id, &draft.target_id] {
-        for id in store::unanswered_creates_for_item(tx, endpoint)? {
+        for id in store::untaken_creates_for_item(tx, endpoint)? {
             if !depends_on.contains(&id) {
                 depends_on.push(id);
             }

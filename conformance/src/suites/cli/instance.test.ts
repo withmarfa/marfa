@@ -173,6 +173,55 @@ describe("the instance from the terminal", () => {
     expect(revoked.envelope.error.server?.status).toBe(401);
   });
 
+  it("mints a key claiming a source, and a create under it names that source until the claim is taken away", async () => {
+    const claimed = unique("cli-claimed");
+    // The operator mints it: a working key may grant only what it claims.
+    const minted = await c.operator.json<{
+      id: string;
+      key: string;
+      sources: string[];
+    }>([
+      "keys",
+      "create",
+      "--label",
+      "claimer",
+      "--source",
+      unique("cli-claimer"),
+      "--type-permission",
+      "core.note=write",
+      "--claim",
+      claimed,
+    ]);
+    trackKey(c.ctx, minted.id);
+    expect(minted.sources).toEqual([claimed]);
+
+    const claimer = c.cli.as(minted.key);
+    const create = (title: string) => [
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--source",
+      claimed,
+      "--properties",
+      JSON.stringify({ title: unique(title), body: "b" }),
+    ];
+    const note = await claimer.json<ItemEnvelope>(create("cli-claimed"));
+    trackItem(c.ctx, note.item.id);
+    expect(note.item.source).toBe(claimed);
+
+    const unclaimed = await c.operator.json<{ sources: string[] }>([
+      "keys",
+      "update",
+      minted.id,
+      "--no-claims",
+    ]);
+    expect(unclaimed.sources).toEqual([]);
+    const refused = await claimer.refused(create("cli-unclaimed"));
+    expect(refused.code).toBe(1);
+    expect(refused.envelope.error.code).toBe("forbidden");
+  });
+
   it("reads and replaces the configuration under a credential that holds config.manage", async () => {
     const root = (await fetch(`${c.apiUrl}/`).then((r) => r.json())) as {
       instance_id: string;

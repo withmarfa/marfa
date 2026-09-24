@@ -134,7 +134,7 @@ export const UNREACHED: Readonly<Record<string, string>> = {
  * run draws any more is stale, since the server stopped answering it.
  */
 export const RECORDED: Readonly<Record<string, string>> = {
-  "POST /auth/oauth2/register 500": "`findings.md` 2",
+  "POST /auth/oauth2/register 500": "`findings.md` 1",
 };
 
 /**

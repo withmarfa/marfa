@@ -269,9 +269,9 @@ describe("export", () => {
     // what the export leaves out can only be the kind of relationship.
     const narrowResp = await client.createKey({
       label: "export-edge-scope-narrow",
-      // Its own source, not the writer's: a display name belongs to one
-      // credential, and what this key exports is chosen by the `source`
-      // filter rather than by the source it writes under.
+      // Its own source, not the writer's: a key's own source belongs to one
+      // key, and what this key exports is chosen by the `source` filter
+      // rather than by the source it writes under.
       source: `${source}-reader`,
       permissions: [],
       type_permissions: { "*": "read" },

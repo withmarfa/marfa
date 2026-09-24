@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConflictSnapshot {
+    #[serde(rename = "id")]
+    pub id: String,
     #[serde(rename = "version")]
     pub version: f64,
     #[serde(rename = "properties")]
@@ -27,6 +29,7 @@ pub struct ConflictSnapshot {
 
 impl ConflictSnapshot {
     pub fn new(
+        id: String,
         version: f64,
         properties: std::collections::HashMap<String, serde_json::Value>,
         tier: models::Tier,
@@ -34,6 +37,7 @@ impl ConflictSnapshot {
         source_id: Option<String>,
     ) -> ConflictSnapshot {
         ConflictSnapshot {
+            id,
             version,
             properties,
             tier,

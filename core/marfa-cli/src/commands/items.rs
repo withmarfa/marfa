@@ -236,7 +236,8 @@ pub struct CreateArgs {
     /// The item's own time, RFC 3339. Defaults to now.
     #[arg(long, value_name = "TIME")]
     pub occurred_at: Option<String>,
-    /// The source to stamp it with.
+    /// The source to key and stamp it with: the key's own, or one it claims.
+    /// Any other is refused.
     #[arg(long)]
     pub source: Option<String>,
     /// The id this row has in the system it came from: the natural key.
