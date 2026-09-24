@@ -1342,6 +1342,15 @@ describe("an answer the device applies keeps what it has not had answered", () =
     if (!holding.ok) return;
     expect(holding.value.version).toBe(THEIRS.version);
     expect(holding.value.properties.title).toBe("theirs");
+    // The queue keeps the reason the drain reported (`queue-and-verdicts.md`
+    // 12), which is what a caller reads after the pass.
+    const kept = (await queueOf(device)).find(
+      (row) => row.id === created.value.id,
+    );
+    expect([kept?.verdict, kept?.reason]).toEqual([
+      "refused",
+      "ancestor_unavailable",
+    ]);
 
     // And a write after it does not wait on the refused create: it is sent,
     // on the version the copy holds.
@@ -1377,11 +1386,20 @@ describe("an answer the device applies keeps what it has not had answered", () =
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "gone.md",
     };
-    for (const [label, refused, reason] of [
+    for (const [label, refused, reason, read] of [
       [
         "unread",
         answers.ancestorUnavailable(current, 0),
         "ancestor_unavailable",
+        refusal(404, "item_not_found", "Item not found"),
+      ],
+      // Out of this credential's reach: a read the server refuses `403` is
+      // not one to ask again on every pass.
+      [
+        "unreadable",
+        answers.ancestorUnavailable(current, 0),
+        "ancestor_unavailable",
+        refusal(403, "type_not_permitted", "No access to this type"),
       ],
       [
         "stale",
@@ -1392,6 +1410,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
           { fields: {}, default: "last_writer_wins" },
         ),
         "conflict_unresolved",
+        refusal(404, "item_not_found", "Item not found"),
       ],
     ] as const) {
       const own = await hydratedHarness(
@@ -1413,7 +1432,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
         const local = created.value.item_id ?? "";
         scriptWrites(own.server, {
           create: [refused],
-          read: [refusal(404, "item_not_found", "Item not found")],
+          read: [read],
         });
         const drained = await own.device.drain();
         expect(drained.ok, JSON.stringify(drained)).toBe(true);
@@ -1598,10 +1617,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
         type: "references",
       }),
       replaced: await device.writeMetadata(local, ["only"], "replace"),
+      merged: await device.writeMetadata(local, ["more"], "merge"),
       untagged: await device.removeTag(local, "theirs"),
       extension: await device.writeExtension(local, "app.test", { a: 1 }),
+      unextended: await device.deleteExtension(local, "app.test"),
       archived: await device.transitionItem(local, "archived"),
       deleted: await device.deleteItem(local),
+      restored: await device.restoreItem(local),
     };
     for (const [name, write] of Object.entries(queued)) {
       expect(write.ok, `${name}: ${JSON.stringify(write)}`).toBe(true);
@@ -1658,13 +1680,16 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(
       [
         verdictOf(idOf(queued.replaced)),
+        verdictOf(idOf(queued.merged)),
         verdictOf(idOf(queued.untagged)),
         verdictOf(idOf(queued.extension)),
+        verdictOf(idOf(queued.unextended)),
         verdictOf(idOf(queued.archived)),
         verdictOf(idOf(queued.deleted)),
+        verdictOf(idOf(queued.restored)),
       ],
       "a write that takes from the row went to another device's item",
-    ).toEqual(["refused", "refused", "refused", "refused", "refused"]);
+    ).toEqual(Array(8).fill("refused"));
     // Only the tag and the edge went out after the create.
     expect(
       server.requests
@@ -1674,6 +1699,76 @@ describe("an answer the device applies keeps what it has not had answered", () =
     // And the copy holds the other device's row as it is, not deleted.
     const holding = await device.get(THEIRS);
     expect(holding.ok && holding.value.state).toBe("active");
+  });
+
+  it("holds a write still waiting behind a landed create on the row it landed on", async () => {
+    // The tag waited on the create and follows it onto the row another
+    // device made; its own answer has not come, so a read of that row shows
+    // it laid over the row as the server holds it (`queue-and-verdicts.md`
+    // 35), rather than the tag seeming gone until it lands.
+    const THEIRS = "01a00000-0000-7000-8000-0000000000c6";
+    harness = await hydratedHarness("queue-landed-waiting-tag", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "raced.md",
+      version: 0,
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect((await device.addTag(created.value.item_id ?? "", "kept")).ok).toBe(
+      true,
+    );
+    const theirs = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      source: "notes",
+      source_id: "raced.md",
+    };
+    scriptWrites(server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: THEIRS,
+            version: 1,
+            properties: theirs.properties,
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "raced.md",
+          },
+          0,
+        ),
+      ],
+      read: [answers.updated(wireItem(theirs))],
+      tags: [answers.serverFault()],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    // The witness: the tag went to that row and was not answered.
+    expect(
+      server.requests.some(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === `/items/${THEIRS}/tags`,
+      ),
+    ).toBe(true);
+    expect(
+      (await queueOf(device)).filter(
+        (row) => row.kind === "add_tag" && row.verdict === null,
+      ),
+    ).toHaveLength(1);
+    const holding = await device.get(THEIRS);
+    expect(holding.ok, JSON.stringify(holding)).toBe(true);
+    expect(
+      holding.ok && holding.value.tags,
+      "a tag still waiting was not laid over the row the create landed on",
+    ).toContain("kept");
   });
 
   it("sends a create carrying a natural key without the id it minted, and holds the row the answer names", async () => {

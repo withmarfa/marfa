@@ -672,32 +672,46 @@ describe("the scripted answers match the server's", () => {
       baseUrl: apiUrl,
       apiKey: doorKey.data.key,
     });
+    const hiddenDoor = new FolderDoor(
+      [
+        [
+          "01a00000-0000-7000-8000-0000000000bb",
+          {
+            properties: { url: "https://example.com/door", title: "door" },
+            source: ctx.source,
+            source_id: hidden,
+            type: "core.bookmark",
+            version: 1,
+          },
+        ],
+      ],
+      () => true,
+      (type) => type === "core.note",
+    );
     const unreadable = await decide(
       "a create whose natural key resolves a row of a type its key may not read",
       { ...keyed, source_id: hidden, version: 0, properties: { title: "x" } },
       { same: ["error.code", "error.message"] },
-      new FolderDoor(
-        [
-          [
-            "01a00000-0000-7000-8000-0000000000bb",
-            {
-              properties: { url: "https://example.com/door", title: "door" },
-              source: ctx.source,
-              source_id: hidden,
-              type: "core.bookmark",
-              version: 1,
-            },
-          ],
-        ],
-        () => true,
-        (type) => type === "core.note",
-      ),
+      hiddenDoor,
       notesOnly,
     );
     expect(
       JSON.stringify(unreadable.real),
       "the server named a row its key may not read",
     ).not.toContain(bookmark.data.item.id);
+
+    // The same row in the bin: the type is asked of it before the bin is,
+    // so the key learns no more than it did of the live row.
+    const hiddenBinned = await client.deleteItem(bookmark.data.item.id);
+    expect(hiddenBinned.ok, JSON.stringify(hiddenBinned.error)).toBe(true);
+    hiddenDoor.trash("01a00000-0000-7000-8000-0000000000bb");
+    await decide(
+      "a create whose natural key resolves a row in the bin of a type its key may not read",
+      { ...keyed, source_id: hidden, version: 0, properties: { title: "x" } },
+      { same: ["error.code", "error.message"] },
+      hiddenDoor,
+      notesOnly,
+    );
   });
 
   it("matches the version_conflict envelope, field for field", async () => {

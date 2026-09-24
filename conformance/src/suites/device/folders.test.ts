@@ -1757,6 +1757,17 @@ describe("identity", () => {
       again.value.drain.verdicts.map((entry) => [entry.verdict, entry.reason]),
       "a create the server acknowledged and did not write was taken as accepted, so the edit is dropped with nothing saying so",
     ).toEqual([["refused", "trashed"]]);
+    // The queue keeps the same reason, which is what a caller reads later
+    // (`queue-and-verdicts.md` 12).
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    expect(
+      queued.ok &&
+        queued.value
+          .filter((row) => row.kind === "create_item")
+          .map((row) => [row.verdict, row.reason])
+          .at(-1),
+    ).toEqual(["refused", "trashed"]);
     expect(door.rows.get(made)?.properties.body).toBe("first\n");
     expect(read(harness, "note.md")).toContain("third");
 
@@ -2145,6 +2156,36 @@ describe("identity", () => {
       again.value.scan.overwrote,
       "the edit replaced content this machine never read and the scan did not say so",
     ).toBe(1);
+  });
+
+  it("queues a file whose row the copy lost again once it moves", async () => {
+    // A move is the person acting on the file, as an edit is, so a file
+    // bound to a row the copy lost is queued again when it moves, bytes
+    // unchanged; left where it was, it is only reported.
+    harness = await folderHarness("folder-lost-moved");
+    const door = new FolderDoor();
+    scriptWrites(harness.server, {
+      create: [
+        refusal(400, "invalid_properties", "the body is not allowed"),
+        (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
+      ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
+    });
+    put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const stayed = await harness.folder.scan();
+    expect(stayed.ok && [stayed.value.requeued, stayed.value.lost]).toEqual([
+      0, 1,
+    ]);
+
+    renameSync(join(harness.dir, "mine.md"), join(harness.dir, "moved.md"));
+    const moved = await harness.folder.scan();
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(
+      [moved.value.created, moved.value.requeued, moved.value.lost],
+      "a lost file that moved was left as lost, though the person acted on it",
+    ).toEqual([1, 1, 0]);
   });
 
   it("refuses a folder that names no source, or one it may never name", async () => {
