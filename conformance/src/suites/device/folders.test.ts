@@ -4821,9 +4821,11 @@ describe("a file that is not a document", () => {
   });
 
   it("writes an item carrying a blob_ref outside the file types as a document", async () => {
+    const unfetched = hashOf(Buffer.from("not fetched"));
+    const bytes = Buffer.from("the bytes a file item names\n");
     harness = await folderHarness("folder-file-not-a-file", {
       slice: {
-        types: ["core.note", "core.bookmark"],
+        types: ["core.note", "core.bookmark", "core.file"],
         defaultType: "core.note",
       },
       rows: {
@@ -4832,27 +4834,47 @@ describe("a file that is not a document", () => {
             item: {
               id: "01a00000-0000-7000-8000-0000000000b1",
               type: "core.bookmark",
+              properties: { title: "Budget.xlsx", blob_ref: unfetched },
+            },
+          },
+        ],
+        // A file item beside it, whose bytes the same pull fetches.
+        "core.file": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000b2",
+              type: "core.file",
               properties: {
-                title: "Budget.xlsx",
-                blob_ref: hashOf(Buffer.from("not fetched")),
+                title: "notes.txt",
+                blob_ref: hashOf(bytes),
+                mime_type: "text/plain",
               },
             },
           },
         ],
       },
     });
+    scriptBlob(harness.server, bytes);
     const pulled = await harness.folder.pull();
     expect(pulled.ok).toBe(true);
     if (!pulled.ok) return;
-    expect(pulled.value.written).toBe(1);
+    expect(pulled.value.written).toBe(2);
     expect(
       existsSync(join(harness.dir, "Budget.xlsx.md")),
       "an item of a type that is not a file was written under a file's name, so the next scan would not read it as the document it is",
     ).toBe(true);
+    const fetched = (hash: string) =>
+      harness!.server.requests.some((request) =>
+        request.pathname.startsWith(`/blobs/${hash}`),
+      );
+    // The witness: the same pull fetched the file item's bytes.
     expect(
-      harness.server.requests.some((request) =>
-        request.pathname.startsWith("/blobs/"),
-      ),
+      fetched(hashOf(bytes)),
+      "the pull fetched no bytes at all, so nothing here is about the bookmark",
+    ).toBe(true);
+    expect(readFileSync(join(harness.dir, "notes.txt"))).toEqual(bytes);
+    expect(
+      fetched(unfetched),
       "the pull fetched bytes for an item that is not a file",
     ).toBe(false);
   });

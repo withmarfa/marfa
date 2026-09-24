@@ -910,8 +910,14 @@ describe("the working copy holds one slice", () => {
     const { server, device } = harness;
     const bytes = Buffer.from("the bytes the name is for\n");
     const hash = scriptBlob(server, bytes, Buffer.from("something else\n"));
+    // Bytes that do hash to their name, fetched beside them.
+    const kept = scriptBlob(
+      server,
+      Buffer.from("the bytes this name is for\n"),
+    );
     hydrateOneFile(server, hash);
     expect((await device.hydrate(["core.file"], "library")).ok).toBe(true);
+    expect((await device.blob(kept)).ok).toBe(true);
 
     const altered = await device.blob(hash);
     expect(
@@ -925,6 +931,13 @@ describe("the working copy holds one slice", () => {
       "the device never followed the link, so nothing here is about what it does with what the link serves",
     ).toBe(true);
     await server.offline();
+    // The witness: an ask with the server gone is answered from the store
+    // for bytes it kept, so the refusal below is bytes it did not keep.
+    const held = await device.blob(kept);
+    expect(
+      held.ok,
+      `bytes the device kept were not answered with the server gone: ${JSON.stringify(held)}`,
+    ).toBe(true);
     const after = await device.blob(hash);
     expect(
       after.ok,
