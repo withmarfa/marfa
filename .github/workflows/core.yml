@@ -3,19 +3,22 @@ name: Core
 # Path-gated, which ci.yml deliberately is not. The trade is the same one
 # ci.yml weighs for its freshness jobs — a gate that skips is a gate that can
 # be wrong — and it lands the other way here: an XCFramework with its iOS
-# slices, both bindings' consumers and a booted server, none of which anything
-# outside core/ can change. The core's own three commands run on every pull
-# request, as `Core checks` in ci.yml.
+# slices, both bindings' consumers and a server booted from this checkout,
+# which only the core and the packages the server is built from can change.
+# The core's own three commands run on every pull request, as `Core checks`
+# in ci.yml.
 on:
   push:
     branches: [main]
     paths:
       - "core/**"
+      - "packages/**"
       - ".github/workflows/core.yml"
   pull_request:
     branches: [main]
     paths:
       - "core/**"
+      - "packages/**"
       - ".github/workflows/core.yml"
   # A path-gated workflow has no other way to be started by hand.
   workflow_dispatch:
@@ -38,10 +41,10 @@ jobs:
     timeout-minutes: 90
     runs-on: self-hosted
     # The same group as ci.yml's suite, and for the same reason: the resource
-    # is the machine. cargo takes every core, and the live test boots the
-    # server on a fixed port, so a second copy of either job manufactures
-    # failures in a branch that caused none. `queue: max` rather than the
-    # default, which cancels the pending entry instead of queueing it.
+    # is the machine. cargo takes every core, so a second copy of either job
+    # manufactures failures in a branch that caused none. `queue: max` rather
+    # than the default, which cancels the pending entry instead of queueing
+    # it.
     concurrency:
       group: marfa-suite-shared-host
       cancel-in-progress: false
@@ -55,12 +58,6 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      # Declared rather than assumed. A runner missing these fails the iOS
-      # step with "can't find crate for `core`", which reads as a defect in
-      # the crate; the add is idempotent and free when they are present.
-      - name: Add the iOS targets
-        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
       - uses: pnpm/action-setup@v6
         with:
@@ -98,7 +95,7 @@ jobs:
           # succeeds; an assignment carries the script's own status.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          cargo test -p marfa-core -- --include-ignored
+          cargo test --locked -p marfa-core -- --ignored
 
       - name: Package the Swift bindings
         run: core/bindings/swift/build.sh

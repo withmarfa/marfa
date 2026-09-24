@@ -79,12 +79,14 @@ jobs:
       - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
 
   # The core's three commands on every pull request, not only on those that
-  # touch `core/`: a required check has to report on each one, and the core
-  # reads the shipped types and the document from outside its folder.
-  # `core.yml` keeps the expensive half, the frameworks and the proofs.
+  # touch `core/`: a required check has to report on each one, and the
+  # binary's own tests read the root `openapi.json`. `core.yml` keeps the
+  # expensive half, the frameworks and the proofs.
   #
-  # The hand-written crates by name, because a generated crate in the
-  # workspace is held to its generator rather than to these.
+  # Every crate but the generated `marfa-client`, which is held to its
+  # generator rather than to these: `--no-deps` keeps clippy off it where a
+  # hand-written crate depends on it. Formatting takes the whole workspace,
+  # since the generator formats what it writes.
   core-checks:
     name: Core checks
     timeout-minutes: 30
@@ -109,28 +111,28 @@ jobs:
       # quietly narrowing it.
       - name: Say whether the keychain answers
         run: |
-          if security add-generic-password -a probe -s marfa-keychain-probe -w probe -U \
-            && security delete-generic-password -a probe -s marfa-keychain-probe >/dev/null; then
+          if security add-generic-password -a probe -s marfa-keychain-probe -w probe -U; then
             echo "MARFA_KEYCHAIN_REQUIRED=1" >> "$GITHUB_ENV"
             echo "the keychain answers; its tests are required"
           else
             echo "the keychain does not answer; its tests will skip and say so"
           fi
+          security delete-generic-password -a probe -s marfa-keychain-probe >/dev/null 2>&1 || true
 
       - name: Check the core workspace
         working-directory: core
         run: |
-          cargo fmt --check -p marfa-core -p marfa-cli
-          cargo clippy -p marfa-core -p marfa-cli --all-targets -- -D warnings
-          cargo test -p marfa-core -p marfa-cli
+          cargo fmt --all --check
+          cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
+          cargo test --locked --workspace --exclude marfa-client
       # Its own workspace, so its own three commands: cargo-swift refuses to
       # name a package inside a multi-crate workspace.
       - name: Check the Swift FFI crate
         working-directory: core/bindings/swift
         run: |
           cargo fmt --check
-          cargo clippy --all-targets -- -D warnings
-          cargo test
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
 
   # The contract, run against the server in this same checkout.
   #

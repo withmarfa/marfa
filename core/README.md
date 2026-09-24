@@ -38,8 +38,8 @@ The device fixtures drive the binary through `conformance/src/device/cli-adapter
 
 ## Build
 
-Three commands, and `core.yml` runs them here and again in `bindings/swift`,
-which is its own workspace and is reached by neither of the first two:
+Three commands, which `Core checks` in `ci.yml` runs on every pull request,
+here and again in `bindings/swift`, its own workspace:
 
 ```sh
 cargo fmt --check
@@ -47,9 +47,11 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-`core.yml` then runs a third lane against a real server: `scripts/server-up.sh`
-boots one and mints a key, and `cargo test -p marfa-core -- --include-ignored`
-runs the tests that need one. That is what `scripts` is for.
+`Core checks` leaves the generated `marfa-client` to its generator. `core.yml`
+runs the rest on a core change: a lane against a real server, where
+`scripts/server-up.sh` boots one and mints a key and
+`cargo test -p marfa-core -- --ignored` runs the tests that need one, the
+XCFramework, and both bindings' proofs. That is what `scripts` is for.
 
 The device fixtures under `conformance/` drive the built binary and refuse one
 older than the source it came from, so build it before running them:
