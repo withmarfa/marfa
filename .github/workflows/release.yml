@@ -219,7 +219,7 @@ jobs:
           pnpm --ignore-workspace install --frozen-lockfile
           pnpm --ignore-workspace run build
           pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artifacts"
-          bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
+          bash "$GITHUB_WORKSPACE/scripts/release/hold-tarball.sh" "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
             index.js index.d.ts marfa-core.darwin-arm64.node
 
       - name: Build the binary for macOS
