@@ -1,10 +1,10 @@
 //! The Node-facing shape of `marfa_core`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use napi::bindgen_prelude::*;
-use napi::threadsafe_function::ThreadsafeFunctionCallMode;
+use napi::threadsafe_function::{ThreadsafeCallContext, ThreadsafeFunctionCallMode};
 use napi_derive::napi;
 
 #[napi(string_enum = "snake_case")]
@@ -619,6 +619,13 @@ pub struct Change {
     pub cursor: String,
 }
 
+/// What the follow's thread hands the JavaScript thread, in the order it
+/// happened.
+enum Told {
+    Change(Change),
+    End(Option<String>),
+}
+
 /// A held stream, stopped by `stop` or by being collected. The follow ends
 /// within a quarter second of either, and `onEnd` is called once it has.
 #[napi]
@@ -635,7 +642,9 @@ impl Subscription {
 }
 
 /// The follow's thread holds the core, and with it the writer's claim on
-/// the store, so a subscription nobody holds any more must end it.
+/// the store, so a subscription nobody holds any more must end it. Node
+/// drops it when it is collected and when its environment is torn down, a
+/// worker's included, so either ends the follow.
 impl Drop for Subscription {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -803,58 +812,69 @@ impl MarfaCore {
     }
 
     /// Holds the event stream open on a thread of its own and applies each
-    /// event as it arrives: `onChange` for each change, `onEnd` once, with
-    /// the error that ended it or null where it was stopped. Neither
-    /// callback keeps the process alive.
+    /// event as it arrives: `onChange` for each change, then `onEnd` once,
+    /// with the error that ended it or null where it was stopped. Neither
+    /// callback keeps the process alive. An `onChange` that throws ends the
+    /// follow, and `onEnd` is told what it threw, as `listener_threw: …`.
     #[napi]
     pub fn follow(
         &self,
+        env: Env,
         on_change: Function<Change, ()>,
         on_end: Function<Option<String>, ()>,
     ) -> Result<Subscription> {
-        let changed = on_change
-            .build_threadsafe_function()
-            .callee_handled::<false>()
-            .weak::<true>()
-            .build()?;
-        let ended = on_end
-            .build_threadsafe_function()
-            .callee_handled::<false>()
-            .weak::<true>()
-            .build()?;
         let stop = Arc::new(AtomicBool::new(false));
+        let on_change = on_change.create_ref()?;
+        let on_end = on_end.create_ref()?;
+        let flag = Arc::clone(&stop);
+        let mut threw: Option<String> = None;
+        // One queue carries both callbacks, so `onEnd` runs after every
+        // `onChange` sent before it; two would keep no order between them.
+        // Its own function does nothing: each call is made here, where a
+        // throw can be caught.
+        let tell = env
+            .create_function_from_closure::<(), (), _>("follow", |_| Ok(()))?
+            .build_threadsafe_function::<Told>()
+            .callee_handled::<false>()
+            .weak::<true>()
+            .build_callback(move |context: ThreadsafeCallContext<Told>| {
+                match context.value {
+                    Told::Change(change) => {
+                        if threw.is_none()
+                            && let Err(thrown) = on_change.borrow_back(&context.env)?.call(change)
+                        {
+                            threw = Some(thrown.reason);
+                            flag.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    Told::End(error) => {
+                        let error = match threw.take() {
+                            Some(thrown) => {
+                                Some(format!("listener_threw: onChange threw {thrown}"))
+                            }
+                            None => error,
+                        };
+                        on_end.borrow_back(&context.env)?.call(error)?;
+                    }
+                }
+                Ok(())
+            })?;
         let flag = Arc::clone(&stop);
         let core = Arc::clone(&self.inner);
         std::thread::spawn(move || {
-            // Two threadsafe functions keep no order between them, so `onEnd`
-            // waits until every `onChange` queued before it has run.
-            let sent = Arc::new(AtomicU64::new(0));
-            let delivered = Arc::new(AtomicU64::new(0));
             let result = core.follow(&flag, |change| {
-                sent.fetch_add(1, Ordering::AcqRel);
-                let done = Arc::clone(&delivered);
-                let status = changed.call_with_return_value(
-                    Change {
+                tell.call(
+                    Told::Change(Change {
                         event: change.event.clone(),
                         item_id: change.item_id.clone(),
                         edge_id: change.edge_id.clone(),
                         cursor: change.cursor.clone(),
-                    },
+                    }),
                     ThreadsafeFunctionCallMode::NonBlocking,
-                    move |_, _| {
-                        done.fetch_add(1, Ordering::AcqRel);
-                        Ok(())
-                    },
                 );
-                if status != napi::Status::Ok {
-                    delivered.fetch_add(1, Ordering::AcqRel);
-                }
             });
-            while delivered.load(Ordering::Acquire) < sent.load(Ordering::Acquire) {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            ended.call(
-                result.err().map(|error| failure(error).reason),
+            tell.call(
+                Told::End(result.err().map(|error| failure(error).reason)),
                 ThreadsafeFunctionCallMode::NonBlocking,
             );
         });
