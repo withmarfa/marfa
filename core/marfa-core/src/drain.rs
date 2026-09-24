@@ -101,7 +101,8 @@ impl DrainVerdict {
 /// Total over every answer and every transport failure, because statement 7
 /// makes an answer a device cannot classify a defect in the device. The
 /// variants are the classification of `queue-and-verdicts.md` 17 to 23, and
-/// the two a create's refusal can mean besides (39, 40), and nothing else.
+/// the three a create's answer can mean besides, two refusals (39, 40) and
+/// one acknowledgment (41), and nothing else.
 #[derive(Debug, Clone, PartialEq)]
 enum Classified {
     /// A `2xx`. Which of the three successful verdicts it carries is read
@@ -132,9 +133,10 @@ enum Classified {
     Trashed,
 }
 
-/// Reads a create's refusal again, knowing it was a create: two refusals
-/// mean something about the row or the credential rather than the write, and
-/// neither can be told from the status and code alone.
+/// Reads a create's answer again, knowing it was a create: two refusals and
+/// one acknowledgment mean something about the row or the credential rather
+/// than the write, and none of the three can be told from the status and code
+/// alone.
 fn refine(
     row: &QueuedWrite,
     payload: &str,
@@ -327,8 +329,10 @@ enum Readiness {
     /// it in turn, whatever holds it: a write behind one held on a create
     /// waits on that create too, or on the held row itself where that is an
     /// edge's create, and the one other thing a write waits on, the upload
-    /// of a file's bytes, is never blocked by a server and refuses what waits
-    /// on it once dead (16).
+    /// of a file's bytes, is blocked only with the whole queue, on a refused
+    /// credential that a person clears (20), since its door reads no
+    /// idempotency key and answers no version, and it refuses what waits on
+    /// it once refused or dead (16).
     Held,
     /// A write it depends on was refused, so this one is too, and the reason
     /// names the write that was refused (16).
