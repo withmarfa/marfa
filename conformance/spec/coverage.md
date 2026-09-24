@@ -69,13 +69,13 @@ Fixture paths are under `src/suites/`.
 
 ## Types
 
-| Operation            | Status  | Fixture                                                                                                   | Notes                                                       |
-| -------------------- | ------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `GET /types`         | covered | `compliance/types.test.ts`, `compliance/type-registry.test.ts`                                            |                                                             |
-| `POST /types`        | covered | `compliance/type-registry.test.ts`, `compliance/type-inheritance.test.ts`, `compliance/namespace.test.ts` | Grammar, reserved roots, duplicates, `metadata.types` gate. |
-| `GET /types/{id}`    | covered | `compliance/types.test.ts`, `compliance/type-label.test.ts`                                               | Resolved merge policy; 404 for an unknown type.             |
-| `PUT /types/{id}`    | covered | `compliance/type-versioning.test.ts`, `compliance/type-registry.test.ts`                                  |                                                             |
-| `DELETE /types/{id}` | covered | `compliance/type-registry.test.ts`                                                                        | `type_has_subtypes`, `type_in_use`, `?force=true`.          |
+| Operation            | Status  | Fixture                                                                                                         | Notes                                                       |
+| -------------------- | ------- | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `GET /types`         | covered | `compliance/types.test.ts`, `compliance/type-registry.test.ts`                                                  |                                                             |
+| `POST /types`        | covered | `compliance/type-registry.test.ts`, `compliance/type-inheritance.test.ts`, `compliance/namespace.test.ts`       | Grammar, reserved roots, duplicates, `metadata.types` gate. |
+| `GET /types/{id}`    | covered | `compliance/types.test.ts`, `compliance/type-label.test.ts`                                                     | Resolved merge policy; 404 for an unknown type.             |
+| `PUT /types/{id}`    | covered | `compliance/type-versioning.test.ts`, `compliance/type-registry.test.ts`, `compliance/type-inheritance.test.ts` |                                                             |
+| `DELETE /types/{id}` | covered | `compliance/type-registry.test.ts`                                                                              | `type_has_subtypes`, `type_in_use`, `?force=true`.          |
 
 ## Search, occurrences and export
 
