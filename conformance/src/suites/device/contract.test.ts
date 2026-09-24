@@ -1024,6 +1024,29 @@ describe("the contract the working copy was built for", () => {
       expect(envelope.error.server?.status, read).toBe(200);
       expect(envelope.exit, read).toBe(1);
     }
+
+    // The witness: a write's answer refused on the same contract says so,
+    // in the same field.
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "sent", body: "sent" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    scriptWrites(scripted, {
+      create: [answers.created(wireItem({ id: queued.value.item_id ?? "" }))],
+    });
+    const drained = await device.drain();
+    expect(drained.ok).toBe(false);
+    if (drained.ok) return;
+    const written = JSON.parse(drained.refusal.raw) as {
+      error: { code: string; message: string };
+    };
+    expect(written.error.code).toBe("contract_mismatch");
+    expect(
+      written.error.message,
+      "a write's answer refused on another contract did not say the write may have taken effect, so its absence above proves nothing",
+    ).toContain("may have taken effect");
   });
 
   it("refuses a contract that only begins with the one it speaks", async () => {
