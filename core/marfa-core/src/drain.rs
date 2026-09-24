@@ -1232,10 +1232,12 @@ fn settle(
 /// onto that row (`queue-and-verdicts.md` 39).
 ///
 /// The row is read before anything is written where the copy does not hold
-/// it, because the copy cannot move onto a row it cannot hold. Where the copy
-/// holds it already it keeps it as it read it: the next write from it is then
-/// based on what was read, and the server merges it rather than taking it as
-/// newer.
+/// it, because the copy cannot move onto a row it cannot hold, and where the
+/// version the copy holds is one the server no longer holds, because that is
+/// as good as never read. Where the copy holds it at a version the server
+/// still holds, it keeps it as it read it, and the file's next edit is based
+/// on that version wherever the copy has caught up to since, so the server
+/// merges it rather than taking it as newer.
 fn land(
     core: &Core,
     row: &QueuedWrite,
@@ -1245,11 +1247,19 @@ fn land(
     code: String,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
+    // The version of that row the create was based on, where the server
+    // still holds it: a `version_conflict` says it does, and names a
+    // collision since. An `ancestor_unavailable` says it does not, whether
+    // the create read nothing or read a version since thinned, and a version
+    // the server no longer holds is as good as never read.
+    let read_at = row
+        .base_version
+        .filter(|version| code == "version_conflict" && *version > 0);
     let held = {
         let conn = core.conn()?;
         store::item_held(&conn, id)?
     };
-    let read = if held {
+    let read = if held && read_at.is_some() {
         None
     } else {
         match core.http_ref()?.item(id) {
@@ -1304,7 +1314,7 @@ fn land(
         let indexing = catalog.indexing(&found.item.r#type);
         store::upsert_item(&tx, &found.item, Some(&found.metadata.tags), &indexing)?;
     }
-    let refused = store::land_on_held_row(&tx, row, id, held)?;
+    let refused = store::land_on_held_row(&tx, row, id, read_at)?;
     store::record_verdict(
         &tx,
         &row.id,

@@ -1946,6 +1946,207 @@ describe("identity", () => {
     }
   });
 
+  it("merges a stale folder's edit against what it read, though its copy caught up since", async () => {
+    // The copy read the row at 1; the server holds 9. The create, based on
+    // 1, is refused and the copy moves onto the row as it read it. A
+    // catch-up then brings 9 into the copy, and the file's edit must still be
+    // based on 1, or the server takes it as newer and the other machine's
+    // content is replaced with nothing saying so.
+    const id = "01a00000-0000-7000-8000-00000000000a";
+    const newerProperties = { title: "Newer", body: "what the server holds\n" };
+    harness = await folderHarness("folder-stale-caught-up", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              source_id: "stale.md",
+              properties: { title: "Read", body: "what the folder read\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 9,
+              source_id: "stale.md",
+              properties: newerProperties,
+            }),
+          ),
+        ]),
+      ],
+    });
+    const newer = {
+      id,
+      version: 9,
+      properties: newerProperties,
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "stale.md",
+    };
+    scriptWrites(harness.server, {
+      create: [
+        answers.versionConflict(
+          newer,
+          {
+            ...newer,
+            version: 1,
+            properties: { title: "Read", body: "what the folder read\n" },
+          },
+          ["body", "title"],
+          {
+            fields: { body: "keep_both_copies", notes: "keep_both_copies" },
+            default: "last_writer_wins",
+          },
+        ),
+      ],
+      update: [
+        answers.resolved(
+          wireItem({
+            id,
+            version: 10,
+            source_id: "stale.md",
+            properties: newerProperties,
+          }),
+          { body: "keep_both_copies", title: "last_writer_wins" },
+          "01a00000-0000-7000-8000-0000000000cd",
+        ),
+      ],
+    });
+    put(
+      harness,
+      "stale.md",
+      "---\ntitle: Stale\n---\nthe stale machine's copy\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.drain.verdicts
+        .filter((entry) => entry.item_id === id)
+        .map((entry) => [entry.verdict, entry.reason]),
+    ).toEqual([["refused", "version_conflict"]]);
+
+    // The witness that the copy did move on: the catch-up applied version 9.
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(1);
+    const holding = await harness.folder.device().get(id);
+    expect(holding.ok && holding.value.version).toBe(9);
+
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    const patch = harness.server.requests.find(
+      (request) => request.method === "PATCH",
+    );
+    expect(patch?.pathname).toBe(`/items/${id}`);
+    expect(
+      (JSON.parse(patch?.body ?? "{}") as { version?: number }).version,
+      "the stale edit went on the version the catch-up brought in, so the server takes it as newer and replaces what it never merged",
+    ).toBe(1);
+    expect(again.value.scan.overwrote).toBe(0);
+    expect(again.value.drain.verdicts[0]?.verdict).toBe("conflicted");
+  });
+
+  it("sends a stale folder's edit over a row whose read version is thinned, and says so", async () => {
+    // The copy read the row at 1, and the server no longer holds a snapshot
+    // of 1: a version it no longer holds is as good as never read. Kept as
+    // the base, every edit of the file would be refused the same way.
+    const id = "01a00000-0000-7000-8000-00000000000b";
+    harness = await folderHarness("folder-stale-thinned", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              source_id: "thin.md",
+              properties: { title: "Read", body: "what the folder read\n" },
+            },
+          },
+        ],
+      },
+    });
+    const newer = {
+      id,
+      version: 9,
+      properties: { title: "Newer", body: "what the server holds\n" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "thin.md",
+    };
+    scriptWrites(harness.server, {
+      create: [answers.ancestorUnavailable(newer, 1)],
+      update: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            version: number;
+            properties: Record<string, unknown>;
+          };
+          return sent.version === 9
+            ? answers.updated(
+                wireItem({
+                  id,
+                  version: 10,
+                  source_id: "thin.md",
+                  properties: sent.properties,
+                }),
+              )
+            : answers.ancestorUnavailable(newer, sent.version);
+        },
+      ],
+      read: [
+        answers.updated(
+          wireItem({
+            id,
+            version: 9,
+            source_id: "thin.md",
+            properties: newer.properties,
+          }),
+        ),
+      ],
+    });
+    put(
+      harness,
+      "thin.md",
+      "---\ntitle: Stale\n---\nthe stale machine's copy\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.drain.verdicts
+        .filter((entry) => entry.item_id === id)
+        .map((entry) => [entry.verdict, entry.reason]),
+    ).toEqual([["refused", "ancestor_unavailable"]]);
+
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(
+      harness.server.requests
+        .filter((request) => request.method === "PATCH")
+        .map(
+          (request) =>
+            (JSON.parse(request.body) as { version?: number }).version,
+        ),
+      "the edit was based on a version the server no longer holds, so none of the person's writing can land",
+    ).toEqual([9]);
+    expect(again.value.drain.verdicts.map((entry) => entry.verdict)).toEqual([
+      "accepted",
+    ]);
+    expect(
+      again.value.scan.overwrote,
+      "the edit replaced content this machine never read and the scan did not say so",
+    ).toBe(1);
+  });
+
   it("refuses a folder that names no source, or one it may never name", async () => {
     harness = await folderHarness("folder-source-refused", { hydrate: false });
     const slice = { types: ["core.note"], defaultType: "core.note" };

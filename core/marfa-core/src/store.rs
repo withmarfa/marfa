@@ -843,14 +843,16 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
 /// A file bound to the minted row holds bytes the server never took, so its
 /// binding is marked as agreeing with nothing (`folders.md` 13): the pull
 /// leaves it as it is, and the next scan sends what it holds as an edit of
-/// the server's row or, where the row holds it already, nothing. Which mark
-/// says whether the copy read that row before the create landed on it, so
-/// the scan can say when the edit goes over content this device never saw.
+/// the server's row or, where the row holds it already, nothing. The mark
+/// carries `read_at`, the version of that row the create was based on where
+/// the server still holds it, so the edit is based on it and merged; with
+/// none, the edit goes over content this device never saw, and the scan says
+/// so.
 pub fn land_on_held_row(
     conn: &Connection,
     create: &QueuedWrite,
     answered: &str,
-    read_before: bool,
+    read_at: Option<i64>,
 ) -> Result<Vec<(QueuedWrite, String)>, CoreError> {
     let Some(local) = create.item_id.as_deref() else {
         return Ok(Vec::new());
@@ -914,16 +916,13 @@ pub fn land_on_held_row(
             ],
         )?;
     }
+    let mark = match read_at {
+        Some(version) => crate::folder::state::untaken_read_at(version),
+        None => crate::folder::state::UNTAKEN_UNREAD.to_string(),
+    };
     conn.execute(
         "UPDATE folder_files SET content_hash = ?2 WHERE item_id = ?1",
-        params![
-            local,
-            if read_before {
-                crate::folder::state::UNTAKEN
-            } else {
-                crate::folder::state::UNTAKEN_UNREAD
-            }
-        ],
+        params![local, mark],
     )?;
     adopt_answered_id(conn, local, answered)?;
     Ok(refused)

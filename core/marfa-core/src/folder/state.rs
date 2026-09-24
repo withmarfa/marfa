@@ -46,22 +46,38 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("{sum:016x}")
 }
 
-/// The content hash of a binding whose bytes the server never took: a create
-/// refused because another device's row already held the natural key, whose
-/// copy moved onto that row (`folders.md` 13). No bytes hash to it, so a scan
-/// reads the file as changed and a pull as the person's, and neither writes
-/// over it. This one is for a row the copy had read before the create landed
-/// on it.
-pub const UNTAKEN: &str = "";
+/// A binding's content hash where its bytes are ones the server never took:
+/// a create refused because another device's row already held the natural
+/// key, whose copy moved onto that row (`folders.md` 13). No bytes hash to
+/// either mark, so a scan reads the file as changed and a pull as the
+/// person's, and neither writes over it.
+///
+/// `read@<version>` is a row the copy had read at that version when the
+/// create was based on it: the next edit is based on that version, so the
+/// server merges it against what was read, whatever the copy has caught up
+/// to since.
+pub fn untaken_read_at(version: i64) -> String {
+    format!("{UNTAKEN_READ_PREFIX}{version}")
+}
 
-/// The same, for a row the copy had never read: another device's content,
-/// which an edit from this file would replace as the last writer rather than
-/// be merged against.
+const UNTAKEN_READ_PREFIX: &str = "read@";
+
+/// The same for a row the copy never read, or read at a version the server
+/// no longer holds, which is as good as never read: another device's
+/// content, which an edit from this file replaces as the last writer.
 pub const UNTAKEN_UNREAD: &str = "unread";
+
+/// The version a binding's untaken bytes were based on, where the copy had
+/// read the row.
+pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
+    content_hash
+        .strip_prefix(UNTAKEN_READ_PREFIX)
+        .and_then(|version| version.parse().ok())
+}
 
 /// Whether a binding's bytes are ones the server never took.
 pub fn untaken(content_hash: &str) -> bool {
-    content_hash == UNTAKEN || content_hash == UNTAKEN_UNREAD
+    content_hash == UNTAKEN_UNREAD || untaken_read_version(content_hash).is_some()
 }
 
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {

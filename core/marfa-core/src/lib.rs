@@ -398,7 +398,20 @@ impl Core {
         store::refuse_unless_hydrated(&conn)?;
         let catalog = catalog::Catalog::load(&conn)?;
         let tx = conn.transaction()?;
-        let queued = queue_update(&tx, &catalog, id, edit, &[])?;
+        let queued = queue_update(&tx, &catalog, id, edit, &[], Based::OnHeld)?;
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// Queues an update based on a version the copy read before the one it
+    /// holds now, which the server merges against what was read.
+    pub(crate) fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        let catalog = catalog::Catalog::load(&conn)?;
+        let tx = conn.transaction()?;
+        let queued = queue_update(&tx, &catalog, id, edit, &[], Based::AsRead)?;
         tx.commit()?;
         Ok(queued)
     }
@@ -752,12 +765,20 @@ impl Core {
         id: &str,
         path: &Path,
         edit: &Edit,
+        based: Based,
     ) -> Result<QueuedWrite> {
         let mime_type = blob::mime_type_for(path, None);
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             let mut edit = edit.clone();
             name_bytes(&mut edit.properties, hash, &mime_type);
-            queue_update(tx, catalog, id, &edit, std::slice::from_ref(&upload.id))
+            queue_update(
+                tx,
+                catalog,
+                id,
+                &edit,
+                std::slice::from_ref(&upload.id),
+                based,
+            )
         })
     }
 
@@ -1049,6 +1070,16 @@ fn queue_create(
     Ok(queued)
 }
 
+/// Which version an update may be based on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Based {
+    /// The version the copy holds now.
+    OnHeld,
+    /// That version or an earlier one the caller read, which the server
+    /// merges the write against.
+    AsRead,
+}
+
 /// An update, applied to the copy and queued in the caller's transaction,
 /// waiting on `after` as well as on the row's own create while the server has
 /// not taken it.
@@ -1067,6 +1098,7 @@ fn queue_update(
     id: &str,
     edit: &Edit,
     after: &[String],
+    based: Based,
 ) -> Result<QueuedWrite> {
     let Some(held) = store::item_by_id(tx, id)? else {
         return Err(CoreError::NotFound {
@@ -1082,8 +1114,11 @@ fn queue_update(
     // The version the caller read, against the row as it stands. A caller
     // editing a row the copy has since replaced is editing something they
     // have not seen, and sending it would be a write based on a version that
-    // was never theirs.
-    if base != held.version {
+    // was never theirs. A caller saying which earlier version it read is the
+    // exception: the server merges its write against that version, so what
+    // came in since is kept rather than overwritten.
+    let read_earlier = based == Based::AsRead && base > 0 && base <= held.version;
+    if base != held.version && !read_earlier {
         return Err(CoreError::Invalid(format!(
             "the update to {id} is based on version {base} and this copy holds version {}; read it again",
             held.version

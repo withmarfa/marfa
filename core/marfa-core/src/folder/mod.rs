@@ -893,8 +893,11 @@ impl Folder {
         // create made** (`folders.md` 13). Where the row holds what the file
         // does and the file stayed where it was, there is nothing to send
         // and the file is simply in step. Otherwise what it holds goes below
-        // as an edit of that row, based on the version the copy holds, and a
-        // new name is still a move to send (23).
+        // as an edit of that row, and a new name is still a move to send
+        // (23). The edit is based on the version the create read, where it
+        // read one the server still holds, so the server merges it against
+        // that whatever the copy caught up to since; otherwise on the version
+        // the copy holds, over content this device never read.
         let untaken = state::untaken(&bound.content_hash);
         let holds = untaken && self.holds_already(&held, seen, &document, catalog);
         let queued = if bound.content_hash == state::UNTAKEN_UNREAD && !holds {
@@ -902,6 +905,13 @@ impl Folder {
         } else {
             Queued::Edit
         };
+        let read_at = state::untaken_read_version(&bound.content_hash);
+        let based = if read_at.is_some() {
+            crate::Based::AsRead
+        } else {
+            crate::Based::OnHeld
+        };
+        let base = read_at.unwrap_or(held.version);
         if holds && bound.path == key {
             let (named, declined, resolved) =
                 self.queue_links(item_id, &document.links, had, &bound.declined)?;
@@ -933,12 +943,12 @@ impl Folder {
         // name that reads as a document is still bytes, and reading it as a
         // document would send its bytes back as a body.
         if bytes_of(&held, catalog).is_some() {
-            self.queue_update_file(bound, seen, &held)?;
+            self.queue_update_file(bound, seen, &held, base, based)?;
             return Ok(queued);
         }
         let edit = Edit {
             properties: sendable(document.properties),
-            base_version: Some(held.version),
+            base_version: Some(base),
             // **The natural key rides only on a move** (`folders.md` 23),
             // and only for a row under this folder's source (10). An item
             // from elsewhere is keyed by something this folder's path is
@@ -948,7 +958,10 @@ impl Folder {
             // down with it.
             source_id: (bound.path != key && self.own(&held)).then(|| key.to_string()),
         };
-        self.core.update_item(item_id, &edit)?;
+        match based {
+            crate::Based::AsRead => self.core.update_item_as_read(item_id, &edit)?,
+            crate::Based::OnHeld => self.core.update_item(item_id, &edit)?,
+        };
         let (named, declined, resolved) =
             self.queue_links(item_id, &document.links, had, &bound.declined)?;
         if !resolved {
@@ -1029,8 +1042,16 @@ impl Folder {
 
     /// A file item's file changed or moved: new bytes are a new upload and
     /// an update naming them, and a move alone is an update carrying the
-    /// name (`folders.md` 23, 28).
-    fn queue_update_file(&self, bound: &state::Bound, seen: &Seen<'_>, held: &Item) -> Result<()> {
+    /// name (`folders.md` 23, 28). The update is based on `base`, which
+    /// `based` says is the version the copy holds or one it read before.
+    fn queue_update_file(
+        &self,
+        bound: &state::Bound,
+        seen: &Seen<'_>,
+        held: &Item,
+        base: i64,
+        based: crate::Based,
+    ) -> Result<()> {
         let Seen {
             key,
             path,
@@ -1040,7 +1061,7 @@ impl Folder {
         } = *seen;
         let mut edit = Edit {
             properties: Map::new(),
-            base_version: Some(held.version),
+            base_version: Some(base),
             // A move carries the name only for a row this folder keys, as a
             // document's does.
             source_id: (bound.path != key && self.own(held)).then(|| key.to_string()),
@@ -1068,9 +1089,12 @@ impl Folder {
                     edit.properties.insert(field.into(), value.clone());
                 }
             }
-            self.core.update_item(&held.id, &edit)?;
+            match based {
+                crate::Based::AsRead => self.core.update_item_as_read(&held.id, &edit)?,
+                crate::Based::OnHeld => self.core.update_item(&held.id, &edit)?,
+            };
         } else {
-            self.core.update_file_item(&held.id, path, &edit)?;
+            self.core.update_file_item(&held.id, path, &edit, based)?;
         }
         let conn = self.core.conn()?;
         state::bind(
