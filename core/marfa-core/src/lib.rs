@@ -1555,6 +1555,10 @@ mod tests {
             "the catalog learned the thumbnail and the row's index entry still holds its base64"
         );
         assert_eq!(found("Holiday"), vec![id.clone()]);
+        // The witness: a title field naming a property no thumbnail is
+        // declared under indexes its base64 as the title it then is.
+        adopt(photo(false, "thumbnail"));
+        assert_eq!(found("unicornsXYZ"), vec![id.clone()]);
         adopt(photo(true, "thumbnail"));
         assert!(
             found("unicornsXYZ").is_empty(),
