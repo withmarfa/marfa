@@ -72,8 +72,9 @@ pub struct Core {
     /// Held for as long as the `Core` lives, which is what makes it the
     /// claim rather than a record of one (`device.md` 3).
     lock: lock::WriterLock,
-    /// Set while a catch-up or a follow runs. Two would each move the one
-    /// cursor, so it could go backwards and an event could be applied twice.
+    /// Set while a hydration, a catch-up or a follow runs. Each moves the
+    /// one cursor, so two at once could move it backwards, apply an event
+    /// twice, or apply one to a copy a hydration has replaced.
     streaming: AtomicBool,
 }
 
@@ -168,10 +169,16 @@ impl Core {
     /// Replaces the local copy with every item of the declared `types` at
     /// `tier`, with their tags and outbound edges, and stores the event
     /// cursor to catch up from.
+    ///
+    /// Refused while a catch-up or a follow runs on this handle, as they are
+    /// while it runs: a follow left running across a hydration would apply
+    /// events read against the old slice to the new copy and move the cursor
+    /// the hydration stored. A caller stops its follow first.
     pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
         // A hydration replaces the copy, which is a write to the store like
         // any other (`device.md` 26).
         self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
         hydrate::hydrate(self, self.http()?, types, tier)
     }
 
@@ -871,8 +878,8 @@ impl Core {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .map_err(|_| {
                 CoreError::Invalid(
-                    "this working copy is already catching up or following; one stream at a \
-                     time moves its cursor"
+                    "this working copy is already hydrating, catching up or following; one \
+                     at a time moves its cursor"
                         .into(),
                 )
             })?;
@@ -1510,14 +1517,60 @@ mod tests {
             let following = scope.spawn(|| core.follow(&stop, |_| {}));
             std::thread::sleep(Duration::from_millis(300));
             let second = core.catch_up();
+            let hydrating = core.hydrate(&["core.note".into()], Tier::Library);
             stop.store(true, Ordering::Relaxed);
             let report = following.join().unwrap().unwrap();
             assert!(
                 matches!(&second, Err(CoreError::Invalid(message)) if message.contains("already")),
                 "a catch-up ran beside a follow on one handle: {second:?}"
             );
+            assert!(
+                matches!(&hydrating, Err(CoreError::Invalid(message)) if message.contains("already")),
+                "a hydration ran under a follow, which goes on applying events to the copy it replaces: {hydrating:?}"
+            );
             // The witness: the follow was running, asking for a stream.
             assert!(report.failed_opens >= 1, "{report:?}");
+        });
+        // And once it ended, the handle takes the next one.
+        assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
+    }
+
+    /// A hydration holds the claim for as long as it runs, so no follow or
+    /// catch-up moves the cursor under it.
+    #[test]
+    fn no_stream_runs_across_a_hydration() {
+        let server = scripted::Scripted::start();
+        // The hydration's first read, the log's head, is never answered.
+        server.on("/events", vec![scripted::Answer::Stall]);
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+        }
+        std::thread::scope(|scope| {
+            let hydrating = scope.spawn(|| core.hydrate(&["core.note".into()], Tier::Library));
+            // The witness: the hydration is under way.
+            server.wait_for("/events", 1, Duration::from_secs(5));
+            let caught = core.catch_up();
+            let followed = core.follow(&AtomicBool::new(false), |_| {});
+            for (what, refused) in [("catch-up", caught.err()), ("follow", followed.err())] {
+                assert!(
+                    matches!(&refused, Some(CoreError::Invalid(message)) if message.contains("already")),
+                    "a {what} ran across a hydration: {refused:?}"
+                );
+            }
+            drop(server);
+            assert!(hydrating.join().unwrap().is_err());
         });
         // And once it ended, the handle takes the next one.
         assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
