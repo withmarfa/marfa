@@ -2,8 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# One cargo-swift, because each version writes different glue and the Swift
-# package checks its committed glue against what this script generates.
+# One cargo-swift, because each version writes different glue: the Swift SDK
+# commits the glue this script generates at the commit it pins, and its CI
+# runs this script again at that pin and refuses glue that differs.
 cargo_swift=0.11.1
 if [[ "$(cargo swift --version 2>/dev/null)" != "cargo-swift ${cargo_swift}" ]]; then
   cargo install cargo-swift --version "${cargo_swift}" --locked
