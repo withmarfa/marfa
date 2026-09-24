@@ -136,8 +136,9 @@ export interface DrainReport {
   /** Rows it did not send because something they depend on is unanswered. */
   held: number;
   verdicts: DrainVerdict[];
-  /** Why the drain stopped before the queue was empty. Only a refused
-   *  credential ends a pass early (`queue-and-verdicts.md` 20). */
+  /** Why the drain stopped before the queue was empty. A refused credential
+   *  ends a pass early here (`queue-and-verdicts.md` 20); an answer on
+   *  another contract ends one as a refusal instead (`device.md` 42). */
   stopped: string | null;
   /** The sources the server said the credential's key does not claim, where
    *  a create naming one was refused for it (`queue-and-verdicts.md` 40). */

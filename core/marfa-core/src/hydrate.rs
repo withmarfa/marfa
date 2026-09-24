@@ -13,6 +13,16 @@ use crate::{Core, Result};
 const HEAD_ATTEMPTS: usize = 3;
 const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Fills the copy with the declared slice, read after a head read so the
+/// snapshot has a resume point from before its first page.
+///
+/// The copy is cleared once the head read and the catalog are in, before
+/// the first page. A head read or a catalog on another contract is refused
+/// before anything is cleared. A page on another contract is refused after
+/// it: the copy holds only the pages read before that one, so a
+/// re-hydration refused on its first page leaves it empty, and it refuses
+/// reads with `hydration_incomplete` until a hydration completes. Nothing
+/// the refused page carried is applied (`device.md` 42).
 pub(crate) fn hydrate(
     core: &Core,
     http: &Http,

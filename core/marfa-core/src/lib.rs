@@ -5,6 +5,7 @@
 mod blob;
 mod catalog;
 mod catch_up;
+pub mod contract;
 mod drain;
 mod error;
 pub mod folder;
@@ -317,7 +318,10 @@ impl Core {
     ///
     /// One pass. Every sendable row is attempted once and the drain returns;
     /// a row that met an environmental failure is left unanswered and
-    /// uncounted for the next pass (`queue-and-verdicts.md` 17).
+    /// uncounted for the next pass (`queue-and-verdicts.md` 17). An answer on
+    /// another contract ends the pass with `ContractMismatch` instead, and
+    /// the rows answered before it hold their verdicts in the queue
+    /// (`device.md` 42).
     pub fn drain(&self) -> Result<DrainReport> {
         // The handle before the server. A second opener with no server
         // configured is still a second opener, and refusing it for the

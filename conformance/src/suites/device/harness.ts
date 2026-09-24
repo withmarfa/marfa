@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -60,10 +66,17 @@ function refuseIfStale(binary: string): void {
       `MARFA_DEVICE_BIN points at ${binary}, which does not exist. Build it with \`cargo build -p marfa-cli\` under core/.`,
     );
   }
-  const root = resolve(
+  const core = resolve(
     fileURLToPath(new URL(".", import.meta.url)),
     "../../../../core",
   );
+  // The sources the binary is compiled from, and no others. A binding beside
+  // these crates, or an integration test inside one, is not in the binary,
+  // so counting it would refuse a binary that `cargo build -p marfa-cli` has
+  // no reason to relink.
+  const sources = ["marfa-core", "marfa-cli", "marfa-client"]
+    .map((crate) => join(core, crate, "src"))
+    .filter((source) => existsSync(source));
   let newest = 0;
   let newestPath = "";
   const walk = (dir: string): void => {
@@ -81,11 +94,9 @@ function refuseIfStale(binary: string): void {
       }
     }
   };
-  try {
-    walk(root);
-  } catch {
-    return; // No source tree beside the suite: nothing to be stale against.
-  }
+  // With no source tree beside the suite there is nothing to be stale
+  // against, and nothing is walked.
+  for (const source of sources) walk(source);
   if (newest > built) {
     throw new Error(
       `the device binary is older than the source it is built from — ${newestPath} changed after ` +

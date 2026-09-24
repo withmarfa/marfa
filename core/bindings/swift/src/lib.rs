@@ -434,6 +434,17 @@ pub enum MarfaError {
         reason: String,
         message: String,
     },
+    /// The server speaks a contract this build was not made for, and its
+    /// answer was not read.
+    ContractMismatch {
+        /// The contract the answer named, or none where a success named none.
+        served: Option<String>,
+        expected: u64,
+        status: u16,
+        /// The answer was to a write, which may have taken effect.
+        write_sent: bool,
+        message: String,
+    },
     Invalid {
         message: String,
     },
@@ -461,6 +472,7 @@ impl MarfaError {
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
             | MarfaError::BytesAbsent { message, .. }
+            | MarfaError::ContractMismatch { message, .. }
             | MarfaError::Invalid { message } => message,
         }
     }
@@ -526,6 +538,19 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::BytesAbsent { hash, reason } => MarfaError::BytesAbsent {
                 hash,
                 reason,
+                message,
+            },
+            E::ContractMismatch {
+                served,
+                expected,
+                status,
+                write_sent,
+                ..
+            } => MarfaError::ContractMismatch {
+                served,
+                expected,
+                status,
+                write_sent,
                 message,
             },
             E::Invalid(_) => MarfaError::Invalid { message },
@@ -1329,6 +1354,17 @@ mod tests {
                 .into(),
                 "BytesAbsent",
             ),
+            (
+                E::ContractMismatch {
+                    origin: text(),
+                    served: Some("4".into()),
+                    expected: 3,
+                    status: 200,
+                    write_sent: false,
+                }
+                .into(),
+                "ContractMismatch",
+            ),
             (E::Invalid(text()).into(), "Invalid"),
         ];
         for (error, name) in &crossed {
@@ -1342,6 +1378,37 @@ mod tests {
             &crossed[18].0,
             MarfaError::BytesAbsent { hash, .. } if hash == "sha256:h"
         ));
+        assert!(matches!(
+            &crossed[19].0,
+            MarfaError::ContractMismatch { served: Some(served), expected: 3, .. } if served == "4"
+        ));
+    }
+
+    #[test]
+    fn a_contract_refusal_crosses_with_its_status_and_whether_a_write_went() {
+        for (status, write_sent) in [(201, true), (200, false)] {
+            let crossed: MarfaError = marfa_core::CoreError::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: None,
+                expected: 3,
+                status,
+                write_sent,
+            }
+            .into();
+            assert!(
+                matches!(
+                    crossed,
+                    MarfaError::ContractMismatch {
+                        served: None,
+                        expected: 3,
+                        status: crossed_status,
+                        write_sent: crossed_write,
+                        ..
+                    } if crossed_status == status && crossed_write == write_sent
+                ),
+                "{crossed:?}"
+            );
+        }
     }
 
     #[test]
@@ -1391,13 +1458,18 @@ mod tests {
                     let path = path.split('?').next().unwrap_or("/").to_string();
                     let resumed = head.to_ascii_lowercase().contains("last-event-id");
                     let mut stream = stream;
+                    // Every answer names the core's contract, as a real
+                    // server's does.
+                    let contract = marfa_core::contract::CONTRACT_VERSION;
                     let json = |body: &str| {
                         format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Marfa-Contract: {contract}\r\nConnection: close\r\n\r\n{body}",
                             body.len()
                         )
                     };
-                    let events = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n: connected\n\n";
+                    let events = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Marfa-Contract: {contract}\r\nConnection: close\r\n\r\n: connected\n\n"
+                    );
                     let _ = match (path.as_str(), resumed) {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
                         // A create is refused for a source the key does not

@@ -61,8 +61,46 @@ pub enum CoreError {
     /// The item is whole and its bytes are not here (`device.md` 30).
     #[error("the bytes of {hash} are not held here and cannot be fetched: {reason}")]
     BytesAbsent { hash: String, reason: String },
+    /// The server speaks a contract this core was not built for, so its
+    /// answer may be shaped in ways the core cannot read, and was not read.
+    #[error("{}", contract_mismatch(origin, served.as_deref(), *expected, *status, *write_sent))]
+    ContractMismatch {
+        origin: String,
+        /// The contract the answer named, or `None` where a success named
+        /// none.
+        served: Option<String>,
+        expected: u64,
+        status: u16,
+        /// Whether the answer was to a write, which the server acted on
+        /// before the answer could say it speaks another contract.
+        write_sent: bool,
+    },
     #[error("{0}")]
     Invalid(String),
+}
+
+fn contract_mismatch(
+    origin: &str,
+    served: Option<&str>,
+    expected: u64,
+    status: u16,
+    write_sent: bool,
+) -> String {
+    let sent = if write_sent {
+        ". The write was sent and may have taken effect, and it stays queued with no verdict"
+    } else {
+        ""
+    };
+    match served {
+        Some(served) => format!(
+            "{origin} answered {status} on contract {served}, and this build of the core speaks contract {expected}, so the answer was not read: use a build for the server's contract{sent}"
+        ),
+        // Nothing here says the answer came from a Marfa server at all: a
+        // captive portal or a mistyped URL answers the same way.
+        None => format!(
+            "{origin} answered {status} naming no contract, so it may not be a Marfa server: check the URL. This build of the core speaks contract {expected}{sent}"
+        ),
+    }
 }
 
 impl From<rusqlite::Error> for CoreError {
