@@ -183,7 +183,7 @@ describe("a thumbnail field", () => {
       texted.status,
       "a parent gained a thumbnail its child reads as text, so a device reads the child's text as the image",
     ).toBe(400);
-    expect(texted.error?.error.code).toBe("invalid_schema");
+    expect(texted.error?.error.code).toBe("inheritance_violation");
     const errors = texted.error?.error.details?.errors as
       Array<{ field: string; code?: string }> | undefined;
     expect(errors?.map((error) => [error.field, error.code])).toContainEqual([

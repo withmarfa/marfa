@@ -515,13 +515,14 @@ const updateTypeRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "inheritance_violation",
             "invalid_schema",
             "validation_error",
           ]),
         },
       },
       description:
-        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses.",
+        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
     },
     401: {
       content: {
@@ -781,6 +782,15 @@ export function typeRoutes(storage: Storage) {
       const body = c.req.valid("json");
       const result = validateTypeSchema({ ...body, id });
       if (!result.success) {
+        // The inheritance rule is one rule from either end of the chain,
+        // so this door answers it with the code registration does.
+        if (result.errors.some((e) => e.code === "inheritance_violation")) {
+          throw new MarfaError(
+            ErrorCode.INHERITANCE_VIOLATION,
+            "Type gives a field a shape another type in its chain declares differently",
+            { errors: result.errors },
+          );
+        }
         throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
           errors: result.errors,
         });

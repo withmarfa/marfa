@@ -119,6 +119,10 @@ describe("type inheritance rule", () => {
       changed.status,
       "a parent gained a field its child already declares with another shape, so the child's items are read by one and validated by the other",
     ).toBe(400);
+    expect(
+      changed.error?.error.code,
+      "the update door answered the inheritance rule with another code than the registration door does",
+    ).toBe("inheritance_violation");
     const errors = changed.error?.error.details?.errors as
       Array<{ field: string; code?: string }> | undefined;
     expect(errors?.map((error) => [error.field, error.code])).toContainEqual([

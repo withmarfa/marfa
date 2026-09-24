@@ -1982,10 +1982,10 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        InvalidSchemaOrValidationErrorRefusal: {
+        InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "invalid_schema" | "validation_error";
+                code: "inheritance_violation" | "invalid_schema" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -7692,7 +7692,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeResponse"];
                 };
             };
-            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `invalid_schema` for a schema the validator refuses. */
+            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7704,7 +7704,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidSchemaOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
