@@ -3894,6 +3894,12 @@ describe("an edit behind an edit of the same row", () => {
     const queue = await queueOf(device);
     const rowEdit = queue.find((row) => row.kind === "update_item");
     // The witness: the create went out and had no answer.
+    expect(
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ),
+      "the create never went out, so nothing here waited on its answer",
+    ).toHaveLength(1);
     expect(queue.find((row) => row.kind === "create_item")?.verdict).toBe(null);
     expect(
       [rowEdit?.verdict, rowEdit?.reason, rowEdit?.follows],
@@ -3968,13 +3974,21 @@ describe("an edit behind an edit of the same row", () => {
       [tag?.verdict, tag?.reason, tag?.follows],
       "the tag moved onto the row went out beside the row's own edit, which had no answer",
     ).toEqual(["blocked", "awaiting_dependency", rowEdit?.id]);
-    expect(
+    const sent = (method: string, pathname: string | RegExp) =>
       server.requests.filter(
         (request) =>
-          request.method === "POST" &&
-          request.pathname === `/items/${KEYED.id}/tags`,
-      ),
-    ).toEqual([]);
+          request.method === method &&
+          (typeof pathname === "string"
+            ? request.pathname === pathname
+            : pathname.test(request.pathname)),
+      ).length;
+    // The create and the row's edit went out, the edit to meet the busy
+    // server, and no tag went anywhere.
+    expect(
+      [sent("POST", "/items"), sent("PATCH", `/items/${KEYED.id}`)],
+      "the row's edit never went out, so the tag waited on nothing that was sent",
+    ).toEqual([1, 1]);
+    expect(sent("POST", /^\/items\/[^/]+\/tags$/)).toBe(0);
   });
 
   it("keeps the later edge a catch-up brought over an older edge answer replayed after it", async () => {

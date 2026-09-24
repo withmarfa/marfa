@@ -5140,10 +5140,17 @@ describe("a file that is not a document", () => {
     try {
       const drained = await device.drain();
       expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
       const held = await device.queue();
       expect(held.ok).toBe(true);
       if (!held.ok) return;
-      // The witness: the upload was tried and left unanswered.
+      // The witness: the upload was tried, met bytes it could not open, and
+      // was left unanswered.
+      expect(
+        drained.value.verdicts.find((row) => row.kind === "upload_blob")
+          ?.reason ?? "",
+        "the upload was never tried, so nothing here waited on bytes that could not be opened",
+      ).toContain(`the bytes of ${hashOf(edited)} could not be opened`);
       expect(
         held.value.find((row) => row.kind === "upload_blob")?.verdict,
       ).toBe(null);
