@@ -65,7 +65,12 @@ export interface FollowReport {
   applied: number;
   skipped: number;
   cursor: string;
+  /** Streams asked for after the first. */
   reconnects: number;
+  /** Asks for a stream that failed and were asked again. */
+  failed_opens: number;
+  /** Why the last of those failed, or null where none did. */
+  last_failure: string | null;
 }
 
 export interface Status {

@@ -63,6 +63,14 @@ export interface HeldCommand {
   /** What it has printed so far, for a command that reports as it runs. */
   readonly stdout: string;
   running: () => boolean;
+  /** Its exit code once it has exited, and null before. */
+  exitCode: () => number | null;
+  /** Resolves once it has exited, however it exited. */
+  exited: () => Promise<void>;
+  /** What Ctrl-C at a terminal sends it. */
+  interrupt: () => void;
+  /** Closes the pipe it prints to, as a reader that went away would. */
+  closeStdout: () => void;
   stop: () => Promise<void>;
 }
 
@@ -127,10 +135,13 @@ export class CliDevice implements DeviceUnderTest {
 
   /**
    * The same follow, left running, so a fixture can read what it prints
-   * while the stream is still held.
+   * while the stream is still held. Without `seconds` it runs until it is
+   * interrupted.
    */
-  holdFollow(seconds: number): HeldCommand {
-    return this.hold(["follow", "--for", String(seconds)]);
+  holdFollow(seconds?: number): HeldCommand {
+    return this.hold(
+      seconds === undefined ? ["follow"] : ["follow", "--for", String(seconds)],
+    );
   }
 
   async hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>> {
@@ -287,6 +298,11 @@ export class CliDevice implements DeviceUnderTest {
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
     });
+    const exited = new Promise<void>((resolve) => {
+      child.once("close", () => {
+        resolve();
+      });
+    });
     return {
       get stderr() {
         return stderr;
@@ -295,17 +311,17 @@ export class CliDevice implements DeviceUnderTest {
         return stdout;
       },
       running: () => child.exitCode === null && !child.killed,
+      exitCode: () => child.exitCode,
+      exited: () => exited,
+      interrupt: () => {
+        child.kill("SIGINT");
+      },
+      closeStdout: () => {
+        child.stdout.destroy();
+      },
       stop: async () => {
         if (child.exitCode === null) child.kill("SIGKILL");
-        await new Promise<void>((resolve) => {
-          if (child.exitCode !== null) {
-            resolve();
-            return;
-          }
-          child.once("close", () => {
-            resolve();
-          });
-        });
+        await exited;
       },
     };
   }

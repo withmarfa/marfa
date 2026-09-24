@@ -21,6 +21,7 @@ import {
   wireType,
 } from "../../device/marfa-answers.js";
 import type { Answer } from "../../device/scripted-server.js";
+import type { FollowReport } from "../../device/protocol.js";
 
 /**
  * "Events apply in log order, gated by version", and "a stale cursor means
@@ -693,9 +694,38 @@ describe("catch-up replays from the cursor", () => {
       asked,
       "the follow asked for a new stream the moment each one ended, which hammers a server that ends them and never lets a laptop sleep",
     ).toBeLessThanOrEqual(4);
+    if (followed.ok) {
+      expect(
+        followed.value.report,
+        "the report does not count the streams asked for after the first, or counts a failure that did not happen",
+      ).toMatchObject({
+        reconnects: asked - 1,
+        failed_opens: 0,
+        last_failure: null,
+      });
+    }
 
-    // A server failing is asked again; an answer that no retry changes ends
-    // the follow and says so.
+    // A server failing is asked again, and the report says so.
+    next = [
+      refusal(503, "unavailable", "busy"),
+      { kind: "sse", frames: [connected] },
+    ];
+    const failedFrom = streams();
+    const failing = await device.follow(3);
+    expect(failing.ok, JSON.stringify(failing)).toBe(true);
+    expect(
+      streams() - failedFrom,
+      "the 503 was not asked again",
+    ).toBeGreaterThan(1);
+    if (failing.ok) {
+      expect(failing.value.report.failed_opens).toBe(1);
+      expect(
+        failing.value.report.last_failure,
+        "the report does not say why a stream could not be opened",
+      ).toContain("503");
+    }
+
+    // An answer that no retry changes ends the follow and says so.
     next = [
       refusal(503, "unavailable", "busy"),
       refusal(405, "method_not_allowed", "not here"),
@@ -711,6 +741,101 @@ describe("catch-up replays from the cursor", () => {
       streams() - refusedFrom,
       "the 503 was not asked again, so a server busy for a moment ends every follow",
     ).toBe(2);
+  });
+
+  it("ends a follow whose reader has gone, rather than going on untold", async () => {
+    harness = await startHarness("follow-unprinted");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      // The first stream ends at once, so the change arrives on the next,
+      // after the reader of what the follow prints has gone.
+      { kind: "sse", frames: [connected] },
+      {
+        kind: "sse",
+        hold: true,
+        frames: [
+          connected,
+          itemEvent("11", "item.created", wireItem({ id: "arrived" })),
+        ],
+      },
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const follow = device.holdFollow(60);
+    follow.closeStdout();
+    const ended = await Promise.race([
+      follow.exited().then(() => true),
+      new Promise<boolean>((resolve) =>
+        setTimeout(() => {
+          resolve(false);
+        }, 20_000),
+      ),
+    ]);
+    await follow.stop();
+    expect(
+      ended,
+      "a follow that could not print a change went on following, applying changes nobody is told of",
+    ).toBe(true);
+    // A reader that went away is not a failure, as it is not for any
+    // command whose output is cut off.
+    expect(follow.exitCode(), follow.stderr).toBe(0);
+    // The witness: the change it could not print had arrived and been
+    // applied, so the follow did meet a line it could not write.
+    expect((await device.get("arrived")).ok).toBe(true);
+  });
+
+  it("prints its report when interrupted, as it does when its time is up", async () => {
+    harness = await startHarness("follow-interrupted");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      frames: [
+        connected,
+        itemEvent("11", "item.created", wireItem({ id: "arrived" })),
+      ],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const follow = device.holdFollow();
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            follow.stdout,
+            `the follow never told the change: ${follow.stderr}`,
+          ).toContain('"cursor":"11"');
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      follow.interrupt();
+      const ended = await Promise.race([
+        follow.exited().then(() => true),
+        new Promise<boolean>((resolve) =>
+          setTimeout(() => {
+            resolve(false);
+          }, 5_000),
+        ),
+      ]);
+      expect(ended, "an interrupted follow went on following").toBe(true);
+    } finally {
+      await follow.stop();
+    }
+    expect(
+      follow.exitCode(),
+      `an interrupted follow did not end on its own: ${follow.stderr}`,
+    ).toBe(0);
+    const report = JSON.parse(
+      follow.stdout.trim().split("\n").at(-1) ?? "null",
+    ) as FollowReport | null;
+    expect(
+      report,
+      "an interrupted follow ended without saying what it did",
+    ).toMatchObject({ applied: 1, cursor: "11" });
   });
 
   it("ends a follow at once when stopped while its stream is still being asked for", async () => {
