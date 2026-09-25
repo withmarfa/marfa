@@ -62,6 +62,10 @@ impl Isolated {
             self.opened();
             command.env("MARFA_KEYCHAIN", &self.keychain);
         }
+        // Where there are no keychain files, a name the binary answers as no
+        // keychain at all keeps it off the person's secret service.
+        #[cfg(not(target_os = "macos"))]
+        command.env("MARFA_KEYCHAIN", self.folder.join("none"));
         command
     }
 

@@ -39,7 +39,10 @@ let unlockedAt = 0;
  * fail the run instead.
  */
 export function keychainEnv(): Record<string, string> {
-  if (process.platform !== "darwin") return {};
+  // Where there are no keychain files, a name the binary answers as no
+  // keychain at all keeps it off the person's secret service.
+  if (process.platform !== "darwin")
+    return { MARFA_KEYCHAIN: join(tmpdir(), "marfa-no-keychain") };
   const path = process.env[PATH];
   const password = process.env[PASSWORD];
   if (path === undefined || password === undefined) {

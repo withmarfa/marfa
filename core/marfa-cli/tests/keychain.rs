@@ -1,6 +1,8 @@
 //! The binary's keychain, end to end: `keys keep` and `keys forget` with
 //! `MARFA_KEYCHAIN` naming a keychain file of the test's own, so the entry
-//! lands there and never in the person's keychain.
+//! lands there and never in the person's keychain. macOS alone has keychain
+//! files.
+#![cfg(target_os = "macos")]
 
 mod isolated;
 
@@ -41,7 +43,6 @@ fn server() -> (String, Receiver<Option<String>>) {
     (url, bearers)
 }
 
-#[cfg(target_os = "macos")]
 #[test]
 fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
     let keychain = Isolated::new("keychain");
@@ -92,7 +93,6 @@ fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
 /// With the server and the key both in the environment, the key sent is the
 /// environment's, whatever the keychain keeps for that server; the witness
 /// is the kept key sent where the environment names only the server.
-#[cfg(target_os = "macos")]
 #[test]
 fn the_environment_wins_over_a_kept_key() {
     let keychain = Isolated::new("environment");

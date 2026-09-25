@@ -38,7 +38,7 @@ struct Cli {
     url: Option<String>,
 
     /// A key or a token for that server. Falls back to MARFA_API_KEY, then
-    /// to the keychain.
+    /// to the keychain: the file MARFA_KEYCHAIN names, where it names one.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
     key: Option<String>,
 

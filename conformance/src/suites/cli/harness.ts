@@ -50,14 +50,7 @@ export interface Refusal {
  * variables and nothing of the developer's (a `MARFA_DB`, a kept
  * `MARFA_API_KEY`), so what a scenario passes is all the binary has.
  */
-const INHERITED = [
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "LANG",
-  "XDG_RUNTIME_DIR",
-  "DBUS_SESSION_BUS_ADDRESS",
-];
+const INHERITED = ["PATH", "HOME", "TMPDIR", "LANG", "XDG_RUNTIME_DIR"];
 
 /** The long-running children a file started, killed when the file ends. */
 const held: ChildProcess[] = [];

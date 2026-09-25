@@ -1,8 +1,7 @@
-//! Where a kept credential lives: the operating system's keychain, and
-//! nowhere else.
+//! Where a kept credential lives: a keychain, and nowhere else.
 //!
 //! One entry per server origin, holding a key or a token set as JSON, and
-//! one entry naming the origin a bare command talks to. Never a file: a file
+//! one entry naming the origin a bare command talks to. Never a plain file: a file
 //! is readable by anything on the machine, and two processes refreshing one
 //! token from a file race each other into a revoked chain; a process with no
 //! keychain is told so and pointed at `--key`, the environment, or
@@ -14,13 +13,14 @@
 //! run keeps its entries in a keychain file of its own (`isolated`) the same
 //! way, since the login keychain asks the person before a rebuilt binary may
 //! read an item another build wrote, and a test waiting on that question
-//! waits for ever.
+//! waits forever.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::CliError;
 
 /// The keychain service every entry is filed under.
+#[cfg_attr(all(test, not(target_os = "macos")), allow(dead_code))]
 const SERVICE: &str = "marfa";
 
 /// The account that names the origin a command with no `--url` talks to.
@@ -270,6 +270,9 @@ mod file {
         /// it with that first, so one that locked itself is never unlocked
         /// by asking anyone.
         password: Option<String>,
+        /// Whether keychain prompts are refused in this process; where they
+        /// could not be, every call is refused rather than risk one.
+        refused: bool,
     }
 
     impl File {
@@ -278,11 +281,20 @@ mod file {
         /// nobody is watching: a call that would wait on a person fails
         /// instead. The refusal is this process's alone.
         pub(super) fn named(path: PathBuf, password: Option<String>) -> File {
-            refuse_prompts();
-            File { path, password }
+            File {
+                path,
+                password,
+                refused: refuse_prompts(),
+            }
         }
 
         pub(super) fn opened(&self) -> Result<SecKeychain, CliError> {
+            if !self.refused {
+                return Err(CliError::NoKeychain(format!(
+                    "{}: keychain prompts could not be refused, so it is not used",
+                    self.path.display()
+                )));
+            }
             let mut keychain =
                 SecKeychain::open(&self.path).map_err(|error| self.refused(error))?;
             if let Some(password) = &self.password {
@@ -298,15 +310,18 @@ mod file {
         }
     }
 
-    pub(super) fn refuse_prompts() {
-        static REFUSED: std::sync::Once = std::sync::Once::new();
-        REFUSED.call_once(|| {
-            if let Ok(refusal) = SecKeychain::disable_user_interaction() {
+    /// Answers whether prompts are refused.
+    pub(super) fn refuse_prompts() -> bool {
+        static REFUSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *REFUSED.get_or_init(|| match SecKeychain::disable_user_interaction() {
+            Ok(refusal) => {
                 // Held for the life of the process: dropping it would allow
                 // prompts again.
                 std::mem::forget(refusal);
+                true
             }
-        });
+            Err(_) => false,
+        })
     }
 
     impl Keychain for File {
@@ -324,12 +339,19 @@ mod file {
                 .map_err(|error| self.refused(error))
         }
 
+        /// Found and deleted by attributes, which answers the delete's own
+        /// status and never reads the secret.
         fn delete(&self, account: &str) -> Result<bool, CliError> {
-            match find_generic_password(Some(&[self.opened()?]), SERVICE, account) {
-                Ok((_, item)) => {
-                    item.delete();
-                    Ok(true)
-                }
+            use security_framework::item::{ItemClass, ItemSearchOptions};
+            let keychains = [self.opened()?];
+            let mut options = ItemSearchOptions::new();
+            options
+                .keychains(&keychains)
+                .class(ItemClass::generic_password())
+                .service(SERVICE)
+                .account(account);
+            match options.delete() {
+                Ok(()) => Ok(true),
                 Err(error) if error.code() == NOT_FOUND => Ok(false),
                 Err(error) => Err(self.refused(error)),
             }
@@ -358,7 +380,7 @@ mod isolated {
     #[cfg(target_os = "macos")]
     fn create() -> super::file::File {
         use security_framework::os::macos::keychain::CreateOptions;
-        super::file::refuse_prompts();
+        assert!(super::file::refuse_prompts(), "keychain prompts refused");
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

@@ -455,9 +455,9 @@ const beyondTheTable: Record<string, () => string[]> = {
 
 /**
  * Commands beyond the table driven only to their refusal, so their silence
- * there has no witness here: `keys keep` would keep a key on the built-for
- * contract, an effect outside the scripted server, and `items attach`
- * cannot succeed against a door whose `{}` is no upload's answer.
+ * there has no witness here: `keys keep` would make its origin current in
+ * the keychain every file of the project shares, and `items attach` cannot
+ * succeed against a door whose `{}` is no upload's answer.
  */
 const refusedOnly: Record<string, () => string[]> = {
   "items attach": () => [ID, fileOf("attached.txt", "bytes")],
