@@ -405,12 +405,8 @@ function yieldToEventLoop(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-/**
- * Types whose items this route reads. Anything declaring the event
- * shape belongs here; `compatible_with` is what makes the Google type
- * readable through the same fields.
- */
-const EVENT_TYPES = ["core.event", "google.calendar.event"] as const;
+/** Types whose items this route reads: those declaring the event shape. */
+const EVENT_TYPES = ["core.event"] as const;
 
 /** Rows read so far by one request, summed across its passes. Reported
  *  on the response rather than compared against anything: what the read

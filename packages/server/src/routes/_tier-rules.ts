@@ -13,9 +13,8 @@ import { ErrorCode, MarfaError, hasBoundedLifecycle } from "@withmarfa/shared";
  * door would have created a fresh disagreement of exactly the kind being
  * closed. One rule, called from all of them.
  *
- * `system.activity` is not an exception to this, and nothing else is
- * either. No server path stamps a `feed` tier on a `system.*` row, and
- * every door refuses a client that asks for one.
+ * There is no exception: no server path stamps a `feed` tier on a
+ * `system.*` row, and every door refuses a client that asks for one.
  *
  * **Which types this applies to is `hasBoundedLifecycle`, not the seeded set
  * alone.** The set and the `system.` name test answer differently for a type

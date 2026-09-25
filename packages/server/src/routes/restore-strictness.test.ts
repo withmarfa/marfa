@@ -281,7 +281,7 @@ describe("a refused restore leaves no blobs behind", () => {
     const refused = JSON.stringify({
       item: {
         id: A,
-        type: "system.activity",
+        type: "system.webhook",
         state: "trashed",
         properties: {},
         source: "strict",

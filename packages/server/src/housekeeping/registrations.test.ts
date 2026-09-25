@@ -73,7 +73,6 @@ describe("the housekeeping registrations", () => {
       "webhook-poll",
       "version-thinning",
       "trash-purge",
-      "activity-purge",
       "revoked-grant-purge",
       "grant-inactivity-retirement",
       "revoked-key-reap",
@@ -94,11 +93,6 @@ describe("the housekeeping registrations", () => {
   });
 
   it.each<[string, Partial<AppConfig>, string[]]>([
-    [
-      "the activity purge interval",
-      { activityPurgeIntervalMs: 0 },
-      ["activity-purge", "revoked-grant-purge"],
-    ],
     [
       "the revoked-grant retention",
       { revokedGrantRetentionDays: 0 },
@@ -168,15 +162,10 @@ describe("the housekeeping registrations", () => {
     expect(defaults("blob-integrity")).toBe(3_600_000);
   });
 
-  it("runs the revoked-key reap on the activity purge's cadence, hourly when that purge is off", async () => {
-    const { intervalOf } = await namesUnder({
-      activityPurgeIntervalMs: 120_000,
-    });
-    expect(intervalOf("revoked-key-reap")).toBe(120_000);
-    const { intervalOf: off } = await namesUnder({
-      activityPurgeIntervalMs: 0,
-    });
-    expect(off("revoked-key-reap")).toBe(3_600_000);
+  it("runs the revoked-grant purge and the revoked-key reap hourly", async () => {
+    const { intervalOf } = await namesUnder({});
+    expect(intervalOf("revoked-grant-purge")).toBe(3_600_000);
+    expect(intervalOf("revoked-key-reap")).toBe(3_600_000);
   });
 });
 

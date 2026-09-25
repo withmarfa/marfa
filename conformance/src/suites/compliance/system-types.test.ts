@@ -50,12 +50,9 @@ describe("system.* set", () => {
   });
 
   it("ships no system.connection field that nothing writes", async () => {
-    // Eight connector fields were declared on a shipped type that no door
-    // accepts and no server path stamps, and the type said so in its own
-    // description — a forward declaration the document then had to keep
-    // explaining. Removing them says the same thing with nothing to
-    // explain, and the connector runtime's vocabulary can be declared
-    // when the runtime is.
+    // No door accepts these fields and no server path stamps them, so the
+    // type declares none of them and its description has nothing to
+    // explain about them.
     //
     // **The absence is witnessed.** A type serving no fields at all
     // would pass an absence assertion while meaning something entirely
@@ -91,31 +88,12 @@ describe("system.* set", () => {
     expect(unwritten.filter((name) => declared.includes(name))).toEqual([]);
     expect(kept.filter((name) => !declared.includes(name))).toEqual([]);
 
-    // And the description has nothing left to say about them. A sentence
-    // explaining why eight absent fields are absent is the residue this
-    // change exists to remove.
+    // And the description says nothing about them: a sentence explaining
+    // why absent fields are absent is a declaration by other means.
     const description = r.data.description ?? "";
     expect(unwritten.filter((name) => description.includes(name))).toEqual([]);
     expect(description).not.toContain("written by nothing in this build");
     expect(description).not.toContain("server-stamped");
-  });
-
-  it("promises no feed stamp on system.activity, which nothing performs", async () => {
-    // Nothing stamps a tier on an activity item, and the type says so
-    // rather than promising a behavior. It used to point at
-    // `system.connection.feed_activity` as where eligibility would be
-    // declared; that field no longer ships, so a reader following the
-    // pointer would find nothing at the other end.
-    const r = await client.getType("system.activity");
-    expect(r.ok).toBe(true);
-    const description = r.data.description ?? "";
-    expect(description).toContain("No server path stamps a tier");
-    expect(description).not.toContain("server stamps");
-    expect(description).not.toContain("feed_activity");
-
-    // The witness: the type still describes itself, so the absences
-    // above are about these two claims and not an empty description.
-    expect(description).toContain("Severity drives surfacing");
   });
 
   it("serves no system.connection carrying a field the type no longer declares", async () => {

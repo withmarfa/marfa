@@ -269,13 +269,12 @@ describe("admin/restore-archive", () => {
       itemsArchive([
         {
           id: systemId,
-          type: "system.activity",
+          type: "system.webhook",
           source: ctx.source,
           state: "trashed",
           properties: {
-            connection_id: uuidv7(),
-            severity: "info",
-            summary: "recorded in a state it cannot be in",
+            url: "https://example.test/recorded-in-a-state-it-cannot-be-in",
+            events: ["item.created"],
           },
         },
       ]),

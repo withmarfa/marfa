@@ -3,7 +3,6 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   TrashPurger,
-  ActivityPurger,
   RevokedGrantPurger,
   RevokedKeyReaper,
   AuthSessionCleaner,
@@ -546,95 +545,6 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
     const disabled = new DcrClientCleaner(ctx.storage, 0, () => FIXED_NOW);
     expect(await disabled.runOnce()).toBe(0);
     expect(await oauthClientExists("client_disabled_job")).toBe(true);
-  });
-});
-
-/**
- * Insert an item of a chosen type with a contrived `created_at`. The
- * activity purger filters on creation rather than update, so these tests
- * have to choose that column specifically.
- */
-async function seedItemWithCreatedAt(opts: {
-  id: string;
-  type: string;
-  createdAtIso: string;
-}): Promise<void> {
-  await ctx.storage.items.create({
-    id: opts.id,
-    type: opts.type,
-    properties:
-      opts.type === "system.activity"
-        ? {
-            summary: `seed ${opts.id}`,
-            severity: "info",
-            connection_id: `conn_${opts.id}`,
-          }
-        : { body: `seed ${opts.id}` },
-    tier: "library",
-  });
-  const st = ctx.storage as unknown as {
-    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-  };
-  await st.__sqliteRun("UPDATE items SET created_at = ? WHERE id = ?", [
-    opts.createdAtIso,
-    opts.id,
-  ]);
-}
-
-describe("ActivityPurger.runOnce — behavioral", () => {
-  it("drops activity past the window and leaves everything else alone", async () => {
-    const ids = {
-      youngActivity: id("bbb1"),
-      oldActivity: id("bbb2"),
-      ancientNote: id("bbb3"),
-    };
-
-    // Inside the window: survives.
-    await seedItemWithCreatedAt({
-      id: ids.youngActivity,
-      type: "system.activity",
-      createdAtIso: new Date(
-        FIXED_NOW.getTime() - 13 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // Past it: purged.
-    await seedItemWithCreatedAt({
-      id: ids.oldActivity,
-      type: "system.activity",
-      createdAtIso: new Date(
-        FIXED_NOW.getTime() - 15 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    // The gate that matters most: an ordinary item of the same age is
-    // untouched. A type filter that slipped would take a person's data.
-    await seedItemWithCreatedAt({
-      id: ids.ancientNote,
-      type: "core.note",
-      createdAtIso: new Date(
-        FIXED_NOW.getTime() - 400 * MS_PER_DAY,
-      ).toISOString(),
-    });
-
-    const purger = new ActivityPurger(ctx.storage.items, 14, () => FIXED_NOW);
-
-    expect(await purger.runOnce()).toBe(1);
-    expect(await rowExists(ids.youngActivity)).toBe(true);
-    expect(await rowExists(ids.oldActivity)).toBe(false);
-    expect(await rowExists(ids.ancientNote)).toBe(true);
-  });
-
-  it("is disabled by a zero retention window", async () => {
-    const only = id("bbb4");
-    await seedItemWithCreatedAt({
-      id: only,
-      type: "system.activity",
-      createdAtIso: new Date(
-        FIXED_NOW.getTime() - 900 * MS_PER_DAY,
-      ).toISOString(),
-    });
-    const disabled = new ActivityPurger(ctx.storage.items, 0, () => FIXED_NOW);
-    expect(await disabled.runOnce()).toBe(0);
-    expect(await rowExists(only)).toBe(true);
   });
 });
 

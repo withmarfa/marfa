@@ -11,7 +11,6 @@ import {
 import { HeartbeatPinger } from "../heartbeat.js";
 import { VersionThinner } from "../storage/version-thinner.js";
 import {
-  ActivityPurger,
   RevokedGrantPurger,
   GrantInactivityRetirer,
   RevokedKeyReaper,
@@ -54,10 +53,6 @@ export function registerHousekeepingJobs(
   const trashOverride: RetentionOverride = {
     settings: storage.settings,
     configField: "trash_retention_days",
-  };
-  const activityOverride: RetentionOverride = {
-    settings: storage.settings,
-    configField: "activity_retention_days",
   };
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or the instance config.
@@ -164,42 +159,23 @@ export function registerHousekeepingJobs(
     run: async () => ({ deleted: await trashPurger.runOnce() }),
   });
 
-  // Activity rows are ordinary items, one per connector run, so they are
-  // the fastest-growing type on an instance with connections and the one
-  // that needs a bound of its own. Same fan-out shape as trash; `0` on the
-  // interval disables.
-  const activityPurgeIntervalMs = config.activityPurgeIntervalMs ?? 3_600_000;
-  if (activityPurgeIntervalMs > 0) {
-    const activityPurger = new ActivityPurger(
+  // Revoked application-grant tombstones, hourly. Unlike trash there is no
+  // /config override for this window, because the reason for its length is
+  // instance-wide: it tracks the audit retention so the tombstone and the
+  // audit row that recorded the revocation cannot disagree about whether a
+  // revocation is still visible. `0` disables.
+  const revokedGrantRetentionDays = config.revokedGrantRetentionDays ?? 90;
+  if (revokedGrantRetentionDays > 0) {
+    const revokedGrantPurger = new RevokedGrantPurger(
       storage.items,
-      config.activityRetentionDays ?? 14,
-      undefined,
-      activityOverride,
+      revokedGrantRetentionDays,
     );
     housekeeping.register({
-      name: "activity-purge",
-      intervalMs: activityPurgeIntervalMs,
-      firstRunDelayMs: 15_000,
-      run: async () => ({ deleted: await activityPurger.runOnce() }),
+      name: "revoked-grant-purge",
+      intervalMs: 3_600_000,
+      firstRunDelayMs: 20_000,
+      run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
     });
-    // Revoked application-grant tombstones. Unlike trash and activity there
-    // is no /config override for this window, because the reason for its
-    // length is instance-wide — it tracks the audit retention so the
-    // tombstone and the audit row that recorded the revocation cannot
-    // disagree about whether a revocation is still visible. `0` disables.
-    const revokedGrantRetentionDays = config.revokedGrantRetentionDays ?? 90;
-    if (revokedGrantRetentionDays > 0) {
-      const revokedGrantPurger = new RevokedGrantPurger(
-        storage.items,
-        revokedGrantRetentionDays,
-      );
-      housekeeping.register({
-        name: "revoked-grant-purge",
-        intervalMs: activityPurgeIntervalMs,
-        firstRunDelayMs: 20_000,
-        run: async () => ({ deleted: await revokedGrantPurger.runOnce() }),
-      });
-    }
   }
 
   // A grant nobody has used for a year is retired through the same cascade
@@ -223,13 +199,10 @@ export function registerHousekeepingJobs(
     });
   }
 
-  // On the activity purge's cadence, which is the hourly one; hourly when
-  // that purge is off, because its interval is then no cadence at all.
   const revokedKeyReaper = new RevokedKeyReaper(storage);
   housekeeping.register({
     name: "revoked-key-reap",
-    intervalMs:
-      activityPurgeIntervalMs > 0 ? activityPurgeIntervalMs : 3_600_000,
+    intervalMs: 3_600_000,
     firstRunDelayMs: 45_000,
     run: async () => ({ deleted: await revokedKeyReaper.runOnce() }),
   });

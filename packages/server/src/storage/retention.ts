@@ -38,7 +38,6 @@ export interface RetentionOverride {
     | "trash_retention_days"
     | "audit_retention_days"
     | "event_log_retention_hours"
-    | "activity_retention_days"
   >;
 }
 
@@ -54,7 +53,7 @@ export interface RetentionOverride {
  * `trash_retention_days` override from the instance configuration. When
  * `override` is omitted the housekeeping job sweeps at the instance default.
  *
- * **This sweep announces nothing, and neither do its two siblings below.**
+ * **This sweep announces nothing, and neither does `RevokedGrantPurger`.**
  * Every other path that removes a row publishes `item.purged`, and every
  * path that removes an edge publishes `edge.deleted`, so that a client
  * which was away can learn the row is gone by replaying the event log. A
@@ -119,9 +118,8 @@ export class TrashPurger {
  * **The row it sweeps is not trash and is not in a terminal lifecycle state.**
  * A grant revoked through the user-facing path keeps `state: "active"` — the
  * revoke writes `status: "revoked"` and `revoked_at` onto the properties and
- * leaves the item alone, so the record survives as a record. Neither sibling
- * above can reach it: the trash purge asks about `state` and the activity
- * purge asks about `type`.
+ * leaves the item alone, so the record survives as a record. The trash purge
+ * above cannot reach it, because it asks about `state`.
  *
  * **Why they accumulate at all.** The grant lookup skips a row whose status is
  * revoked, so an operator soft-delete is permanent rather than reusable, and
@@ -134,10 +132,8 @@ export class TrashPurger {
  * `AUDIT_RETENTION_DAYS`, and `0` switches the housekeeping job off as it
  * does for the others.
  *
- * **A connector's revoked connection is not a tombstone and is not swept.**
- * The uninstall path writes the same `revoked` status as a matter of routine,
- * onto a row somebody may reinstall against. The store predicate asks
- * `kind = 'app'`.
+ * The store predicate asks `kind = 'app'`: an application grant, not any
+ * revoked connection.
  */
 export class RevokedGrantPurger {
   constructor(
@@ -254,52 +250,6 @@ export class GrantInactivityRetirer {
       });
     }
     return retired;
-  }
-}
-
-/**
- * Ages out `system.activity` items, the one item type written per run
- * rather than per record, and so the one that grows without a bound of its
- * own. Same shape as `TrashPurger` above: honors the
- * `activity_retention_days` override when the instance configuration is
- * wired, and sweeps at the instance default otherwise.
- *
- * This housekeeping job bounds the rows; it does not decide whether a run
- * deserves one.
- */
-export class ActivityPurger {
-  constructor(
-    private items: ItemStore,
-    private retentionDays: number,
-    private nowFn: () => Date = () => new Date(),
-    private configOverride?: RetentionOverride,
-  ) {}
-
-  async runOnce(): Promise<number> {
-    const deleted = this.configOverride
-      ? await runSweepToCutoff({
-          override: this.configOverride,
-          nowFn: this.nowFn,
-          instanceDefault: this.retentionDays,
-          unitMs: MS_PER_DAY,
-          sweep: (cutoff) => this.items.purgeActivityOlderThan(cutoff),
-        })
-      : await this.runOnceGlobal();
-    if (deleted > 0) {
-      log("info", "Activity purge", {
-        deleted,
-        retentionDays: this.retentionDays,
-      });
-    }
-    return deleted;
-  }
-
-  private async runOnceGlobal(): Promise<number> {
-    if (this.retentionDays <= 0) return 0;
-    const cutoff = new Date(
-      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
-    ).toISOString();
-    return this.items.purgeActivityOlderThan(cutoff);
   }
 }
 

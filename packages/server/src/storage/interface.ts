@@ -727,23 +727,6 @@ export interface ItemStore {
    */
   purgeTrashedOlderThan(beforeDate: string): Promise<number>;
   /**
-   * Hard-delete every `system.activity` item whose `created_at` is
-   * strictly older than `beforeDate` (an ISO 8601 timestamp). Returns
-   * the number of rows deleted.
-   *
-   * A sibling of `purgeTrashedOlderThan` rather than a reuse of it,
-   * because activity rows are `active`: they are never trashed, so the
-   * trash lifecycle never reaches them and nothing else did either.
-   * Same obligations — clean the search index, drop edges in both
-   * directions inside the transaction, since edges have no FK to items.
-   *
-   * Filters on `created_at` rather than `updated_at`. An activity row is
-   * written once and never revised, so the two agree; `created_at` is
-   * the one that states the intent, which is "how long we keep the
-   * record of a run".
-   */
-  purgeActivityOlderThan(beforeDate: string): Promise<number>;
-  /**
    * Hard-delete every revoked **application** grant tombstone whose
    * `properties.revoked_at` is strictly older than `beforeDate`. Returns the
    * number of rows deleted.
@@ -755,17 +738,11 @@ export interface ItemStore {
    * lifecycle alone, so the record survives as a record. A sweep keyed on
    * `state` the way the trash purge is would match none of them.
    *
-   * **`kind = 'app'` is load-bearing rather than tidiness.** A connector
-   * uninstall writes the same `revoked` status onto a `system.connection` row
-   * as a matter of routine, and that row is not a tombstone — it is a
-   * connection somebody may reinstall. It is separately distinguishable
-   * because the uninstall path also transitions the item to `state:
-   * "revoked"`, but this predicate does not rely on that: it asks the question
-   * it means.
+   * **`kind = 'app'` asks the question it means**: a withdrawn application
+   * grant, not any revoked connection.
    *
-   * Filters on `revoked_at` rather than `updated_at`, on the same reasoning
-   * `purgeActivityOlderThan` gives for `created_at`: `updated_at` moves on any
-   * write, and the window here means "how long we keep the record of a
+   * Filters on `revoked_at` rather than `updated_at`: `updated_at` moves on
+   * any write, and the window here means "how long we keep the record of a
    * withdrawn grant".
    */
   purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number>;
@@ -981,9 +958,9 @@ export interface TypeStore {
    *
    * `listRegistered` returns bare schemas, which is all its two other
    * callers need. This exists because deciding what a type IS cannot be
-   * done from its identifier: a vendor's `readwise.book` and a person's
-   * `jonah.reading_item` under a claimed handle are the same shape, and
-   * only the stored `origin` separates them.
+   * done from its identifier: a restored `salvage.record` nobody recorded
+   * and a person's `jonah.reading_item` under a claimed handle are the same
+   * shape, and only the stored `origin` separates them.
    */
   listRegisteredWithProvenance(): Promise<LoadedType[]>;
   /** Every row for server-startup registry warmup, the platform-seeded
@@ -1025,21 +1002,6 @@ export interface TypeStore {
 /** Where a registered type came from, written alongside its schema. */
 export interface TypeProvenance {
   origin: TypeOrigin;
-  /**
-   * What kind of type this is: core content, a connector's own shape,
-   * or a structural platform record.
-   *
-   * **Asked of every type, not of the shipped set alone.** The question
-   * "what kind of type is this" is asked of every type, and answering it
-   * from the identifier cannot separate a vendor's type from a person's
-   * under a claimed handle.
-   *
-   * Absent for `user` rows, which is not a gap — a type a person
-   * registered belongs to no platform family and never did.
-   */
-  family?: PlatformTypeFamily;
-  /** Manifest name of the publishing connector, for `connector` rows. */
-  owner_connector?: string;
 }
 
 /** A type schema as loaded at startup, the shape the warmup registers. */
@@ -1048,8 +1010,8 @@ export interface LoadedType {
   /** Provenance as stored. `NOT NULL DEFAULT 'user'`, so a row carries one
    *  whatever wrote it. */
   origin: TypeOrigin;
+  /** Written by the platform seed alone, so absent on a registration. */
   family?: PlatformTypeFamily;
-  owner_connector?: string;
 }
 
 export interface EdgeTypeStore {

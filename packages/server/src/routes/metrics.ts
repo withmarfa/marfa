@@ -1,5 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ALL_TYPES, ALL_CONNECTOR_TYPES } from "@withmarfa/shared";
+import { ALL_TYPES } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -28,7 +28,6 @@ const MetricsResponseSchema = z.object({
   }),
   types: z.object({
     core: z.number(),
-    connector: z.number(),
     registered: z.number(),
   }),
   keys: z.object({
@@ -113,10 +112,7 @@ export function metricsRoutes(storage: Storage) {
         total_bytes: blobStats.total_size_bytes,
       },
       types: {
-        // Counted apart so the number does not quietly conflate the shared
-        // vocabulary with the vendor-shaped types a connector writes into.
         core: ALL_TYPES.length,
-        connector: ALL_CONNECTOR_TYPES.length,
         registered: registeredTypeCount,
       },
       keys: {

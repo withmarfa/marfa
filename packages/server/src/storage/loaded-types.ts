@@ -7,8 +7,8 @@
  * The boot projection is what decides where an unplaceable platform row
  * goes, and it logs the value it found to say so. Narrowing the column to
  * recognized-or-absent in this function would leave that log reporting
- * `undefined` for every case, including the one it exists for: an older
- * build meeting a family a newer build wrote. The reader that acts on a
+ * `undefined` for every case, including the one it exists for: a family
+ * this build does not know. The reader that acts on a
  * value is the reader that should see it.
  *
  * **`origin` is different, and the difference is worth stating** because
@@ -17,11 +17,11 @@
  * union already fails `=== "platform"` and `=== "user"` alike, so it is
  * excluded from the shipped vocabulary and from a person's own
  * registrations both — fail-closed on every consumer without anything
- * being decided for it. An earlier draft of this file "improved" that by
- * projecting an unrecognized value to `user`, which reads as the cautious
- * choice and is the permissive one: `user` is exactly what the consent
- * screen treats as the person's own to offer a read-and-write wildcard
- * over. Passing the value through unchanged is what keeps both doors shut.
+ * being decided for it. Projecting an unrecognized value to `user` would
+ * read as the cautious choice and be the permissive one: `user` is exactly
+ * what the consent screen treats as the person's own to offer a
+ * read-and-write wildcard over. Passing the value through unchanged is what
+ * keeps both doors shut.
  */
 import { isValidTypeOrigin, type TypeSchema } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
@@ -35,7 +35,6 @@ export interface TypeRow {
   /** `NOT NULL DEFAULT 'user'`, so never absent. */
   origin: string;
   family: string | null;
-  owner_connector: string | null;
 }
 
 /**
@@ -75,9 +74,6 @@ export function toLoadedTypes(rows: readonly TypeRow[]): LoadedType[] {
       origin: row.origin as LoadedType["origin"],
       ...(row.family !== null && {
         family: row.family as LoadedType["family"],
-      }),
-      ...(row.owner_connector !== null && {
-        owner_connector: row.owner_connector,
       }),
     });
   }

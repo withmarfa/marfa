@@ -1519,10 +1519,9 @@ export function bulkRoutes(storage: Storage) {
         // namespace which `PATCH /items/{id}` refuses to the same key.
         //
         // `mayWriteReserved` is that fence in predicate form rather than a
-        // second copy of it, so the connector that legitimately reaches
-        // its own `system.activity` rows here still does — narrowed per row
-        // afterwards by the attribution rule, which is where whose rows it
-        // may touch is decided.
+        // second copy of it, so the one credential it admits, the operator
+        // key, still reaches reserved rows here, and its empty type map
+        // decides the rest.
         //
         // There is no widening token beside it for the ordinary reason: a
         // read widened by one answers a bigger question, an action widened

@@ -1202,39 +1202,9 @@ export class SqliteItemStore implements ItemStore {
       // without this the background sweep leaves a dangling edge row for
       // every relationship a purged item had. Same statement shape as the
       // bulk-action purge worker.
-      // Nothing is announced for any of it, here or in the two sibling
-      // sweeps: `TrashPurger` carries why, and it is a decision rather
-      // than an omission.
-      await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
-      await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
-      await tx.delete(items).where(inArray(items.id, ids)).run();
-      return ids.length;
-    });
-  }
-
-  async purgeActivityOlderThan(beforeDate: string): Promise<number> {
-    // Activity rows are `active` and never trashed, so the trash sweep's
-    // predicate cannot serve.
-    const baseConditions = [
-      eq(items.type, "system.activity"),
-      lt(items.created_at, beforeDate),
-    ];
-    const where = and(...baseConditions);
-
-    return await this.db.transaction(async (tx) => {
-      const idRows = await tx
-        .select({ id: items.id })
-        .from(items)
-        .where(where)
-        .all();
-      if (idRows.length === 0) return 0;
-
-      const ids = idRows.map((row) => row.id);
-      // items_fts is a separate virtual table, so it needs cleaning by
-      // hand.
-      for (const id of ids) {
-        await this.searchStore.remove(id);
-      }
+      // Nothing is announced for any of it, here or in the revoked-grant
+      // sweep: `TrashPurger` carries why, and it is a decision rather than
+      // an omission.
       await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
       await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
       await tx.delete(items).where(inArray(items.id, ids)).run();

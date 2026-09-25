@@ -19,7 +19,7 @@
  * **The two floors, which are the two ways a person is shown machine text.**
  * The device approval screen has no labels: its row is
  * `descriptions[pattern] ?? literal`, so a pattern with no copy renders as
- * `todoist.task:read` and a pattern with only registry copy renders as
+ * `acme.widget:read` and a pattern with only registry copy renders as
  * several hundred characters written for somebody reading API docs. The
  * authorize screen's row is `SCOPE_LABELS[pattern] ?? descriptions[pattern]
  * ?? humanizeType(pattern)`, so the same absence arrives there as a

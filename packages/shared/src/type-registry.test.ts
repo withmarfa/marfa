@@ -1677,10 +1677,6 @@ describe("isPlatformTypeFamily", () => {
     // array and that switch move together or the build breaks. Pinning
     // the contents means a family added without a decision about which id
     // set it joins fails here as well as there.
-    expect([...PLATFORM_TYPE_FAMILIES]).toEqual([
-      "core",
-      "connector",
-      "system",
-    ]);
+    expect([...PLATFORM_TYPE_FAMILIES]).toEqual(["core", "system"]);
   });
 });

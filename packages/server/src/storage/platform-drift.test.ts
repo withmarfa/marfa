@@ -41,16 +41,12 @@ describe("which shipped types an instance carries that the build does not", () =
   });
 
   it("never reports a row that is not the platform's", () => {
-    // A runtime registration and a type a connector brought with it are
-    // not the build's to have an opinion about. Scoping on origin is
-    // what keeps a prune built on this from reaching either.
+    // A runtime registration and a restored row nobody recorded are not
+    // the build's to have an opinion about. Scoping on origin is what keeps
+    // a prune built on this from reaching either.
     const drift = computePlatformDrift(
       [],
-      [
-        row("jonah.recipe", "user"),
-        row("acme.widget", "connector"),
-        row("salvage.thing", "unknown"),
-      ],
+      [row("jonah.recipe", "user"), row("salvage.thing", "unknown")],
     );
     expect(drift).toEqual([]);
   });
@@ -80,7 +76,7 @@ describe("which shipped types an instance carries that the build does not", () =
           version: 1,
           fields: { name: { type: "string", required: true } },
         },
-        { origin: "platform", family: "core" },
+        { origin: "platform" },
       );
 
       const drift = computePlatformDrift(

@@ -221,13 +221,13 @@ describe("Instance config — round trips", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  it("PUT persists the activity retention override rather than discarding it", async () => {
-    // The purger already reads this field, so a value the route accepts and
-    // drops is worse than one it refuses: PUT is a full replacement, so
+  it("PUT persists the retention overrides rather than discarding them", async () => {
+    // The housekeeping jobs read these fields, so a value the route accepts
+    // and drops is worse than one it refuses: PUT is a full replacement, so
     // following the documentation un-sets the neighbors.
     const res = await request(configCtx.app, "PUT", "/config", {
       key: configCtx.workingKey,
-      body: { activity_retention_days: 30, trash_retention_days: 7 },
+      body: { audit_retention_days: 30, trash_retention_days: 7 },
     });
     expect(res.status).toBe(200);
 
@@ -236,21 +236,11 @@ describe("Instance config — round trips", () => {
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
-      activity_retention_days?: number;
+      audit_retention_days?: number;
       trash_retention_days?: number;
     };
-    expect(getBody.activity_retention_days).toBe(30);
+    expect(getBody.audit_retention_days).toBe(30);
     expect(getBody.trash_retention_days).toBe(7);
-  });
-
-  it("PUT rejects a negative activity retention override with 400", async () => {
-    const res = await request(configCtx.app, "PUT", "/config", {
-      key: configCtx.workingKey,
-      body: { activity_retention_days: -1 },
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("validation_error");
   });
 
   // The destructive shape, and the reason the schema is strict. PUT is a
@@ -261,13 +251,13 @@ describe("Instance config — round trips", () => {
   it("PUT refuses a mistyped key instead of dropping it", async () => {
     const good = await request(configCtx.app, "PUT", "/config", {
       key: configCtx.workingKey,
-      body: { activity_retention_days: 30, trash_retention_days: 7 },
+      body: { audit_retention_days: 30, trash_retention_days: 7 },
     });
     expect(good.status).toBe(200);
 
     const res = await request(configCtx.app, "PUT", "/config", {
       key: configCtx.workingKey,
-      body: { activity_retention_day: 30 },
+      body: { audit_retention_day: 30 },
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -279,10 +269,10 @@ describe("Instance config — round trips", () => {
       key: configCtx.workingKey,
     });
     const getBody = (await getRes.json()) as {
-      activity_retention_days?: number;
+      audit_retention_days?: number;
       trash_retention_days?: number;
     };
-    expect(getBody.activity_retention_days).toBe(30);
+    expect(getBody.audit_retention_days).toBe(30);
     expect(getBody.trash_retention_days).toBe(7);
   });
 

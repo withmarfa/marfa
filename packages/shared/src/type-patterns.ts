@@ -12,11 +12,11 @@
 // and never requires the child's name to start with the parent's.
 //
 // The `?type=` READ FILTER resolves both: everything under the name, plus
-// everything that declares its way there. Resolving names alone is the defect
-// this closes — a declared child named elsewhere was missing from a query
-// against its own parent, with no error. Resolving declarations alone would
-// break the other half, since nothing declares a parent of `google` yet
-// `google.*` plainly means the Google types.
+// everything that declares its way there. Resolving names alone would leave a
+// declared child named elsewhere missing from a query against its own parent,
+// with no error. Resolving declarations alone would break the other half,
+// since nothing declares a parent of `acme` yet `acme.*` plainly means Acme's
+// types.
 //
 // PERMISSION PATTERNS resolve names only. That asymmetry is deliberate and is
 // explained at `typePatternToSql`: a permission map is ranked by longest-prefix

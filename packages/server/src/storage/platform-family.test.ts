@@ -3,7 +3,7 @@
  *
  * Two properties, and they pull against each other, which is why both are
  * pinned here. The projection must not be `core`, because `core` is the
- * family that joins neither id set and so carries the three-state
+ * family that misses the system set and so carries the three-state
  * lifecycle and an open `tier` — the permissive answer, chosen by default
  * for a row nobody could read. And it must not stop the boot, because the
  * rows that can reach it are retired types, archive rows, and rows written
@@ -24,9 +24,8 @@ import type { LoadedType } from "./interface.js";
 import * as logger from "../middleware/logger.js";
 
 function schema(id: string): TypeSchema {
-  // No laundering cast: this is a real `TypeSchema`, and it is worth
-  // keeping that way. A cast here would have hidden `version: "1.0.0"`,
-  // which is what an earlier draft carried and the type rejects.
+  // A real `TypeSchema` rather than a cast, so the compiler holds the row
+  // to the shape the registry reads, `version` an integer included.
   return { id, version: 1, fields: {} };
 }
 
@@ -56,20 +55,18 @@ describe("projectPlatformRows", () => {
         projectPlatformRows([
           row({ id: "core.note", family: "core" }),
           row({ id: "system.connection", family: "system" }),
-          row({ id: "readwise.document", family: "connector" }),
         ]),
       ),
     ).toEqual([
       ["core.note", "core"],
       ["system.connection", "system"],
-      ["readwise.document", "connector"],
     ]);
     expect(logSpy).not.toHaveBeenCalled();
   });
 
   it("places a row carrying no family at the restrictive end, not core", () => {
-    // `core` is what this used to default to, and it is the family that
-    // joins neither id set: three-state lifecycle, caller-settable tier.
+    // `core` is the permissive default, the family that misses the system
+    // set: three-state lifecycle, caller-settable tier.
     // Asserting "not core" as well as "is system" because the first is
     // the property that matters and the second is only today's spelling
     // of it.
@@ -96,7 +93,7 @@ describe("projectPlatformRows", () => {
   });
 
   it("says so, naming the row and what it did", () => {
-    // A projection nobody can see is the same silence this replaces.
+    // A projection nobody can see is a silent fallback.
     projectPlatformRows([
       row({ id: "system.webhook", family: "" as LoadedType["family"] }),
     ]);
@@ -120,7 +117,7 @@ describe("projectPlatformRows", () => {
     const rows = projectPlatformRows([
       row({ id: "core.note", family: "core" }),
       row({ id: "jonah.reading_item", origin: "user" }),
-      row({ id: "acme.widget", origin: "connector" }),
+      row({ id: "salvage.record", origin: "unknown" }),
     ]);
     expect(rows.map((r) => r.schema.id)).toEqual(["core.note"]);
     expect(logSpy).not.toHaveBeenCalled();

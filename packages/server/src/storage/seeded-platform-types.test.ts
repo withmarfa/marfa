@@ -35,8 +35,8 @@ describe("the seeded platform set", () => {
     expect(note?.origin).toBe("platform");
     expect(note?.family).toBe("core");
 
-    const activity = loaded.find((row) => row.schema.id === "system.activity");
-    expect(activity?.family).toBe("system");
+    const webhook = loaded.find((row) => row.schema.id === "system.webhook");
+    expect(webhook?.family).toBe("system");
   });
 
   it("never appears in the runtime registrations", async () => {

@@ -1,11 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
-  CONNECTOR_TYPE_IDS,
-  SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
 } from "./type-registry.js";
 import { ALL_EDGE_TYPES } from "./edge-registry.js";
@@ -21,8 +18,9 @@ import { ALL_EDGE_TYPES } from "./edge-registry.js";
 //
 // So the identifiers are pinned literally, below. Splitting the source tree,
 // re-partitioning the emitted registries, renaming a file: none of those may
-// move this list. A change here is only ever correct alongside a migration
-// that rewrites the stored values, and there is no such migration.
+// move this list. A change here strands every item stored under the
+// identifier it drops, so it is a decision about stored data and never the
+// side effect of a refactor.
 // -----------------------------------------------------------------------------
 
 const CORE_TYPE_IDENTIFIERS = [
@@ -49,39 +47,16 @@ const CORE_TYPE_IDENTIFIERS = [
   "core.task",
 ];
 
-const CONNECTOR_TYPE_IDENTIFIERS = [
-  "google.calendar.event",
-  "google.contacts.contact",
-  "google.drive.file",
-  "google.tasks.task",
-  "google.youtube.channel",
-  "google.youtube.playlist",
-  "google.youtube.video",
-  "marfa.captured_email",
-  "marfa.podcast.episode",
-  "marfa.podcast.show",
-  "raindrop.collection",
-  "raindrop.raindrop",
-  "readwise.book",
-  "readwise.document",
-  "readwise.highlight",
-  "todoist.task",
-];
-
 const SYSTEM_TYPE_IDENTIFIERS = [
   "system.account_holder",
-  "system.activity",
   "system.app",
   "system.connection",
-  "system.credential",
   "system.device",
-  "system.connector",
   "system.webhook",
 ];
 
 const ALL_SHIPPED_IDENTIFIERS = [
   ...CORE_TYPE_IDENTIFIERS,
-  ...CONNECTOR_TYPE_IDENTIFIERS,
   ...SYSTEM_TYPE_IDENTIFIERS,
 ].sort();
 
@@ -97,22 +72,14 @@ describe("shipped type identifiers", () => {
     expect(sortedIds(ALL_TYPES)).toEqual([...CORE_TYPE_IDENTIFIERS].sort());
   });
 
-  it("keeps the connector family exact", () => {
-    expect(sortedIds(ALL_CONNECTOR_TYPES)).toEqual(
-      [...CONNECTOR_TYPE_IDENTIFIERS].sort(),
-    );
-  });
-
   it("keeps the system family exact", () => {
     expect(sortedIds(ALL_SYSTEM_TYPES)).toEqual(
       [...SYSTEM_TYPE_IDENTIFIERS].sort(),
     );
   });
 
-  it("partitions the registry into three disjoint families", () => {
-    const total =
-      ALL_TYPES.length + ALL_CONNECTOR_TYPES.length + ALL_SYSTEM_TYPES.length;
-    expect(TYPE_REGISTRY.size).toBe(total);
+  it("partitions the registry into two disjoint families", () => {
+    expect(TYPE_REGISTRY.size).toBe(ALL_TYPES.length + ALL_SYSTEM_TYPES.length);
   });
 
   it("exposes the same identifiers to the compiler as to the runtime", () => {
@@ -123,17 +90,6 @@ describe("shipped type identifiers", () => {
     expect([...ALL_TYPE_IDS].sort()).toEqual(ALL_SHIPPED_IDENTIFIERS);
     for (const id of ALL_TYPE_IDS) {
       expect(TYPE_REGISTRY.has(id), `not registered: ${id}`).toBe(true);
-    }
-  });
-
-  it("resolves connector types exactly like core types", () => {
-    // The families differ in provenance only. A connector type that stopped
-    // resolving, or that picked up a system-type restriction, would strand
-    // every item a connector has written.
-    for (const id of CONNECTOR_TYPE_IDENTIFIERS) {
-      expect(TYPE_REGISTRY.get(id)?.id, `missing ${id}`).toBe(id);
-      expect(CONNECTOR_TYPE_IDS.has(id), `not classified: ${id}`).toBe(true);
-      expect(SYSTEM_TYPE_IDS.has(id), `wrongly system: ${id}`).toBe(false);
     }
   });
 });

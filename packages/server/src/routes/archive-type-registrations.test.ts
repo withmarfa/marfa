@@ -181,7 +181,7 @@ describe("archives carry type registrations", () => {
     const result = (await res.json()) as RestoreResult;
     expect(result.types_registered).toBe(1);
     expect(result.edge_types_registered).toBe(1);
-    // The item of the custom type landed, which is what used to fail.
+    // The item of the custom type landed, which needs its type registered first.
     expect(result.imported).toBe(2);
 
     const restored = await destination.storage.items.get(recipe.id);
@@ -728,28 +728,24 @@ describe("an archive carries where a type came from", () => {
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
 
-  it("replays a connector's provenance instead of defaulting it", async () => {
+  it("replays a row's provenance instead of defaulting it", async () => {
     // The laundering this exists to stop. The column defaults to `user`,
     // and `user` is what the consent screen offers a read-and-write
-    // wildcard over, so a type a connected service published came back
-    // from a backup as a type the person registered, through a
-    // first-party operation described to them as a restore.
+    // wildcard over, so a row nobody recorded would come back from a backup
+    // as a type the person registered, through a first-party operation
+    // described to them as a restore.
     const source = await newContext();
     const destination = await newContext();
-    const typeId = `acme.widget_${uniqueSuffix()}`;
+    const typeId = `salvage.widget_${uniqueSuffix()}`;
 
     await source.storage.types.create(
       { id: typeId, ...baseType },
-      {
-        origin: "connector",
-        family: "connector",
-        owner_connector: "acme/widgets",
-      },
+      { origin: "unknown" },
     );
 
     const res = await restore(destination, await exportArchive(source));
     expect(res.status).toBe(200);
-    expect(await storedOrigin(destination, typeId)).toBe("connector");
+    expect(await storedOrigin(destination, typeId)).toBe("unknown");
   });
 
   it("records an archive with no provenance as unrecorded", async () => {
@@ -862,11 +858,10 @@ describe("an archive carries where a type came from", () => {
   });
 
   it("refuses an archive claiming a shipped family", async () => {
-    // Family decides membership of the content category, and `core` is
-    // the permissive value the boot projection exists to warn about. The
-    // namespace guard stops a reserved identifier; this is the separate
-    // axis, and an ordinary namespace claiming a shipped family is
-    // claiming to be part of the build.
+    // A family is the build's, written by the seed alone. The namespace
+    // guard stops a reserved identifier; this is the separate axis, and an
+    // ordinary namespace claiming a shipped family is claiming to be part of
+    // the build.
     const source = await newContext();
     const destination = await newContext();
 
@@ -960,8 +955,8 @@ describe("a claimed `user` origin is honored as claimed", () => {
 
   it("does not rewrite the provenance of a row that already exists", async () => {
     // Re-restoring must stay a no-op. If the skip branch ever started
-    // refreshing the column, a second restore of an older copy would walk
-    // a row a connector had claimed back to `unknown`.
+    // refreshing the column, an archive claiming `user` would hand a row
+    // recorded as `unknown` the write wildcard it was held back from.
     const source = await newContext();
     const destination = await newContext();
     const suffix = uniqueSuffix();
@@ -969,10 +964,7 @@ describe("a claimed `user` origin is honored as claimed", () => {
 
     await destination.storage.types.create(
       { id: typeId, ...baseType },
-      {
-        origin: "connector",
-        family: "connector",
-      },
+      { origin: "unknown" },
     );
 
     const archive = await archiveClaiming(
@@ -983,6 +975,6 @@ describe("a claimed `user` origin is honored as claimed", () => {
     );
     const res = await restore(destination, archive);
     expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, typeId)).toBe("connector");
+    expect(await storedOriginOf(destination, typeId)).toBe("unknown");
   });
 });

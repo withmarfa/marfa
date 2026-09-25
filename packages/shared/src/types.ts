@@ -610,10 +610,4 @@ export interface InstanceConfig {
   audit_retention_days?: number;
   event_log_retention_hours?: number;
   trash_retention_days?: number;
-  /**
-   * Days to keep `system.activity` rows. A connector reports its runs as
-   * activity, so on a busy instance this is the fastest-growing item type
-   * by a wide margin, and nothing else ages it out.
-   */
-  activity_retention_days?: number;
 }

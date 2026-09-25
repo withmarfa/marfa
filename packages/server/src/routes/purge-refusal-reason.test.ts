@@ -11,11 +11,10 @@
  * **Two refusals sharing a status is what makes this expensive.** Both are
  * 400-shaped to a reader skimming, so the second message is the one acted
  * on, and it sends somebody looking for a trash step they think they
- * skipped. That happened: a purge of a `marfa.*` corpus was read as an
- * ordering problem and the namespace gate above it was never suspected.
+ * skipped, and the namespace gate above it is never suspected.
  *
- * The fix asks the write rule on the not-trashed path, which is the path the
- * purge was going to be refused on anyway. So the assertions here are about
+ * So the door asks the write rule on the not-trashed path, which is the path
+ * the purge was going to be refused on anyway. So the assertions here are about
  * *which message* comes back, and the case that matters most is the one
  * proving the ordinary refusal is unchanged — a fix that renamed every
  * refusal would pass a test that only checked the reserved-namespace one.
@@ -32,6 +31,13 @@ let workingKey: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+
+  // The build ships no `marfa.*` type, so the row's type is a platform row
+  // an instance can still hold after the build stopped shipping it.
+  await ctx.storage.types.create(
+    { id: "marfa.relic", version: 1, fields: { title: { type: "string" } } },
+    { origin: "platform" },
+  );
 
   // Reaches every type and is still not the instance tier,
   // which is the whole shape this file is about: the reserved namespace
@@ -52,14 +58,13 @@ afterAll(async () => {
  *
  * Through storage rather than the API because the API gate is the very
  * thing under test: a working credential cannot create one, and the operator
- * key holds no permissions to create one with. That combination is exactly
- * the situation a connector's corpus is in.
+ * key holds no permissions to create one with.
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await ctx.storage.items.create({
-    type: "marfa.podcast.show",
-    properties: { title: "A show", feed_url: "https://example.com/feed.xml" },
-    source: "connector:marfa/podcasts",
+    type: "marfa.relic",
+    properties: { title: "A relic" },
+    source: "test/purge-refusal",
     source_id: sourceId,
   });
   return item.id;
@@ -67,7 +72,7 @@ async function seedReservedRow(sourceId: string): Promise<string> {
 
 describe("purging a row a working credential may not write", () => {
   it("names the namespace rather than the trashed-state precondition", async () => {
-    const id = await seedReservedRow("show:refusal-1");
+    const id = await seedReservedRow("relic:refusal-1");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: workingKey,
@@ -121,18 +126,16 @@ describe("purging a row a working credential may not write", () => {
     expect(body.error.message).toContain("trashed");
   });
 
-  it("purges a reserved-namespace row once it is trashed, as before", async () => {
-    // The non-regression the guard's placement exists for. The new check
-    // runs only on the not-trashed path, so an already-trashed row is purged
-    // exactly as it was before the guard existed.
+  it("purges a reserved-namespace row once it is trashed", async () => {
+    // What the guard's placement exists for: the check runs only on the
+    // not-trashed path, so an already-trashed row is purged as any other.
     //
     // Trashed through the storage layer, which is how a reserved-namespace
     // row reaches that state at all: the trash door asks the same write rule
     // and refuses every working credential, and the operator key holds no
     // permissions to pass it with either. So the platform's own machinery is
-    // what moves these rows, and the state this test needs is the state a
-    // retention sweep or an uninstall leaves behind.
-    const id = await seedReservedRow("show:refusal-2");
+    // what moves these rows.
+    const id = await seedReservedRow("relic:refusal-2");
     await ctx.storage.items.transition(id, "trashed");
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {

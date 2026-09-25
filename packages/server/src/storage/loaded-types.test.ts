@@ -7,8 +7,8 @@
  * `'Platform'` matches neither `platform` nor `user`, so the row is
  * excluded from the shipped vocabulary and from a person's own
  * registrations alike. Substituting a member of the union would pick one
- * of those doors and open it — which an earlier draft did, choosing the
- * one the consent screen offers a read-and-write wildcard over.
+ * of those doors and open it, and `user`, the obvious pick, is the one the
+ * consent screen offers a read-and-write wildcard over.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
@@ -20,7 +20,6 @@ function row(part: Partial<TypeRow> & { id: string }): TypeRow {
     schema: JSON.stringify({ id: part.id, version: 1, fields: {} }),
     origin: "user",
     family: null,
-    owner_connector: null,
     ...part,
   };
 }
@@ -38,16 +37,10 @@ afterEach(() => {
 describe("toLoadedTypes", () => {
   it("carries recognized provenance through", () => {
     const [loaded] = toLoadedTypes([
-      row({
-        id: "acme.widget",
-        origin: "connector",
-        family: "connector",
-        owner_connector: "acme/widgets",
-      }),
+      row({ id: "core.note", origin: "platform", family: "core" }),
     ]);
-    expect(loaded?.origin).toBe("connector");
-    expect(loaded?.family).toBe("connector");
-    expect(loaded?.owner_connector).toBe("acme/widgets");
+    expect(loaded?.origin).toBe("platform");
+    expect(loaded?.family).toBe("core");
     expect(logSpy).not.toHaveBeenCalled();
   });
 
@@ -56,11 +49,9 @@ describe("toLoadedTypes", () => {
     // asserting rather than an incidental one. A stored `"Platform"`
     // fails `=== "platform"` and `=== "user"` alike, so the row is
     // excluded from the shipped vocabulary and from the person's own
-    // registrations both.
-    //
-    // An earlier draft projected it to `user`, which reads as the
-    // cautious answer and is the permissive one: `user` is exactly what
-    // the consent screen offers a read-and-write wildcard over.
+    // registrations both. Projecting it to `user` would read as the
+    // cautious answer and be the permissive one: `user` is exactly what the
+    // consent screen offers a read-and-write wildcard over.
     const [loaded] = toLoadedTypes([
       row({ id: "acme.widget", origin: "Platform" }),
     ]);

@@ -31,29 +31,13 @@ afterEach(async () => {
 
 /** The bounded lifecycle belongs to the `system.*` classification rather
  *  than to any one type, so any system type states the same graph. */
-const SYSTEM_TYPE = "system.activity";
+const SYSTEM_TYPE = "system.webhook";
 
-/** The Connection a system row belongs to, built through the store because
- *  no credential writes a reserved namespace over the wire. */
-async function systemWriter(c: TestContext): Promise<{
-  properties: () => Record<string, unknown>;
-}> {
-  const connection = await c.storage.items.create({
-    type: "system.connection",
-    properties: {
-      kind: "connector",
-      status: "active",
-      granted_at: new Date().toISOString(),
-    },
-    source: "test/lifecycle-graph",
-  });
-  return {
-    properties: () => ({
-      connection_id: connection.id,
-      severity: "info",
-      summary: "Lifecycle fixture",
-    }),
-  };
+/** Properties a `system.webhook` row accepts. The rows are built through
+ *  the store, because no credential writes a reserved namespace over the
+ *  wire. */
+function systemProperties(): Record<string, unknown> {
+  return { url: "https://example.test/lifecycle", events: ["item.created"] };
 }
 
 async function errorOf(
@@ -70,8 +54,6 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     ctx = await createTestContext();
     const c = ctx;
 
-    const writer = await systemWriter(c);
-
     // Built through the store rather than the API, and it has to be: the
     // create route refuses this exact state for this exact type. The store
     // stays permissive so the archive restore can replay it, so it is the
@@ -79,7 +61,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     const trashed = await c.storage.items.create({
       type: SYSTEM_TYPE,
       state: "trashed",
-      properties: writer.properties(),
+      properties: systemProperties(),
       source: "test/lifecycle-graph",
     });
     expect(trashed.state).toBe("trashed");
@@ -247,7 +229,6 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
     ctx = await createTestContext();
     const c = ctx;
 
-    const writer = await systemWriter(c);
     const systemId = generateId();
     const noteId = generateId();
     const archive = await buildArchive(MANIFEST, [
@@ -266,7 +247,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
           id: systemId,
           type: SYSTEM_TYPE,
           state: "trashed",
-          properties: writer.properties(),
+          properties: systemProperties(),
         },
       }),
     ]);
@@ -301,7 +282,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
             id: archivedId,
             type: SYSTEM_TYPE,
             state: "archived",
-            properties: writer.properties(),
+            properties: systemProperties(),
           },
         }),
       ]),
@@ -342,7 +323,6 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
     ctx = await createTestContext();
     const c = ctx;
 
-    const writer = await systemWriter(c);
     const systemId = generateId();
     const noteId = generateId();
     const archive = await buildArchive(MANIFEST, [
@@ -359,7 +339,7 @@ describe("POST /admin/restore-archive — an archive names a state the type's li
           id: systemId,
           type: SYSTEM_TYPE,
           state: "active",
-          properties: writer.properties(),
+          properties: systemProperties(),
         },
       }),
     ]);

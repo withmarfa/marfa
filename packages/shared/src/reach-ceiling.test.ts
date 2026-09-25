@@ -20,9 +20,9 @@ describe("firstReachBeyondMap on the type axis", () => {
   it("refuses a wildcard that erases a denial the held map carries", () => {
     // The escalation this function exists for. The request reads as a no-op
     // and is a widening: the same wildcard, minus the entries beneath it.
-    const held = { "*": "read", "system.credential": "none" } as const;
+    const held = { "*": "read", "system.device": "none" } as const;
     expect(firstReachBeyondMap("type", held, { "*": "read" })).toBe(
-      "system.credential",
+      "system.device",
     );
   });
 
@@ -142,9 +142,10 @@ describe("firstReachBeyondMap on the leveled axes", () => {
   });
 
   it("keeps each axis to itself", () => {
-    // A type key of `metadata` used to project to the literal `metadata:write`
-    // and land in the metadata family, so a type entry conferred a metadata
-    // grant. Comparing maps per axis has nowhere for that to happen.
+    // Projected to a literal, a type key of `metadata` would read as
+    // `metadata:write` and land in the metadata family, so a type entry would
+    // confer a metadata grant. Comparing maps per axis has nowhere for that
+    // to happen.
     expect(firstReachBeyondMap("metadata", {}, { "*": "write" })).toBe("*");
   });
 });

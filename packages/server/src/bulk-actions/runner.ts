@@ -92,8 +92,8 @@ async function runTransitionChunk({
         // reserved-namespace narrowing keeps every `system.connection` out
         // of the match set this runner is handed: it admits a reserved type
         // only to a credential that may write it, and the one credential
-        // `mayWriteReserved` admits beyond the `system.activity` carve-out
-        // is the operator key, whose own type map is empty. So no id
+        // `mayWriteReserved` admits is the operator key, whose own type map
+        // is empty. So no id
         // reaching this loop can name a connection, and a refusal here
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
@@ -201,13 +201,11 @@ async function runPurgeChunk({
   // being purged, so nothing else tells its holder the relationship is
   // gone — which is why the cascade is announced per edge.
   //
-  // **The items too, and this door used to announce only the edges.** The
-  // reason given was that a purge was not in the contract and that the
-  // trash transition preceding it had already announced the item — but
-  // `item.deleted` says recoverable, and a client that acted on it holds a
-  // trashed row nothing will ever correct. One event per row, which is what
-  // the trash arm of this same runner already writes, so a purge is no
-  // noisier than the transition it follows.
+  // **The items too, not only the edges.** The trash transition before a
+  // purge announced `item.deleted`, which says recoverable, and a client
+  // that acted on it would hold a trashed row nothing ever corrects. One
+  // event per row, which is what the trash arm of this same runner already
+  // writes, so a purge is no noisier than the transition it follows.
   //
   // Edges first and rows after, the ordering the single-item door states.
   if (!chunk.failed) {

@@ -1,6 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
-  ALL_CONNECTOR_TYPES,
   ALL_EDGE_TYPES,
   ALL_SYSTEM_TYPES,
   ALL_TYPES,
@@ -28,7 +27,7 @@ function withoutProse(value: unknown, named = false): unknown {
 
 describe("the shipped shapes", () => {
   it("carry every shipped type as its registry entry reads, less the prose", () => {
-    const shipped = [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES];
+    const shipped = [...ALL_TYPES, ...ALL_SYSTEM_TYPES];
     expect(Object.keys(SHIPPED_TYPE_SHAPES).sort()).toEqual(
       shipped.map((t) => t.id).sort(),
     );
@@ -49,10 +48,6 @@ describe("the shipped shapes", () => {
     expect(SHIPPED_TYPE_SHAPES["core.task"].fields.description).toEqual({
       type: "string",
     });
-    expect(
-      ALL_SYSTEM_TYPES.find((t) => t.id === "system.credential")?.fields.label,
-    ).toBeDefined();
-    expect(SHIPPED_TYPE_SHAPES["system.credential"].fields.label).toBeDefined();
   });
 
   it("carry every shipped edge type the same way", () => {

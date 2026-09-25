@@ -15,7 +15,7 @@ import type { TestContext } from "../test-utils.js";
  * The tests below pin both halves of the union. The declared half is the fix;
  * the namespace half is the thing the fix must not break, because plenty of
  * subtrees have no parent type to declare (nothing declares a parent of
- * `google`, yet `google.*` plainly means the Google types).
+ * `acme`, yet `acme.*` plainly means Acme's types).
  */
 
 let ctx: TestContext | undefined;
@@ -141,9 +141,7 @@ describe("a subtree query reaches a child declared outside its namespace", () =>
   it("still resolves a namespace with no parent type to declare", async () => {
     ctx = await createTestContext();
     // `core.entity.person` declares `core.entity` as its parent AND sits in its
-    // namespace, so the two halves agree about it. What makes it the right
-    // witness is `google.youtube.video`, which declares no parent at all: the
-    // only thing that can return it from a `google.youtube` query is the name.
+    // namespace, so the two halves agree about it.
     await createNote(ctx, "core.note", "plain");
     const person = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,

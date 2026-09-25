@@ -8,12 +8,10 @@
  * Three sources feed the derivation:
  *
  * - The static type registry, for the shipped families: every `core.*` type
- *   lands in the read and write bundles, every publisher-tier registry type
- *   (the connector set) lands in the read-only connected bundle, and
- *   `system.*` stays out except the `system.connection:read` toggle.
+ *   lands in the read and write bundles, and `system.*` stays out except the
+ *   `system.connection:read` toggle.
  * - The registry's own publisher roots, for the namespace wildcards the
- *   scope allowlist admits (`google.*`, `readwise.*`, …) — previously a
- *   second hand list.
+ *   scope allowlist admits.
  * - The runtime `types` table, for the namespaces of types registered at
  *   runtime. Their roots extend the custom bundle with
  *   `<root>.*` wildcards so a custom type under any handle is offerable,
@@ -25,8 +23,8 @@
  * a literal outside it is narrowed away before consent can see one, and
  * being in it is not disclosure. The default bundles take the roots split
  * by provenance ({@link resolveRegisteredNamespaceRoots}), because what a
- * person is offered turns on whether a root is their own or a connected
- * service's mirror, which is a distinction the allowlist has no use for.
+ * person is offered turns on whether a root is their own or one nobody
+ * recorded, which is a distinction the allowlist has no use for.
  */
 import {
   TYPE_REGISTRY,
@@ -39,8 +37,8 @@ import type { Storage } from "../storage/interface.js";
 /**
  * The namespace roots whose wildcard scopes (`<root>.*:read|write`, plus the
  * `edge.<root>.*` pair) are requestable: `user` and `app` for the runtime
- * tiers, plus every publisher root the shipped registry occupies. Derived,
- * not enumerated — a new connector namespace joins by existing.
+ * tiers, plus every publisher root the registry occupies. Derived, not
+ * enumerated: a publisher root joins by existing.
  *
  * **Not a reader of the `types` table**, which is why it is not named for a
  * registration: it answers from `TYPE_REGISTRY`, the build's own set, and
@@ -71,19 +69,17 @@ export function deriveRequestableNamespaceRoots(): string[] {
 export interface RuntimeNamespaceRoots {
   /** Roots holding types the person registered themselves. */
   own: string[];
-  /** Roots holding types an installed connector published. */
-  connected: string[];
   /**
-   * Roots holding types whose provenance nobody recorded — a row whose
-   * `origin` a newer build wrote and this one does not recognize, or a
-   * hand-written archive line that carried none.
+   * Roots holding types whose provenance nobody recorded: an archive line
+   * that carried none, or one claiming an origin this build does not know.
    *
    * Offered as the person's own, because a root that lands in no bundle is
    * a root no application can be granted, and a legitimate backup of your
    * own types restoring into something ungrantable is a worse outcome than
-   * the one this guards against. Offered READ-ONLY, because the row may be
-   * a connected service's mirror and a third-party write would fork it from
-   * upstream. Read is the half both cases can live with.
+   * the one this guards against. Offered READ-ONLY, because nothing says
+   * the person wrote it, and a write wildcard is the one thing an archive
+   * line should not be able to hand itself. Read is the half both cases can
+   * live with.
    */
   ownReadOnly: string[];
 }
@@ -93,33 +89,15 @@ export async function resolveRegisteredNamespaceRoots(
 ): Promise<RuntimeNamespaceRoots> {
   const rows = await storage.types.listRegisteredWithProvenance();
   // Split by the stored fact, because the identifier cannot do it:
-  // `readwise.book` and `jonah.reading_item` are the same shape to a
-  // first-segment test, and one arrived with a connected service while
-  // the other is the person's own invention.
-  //
-  // Both are offered; what differs is how. A person's own root gets the
-  // read-and-write wildcard, because types they have not invented yet
-  // cannot be enumerated. A service's root is offered read-only, matching
-  // every other connected type: a connector's row is a faithful mirror
-  // of an upstream record, and a third-party write forks it.
-  //
-  // Neither is dropped. Removing a service's types from the person's
-  // bundle without putting them anywhere is not a narrowing, it is an
-  // omission — they would then sit in no default bundle at all, including
-  // the one named for them.
+  // `salvage.record` and `jonah.reading_item` are the same shape to a
+  // first-segment test, and one may have arrived on an archive line that
+  // said nothing about where it came from.
   return {
     own: namespaceRootsOf(
       rows.filter((row) => row.origin === "user").map((row) => row.schema.id),
     ),
-    connected: namespaceRootsOf(
-      rows
-        .filter((row) => row.origin === "connector")
-        .map((row) => row.schema.id),
-    ),
-    // A row whose provenance nobody recorded. Deliberately its own bucket
-    // rather than folded into either neighbor: folding into `own` is the
-    // silent upgrade to write that this split exists to prevent, and
-    // folding into `connected` claims a publisher no row names.
+    // Its own bucket rather than folded into `own`, which would be the
+    // silent upgrade to write that this split exists to prevent.
     ownReadOnly: namespaceRootsOf(
       rows
         .filter((row) => row.origin === "unknown")
@@ -165,8 +143,7 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
 /**
  * Build the default permission bundles from the registry.
  *
- * The shape and rationale carried over from the hand-written era, now held
- * by construction rather than by curation:
+ * The rules, held by construction rather than by curation:
  *
  * - `read` / `write` carry CONCRETE per-type scopes rather than a `core.*`
  *   wildcard. The OAuth provider only lets a consent grant narrow to scopes
@@ -177,33 +154,24 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  *   on the next connect.
  * - Everything in `system.*` stays out except `system.connection:read` (the
  *   "Connections" toggle), so an app reading "your content" cannot
- *   read security internals (credentials, devices, webhooks).
- * - Publisher-tier registry types (the connector set) are the person's
- *   own synced content, so `connected` covers them for READ. Writes stay
- *   request-only: a connector row is a vendor-faithful mirror, and a
- *   third-party write would fork it from upstream.
+ *   read the instance's own records (devices, apps, webhooks).
  * - `custom` is the one wildcard bundle, deliberately: types a person
  *   invents do not exist at request time, so no concrete list can name
  *   them. `user.*` always; `extraCustomNamespaces` (the runtime roots from
  *   {@link resolveRegisteredNamespaceRoots}) extend it so custom types under
- *   a claimed handle are offerable through the same toggle. Registry
- *   publisher roots are excluded here — `connected` already covers their
- *   types concretely, and their namespace wildcards stay requestable
+ *   a claimed handle are offerable through the same toggle. A publisher
+ *   root the registry itself occupies is excluded: its types are platform
+ *   rows rather than the person's, so its wildcard stays requestable
  *   without being part of the default grant.
  */
 export function buildDefaultPermissionBundles(
   runtimeRoots: Partial<RuntimeNamespaceRoots> = {},
 ): PermissionBundle[] {
   const extraCustomNamespaces = runtimeRoots.own ?? [];
-  const connectedNamespaces = runtimeRoots.connected ?? [];
   const readOnlyCustomNamespaces = runtimeRoots.ownReadOnly ?? [];
-  const coreTypes: string[] = [];
-  const connectedTypes: string[] = [];
-  for (const id of [...TYPE_REGISTRY.keys()].sort()) {
-    const tier = classifyNamespace(id);
-    if (tier === "core") coreTypes.push(id);
-    else if (tier !== "system") connectedTypes.push(id);
-  }
+  const coreTypes = [...TYPE_REGISTRY.keys()]
+    .filter((id) => classifyNamespace(id) === "core")
+    .sort();
 
   const registryRoots = new Set(deriveRequestableNamespaceRoots());
   const customWildcardRoots = [
@@ -218,8 +186,7 @@ export function buildDefaultPermissionBundles(
   // root holding both a type registered here and a restored one has earned
   // write through the first, and offering the same root twice at two levels
   // would put a contradiction on one screen. The stronger grant wins, which
-  // is the existing rule for a
-  // root that appears more than once.
+  // is the rule for a root that appears more than once.
   const writableRoots = new Set(customWildcardRoots);
   const readOnlyCustomRoots = [...new Set(readOnlyCustomNamespaces)]
     .filter(
@@ -244,24 +211,6 @@ export function buildDefaultPermissionBundles(
       label: "Write your content",
       description: "Add, edit, and organize what's on your server.",
       scopes: coreTypes.map((id) => `${id}:write`),
-      default_on: true,
-    },
-    {
-      id: "connected",
-      label: "Content from your connected services",
-      description:
-        "What your connectors have synced, like Google and Readwise.",
-      // Shipped publisher types are enumerated; locally installed
-      // connectors publish types this build has never heard of, so
-      // their roots ride as wildcards. Read-only either way, which is the
-      // rule for a mirror rather than a property of how it is named.
-      scopes: [
-        ...connectedTypes.map((id) => `${id}:read`),
-        ...[...new Set(connectedNamespaces)]
-          .filter((ns) => !registryRoots.has(ns) && !isReservedRoot(ns))
-          .sort()
-          .map((ns) => `${ns}.*:read`),
-      ],
       default_on: true,
     },
     {

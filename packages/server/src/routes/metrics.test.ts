@@ -41,16 +41,16 @@ describe("GET /metrics", () => {
     const body = (await res.json()) as {
       items: { total: unknown; by_state: Record<string, unknown> };
       blobs: { count: unknown; total_bytes: unknown };
-      types: { core: unknown; connector: unknown; registered: unknown };
+      types: { core: unknown; registered: unknown };
       keys: { total: unknown };
       webhooks: { total: unknown };
       uptime_seconds: unknown;
       cached_at: unknown;
     };
 
-    // Every counter must be a JS number. Regression guard against a driver
-    // `bigint` leaking through as a string (which historically produced a
-    // string-concat `items.total` like "01135389" in the reduce).
+    // Every counter must be a JS number: a driver `bigint` leaking through as
+    // a string would turn the reduce into a concatenation, an `items.total`
+    // like "01135389".
     expect(typeof body.items.total).toBe("number");
     for (const [state, count] of Object.entries(body.items.by_state)) {
       expect(typeof count, `items.by_state.${state} should be a number`).toBe(
@@ -60,7 +60,6 @@ describe("GET /metrics", () => {
     expect(typeof body.blobs.count).toBe("number");
     expect(typeof body.blobs.total_bytes).toBe("number");
     expect(typeof body.types.core).toBe("number");
-    expect(typeof body.types.connector).toBe("number");
     expect(typeof body.types.registered).toBe("number");
     expect(typeof body.keys.total).toBe("number");
     expect(typeof body.webhooks.total).toBe("number");

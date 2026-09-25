@@ -461,13 +461,7 @@ async function handleArchiveExport(
       typeLines.push(
         JSON.stringify({
           type: row.schema,
-          provenance: {
-            origin: row.origin,
-            ...(row.family !== undefined && { family: row.family }),
-            ...(row.owner_connector !== undefined && {
-              owner_connector: row.owner_connector,
-            }),
-          },
+          provenance: { origin: row.origin },
         }),
       );
       typeCount += 1;

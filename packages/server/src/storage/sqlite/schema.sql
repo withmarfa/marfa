@@ -508,7 +508,6 @@ CREATE TABLE IF NOT EXISTS `types` (
 	`schema` text NOT NULL,
 	`origin` text DEFAULT 'user' NOT NULL,
 	`family` text,
-	`owner_connector` text,
 	`created_at` text NOT NULL,
 	`updated_at` text NOT NULL
 );

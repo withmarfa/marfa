@@ -7,7 +7,6 @@ import {
   isValidEmail,
   isValidLanguageCode,
   isValidTypeIdentifier,
-  isValidConnectorIdentifier,
   isValidTypePattern,
   isValidHandle,
   isReservedHandle,
@@ -206,8 +205,8 @@ describe("isValidTypeIdentifier", () => {
   });
 
   it("accepts multi-segment publisher types (publisher.foo.bar)", () => {
-    expect(isValidTypeIdentifier("google.calendar.event")).toBe(true);
-    expect(isValidTypeIdentifier("google.tasks.task")).toBe(true);
+    expect(isValidTypeIdentifier("acme.calendar.event")).toBe(true);
+    expect(isValidTypeIdentifier("acme.tasks.task")).toBe(true);
     expect(isValidTypeIdentifier("acme.deeply.nested.type")).toBe(true);
   });
 
@@ -512,66 +511,12 @@ describe("isReservedHandle", () => {
   });
 });
 
-describe("isValidConnectorIdentifier", () => {
-  it("accepts handle-slash-name", () => {
-    expect(isValidConnectorIdentifier("readwise/reader")).toBe(true);
-    expect(isValidConnectorIdentifier("marfa/rss-watcher")).toBe(true);
-    expect(isValidConnectorIdentifier("google/calendar")).toBe(true);
-  });
-
-  it("accepts a dotted name half, so a family can carry a sub-namespace", () => {
-    expect(isValidConnectorIdentifier("acme/calendar.events")).toBe(true);
-  });
-
-  it("does not judge reserved words — that is registration's question", () => {
-    // `marfa` is a reserved root and the platform's own connectors live
-    // under `marfa/`, so refusing reserved values syntactically would refuse
-    // the shipped set. Whether a publisher may publish under a handle is
-    // answered at registration, where the credential is in hand.
-    expect(isValidConnectorIdentifier("marfa/podcasts")).toBe(true);
-    expect(isValidConnectorIdentifier("todoist/tasks")).toBe(true);
-  });
-
-  it("takes exactly one slash, never a path", () => {
-    expect(isValidConnectorIdentifier("acme/deep/name")).toBe(false);
-    expect(isValidConnectorIdentifier("/leading")).toBe(false);
-    expect(isValidConnectorIdentifier("trailing/")).toBe(false);
-  });
-
-  it("holds the handle to the handle grammar", () => {
-    expect(isValidConnectorIdentifier("ab/short-handle")).toBe(false);
-    expect(isValidConnectorIdentifier("do--uble/name")).toBe(false);
-    expect(isValidConnectorIdentifier("Upper/name")).toBe(false);
-    expect(isValidConnectorIdentifier("-lead/name")).toBe(false);
-  });
-
-  it("refuses the dot form the connectors shipped under before", () => {
-    // Every stored name carries the slash now, so a dotted value names a
-    // type. Accepting both was the migration window, and it is closed.
-    expect(isValidConnectorIdentifier("readwise.reader")).toBe(false);
-    expect(isValidConnectorIdentifier("withmarfa.inbox")).toBe(false);
-    expect(isValidConnectorIdentifier("core.note")).toBe(false);
-  });
-
-  it("refuses a bare word carrying neither separator", () => {
-    expect(isValidConnectorIdentifier("nodot")).toBe(false);
-  });
-
-  it("caps length and refuses non-strings", () => {
-    expect(isValidConnectorIdentifier(`acme/${"a".repeat(200)}`)).toBe(false);
-    expect(isValidConnectorIdentifier(undefined as unknown as string)).toBe(
-      false,
-    );
-  });
-});
-
-describe("the two grammars stay apart", () => {
-  it("a type identifier never admits a slash", () => {
-    // The whole reason connector names got their own validator: a slash
-    // reaching the type grammar would reach every scope literal and
+describe("a type identifier never admits a slash", () => {
+  it("in the identifier or the pattern", () => {
+    // A slash reaching the type grammar would reach every scope literal and
     // permission-map key, where it can only ever name something that does
     // not exist.
-    expect(isValidTypeIdentifier("readwise/reader")).toBe(false);
+    expect(isValidTypeIdentifier("acme/reader")).toBe(false);
     expect(isValidTypeIdentifier("core/note")).toBe(false);
     expect(isValidTypePattern("core/note")).toBe(false);
     expect(isValidTypePattern("core/media.*")).toBe(false);
@@ -620,15 +565,15 @@ describe("the reserved roots are derived rather than typed out", () => {
     }
   });
 
-  it("still admits a publisher handle the shipped registry occupies", () => {
+  it("still admits a publisher handle the registry occupies", () => {
     // Deliberate, and the reason is on `isReservedHandle`. A handle naming a
-    // shipped publisher root is a namespace collision rather than a grammar
-    // confusion, and reserving `google` while admitting `google-drive` is a
-    // half-protection rather than a defense. `google.calendar.event` also has
-    // to stay a valid identifier, which putting the root in this set would
-    // prevent.
-    expect(isValidHandle("google")).toBe(true);
-    expect(isValidTypeIdentifier("google.calendar.event")).toBe(true);
+    // publisher root the registry holds is a namespace collision rather than
+    // a grammar confusion, and reserving `acme` while admitting `acme-corp`
+    // is a half-protection rather than a defense. `acme.calendar.event` also
+    // has to stay a valid identifier, which putting the root in this set
+    // would prevent.
+    expect(isValidHandle("acme")).toBe(true);
+    expect(isValidTypeIdentifier("acme.calendar.event")).toBe(true);
   });
 });
 

@@ -310,7 +310,7 @@ describe("the instance", () => {
     const r = await operator.rawRequest<{
       items: { total: number; by_state: Record<string, number> };
       blobs: { count: number; total_bytes: number };
-      types: { core: number; connector: number; registered: number };
+      types: { core: number; registered: number };
       keys: { total: number };
       webhooks: { total: number };
       uptime_seconds: number;
@@ -328,9 +328,7 @@ describe("the instance", () => {
         "webhooks",
       ].sort(),
     );
-    expect(Object.keys(r.data.types).sort()).toEqual(
-      ["connector", "core", "registered"].sort(),
-    );
+    expect(Object.keys(r.data.types).sort()).toEqual(["core", "registered"]);
     expect(Object.keys(r.data.items).sort()).toEqual(["by_state", "total"]);
     expect(Object.keys(r.data.blobs).sort()).toEqual(["count", "total_bytes"]);
     expect(typeof r.data.types.registered).toBe("number");

@@ -113,17 +113,12 @@ interface Door {
   /**
    * The door's write, naming a type that is NOT the row's wherever it can.
    *
-   * **The misdeclaration is load-bearing and was nearly lost.** The
-   * claim-side gates run on the type the body names, and the row-side
-   * gates on the type the row is; naming the row's own type fires the
-   * claim-side one first and the write never reaches the gates these
-   * tests are measuring. Every refusal below then passes for the wrong
-   * reason, and this file stops speaking for the doors it names.
-   *
-   * That is not hypothetical. Changing these to `system.activity` — which
-   * looked like the honest fix once a misdeclaration became refusable —
-   * left `requireTypeAccess` and both `requireActivityAttribution` calls
-   * deletable on two doors with the whole file still green.
+   * **The misdeclaration is load-bearing.** The claim-side gates run on
+   * the type the body names, and the row-side gates on the type the row
+   * is; naming the row's own type fires the claim-side one first and the
+   * write never reaches the gates these tests are measuring. Every refusal
+   * below would then pass for the wrong reason, leaving `requireTypeAccess`
+   * deletable with the whole file still green.
    */
   write(w: DoorWrite): Promise<Response>;
   /**
@@ -195,10 +190,8 @@ const CANNOT_MISDECLARE: Record<string, string> = {
  * reason is the whole point. Asserting "refused, and the row is
  * unchanged" is satisfied by ANY refusal, so the day a new guard is added
  * upstream of the gates this file measures, every test here keeps passing
- * while the gates underneath can be deleted one by one. That is not
- * hypothetical: adding the type-claim guard did exactly that, and
- * `requireTypeAccess` and both `requireActivityAttribution` calls were
- * individually deletable with the whole file green.
+ * while the gates underneath can be deleted one by one, `requireTypeAccess`
+ * among them, with the whole file green.
  *
  * Unwraps `bulk_atomic_rollback`, which is the envelope the bulk door
  * puts a per-entry refusal in rather than a reason of its own.
