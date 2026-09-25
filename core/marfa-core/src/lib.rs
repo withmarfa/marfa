@@ -1841,15 +1841,21 @@ mod tests {
         // The functions that call the guard themselves, read from the
         // source. A helper is covered by the doors that reach it, which are
         // listed above.
-        let helpers = [
-            "transition_locally",
-            "tag_write",
-            "extension_write",
-            "with_upload",
-        ];
         let listed: Vec<&str> = refusals.iter().map(|(door, _)| *door).collect();
         let mut guarded = Vec::new();
-        for source in [include_str!("lib.rs"), include_str!("drain.rs")] {
+        for (source, helpers) in [
+            (
+                include_str!("lib.rs"),
+                &[
+                    "transition_locally",
+                    "tag_write",
+                    "extension_write",
+                    "with_upload",
+                ][..],
+            ),
+            // `drain::drain`, which `Core::drain` and `drain_paced` reach.
+            (include_str!("drain.rs"), &["drain"][..]),
+        ] {
             let mut current: Option<&str> = None;
             for line in source.lines() {
                 if line.starts_with("mod tests") {
@@ -1869,17 +1875,17 @@ mod tests {
                 if line.contains("refuse_unless_writer()")
                     && let Some(name) = current
                 {
-                    guarded.push(name);
+                    guarded.push((name, helpers));
                 }
             }
         }
+        // The witness that the scan reads the doors at all.
         assert!(
-            guarded.len() >= 20,
-            "the scan found {} guarded functions, so it is reading the wrong \
-             source rather than finding every door listed",
-            guarded.len()
+            guarded.iter().any(|(name, _)| *name == "create_item"),
+            "the scan did not find `create_item`, so it is reading the wrong \
+             source and the check below passes on nothing"
         );
-        for name in guarded {
+        for (name, helpers) in guarded {
             assert!(
                 listed.contains(&name) || helpers.contains(&name),
                 "{name} calls `refuse_unless_writer` and is not in the list \

@@ -54,8 +54,8 @@ pub struct Slice {
     pub tags: Vec<String>,
 }
 
-/// The prefixes the server reserves: no key may carry or claim a source
-/// under either, so a folder naming one would have every create refused.
+/// The prefixes the server reserves: no key is minted with a source under
+/// either, and no key may claim one.
 const RESERVED_SOURCES: [&str; 2] = ["connector:", "oauth:"];
 
 /// The longest source a key may claim, counted as the server counts it, in

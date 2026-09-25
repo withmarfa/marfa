@@ -661,12 +661,19 @@ describe("the ceiling, and releasing what it stopped", () => {
       expect((await device.drain()).ok).toBe(true);
     }
     const settled = await queueOf(harness);
-    const verdictOf = (id: string) =>
-      settled.find((row) => row.item_id === id)?.verdict;
+    const settledOf = (id: string) => {
+      const row = settled.find((queued) => queued.item_id === id);
+      return [row?.verdict, row?.reason];
+    };
+    // The blocked row's reason is the witness that the queue reports the
+    // column the dead row leaves empty.
     expect(
-      [verdictOf(HELD.id), verdictOf(DEAD.id)],
-      "the fixture did not reach one blocked row and one dead one, so the release below is about neither",
-    ).toEqual(["blocked", "dead"]);
+      [settledOf(HELD.id), settledOf(DEAD.id)],
+      "the fixture did not reach one row blocked for a spent key and one dead one carrying no reason, so the release below is about neither",
+    ).toEqual([
+      ["blocked", "key_spent"],
+      ["dead", null],
+    ]);
 
     const released = await device.release({ reason: "key_spent" });
     expect(released.ok, JSON.stringify(released)).toBe(true);

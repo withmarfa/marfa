@@ -16,9 +16,9 @@ function ignored(path: string): boolean {
 }
 
 /**
- * A local server's state folder holds its keys. The conformance scripts
- * write `.marfa-state/` by default and take `--state <dir>`, so a folder
- * with a suffix is one a run can make, and `git add -A` would commit it.
+ * A local server's state folder holds its keys. The boot scripts write a
+ * `.gitignore` into the folder whatever `--state` names it; this holds the
+ * root rule for a folder under the names in use made any other way.
  */
 describe("a local server's state folder", () => {
   it("is ignored under any name with the prefix, at any depth", () => {
