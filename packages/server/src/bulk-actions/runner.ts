@@ -374,8 +374,7 @@ async function runUpdatePropertiesChunk({
         if (before && getTypeSchema(before.type)) {
           const merged = mergeUpdateProperties(
             before.properties,
-            resolveIncomingProperties(before.type, input.patch, false) ?? {},
-            false,
+            resolveIncomingProperties(before.type, input.patch) ?? {},
             "merge",
           );
           const validation = validateProperties(before.type, merged);

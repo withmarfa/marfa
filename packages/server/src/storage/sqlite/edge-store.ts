@@ -286,7 +286,7 @@ export class SqliteEdgeStore implements EdgeStore {
       // not move backwards.
       const now = new Date().toISOString();
       const held = rowToEdge(row).properties;
-      const merged = mergeUpdateProperties(held, properties, false);
+      const merged = mergeUpdateProperties(held, properties);
       const [written] = await tx
         .update(edges)
         .set({

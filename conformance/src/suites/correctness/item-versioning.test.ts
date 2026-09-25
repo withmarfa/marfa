@@ -380,6 +380,81 @@ describe("item versioning", () => {
     expect(stale.data.item.properties.title).toBe("Server title");
   });
 
+  it("takes a replace at the current version as the item's whole properties, and refuses one that drops a required field", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Whole", body: "Original", notes: "Set" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const replaced = await client.updateItem(r.data.item.id, {
+      properties: { body: "Original" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect(replaced.data.item.properties).toEqual({ body: "Original" });
+    expect(replaced.data.item.version).toBe(2);
+
+    // The witness for the refusal: the same shape landed above with the
+    // required field in it.
+    const dropped = await client.updateItem(r.data.item.id, {
+      properties: { title: "No body" },
+      properties_mode: "replace",
+      version: 2,
+    });
+    expect(dropped.status).toBe(400);
+    expect(dropped.error?.error.code).toBe("invalid_properties");
+
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.version).toBe(2);
+    expect(fetched.data.item.properties).toEqual({ body: "Original" });
+  });
+
+  it("moves the type on a stale write as on a current one, and holds the merged properties to the destination", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Moving", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+
+    // A bookmark requires a url and has no body: the body the note had is
+    // cleared by the replace, the url arrives with it, and the title the
+    // other writer changed since is kept, because this write echoed it.
+    const moved = await client.updateItem(r.data.item.id, {
+      type: "core.bookmark",
+      retype: true,
+      properties: { url: "https://example.com/moved", title: "Moving" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.bookmark");
+    expect(moved.data.item.version).toBe(3);
+    expect(moved.data.item.properties).toEqual({
+      url: "https://example.com/moved",
+      title: "Server title",
+    });
+
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.bookmark");
+    expect(fetched.data.item.properties).not.toHaveProperty("body");
+  });
+
   it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
     // `versions.md` 11 applies a stale write's genuine changes over the
     // current row. Under `properties_mode: replace` the body is the whole of

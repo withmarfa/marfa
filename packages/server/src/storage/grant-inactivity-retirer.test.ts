@@ -254,14 +254,12 @@ describe("GrantInactivityRetirer.runOnce", () => {
     // null unless told to clear on it, so say so. Then move the approval
     // past the window.
     const grant = await onlyGrant(ctx);
-    const props: Record<string, unknown> = {
-      ...grant.properties,
-      last_used_at: null,
-    };
+    const props: Record<string, unknown> = { ...grant.properties };
+    Reflect.deleteProperty(props, "last_used_at");
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
     await ctx.storage.items.update(grant.id, {
       properties: props,
-      null_clears: true,
+      properties_mode: "replace",
     });
 
     const disabled = new GrantInactivityRetirer(ctx.storage, 0);

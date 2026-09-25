@@ -79,8 +79,12 @@ export interface CreateItemInput {
 
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
-  /** Whether `properties` lays over the row's or becomes them outright. */
+  /** Whether `properties` lays over the row's or is the whole of them, so a
+   *  field left out is cleared (`versions.md` 11 for a stale write). */
   properties_mode?: "merge" | "replace";
+  /** Move the item to this type, with `retype`. */
+  type?: string;
+  retype?: boolean;
   source_id?: string; // Mutable — updated value round-trips on subsequent GET
   tier?: "library" | "feed";
   /** The item's own time. One of the three fields of the row that are not

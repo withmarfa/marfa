@@ -898,8 +898,7 @@ async function processBulkItem(
         // re-sync sends, and it is the difference between predicting the
         // write and approximating it. `existing.type` rather than the destination for
         // the same reason: the store resolves against the row's own type.
-        resolveIncomingProperties(existing.type, raw.properties, false) ?? {},
-        false,
+        resolveIncomingProperties(existing.type, raw.properties) ?? {},
         "merge",
       );
       // The move stays unguarded, which is not an oversight: a destination

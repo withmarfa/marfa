@@ -76,9 +76,9 @@ function clearedKeys(input: {
 }): string[] {
   return (input.clearedProperties ?? []).filter(
     (key) =>
-      key in input.ancestorProperties &&
-      !(key in input.clientProperties) &&
-      key in input.currentProperties,
+      Object.hasOwn(input.ancestorProperties, key) &&
+      !Object.hasOwn(input.clientProperties, key) &&
+      Object.hasOwn(input.currentProperties, key),
   );
 }
 
@@ -149,9 +149,7 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * `tier`, `occurred_at` and `source_id` go through the same comparison and
  * appear in the same list. They are not properties and are not merged into
  * the properties object, but a device holding the version as its protection
- * is protected on every field of the row or on none of them: a check that
- * looked at properties alone let a stale write carrying a tier overwrite a
- * newer one with nothing refused.
+ * is protected on every field of the row or on none of them.
  */
 export function detectConflict(input: ConflictInput): ConflictResult {
   const { clientProperties, currentProperties, ancestorProperties } = input;
@@ -378,7 +376,7 @@ export function conflictedSiblingProperties(input: {
   const properties: Record<string, unknown> = { ...input.currentProperties };
   const cleared = new Set(input.clearedProperties ?? []);
   for (const field of input.keepBothFields) {
-    if (cleared.has(field) && !(field in input.clientProperties)) {
+    if (cleared.has(field) && !Object.hasOwn(input.clientProperties, field)) {
       Reflect.deleteProperty(properties, field);
     } else {
       properties[field] = input.clientProperties[field];
@@ -565,8 +563,7 @@ export const CONFLICTED_COPY_TAG = "conflicted-copy";
  *
  * A plain spread rather than a mutation, and absent entirely when nothing was
  * resolved: a key present with `undefined` serializes to a field a client can
- * see and cannot use, which is the shape of defect this envelope work exists
- * to remove.
+ * see and cannot use.
  */
 export function attachResolution(
   item: Item,

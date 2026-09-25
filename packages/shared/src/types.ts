@@ -103,19 +103,12 @@ export interface CreateItemInput {
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   /**
-   * Faithful-mirror semantics for an owning connector's re-sync: an
-   * explicit null deletes the key instead of reading as "leave unset".
-   * The upstream cleared the field, so the mirror must clear it too —
-   * otherwise a stale value survives every re-sync. Set by the server
-   * for owner writes to connector-owned rows; never caller-supplied.
-   */
-  null_clears?: boolean;
-  /**
    * Whether `properties` lays over the row's or becomes them.
    *
-   * Defaults to `merge`, which is what every existing caller means. A
-   * `replace` says the incoming set IS the item's properties, so a field the
-   * row holds and the write does not name is gone.
+   * Defaults to `merge`. A `replace` says the incoming set IS the caller's
+   * properties, so a field it leaves out is cleared: at the current version
+   * outright, at a stale one where nobody changed it since, and colliding
+   * where somebody did.
    *
    * It exists because the clearing behavior was otherwise reachable only by
    * naming every field to be removed, which puts the type's shape in every
@@ -145,13 +138,12 @@ export interface UpdateItemInput {
    * arrived since.
    */
   version: number;
-  /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
-   *  path for `properties`; flipping `tier` doesn't conflict (it's a single
-   *  metadata-axis flag, last-writer-wins by design). */
+  /** Toggle the tier (`library` ↔ `feed`). Compared against the version
+   *  named like a property, so a stale flip collides with one made since. */
   tier?: Tier;
   /** Override the item's own time. Settable on create; this field lets
    *  importers fix dates retroactively without rewriting properties.
-   *  Independent of the version-merge path. */
+   *  Compared against the version named like `tier`. */
   occurred_at?: string;
   /**
    * Repoint the item at a new natural-key identifier under the caller's

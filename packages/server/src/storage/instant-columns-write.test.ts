@@ -102,17 +102,15 @@ describe("the instant columns on the write path", () => {
   it("nulls the column when a write clears the property", async () => {
     // The failure this pins is the quiet one: a merge that leaves the
     // old column behind puts the event back on a calendar it is no
-    // longer on. Clearing a field is the faithful-mirror path an
-    // owning connector's re-sync takes, so the store is driven
-    // directly — an ordinary PATCH cannot reach it (see below).
+    // longer on. A replace that leaves the fields out clears them.
     const id = await createItem({
       title: "Undated",
       starts_at: "2026-04-05T09:00:00.000Z",
       ends_at: "2026-04-05T10:00:00.000Z",
     });
     await ctx.storage.items.update(id, {
-      properties: { starts_at: null, ends_at: null },
-      null_clears: true,
+      properties: { title: "Undated" },
+      properties_mode: "replace",
     });
     expect(await readColumns(ctx.storage, id)).toEqual({
       starts_at: null,

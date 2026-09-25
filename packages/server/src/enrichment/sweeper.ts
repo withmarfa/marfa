@@ -72,8 +72,7 @@ function validationRefusal(
   if (!getTypeSchema(typeId)) return null;
   const merged = mergeUpdateProperties(
     current,
-    resolveIncomingProperties(typeId, patch, false) ?? {},
-    false,
+    resolveIncomingProperties(typeId, patch) ?? {},
     "merge",
   );
   const result = validateProperties(typeId, merged);

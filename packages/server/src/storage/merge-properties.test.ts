@@ -1,7 +1,7 @@
 /**
- * The merge rule three write paths depend on. Two of them had already drifted
- * apart, so the cases below pin the parts that differ by more than style: what
- * a null means with and without faithful-mirror semantics.
+ * The merge rule three write paths depend on. The cases below pin the parts
+ * that differ by more than style: what a null means, and what a replace
+ * leaves out.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
@@ -30,56 +30,52 @@ afterAll(() => {
 describe("an ordinary update", () => {
   it("treats a null on an optional field as leaving it unset", () => {
     // `body` is what `core.note` requires; `title` is optional.
-    const incoming = resolveIncomingProperties(
-      "core.note",
-      { body: "kept", title: null },
-      false,
-    );
+    const incoming = resolveIncomingProperties("core.note", {
+      body: "kept",
+      title: null,
+    });
     expect(incoming).toEqual({ body: "kept" });
     expect(
-      mergeUpdateProperties(
-        { body: "old", title: "kept too" },
-        incoming,
-        false,
-      ),
+      mergeUpdateProperties({ body: "old", title: "kept too" }, incoming),
     ).toEqual({ body: "kept", title: "kept too" });
   });
 
   it("keeps a null on a required field so validation can still refuse it", () => {
-    const incoming = resolveIncomingProperties(
-      "core.note",
-      { body: null },
-      false,
-    );
+    const incoming = resolveIncomingProperties("core.note", { body: null });
     expect(incoming).toEqual({ body: null });
   });
 
   it("resolves a type registered at runtime, not only a shipped one", () => {
-    // The store once missed the runtime overlay, so the same null was
-    // written as null on a runtime-registered type.
-    expect(
-      resolveIncomingProperties(CUSTOM_TYPE, { note: null }, false),
-    ).toEqual({});
-    expect(
-      resolveIncomingProperties(CUSTOM_TYPE, { name: null }, false),
-    ).toEqual({ name: null });
+    expect(resolveIncomingProperties(CUSTOM_TYPE, { note: null })).toEqual({});
+    expect(resolveIncomingProperties(CUSTOM_TYPE, { name: null })).toEqual({
+      name: null,
+    });
   });
 });
 
-describe("an owning connector's re-sync", () => {
-  it("clears the keys the upstream cleared, and only those", () => {
-    const incoming = resolveIncomingProperties(
-      "core.note",
-      { body: "new", title: null },
-      true,
-    );
+describe("a replace", () => {
+  it("clears the keys the body leaves out, and only those", () => {
+    const incoming = resolveIncomingProperties("core.note", {
+      body: "new",
+      notes: "kept",
+    });
     expect(
       mergeUpdateProperties(
         { body: "old", title: "gone", notes: "kept" },
         incoming,
-        true,
+        "replace",
       ),
     ).toEqual({ body: "new", notes: "kept" });
+  });
+
+  it("reads a null as a key left out, so the two ways of clearing agree", () => {
+    expect(
+      mergeUpdateProperties(
+        { body: "old", title: "gone" },
+        { body: "new", title: null },
+        "replace",
+      ),
+    ).toEqual({ body: "new" });
   });
 
   it("leaves the row alone when the update names no properties", () => {
@@ -87,8 +83,8 @@ describe("an owning connector's re-sync", () => {
     expect(
       mergeUpdateProperties(
         current,
-        resolveIncomingProperties("core.note", undefined, true),
-        true,
+        resolveIncomingProperties("core.note", undefined),
+        "replace",
       ),
     ).toEqual(current);
   });

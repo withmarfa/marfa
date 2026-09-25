@@ -663,7 +663,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, at a stale version as at the current one — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -703,11 +703,12 @@ const updateItemRoute = createRoute({
             type: z.string().optional(),
             /** Whether `properties` lays over the item's or becomes them.
              *  Defaults to `merge`, so a write that names no mode can never
-             *  remove a property it did not mention. A `replace` says the set sent IS the item's
-             *  properties, so a field the row holds and this write does not
-             *  name is removed. The result is validated either way, so a
-             *  replace dropping a required field is refused rather than
-             *  written. */
+             *  remove a property it did not mention. A `replace` says the
+             *  set sent IS the caller's properties, so a field it leaves out
+             *  is cleared: at the current version outright, at a stale one
+             *  where nobody changed it since, and colliding where somebody
+             *  did. The result is validated either way, so a replace
+             *  dropping a required field is refused rather than written. */
             properties_mode: z.enum(["merge", "replace"]).optional(),
             /** Move the item to the `type` named above.
              *
@@ -731,11 +732,12 @@ const updateItemRoute = createRoute({
               .describe(
                 "The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since.",
               ),
-            /** Toggle the tier (`library` ↔ `feed`). Independent of the
-             *  properties merge path — last-writer-wins. */
+            /** Toggle the tier (`library` ↔ `feed`). Compared against the
+             *  version named like a property, so a stale flip collides with
+             *  one made since. */
             tier: TierEnum.optional(),
-            /** Override the item's own time (ISO 8601).
-             *  Last-writer-wins like `tier`. */
+            /** Override the item's own time (ISO 8601). Compared against
+             *  the version named like `tier`. */
             occurred_at: z.string().optional(),
             /** Repoint at a new natural-key identifier under the item's
              *  own `source`, which this door never moves. The
@@ -1530,21 +1532,18 @@ export function itemRoutes(storage: Storage) {
         // so the two doors cannot drift apart on it.
         requireDeclaredTypeMatches(type, existing);
 
-        // This branch is the one where a null removes a value rather than
-        // setting it, so without validation a re-sync sending a null title
-        // would delete a field `core.event` declares required, leaving a
-        // row that could not have been created in the state it sat in,
-        // with a 200 and no signal. Judged on the merged result rather than
-        // the body, mirroring the merge the storage layer performs: a body
-        // naming no required field at all can still be what removes one.
+        // Judged on the merged result rather than the body, mirroring the
+        // merge the storage layer performs: a body naming no required field
+        // at all can still be what removes one, and a row that could not
+        // have been created in the state it sat in would otherwise land
+        // with a 200 and no signal.
         if (
           body.properties !== undefined &&
           getTypeSchema(existing.type) !== undefined
         ) {
           const merged = mergeUpdateProperties(
             existing.properties,
-            resolveIncomingProperties(existing.type, properties, false),
-            false,
+            resolveIncomingProperties(existing.type, properties),
             // "merge", because this branch is the natural-key upsert on
             // `POST /items` and that route offers no mode. Stated rather
             // than defaulted silently, so the prediction is visibly tied to
@@ -2379,10 +2378,12 @@ export function itemRoutes(storage: Storage) {
         c.get("apiKey"),
       );
       // Through the shared helper rather than a shallow spread of its own,
-      // because this has to predict exactly what the store will write: a
-      // copy that validated the merged set while the store wrote the
-      // replaced one would pass a write dropping a required field on the
-      // strength of the value it was removing.
+      // because this has to predict what the store writes at the current
+      // version: a copy that validated the merged set while the store wrote
+      // the replaced one would pass a write dropping a required field on
+      // the strength of the value it was removing. At a stale version the
+      // store merges against the ancestor instead, and every required field
+      // is then either in this body or already on the row.
       // The type the row ends up as, which is what the resulting
       // properties have to satisfy. Validating against the type being left
       // would admit a move whose result the destination calls invalid,
@@ -2413,8 +2414,7 @@ export function itemRoutes(storage: Storage) {
       if (undeclared) throw undeclared;
       const merged = mergeUpdateProperties(
         item.properties,
-        resolveIncomingProperties(resultingType, body.properties, false),
-        false,
+        resolveIncomingProperties(resultingType, body.properties),
         body.properties_mode ?? "merge",
       );
       if (getTypeSchema(resultingType)) {
