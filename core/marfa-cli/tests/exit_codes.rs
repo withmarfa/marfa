@@ -3,12 +3,12 @@
 //! server. A server's own refusal (exit 1 with the server's code) needs one
 //! and is held by the scenario suite under `conformance/`.
 
-use std::path::PathBuf;
-use std::process::Command;
+mod isolated;
 
-fn marfa() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_marfa"))
-}
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use isolated::Isolated;
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("marfa-exit-codes-{}-{name}", std::process::id()));
@@ -16,19 +16,18 @@ fn scratch(name: &str) -> PathBuf {
     dir.join("store.sqlite")
 }
 
-/// Runs the binary with no server or credential in the environment, so the
-/// answer comes from the arguments alone.
+/// Runs the binary with no server or credential in the environment and a
+/// keychain of its own that holds nothing, so the answer comes from the
+/// arguments alone.
 fn run(args: &[&str]) -> (i32, String, String) {
     run_with(args, &[])
 }
 
 fn run_with(args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
-    let mut command = marfa();
-    command
-        .args(args)
-        .env_remove("MARFA_API_URL")
-        .env_remove("MARFA_API_KEY")
-        .env_remove("MARFA_DB");
+    static RUNS: AtomicUsize = AtomicUsize::new(0);
+    let keychain = Isolated::new(&format!("exit-{}", RUNS.fetch_add(1, Ordering::Relaxed)));
+    let mut command = keychain.marfa();
+    command.args(args);
     for (name, value) in env {
         command.env(name, value);
     }
@@ -45,17 +44,6 @@ fn read_envelope(stderr: &str) -> serde_json::Value {
         .unwrap_or_else(|error| panic!("stderr is not one JSON object: {error}\n{stderr}"))
 }
 
-/// Whether this machine's keychain names a current server, which the
-/// binary consults when nothing else names one: the cases that expect
-/// `no_server` cannot be held on a machine where a kept credential answers.
-/// The built binary reads the real keychain (the per-run test service is
-/// the unit tests' alone), so on a developer's machine the verdict adapts
-/// to what they have kept.
-fn keychain_names_a_server() -> bool {
-    let (code, _, stderr) = run(&["--json", "status"]);
-    code != 2 || !stderr.contains("no_server")
-}
-
 #[test]
 fn a_usage_refusal_leaves_by_two() {
     let (code, stdout, stderr) = run(&["--json", "device", "queue"]);
@@ -66,17 +54,12 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(envelope["exit"], 2);
 
     let store = scratch("usage");
-    if keychain_names_a_server() {
-        eprintln!("skipped the no_server cases: this machine's keychain names a server");
-    } else {
-        let (code, _, stderr) =
-            run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
-        assert_eq!(code, 2, "{stderr}");
-        assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
-        let (code, _, stderr) = run(&["--json", "items", "list"]);
-        assert_eq!(code, 2, "{stderr}");
-        assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
-    }
+    let (code, _, stderr) = run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
+    let (code, _, stderr) = run(&["--json", "items", "list"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
     // The table needs no server at all.
     let (code, stdout, _) = run(&["--json", "operations"]);
     assert_eq!(code, 0);

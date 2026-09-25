@@ -30,3 +30,9 @@ libc = "0.2"
 url = "2"
 # The generated client's HTTP stack, which every call the binary makes rides on.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+
+# A keychain file by its path (`MARFA_KEYCHAIN`, and a test run's own): the
+# keyring crate reaches only the user's keychain.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+

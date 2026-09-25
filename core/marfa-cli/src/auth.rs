@@ -579,18 +579,6 @@ mod tests {
         origin
     }
 
-    /// Keeps a token for a test, or says why the keychain did not answer.
-    fn keep_or_skip(origin: &str, kept: &Kept) -> bool {
-        match credentials::keep(origin, kept) {
-            Ok(()) => true,
-            Err(CliError::NoKeychain(reason)) => {
-                credentials::skipped(&reason);
-                false
-            }
-            Err(error) => panic!("{error}"),
-        }
-    }
-
     #[test]
     fn a_stale_token_is_one_within_a_minute_of_its_end_that_can_be_refreshed() {
         let door = "http://door.invalid/token";
@@ -745,8 +733,8 @@ mod tests {
         assert!(sent[0].body.contains("device_code=dc"), "{}", sent[0].body);
     }
 
-    /// The refresh, through the real keychain, against a door on a local
-    /// port: the rotated pair is kept, and the refresh token the server
+    /// The refresh, through the test run's keychain, against a door on a
+    /// local port: the rotated pair is kept, and the refresh token the server
     /// sent replaces the one that was spent, sent once.
     #[test]
     fn a_refresh_keeps_the_rotated_pair_and_sends_the_spent_token_once() {
@@ -756,9 +744,7 @@ mod tests {
         );
         let origin = door.url.clone();
         let _keychain = credentials::hold(&origin);
-        if !keep_or_skip(&origin, &stale_token(&endpoint)) {
-            return;
-        }
+        credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
         let outcome = refresh(&origin, None);
         let received = door.received();
         assert_eq!(received.len(), 2);
@@ -813,9 +799,7 @@ mod tests {
             Some(now_seconds() + 3600),
             Some("marfa_rt_fresh"),
         );
-        if !keep_or_skip(&origin, &fresh) {
-            return;
-        }
+        credentials::keep(&origin, &fresh).unwrap();
         assert_eq!(
             refresh(&origin, None).unwrap(),
             fresh,
@@ -854,9 +838,7 @@ mod tests {
         let endpoint = format!("{}/token", door.url);
         let origin = door.url.clone();
         let _keychain = credentials::hold(&origin);
-        if !keep_or_skip(&origin, &stale_token(&endpoint)) {
-            return;
-        }
+        credentials::keep(&origin, &stale_token(&endpoint)).unwrap();
         let outcome = refresh(&origin, None);
         assert!(
             matches!(outcome, Err(CliError::Refused { status: 429, .. })),

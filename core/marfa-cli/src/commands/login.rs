@@ -301,20 +301,13 @@ mod tests {
             .origin()
             .to_string();
         let _keychain = credentials::hold(&origin);
-        match credentials::keep(
+        credentials::keep(
             &origin,
             &Kept::Key {
                 key: "marfa_k1_kept".into(),
             },
-        ) {
-            Ok(()) => {}
-            Err(CliError::NoKeychain(reason)) => {
-                credentials::skipped(&reason);
-                drop(door);
-                return;
-            }
-            Err(error) => panic!("{error}"),
-        }
+        )
+        .unwrap();
         let named = Named {
             url: Some(door.url.clone()),
             key: None,

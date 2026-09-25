@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import type { TestContext } from "../../client/types.js";
+import { keychainEnv } from "../../utils/keychain.js";
 import { createTestContext } from "../../utils/setup.js";
 
 /**
@@ -81,7 +82,7 @@ export class Cli {
     }
     env.MARFA_API_URL = this.url;
     if (this.key !== undefined) env.MARFA_API_KEY = this.key;
-    return env;
+    return { ...env, ...keychainEnv() };
   }
 
   /** Runs the binary and answers whatever it did, refusal or not. */

@@ -178,7 +178,7 @@ impl Remote {
     }
 
     /// A remote holding a keychain entry, for the tests of the refresh
-    /// path, which `resolve` reaches only through the real keychain.
+    /// path, without the flag and the environment `resolve` reads first.
     #[cfg(test)]
     pub(crate) fn holding(url: &str, kept: Kept) -> Result<Remote, CliError> {
         let http = Transport::new(url, Some(kept.bearer()))?;
@@ -672,14 +672,7 @@ mod tests {
         // the door's.
         let origin = Transport::new(&door.url, None).unwrap().origin();
         let _keychain = credentials::hold(&origin);
-        match credentials::keep(&origin, &kept) {
-            Ok(()) => {}
-            Err(CliError::NoKeychain(reason)) => {
-                credentials::skipped(&reason);
-                return;
-            }
-            Err(error) => panic!("{error}"),
-        }
+        credentials::keep(&origin, &kept).unwrap();
         let remote = Remote::holding(&door.url, kept).unwrap();
         let listed = remote.json(&Request::get(&["items"])).unwrap();
         assert_eq!(listed["data"], serde_json::json!([]));
@@ -754,14 +747,7 @@ mod tests {
         };
         let origin = Transport::new(&door.url, None).unwrap().origin();
         let _keychain = credentials::hold(&origin);
-        match credentials::keep(&origin, &kept) {
-            Ok(()) => {}
-            Err(CliError::NoKeychain(reason)) => {
-                credentials::skipped(&reason);
-                return;
-            }
-            Err(error) => panic!("{error}"),
-        }
+        credentials::keep(&origin, &kept).unwrap();
         let remote = Remote::holding(&door.url, kept).unwrap();
         match remote.json(&Request::get(&["items"])) {
             Err(CliError::ContractMismatch { served, .. }) => {

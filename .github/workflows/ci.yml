@@ -106,27 +106,14 @@ jobs:
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      # The keychain tests skip, saying so, where no keychain answers. Where
-      # the probe finds one that does, they are required for the rest of the
-      # job, so a keychain that stops answering between the probe and the
-      # tests fails the job; one that answers no probe at all is named in the
-      # log and its tests skip.
-      - name: Say whether the keychain answers
-        run: |
-          if security add-generic-password -a probe -s marfa-keychain-probe -w probe -U; then
-            echo "MARFA_KEYCHAIN_REQUIRED=1" >> "$GITHUB_ENV"
-            echo "the keychain answers; its tests are required"
-          else
-            echo "the keychain does not answer; its tests will skip and say so"
-          fi
-          security delete-generic-password -a probe -s marfa-keychain-probe >/dev/null 2>&1 || true
-
       - name: Check the core workspace
         working-directory: core
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
-          cargo test --locked --workspace --exclude marfa-client
+          # The tests keep in keychain files of their own; the login
+          # keychain holds after them what it held before.
+          scripts/login-keychain-unchanged.sh cargo test --locked --workspace --exclude marfa-client
       # Its own workspace, so its own three commands: cargo-swift refuses to
       # name a package inside a multi-crate workspace.
       - name: Check the Swift FFI crate
@@ -222,7 +209,7 @@ jobs:
 
       - name: Run the default selection
         working-directory: conformance
-        run: pnpm test:conformance
+        run: ../core/scripts/login-keychain-unchanged.sh pnpm test:conformance
 
       # Reads the log of the server the selection just drove, so it runs
       # here rather than as a job of its own and before the stop, which
@@ -309,7 +296,7 @@ jobs:
 
       - name: Run the scenarios
         working-directory: conformance
-        run: pnpm test:cli
+        run: ../core/scripts/login-keychain-unchanged.sh pnpm test:cli
 
       - name: Hold every status observed to its declaration
         working-directory: conformance
