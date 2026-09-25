@@ -295,6 +295,14 @@ mod file {
                     self.path.display()
                 )));
             }
+            // Opening a path makes no file of it, and an item added to a
+            // keychain that is not there lands in the person's default one.
+            if !self.path.is_file() {
+                return Err(CliError::NoKeychain(format!(
+                    "{}: no keychain file is there",
+                    self.path.display()
+                )));
+            }
             let mut keychain =
                 SecKeychain::open(&self.path).map_err(|error| self.refused(error))?;
             if let Some(password) = &self.password {
@@ -484,6 +492,41 @@ mod tests {
         assert!(!forget(&origin).unwrap());
         assert!(keychain().delete(&format!("{CLIENT}{origin}")).unwrap());
         assert_eq!(client_id(&origin).unwrap(), None);
+    }
+
+    /// A keychain file that is not there is refused before any call, since
+    /// an item added to one lands in the person's default keychain.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_keychain_file_that_is_not_there_is_refused() {
+        let missing = file::File::named(
+            std::env::temp_dir().join(format!("marfa-no-keychain-{}", std::process::id())),
+            None,
+        );
+        assert!(matches!(
+            missing.opened(),
+            Err(CliError::NoKeychain(message)) if message.contains("no keychain file")
+        ));
+        // The witness: the run's own file, which is there, opens.
+        assert!(isolated::file().opened().is_ok());
+    }
+
+    /// Forgetting one origin leaves another that was made current since.
+    #[test]
+    fn forgetting_an_origin_leaves_another_current() {
+        let a = format!("https://a.invalid:{}", std::process::id());
+        let b = format!("https://b.invalid:{}", std::process::id());
+        let _keychain = hold(&a);
+        let kept = Kept::Key {
+            key: "marfa_k1_forget".into(),
+        };
+        keep(&a, &kept).unwrap();
+        keep(&b, &kept).unwrap();
+        assert!(forget(&a).unwrap());
+        assert_eq!(current().unwrap().as_deref(), Some(b.as_str()));
+        // The witness: forgetting the current one clears it.
+        assert!(forget(&b).unwrap());
+        assert_eq!(current().unwrap(), None);
     }
 
     /// What a test keeps is in the run's own keychain, under the service

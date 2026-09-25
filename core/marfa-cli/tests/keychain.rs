@@ -43,10 +43,32 @@ fn server() -> (String, Receiver<Option<String>>) {
     (url, bearers)
 }
 
+/// Refuses to go on unless the binary keeps where `MARFA_KEYCHAIN` says:
+/// named a file that is not there, it refuses even to forget, where a
+/// binary that ignored the name would answer from the person's keychain.
+/// Nothing is written either way, so a binary that ignores the name fails
+/// here before any test keeps a key.
+fn the_named_keychain_is_the_one_used(keychain: &Isolated, url: &str) {
+    let forgot = keychain
+        .marfa()
+        .env("MARFA_KEYCHAIN", keychain.missing())
+        .args(["--json", "--url", url, "keys", "forget"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        forgot.status.code(),
+        Some(4),
+        "the binary did not keep to MARFA_KEYCHAIN: {}",
+        String::from_utf8_lossy(&forgot.stderr)
+    );
+    assert!(String::from_utf8_lossy(&forgot.stderr).contains("no_keychain"));
+}
+
 #[test]
 fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
     let keychain = Isolated::new("keychain");
     let (url, _) = server();
+    the_named_keychain_is_the_one_used(&keychain, &url);
     let kept = keychain
         .marfa()
         .args([
@@ -91,12 +113,14 @@ fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
 }
 
 /// With the server and the key both in the environment, the key sent is the
-/// environment's, whatever the keychain keeps for that server; the witness
-/// is the kept key sent where the environment names only the server.
+/// environment's, whatever the keychain keeps for that server, and the
+/// server kept as current hears nothing; the witness is the kept key sent
+/// where the environment names only the server.
 #[test]
 fn the_environment_wins_over_a_kept_key() {
     let keychain = Isolated::new("environment");
     let (url, bearers) = server();
+    the_named_keychain_is_the_one_used(&keychain, &url);
     let kept = keychain
         .marfa()
         .args([
@@ -136,6 +160,24 @@ fn the_environment_wins_over_a_kept_key() {
             .all(|bearer| bearer.as_deref() == Some("marfa_k1_environment")),
         "{sent:?}"
     );
+
+    // Another server named in the environment is the one reached, never the
+    // one the keychain made current.
+    let (elsewhere, heard) = server();
+    let listed = keychain
+        .marfa()
+        .args(["--json", "items", "list"])
+        .env("MARFA_API_URL", &elsewhere)
+        .env("MARFA_API_KEY", "marfa_k1_environment")
+        .output()
+        .unwrap();
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert!(heard.try_iter().next().is_some());
+    assert_eq!(bearers.try_iter().count(), 0, "the kept server was reached");
 
     let listed = keychain
         .marfa()

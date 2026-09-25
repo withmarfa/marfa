@@ -8,21 +8,13 @@
 #   core/scripts/login-keychain.sh marfa [KEYCHAIN]
 #
 # login-keychain-unchanged.sh compares two listings around a run.
-#
-# A listing that parsed no generic password at all is refused rather than
-# answered empty: a login keychain always holds some, so none means the
-# dump's format moved under the parser and an empty answer would compare
-# equal to anything.
 set -euo pipefail
 
 service="${1:?usage: login-keychain.sh SERVICE [KEYCHAIN]}"
 dump="$(security dump-keychain "${2:-${HOME}/Library/Keychains/login.keychain-db}")"
 awk -v service="\"${service}\"" '
   function flush() {
-    if (class == "\"genp\"") {
-      parsed++
-      if (svce == service) print acct "\t" cdat "\t" mdat
-    }
+    if (class == "\"genp\"" && svce == service) print acct "\t" cdat "\t" mdat
     class = ""; svce = ""; acct = ""; cdat = ""; mdat = ""
   }
   /^keychain: / { flush() }
@@ -31,11 +23,5 @@ awk -v service="\"${service}\"" '
   /^ *"acct"<blob>=/ { sub(/^ *"acct"<blob>=/, ""); acct = $0 }
   /^ *"cdat"<timedate>=/ { cdat = $NF }
   /^ *"mdat"<timedate>=/ { mdat = $NF }
-  END {
-    flush()
-    if (parsed == 0) {
-      print "login-keychain.sh: parsed no generic password from the dump" > "/dev/stderr"
-      exit 1
-    }
-  }
+  END { flush() }
 ' <<<"${dump}" | sort

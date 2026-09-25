@@ -69,6 +69,11 @@ impl Isolated {
         command
     }
 
+    /// A keychain file name in this test's folder with nothing there.
+    pub fn missing(&self) -> PathBuf {
+        self.folder.join("missing.keychain-db")
+    }
+
     #[cfg(target_os = "macos")]
     fn opened(&self) -> security_framework::os::macos::keychain::SecKeychain {
         let mut keychain =
