@@ -498,15 +498,16 @@ export function eventRoutes(
            * `id:` is actually written — a frame the filter withheld moved
            * no client cursor.
            *
-           * The last id written is also the highest: the log issues ids
-           * in commit order, and this stream sends frames in that order,
-           * edge frames beside item frames, so a reader resuming from this
-           * value misses nothing. The one exception is a stored row the
-           * replay could not decode, whose live copy goes out after the
-           * replay under its lower id (`events-replay-dedupe.test.ts`);
-           * a reader resuming from the higher value has already received
-           * it. `events-live-order.test.ts` holds the stream to the order
-           * and `sync/resume.test.ts` a resuming reader.
+           * The log issues ids in commit order and this stream sends
+           * frames in that order, edge frames beside item frames, so the
+           * last id written is the highest and a reader resuming from it
+           * misses nothing. The one exception is a stored row the replay
+           * could not decode, whose live copy goes out after the replay
+           * under its lower id (`events-replay-dedupe.test.ts`): then
+           * this is that lower id, and a reader resuming from it repeats
+           * the replayed frames above it and still misses nothing.
+           * `events-live-order.test.ts` holds the stream to the order and
+           * `sync/resume.test.ts` a resuming reader.
            */
           let lastSentId: bigint | null = null;
 

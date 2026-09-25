@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import type { SseEvent } from "../../utils/sse.js";
 import {
   createTestContext,
   trackItem,
@@ -84,31 +85,41 @@ describe("the stream announces where it starts", () => {
     // would replay it and fail here.
     const before = await makeNote("announced-cursor-before");
 
+    const isAnnouncement = (e: SseEvent): boolean =>
+      !MUTATION_EVENT_NAMES.has(e.event) && e.event !== "catchup_too_old";
+    const PROBE_BODY = "announced-cursor-probe";
+    const isProbe = (e: SseEvent): boolean =>
+      (e.data as { item?: { properties?: { body?: unknown } } })?.item
+        ?.properties?.body === PROBE_BODY;
+
     const opened = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      // A write made after the subscription opens, and what turns the absence
-      // below into an observation. An announcement names the point the stream
-      // starts from, so it can only precede the first event that stream
-      // delivers; once this write's frame has arrived, an announcement that
-      // was going to come has come. Reading to a quiet window instead would
-      // report a missing announcement for a stream that was merely slow, and
-      // it is also the control: a stream that never delivers this fails here
-      // rather than answering.
-      const probe = await makeNote("announced-cursor-probe");
+      // The probe is written the moment the announcement arrives, from
+      // inside the read, so it is the first write after the announced
+      // position by observation rather than by a pause: a server slow to
+      // read its head would otherwise see the probe land before the head,
+      // at or below the cursor it then announces. The probe's frame is
+      // recognized by its body, because it can arrive before the write's
+      // own response does. A stream that never announces never writes the
+      // probe and fails here on the wait, which is the control.
+      let writing: Promise<string> | undefined;
       const { events } = await collectUntil(
         stream,
-        (evts) => itemIds(evts).has(probe),
-        `item.created for the probe write ${probe}`,
+        (evts) => {
+          if (writing === undefined && evts.some(isAnnouncement)) {
+            writing = makeNote(PROBE_BODY);
+          }
+          return evts.some(isProbe);
+        },
+        "a frame announcing the stream's position, then item.created for the probe written after it",
         context.signal,
       );
-      const frame = events.find(
-        (e) =>
-          !MUTATION_EVENT_NAMES.has(e.event) && e.event !== "catchup_too_old",
-      );
+      const frame = events.find(isAnnouncement);
       expect(
         frame,
         `a fresh connection sent no frame announcing its position, so a client cannot say which point its hydrating read is relative to (saw: ${events.map((e) => e.event).join(", ") || "no typed events"})`,
       ).toBeDefined();
+      expect(writing, "the probe was never written").toBeDefined();
+      const probe = await writing!;
       return { frame: frame!, probe, events };
     });
     const { frame: announced, probe, events: firstRead } = opened;
@@ -160,25 +171,32 @@ describe("the stream announces where it starts", () => {
       replayed.has(probe),
       "resuming from the announced cursor missed the first write after it, so the announcement names a position past the head",
     ).toBe(true);
-    // And every id the first stream delivered live above the cursor, not
-    // the probe alone: in a run where another fixture writes between the
-    // head read and the probe, a cursor one too high skips that write
-    // and the probe still arrives.
+    // And every id the first stream delivered above the cursor, not the
+    // probe alone: another fixture's write landing between the
+    // announcement and the probe is carried by the first stream too, and
+    // a resume has to bring it back. Ids at or below the cursor are left
+    // out on purpose. A write that lands between the subscription
+    // attaching and the head read is delivered live under an id the
+    // announcement then covers, and from ids alone a correct server
+    // delivering it cannot be told from one announcing its head one too
+    // high; the probe check above is exact for that case, since the probe
+    // is written after the announcement, and the server's own
+    // `routes/events-cursor.test.ts` holds the head directly.
     const cursorId = BigInt(String(cursor));
     const resumedIds = new Set(
       events
         .map((e) => e.id)
         .filter((id): id is string => typeof id === "string" && id !== ""),
     );
-    const liveAboveCursor = firstRead
+    const delivered = firstRead
       .map((e) => e.id)
       .filter((id): id is string => typeof id === "string" && id !== "")
       .filter((id) => BigInt(id) > cursorId);
     expect(
-      liveAboveCursor.length,
-      "the first stream delivered no id above the announced cursor",
+      delivered.length,
+      "the first stream delivered no event above the announced cursor",
     ).toBeGreaterThan(0);
-    for (const id of liveAboveCursor) {
+    for (const id of delivered) {
       expect(
         resumedIds.has(id),
         `the resumed read missed event ${id}, which the first stream delivered above the announced cursor ${String(cursorId)}`,

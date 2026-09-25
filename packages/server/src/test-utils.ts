@@ -1092,9 +1092,11 @@ export async function readSseWriting(
   const read = readSse(res, {
     onChunk: (seen) => {
       if (writes === undefined && seen.includes(probe)) {
-        writes = write().catch((err: unknown) => {
-          failed(err);
-        });
+        writes = write();
+        // Handled here so a failure while the read is still going ends
+        // the race, and the promise itself is awaited below so one that
+        // lands after the read has finished is not lost.
+        writes.catch(failed);
       }
     },
     ...(typeof until === "function" ? { until } : until),
