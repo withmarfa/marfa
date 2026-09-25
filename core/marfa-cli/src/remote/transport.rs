@@ -150,8 +150,9 @@ impl Transport {
     /// shaped, and sized, for a contract this binary cannot read.
     ///
     /// Visible to `remote` alone, whose `Remote` holds every answer to the
-    /// contract: a command that could reach this could send a call unheld
-    /// and print an answer on a contract it cannot read.
+    /// contract but the root's and the health door's, which it reads to say
+    /// which server this is: a command that could reach this could send a
+    /// call unheld and print an answer on a contract it cannot read.
     pub(super) fn call(&self, call: Call<'_>, held: bool) -> Result<Reply, CoreError> {
         let url = self.url(call.segments, call.params);
         let method = reqwest::Method::from_bytes(call.method.as_str().as_bytes())
