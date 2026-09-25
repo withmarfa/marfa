@@ -58,7 +58,7 @@ marfa items create --type user.snapshot \
   --properties '{"title":"Held before","thumbnail":"not an image"}'
 marfa types update user.snapshot \
   --body '{"version":2,"fields":{"title":{"type":"string"},"thumbnail":{"type":"thumbnail"}}}'
-# A PNG's signature, then the words the proofs look for.
+# A PNG's signature, then the words the proof looks for.
 marfa items create --type user.snapshot \
   --properties '{"title":"With an image","thumbnail":"data:image/png;base64,iVBORw0KGgpiaW5kaW5nIHByb29m"}'
 node_proof thumbnail

@@ -306,8 +306,8 @@ jobs:
   # re-run of the same tag can finish, and never a version half out: every
   # credential is checked before anything is sent; the draft release, which
   # can be undone, comes first; the registries, which never take a version
-  # back, come after it; and the release
-  # is made public only once everything is out. Every step asks whether its
+  # back, come after it; and the release is made public only once everything
+  # is out. Every step asks whether its
   # version is already there and skips if it is, so a re-run repeats nothing.
   publish:
     name: Publish
@@ -352,7 +352,8 @@ jobs:
       # A set secret can still be the wrong one. npm names the account a
       # token signs in as, though whether it may publish under the scope is
       # known only at the publish. crates.io has no read that proves a
-      # publish token, so that one is known only by its publish.
+      # publish token, so that one is known only by its publish, which is why
+      # the crate goes before the npm packages.
       - name: Check the npm credential signs in
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

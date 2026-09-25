@@ -6,8 +6,8 @@
  * tag's version into every manifest there, and nothing on a branch runs it.
  * So every manifest here carries the placeholder, and a change that moves
  * one off it is refused, whatever else it does. The placeholder is `0.0.0`,
- * which npm and cargo both accept as a version and which no release can ever be, so a stamped build
- * and an unstamped one cannot be confused.
+ * which npm and cargo both accept as a version and which no release can ever
+ * be, so a stamped build and an unstamped one cannot be confused.
  *
  * Three files carry one: `package.json` (`version`, on every package; the
  * root is a workspace, not a package, and holds none), `Cargo.toml` and
@@ -16,7 +16,8 @@
  * (`version = `, `version.workspace = true`, a dotted key, a commented
  * header) and cargo's own reading is the one a build uses. The lock's
  * entries for the workspace's own crates, the ones with no `source`, are
- * cargo's own formatting and are read directly. The API document's `info.version` is the contract version, not a product version.
+ * cargo's own formatting and are read directly. The API document's
+ * `info.version` is the contract version, not a product version.
  *
  * Two kinds of file that are not manifests are read for a product version
  * written as text: `packages/server/src/contract.ts`, where the contract
@@ -299,7 +300,7 @@ describe("no file holds a version", () => {
           text: "npm install @withmarfa/client@0.0.1\n",
         },
         {
-          path: "core/bindings/node/README.md",
+          path: "packages/client/README.md",
           text: "Tagged as v1.2.3.\n",
         },
         {
@@ -313,7 +314,7 @@ describe("no file holds a version", () => {
       ]),
     ).toEqual([
       { path: "packages/client/README.md", version: "0.0.1" },
-      { path: "core/bindings/node/README.md", version: "v1.2.3" },
+      { path: "packages/client/README.md", version: "v1.2.3" },
       { path: CONTRACT_FILE, version: "0.0.4" },
     ]);
   });
