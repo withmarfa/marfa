@@ -291,7 +291,9 @@ describe("detectConflict", () => {
       clientFields: fields(),
       currentFields: fields({ tier: "library" }),
       ancestorFields: fields({ tier: "library" }),
-      clearedProperties: [],
+      // Listed as cleared, since the body lacks it; not in the ancestor, so
+      // not a clear.
+      clearedProperties: ["notes"],
     });
     expect(result).toEqual({
       type: "no_conflict",

@@ -5,8 +5,8 @@ import { coerceNullProperties } from "@withmarfa/shared";
  *
  * The item store performs this merge, and the natural-key upsert route has
  * to predict it: a re-sync is judged on the value the row ends up with, not
- * on the body, because a body naming no required field at all can still be
- * what removes one. Two copies of a merge rule is two chances to disagree.
+ * on the body, because a null kept on a required field shows only there.
+ * Two copies of a merge rule is two chances to disagree.
  */
 
 /**

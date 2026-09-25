@@ -254,6 +254,48 @@ describe("the server resolves a conflict", () => {
     expect(sibling.data.metadata.tags).toContain("conflicted-copy");
   });
 
+  it("refuses to resolve a colliding write that also moves the type", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { title: "moving title", body: "moving body" },
+    });
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const base = seed.data.item.version;
+
+    const winner = await client.updateItem(id, {
+      properties: { body: "body from the winner" },
+      version: base,
+    });
+    expect(winner.ok).toBe(true);
+
+    // A stale replace that clears the body the winner changed, and moves
+    // the row to a bookmark: the collision is real, and the copy a
+    // resolution would write would be a note without a body.
+    const refused = await client.rawRequest(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        type: "core.bookmark",
+        retype: true,
+        properties: { url: "https://example.com/moved", title: "moving title" },
+        properties_mode: "replace",
+        version: base,
+      },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+
+    const fetched = await client.getItem(id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.note");
+    expect(fetched.data.item.version).toBe(base + 1);
+    expect(fetched.data.item.properties.body).toBe("body from the winner");
+  });
+
   it("resolves a colliding item field to the later writer, and leaves an echoed one alone", async () => {
     // `tier`, `occurred_at` and `source_id` are the item's own fields
     // rather than properties, so the type declares no strategy for them

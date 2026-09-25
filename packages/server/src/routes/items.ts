@@ -663,7 +663,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, at a stale version as at the current one — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1533,10 +1533,10 @@ export function itemRoutes(storage: Storage) {
         requireDeclaredTypeMatches(type, existing);
 
         // Judged on the merged result rather than the body, mirroring the
-        // merge the storage layer performs: a body naming no required field
-        // at all can still be what removes one, and a row that could not
-        // have been created in the state it sat in would otherwise land
-        // with a 200 and no signal.
+        // merge the storage layer performs: a null on a required field is
+        // kept for the type to refuse, and only the merged result shows it,
+        // so a row that could not have been created in the state it sat in
+        // would otherwise land with a 200 and no signal.
         if (
           body.properties !== undefined &&
           getTypeSchema(existing.type) !== undefined
@@ -2368,11 +2368,12 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    if (body.properties) {
+    if (body.properties || retyping) {
       // The levers this door has to ask before it writes. Read here
       // rather than at the top of the handler because this is the only
-      // branch that needs them: a body carrying no `properties` changes
-      // nothing a schema has an opinion about.
+      // branch that needs them: a body carrying no `properties` and no
+      // move changes nothing a schema has an opinion about. A move alone
+      // does: the row's properties have to satisfy the type it enters.
       const enforcementForUpdate = resolveEnforcement(
         await readInstanceConfig(storage.settings),
         c.get("apiKey"),
@@ -2382,8 +2383,8 @@ export function itemRoutes(storage: Storage) {
       // version: a copy that validated the merged set while the store wrote
       // the replaced one would pass a write dropping a required field on
       // the strength of the value it was removing. At a stale version the
-      // store merges against the ancestor instead, and every required field
-      // is then either in this body or already on the row.
+      // store merges against the ancestor instead, and judges the result
+      // against the type it ends up as before it writes.
       // The type the row ends up as, which is what the resulting
       // properties have to satisfy. Validating against the type being left
       // would admit a move whose result the destination calls invalid,
@@ -2406,11 +2407,14 @@ export function itemRoutes(storage: Storage) {
       //
       // Against the type the row ends up as, for the reason the
       // validation below uses it: a move is judged by the destination.
-      const undeclared = undeclaredPropertyRefusal(
-        enforcementForUpdate,
-        resultingType,
-        body.properties,
-      );
+      const undeclared =
+        body.properties === undefined
+          ? undefined
+          : undeclaredPropertyRefusal(
+              enforcementForUpdate,
+              resultingType,
+              body.properties,
+            );
       if (undeclared) throw undeclared;
       const merged = mergeUpdateProperties(
         item.properties,
@@ -2492,7 +2496,13 @@ export function itemRoutes(storage: Storage) {
       // `body.current.version` reads it here too instead of finding
       // `undefined` on one door out of three. (The bulk doors report the
       // code per entry inside their own envelope and are not in that set.)
-      if (!hasProperties && !hasTier && !hasOccurredAt && !hasSourceId) {
+      if (
+        !hasProperties &&
+        !hasTier &&
+        !hasOccurredAt &&
+        !hasSourceId &&
+        !retyping
+      ) {
         const current = await storage.items.get(id);
         if (current && body.version !== current.version) {
           return staleVersion(
@@ -2514,7 +2524,7 @@ export function itemRoutes(storage: Storage) {
       // resolution report the store attaches on the other arm.
       const updated:
         ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
-        hasProperties || hasTier || hasOccurredAt || hasSourceId
+        hasProperties || hasTier || hasOccurredAt || hasSourceId || retyping
           ? await storage.items.update(id, {
               properties: body.properties,
               ...(body.properties_mode !== undefined && {
@@ -2538,7 +2548,11 @@ export function itemRoutes(storage: Storage) {
             })
           : item;
       if (
-        (hasProperties || hasTier || hasOccurredAt || hasSourceId) &&
+        (hasProperties ||
+          hasTier ||
+          hasOccurredAt ||
+          hasSourceId ||
+          retyping) &&
         "error" in updated
       ) {
         return updated;

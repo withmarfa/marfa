@@ -415,7 +415,7 @@ describe("item versioning", () => {
     expect(fetched.data.item.properties).toEqual({ body: "Original" });
   });
 
-  it("moves the type on a stale write as on a current one, and holds the merged properties to the destination", async () => {
+  it("moves the type on a stale write as on a current one", async () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -430,10 +430,12 @@ describe("item versioning", () => {
       version: 1,
     });
     expect(advanced.ok).toBe(true);
+    // The witness for the clear below: the body is there to be cleared.
+    expect(advanced.data.item.properties.body).toBe("Original");
 
-    // A bookmark requires a url and has no body: the body the note had is
-    // cleared by the replace, the url arrives with it, and the title the
-    // other writer changed since is kept, because this write echoed it.
+    // The replace clears the body the note had, the url arrives with it,
+    // and the title the other writer changed since is kept, because this
+    // write echoed it at the value it read.
     const moved = await client.updateItem(r.data.item.id, {
       type: "core.bookmark",
       retype: true,
@@ -453,6 +455,83 @@ describe("item versioning", () => {
     expect(fetched.ok).toBe(true);
     expect(fetched.data.item.type).toBe("core.bookmark");
     expect(fetched.data.item.properties).not.toHaveProperty("body");
+  });
+
+  it("refuses a stale move whose merged properties fall short of the type entered", async () => {
+    // A bookmark requires nothing and may carry a body; a note requires
+    // one. The body this write carries echoes the ancestor's value, so it
+    // is not applied, and the other writer removed it since: the row a
+    // note would be left as has no body.
+    const r = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/short", body: "Carried" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const removed = await client.updateItem(r.data.item.id, {
+      properties: { url: "https://example.com/short" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(removed.ok).toBe(true);
+    expect(removed.data.item.properties).not.toHaveProperty("body");
+
+    const refused = await client.updateItem(r.data.item.id, {
+      type: "core.note",
+      retype: true,
+      properties: { body: "Carried" },
+      version: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.bookmark");
+    expect(fetched.data.item.version).toBe(2);
+  });
+
+  it("moves the type with retype alone, holding the row to the type entered", async () => {
+    const r = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/alone", body: "Kept" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const moved = await client.updateItem(r.data.item.id, {
+      type: "core.note",
+      retype: true,
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.note");
+    expect(moved.data.item.version).toBe(2);
+    expect(moved.data.item.properties.body).toBe("Kept");
+
+    // The witness: the same move on a row without the body the note
+    // requires is refused, and nothing moves.
+    const bare = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/bare" },
+    });
+    expect(bare.ok).toBe(true);
+    trackItem(ctx, bare.data.item.id);
+    const refused = await client.updateItem(bare.data.item.id, {
+      type: "core.note",
+      retype: true,
+      version: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const fetched = await client.getItem(bare.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.bookmark");
+    expect(fetched.data.item.version).toBe(1);
   });
 
   it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
