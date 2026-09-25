@@ -2,6 +2,11 @@
   "name": "@withmarfa/client",
   "version": "0.0.0",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/withmarfa/marfa.git",
+    "directory": "packages/client"
+  },
   "type": "module",
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
