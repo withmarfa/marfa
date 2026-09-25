@@ -22,7 +22,13 @@
  * lose data, so it is asserted rather than assumed.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, readSse, settle } from "../test-utils.js";
+import {
+  createTestContext,
+  readSse,
+  readSseWriting,
+  request,
+  settle,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 
@@ -200,6 +206,69 @@ describe("GET /events announces its cursor", () => {
       "replaying without the filter the cursor was taken under must deliver the rows it excluded",
     ).toContain(task);
     expect(text, "and the rows it admitted").toContain(note);
+  });
+});
+
+describe("GET /events says when it is live", () => {
+  it("sends stream_live after the replay and before anything live, without an id, at the head", async () => {
+    await createNote("seed");
+    const cursor = await latestEventId();
+    const backlog = await createNote("written while the client was away");
+    const head = await latestEventId();
+
+    const res = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    // Written once the marker has arrived, so its frame is a live one and
+    // the marker's place before it is an observation.
+    let live: string | undefined;
+    const { text } = await readSseWriting(
+      res,
+      "event: stream_live",
+      async () => {
+        live = await createNote("written once the stream was live");
+      },
+      (seen) => seen.includes("written once the stream was live"),
+    );
+
+    const marker = frameNamed(text, "stream_live");
+    expect(marker, "the stream must say when it is live").not.toBeNull();
+    expect(
+      marker?.split("\n").some((l) => l.startsWith("id:")),
+      "an id on the marker would move a resuming client's cursor",
+    ).toBe(false);
+    expect(dataOf(marker ?? "").cursor).toBe(String(head));
+    const at = text.indexOf("event: stream_live");
+    expect(at).toBeGreaterThan(text.indexOf(backlog));
+    expect(at).toBeLessThan(text.indexOf(live!));
+  });
+
+  it("names the head even when the frame that reached it is withheld from this stream", async () => {
+    await createNote("seed");
+    const cursor = await latestEventId();
+    const bookmark = await createItem("core.bookmark", {
+      url: "https://example.com/head",
+    });
+    // The head is a note, which a stream narrowed to bookmarks is never
+    // sent; the marker names it all the same, and nothing else could.
+    const note = await createNote("the head");
+    const head = await latestEventId();
+
+    const res = await request(ctx.app, "GET", "/events?type=core.bookmark", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    const { text } = await readSse(res, {
+      until: (t) => t.includes("event: stream_live"),
+    });
+    expect(text).toContain(bookmark);
+    expect(text).not.toContain(note);
+    expect(dataOf(frameNamed(text, "stream_live") ?? "").cursor).toBe(
+      String(head),
+    );
   });
 });
 

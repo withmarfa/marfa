@@ -9,6 +9,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import {
+  baselineEventId,
   collectUntil,
   withStream,
   MUTATION_EVENT_NAMES,
@@ -202,6 +203,82 @@ describe("the stream announces where it starts", () => {
         `the resumed read missed event ${id}, which the first stream delivered above the announced cursor ${String(cursorId)}`,
       ).toBe(true);
     }
+  });
+});
+
+describe("the stream says when it is live", () => {
+  it("marks the end of the replay with a cursor a filtered reader can resume from", async (context) => {
+    const { eventId } = await baselineEventId(
+      apiUrl,
+      apiKey,
+      () => makeNote("live-marker"),
+      context.signal,
+    );
+    const note = await makeNote("live-note");
+    // The log's head is a row the filtered stream is never sent, so no
+    // frame with an id can show the reader that the replay reached it.
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      source: ctx.source,
+      properties: { url: "https://example.com/live-head" },
+    });
+    expect(bookmark.ok).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+
+    const { events } = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: eventId, query: [["type", "core.note"]] },
+      (stream) =>
+        collectUntil(
+          stream,
+          (evts) => evts.some((e) => e.event === "stream_live"),
+          "the frame that says the replay is done",
+          context.signal,
+        ),
+    );
+    const announced = events.find((e) => e.event === "stream_cursor");
+    const live = events.find((e) => e.event === "stream_live");
+    expect(announced, "the stream announced no cursor").toBeDefined();
+    expect(live).toBeDefined();
+    // No id of its own, so a client keeping the last id it received is not
+    // moved by it; what it carries is a position the client may adopt.
+    expect(live?.id ?? "").toBe("");
+    const head = BigInt(
+      String((announced?.data as { cursor?: unknown })?.cursor),
+    );
+    const cursor = BigInt(String((live?.data as { cursor?: unknown })?.cursor));
+    expect(
+      cursor >= head,
+      `the live cursor ${String(cursor)} sits below the announced head ${String(head)}`,
+    ).toBe(true);
+    // After the replay, which delivered the note and never the bookmark.
+    expect(itemIds(events).has(note)).toBe(true);
+    expect(itemIds(events).has(bookmark.data.item.id)).toBe(false);
+    expect(events.indexOf(live!)).toBeGreaterThan(
+      events.findIndex(
+        (e) => (e.data as { item?: { id?: string } })?.item?.id === note,
+      ),
+    );
+
+    // Resuming from it: nothing the replay covered comes back, the row it
+    // never delivered included, and a write made after it does.
+    const after = await makeNote("live-after");
+    const { events: resumed } = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: String(cursor) },
+      (stream) =>
+        collectUntil(
+          stream,
+          (evts) => itemIds(evts).has(after),
+          `the resumed stream to reach ${after}`,
+          context.signal,
+        ),
+    );
+    expect(itemIds(resumed).has(note)).toBe(false);
+    expect(itemIds(resumed).has(bookmark.data.item.id)).toBe(false);
+    expect(itemIds(resumed).has(after)).toBe(true);
   });
 });
 

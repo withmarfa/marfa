@@ -74,6 +74,20 @@ const HEAD_READ_TIMED_OUT = Symbol("head-read-timed-out");
 const STREAM_CURSOR_EVENT = "stream_cursor";
 
 /**
+ * The frame that says the prologue is over: everything up to the cursor
+ * it carries has been sent or withheld, and what follows is live.
+ *
+ * A subscriber cannot otherwise tell. A frame the filter or the
+ * permission projection withholds is not written at all, so the frame
+ * that would show the announced head reached can be one this subscriber
+ * is never sent, and a reader waiting for it waits for good. Carrying no
+ * `id:`, so a client keeping the last id it received is not moved by it;
+ * carrying a cursor at or past the announced head, so a client may adopt
+ * it and resume past the events it was not sent.
+ */
+const STREAM_LIVE_EVENT = "stream_live";
+
+/**
  * Most types one `?type=` may name.
  *
  * Ten, the same as the edge-type filter on `GET /edges`, and the same
@@ -1248,6 +1262,9 @@ export function eventRoutes(
            * closed the stream. A read that merely outran its budget
            * answers true and announces nothing: see below.
            */
+          /** The head the stream announced, once it has. */
+          let announcedHead: bigint | null = null;
+
           const announceCursor = async (): Promise<boolean> => {
             let head: bigint | null | typeof HEAD_READ_TIMED_OUT;
             try {
@@ -1284,12 +1301,32 @@ export function eventRoutes(
             // An empty log announces 0, which is a cursor the replay
             // accepts and the retention check passes: `getMinRetainedId`
             // answers null on an empty log, so nothing reads 0 as stale.
+            announcedHead = head ?? 0n;
             const payload = JSON.stringify({
               type: STREAM_CURSOR_EVENT,
-              cursor: String(head ?? 0n),
+              cursor: String(announcedHead),
             });
             send(`event: ${STREAM_CURSOR_EVENT}\ndata: ${payload}\n\n`);
             return true;
+          };
+
+          /**
+           * The prologue is over. The cursor is the announced head or the
+           * last id sent, whichever is further: a held live frame drained
+           * after the replay carries an id past the head, and a subscriber
+           * resuming from the head alone would be sent it again.
+           */
+          const announceLive = (): void => {
+            if (state.closed || announcedHead === null) return;
+            const reached =
+              lastSentId !== null && lastSentId > announcedHead
+                ? lastSentId
+                : announcedHead;
+            const payload = JSON.stringify({
+              type: STREAM_LIVE_EVENT,
+              cursor: String(reached),
+            });
+            send(`event: ${STREAM_LIVE_EVENT}\ndata: ${payload}\n\n`);
           };
 
           // The prologue, in the order a client has to receive it:
@@ -1313,6 +1350,7 @@ export function eventRoutes(
             // cannot see is short.
             if (!caughtUp) return;
             await releaseHold();
+            announceLive();
           })();
 
           c.req.raw.signal.addEventListener("abort", () => {
