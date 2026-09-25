@@ -464,7 +464,7 @@ describe("bootstrap sentinel", () => {
      * obtains it. **Generated here rather than by the app**, because these
      * tests build the app directly and never run the boot path that prints
      * it — and a fixture that skipped the secret would be testing a door the
-     * product no longer has.
+     * product does not have.
      */
     bootstrapSecret: string;
     /** Removed by the caller alongside `storage.close()`; nothing else
@@ -1675,10 +1675,9 @@ describe("POST /keys — what an operator key mints", () => {
     // is a row nothing can write, and the route's forcing is unreachable
     // from below rather than merely unused.
     //
-    // Kept, and pointed at the refusal instead: the reason the forcing above
-    // can no longer be exercised is worth a failing test of its own, so a
-    // constraint dropped in some later rebuild is noticed here rather than
-    // leaving a silently dead assertion behind.
+    // So the refusal is what is asserted: a constraint dropped from the row
+    // turns this red, rather than making that caller writable with nothing
+    // to say the forcing now matters.
     const suffix = Math.random().toString(36).slice(2, 10);
     const rawWide = `marfa_k1_wide_operator_${suffix}`;
     await expect(

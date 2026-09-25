@@ -54,8 +54,8 @@ pub struct Slice {
     pub tags: Vec<String>,
 }
 
-/// Sources a credential is given and never names: a connector's and an
-/// app's.
+/// The prefixes the server reserves: no key may carry or claim a source
+/// under either, so a folder naming one would have every create refused.
 const RESERVED_SOURCES: [&str; 2] = ["connector:", "oauth:"];
 
 /// The longest source a key may claim, counted as the server counts it, in
@@ -100,7 +100,7 @@ impl Slice {
             .find(|prefix| named.starts_with(**prefix))
         {
             return Err(CoreError::Invalid(format!(
-                "a folder cannot name the source {}: {prefix} is given to connectors and apps, never named",
+                "a folder cannot name the source {}: {prefix} is reserved, and no key may claim a source under it",
                 self.source
             )));
         }

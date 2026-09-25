@@ -1419,7 +1419,7 @@ export function itemRoutes(storage: Storage) {
     // state, capture_*) are ignored — the existing row's id wins.
     if (stampedSource && body.source_id) {
       // Including trashed rows, deliberately. `findBySourceId` hides them,
-      // which would send a re-sync of a mirror the user had deleted into
+      // which would send a re-sync of an item the user had deleted into
       // the create path, where `create`'s own dedup pre-check (which does
       // not filter state) finds the same row and refuses with a 409 that
       // never clears: the row stays trashed, so every later sync fails the
