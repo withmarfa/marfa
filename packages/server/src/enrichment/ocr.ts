@@ -1,5 +1,6 @@
 import { createWorker } from "tesseract.js";
 import type { Worker } from "tesseract.js";
+import type { Worker as NodeWorker } from "node:worker_threads";
 
 export const OCR_MIMES: ReadonlySet<string> = new Set([
   "image/png",
@@ -44,8 +45,24 @@ export class TesseractOcr implements OcrEngine {
     this.worker ??= (this.opts.createWorkerFn ?? createWorker)(
       this.opts.langs ?? "eng",
       undefined,
-      { cachePath: this.opts.cachePath },
-    );
+      {
+        cachePath: this.opts.cachePath,
+        // A job the engine refuses, such as an image its decoder cannot
+        // read, rejects that job's own promise, which the sweeper records
+        // against the item. With no handler, tesseract.js also rethrows the
+        // refusal from the worker's message listener, where nothing can
+        // catch it and the process ends.
+        errorHandler: () => undefined,
+      },
+    ).then((worker) => {
+      // A worker thread that dies leaves its jobs unanswered, which the
+      // sweeper's time budget ends; unheard, its `error` event would end
+      // the process. The next recognition starts a fresh worker.
+      (worker as Worker & { worker?: NodeWorker }).worker?.on("error", () => {
+        this.worker = null;
+      });
+      return worker;
+    });
     return this.worker;
   }
 
