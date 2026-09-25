@@ -32,11 +32,6 @@ pub struct ReplaceConfigRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub trash_retention_days: Option<i32>,
-    #[serde(
-        rename = "activity_retention_days",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub activity_retention_days: Option<i32>,
 }
 
 impl ReplaceConfigRequest {
@@ -47,7 +42,6 @@ impl ReplaceConfigRequest {
             audit_retention_days: None,
             event_log_retention_hours: None,
             trash_retention_days: None,
-            activity_retention_days: None,
         }
     }
 }

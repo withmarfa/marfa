@@ -57240,8 +57240,6 @@ public enum Operations {
                     public var eventLogRetentionHours: Swift.Int?
                     /// - Remark: Generated from `#/paths/config/PUT/requestBody/json/trash_retention_days`.
                     public var trashRetentionDays: Swift.Int?
-                    /// - Remark: Generated from `#/paths/config/PUT/requestBody/json/activity_retention_days`.
-                    public var activityRetentionDays: Swift.Int?
                     /// Creates a new `JsonPayload`.
                     ///
                     /// - Parameters:
@@ -57250,21 +57248,18 @@ public enum Operations {
                     ///   - auditRetentionDays:
                     ///   - eventLogRetentionHours:
                     ///   - trashRetentionDays:
-                    ///   - activityRetentionDays:
                     public init(
                         instanceId: Swift.String? = nil,
                         enforcement: Operations.ReplaceConfig.Input.Body.JsonPayload.EnforcementPayload? = nil,
                         auditRetentionDays: Swift.Int? = nil,
                         eventLogRetentionHours: Swift.Int? = nil,
-                        trashRetentionDays: Swift.Int? = nil,
-                        activityRetentionDays: Swift.Int? = nil
+                        trashRetentionDays: Swift.Int? = nil
                     ) {
                         self.instanceId = instanceId
                         self.enforcement = enforcement
                         self.auditRetentionDays = auditRetentionDays
                         self.eventLogRetentionHours = eventLogRetentionHours
                         self.trashRetentionDays = trashRetentionDays
-                        self.activityRetentionDays = activityRetentionDays
                     }
                     public enum CodingKeys: String, CodingKey {
                         case instanceId = "instance_id"
@@ -57272,7 +57267,6 @@ public enum Operations {
                         case auditRetentionDays = "audit_retention_days"
                         case eventLogRetentionHours = "event_log_retention_hours"
                         case trashRetentionDays = "trash_retention_days"
-                        case activityRetentionDays = "activity_retention_days"
                     }
                     public init(from decoder: any Swift.Decoder) throws {
                         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -57296,17 +57290,12 @@ public enum Operations {
                             Swift.Int.self,
                             forKey: .trashRetentionDays
                         )
-                        self.activityRetentionDays = try container.decodeIfPresent(
-                            Swift.Int.self,
-                            forKey: .activityRetentionDays
-                        )
                         try decoder.ensureNoAdditionalProperties(knownKeys: [
                             "instance_id",
                             "enforcement",
                             "audit_retention_days",
                             "event_log_retention_hours",
-                            "trash_retention_days",
-                            "activity_retention_days"
+                            "trash_retention_days"
                         ])
                     }
                 }

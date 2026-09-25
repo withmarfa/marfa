@@ -2400,7 +2400,6 @@ export interface components {
             audit_retention_days?: number;
             event_log_retention_hours?: number;
             trash_retention_days?: number;
-            activity_retention_days?: number;
         };
         TypeLeverStrict: {
             types: string[];
@@ -10686,7 +10685,6 @@ export interface operations {
                     audit_retention_days?: number;
                     event_log_retention_hours?: number;
                     trash_retention_days?: number;
-                    activity_retention_days?: number;
                 };
             };
         };

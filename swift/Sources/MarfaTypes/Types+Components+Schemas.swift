@@ -7402,8 +7402,6 @@ extension Components {
             public var eventLogRetentionHours: Swift.Int?
             /// - Remark: Generated from `#/components/schemas/InstanceConfig/trash_retention_days`.
             public var trashRetentionDays: Swift.Int?
-            /// - Remark: Generated from `#/components/schemas/InstanceConfig/activity_retention_days`.
-            public var activityRetentionDays: Swift.Int?
             /// Creates a new `InstanceConfig`.
             ///
             /// - Parameters:
@@ -7412,21 +7410,18 @@ extension Components {
             ///   - auditRetentionDays:
             ///   - eventLogRetentionHours:
             ///   - trashRetentionDays:
-            ///   - activityRetentionDays:
             public init(
                 instanceId: Swift.String,
                 enforcement: Components.Schemas.InstanceConfig.EnforcementPayload? = nil,
                 auditRetentionDays: Swift.Int? = nil,
                 eventLogRetentionHours: Swift.Int? = nil,
-                trashRetentionDays: Swift.Int? = nil,
-                activityRetentionDays: Swift.Int? = nil
+                trashRetentionDays: Swift.Int? = nil
             ) {
                 self.instanceId = instanceId
                 self.enforcement = enforcement
                 self.auditRetentionDays = auditRetentionDays
                 self.eventLogRetentionHours = eventLogRetentionHours
                 self.trashRetentionDays = trashRetentionDays
-                self.activityRetentionDays = activityRetentionDays
             }
             public enum CodingKeys: String, CodingKey {
                 case instanceId = "instance_id"
@@ -7434,7 +7429,6 @@ extension Components {
                 case auditRetentionDays = "audit_retention_days"
                 case eventLogRetentionHours = "event_log_retention_hours"
                 case trashRetentionDays = "trash_retention_days"
-                case activityRetentionDays = "activity_retention_days"
             }
         }
         /// - Remark: Generated from `#/components/schemas/TypeLeverStrict`.
