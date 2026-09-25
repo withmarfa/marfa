@@ -366,4 +366,70 @@ export async function* subscribeEdges(options?: {
   }
 }
 
+/** A frame of either kind, as one subscription hands them on. */
+export type LiveFrame =
+  | { kind: "item"; event: ItemEventWithId }
+  | { kind: "edge"; event: EdgeEventWithId };
+
+/**
+ * Both kinds of event in one sequence, in the order they were published,
+ * which is the order of their ids.
+ *
+ * One generator per kind cannot keep that order: each hands its next event
+ * on through its own chain of promise jobs, so a burst of item events
+ * queued on one side is still being consumed while an edge published after
+ * them is handed on by the other, and a subscriber sees a higher id before
+ * a lower one. A subscriber that keeps the last id it received as its
+ * cursor, which is what the stream tells it to do, then resumes past the
+ * lower one for good. One queue fed by both listeners keeps the order the
+ * emitter saw.
+ *
+ * Same cleanup contract as `subscribe()`: close the iterator, or hand it a
+ * signal, and both listeners come off.
+ */
+export async function* subscribeAll(
+  options?: SubscribeOptions,
+): AsyncGenerator<LiveFrame> {
+  const queue: LiveFrame[] = [];
+  let wake: (() => void) | undefined;
+  let ended = options?.signal?.aborted === true;
+  const push = (frame: LiveFrame): void => {
+    queue.push(frame);
+    wake?.();
+  };
+  const onItem = (event: ItemEventWithId): void => {
+    if (eventMatchesTypeFilter(event.item.type, options?.typeFilter)) {
+      push({ kind: "item", event });
+    }
+  };
+  const onEdge = (event: EdgeEventWithId): void => {
+    push({ kind: "edge", event });
+  };
+  const onAbort = (): void => {
+    ended = true;
+    wake?.();
+  };
+  emitter.on("ITEM_CHANGED", onItem);
+  emitter.on("EDGE_CHANGED", onEdge);
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    for (;;) {
+      if (ended) return;
+      const frame = queue.shift();
+      if (frame === undefined) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        wake = undefined;
+        continue;
+      }
+      yield frame;
+    }
+  } finally {
+    emitter.off("ITEM_CHANGED", onItem);
+    emitter.off("EDGE_CHANGED", onEdge);
+    options?.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 export { isEdgeEvent };

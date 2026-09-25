@@ -93,9 +93,10 @@ describe("catch-up replays from the cursor", () => {
     harness = await startHarness("late-lower-id");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    // A server assigns an event its id before it commits, so a lower id can
-    // reach a subscriber after a higher one. A cursor kept as a high-water
-    // mark steps over the lower one, and nothing ever fetches it again.
+    // The real server delivers ids in order (`events.md` 3); this one hands
+    // a lower id after a higher one, which a cursor kept as a high-water
+    // mark would step over for good. The rule is that the cursor is what
+    // was applied, whatever arrived.
     server.answer(
       "GET",
       "/events",
@@ -163,9 +164,9 @@ describe("catch-up replays from the cursor", () => {
       "GET",
       "/events",
       replay("13", [
-        // Version 3 lands, then version 2 arrives behind it. Ids are
-        // assigned before commit, so this is the ordinary shape of two
-        // writes to one row rather than a contrived one.
+        // Version 3 lands, then version 2 arrives behind it: a shape the
+        // real server does not produce, since it delivers ids in order,
+        // and one the device still takes by the version, not by arrival.
         itemEvent(
           "11",
           "item.created",

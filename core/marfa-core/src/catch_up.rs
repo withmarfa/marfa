@@ -243,9 +243,10 @@ fn take(
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     let applied = apply(&tx, catalog, slice, kind, payload)?;
-    // The cursor is the last id received, never the highest: ids are
-    // assigned before commit, so a lower id can arrive after a higher one
-    // and would be skipped forever by a high-water mark.
+    // The cursor is the last id applied, never the highest seen: the
+    // server delivers ids in order, so the two agree while every event is
+    // applied, and where one is not, a high-water mark would step over it
+    // forever.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
     tx.commit()?;
     Ok(applied.then(|| Change {
@@ -582,9 +583,9 @@ fn apply(
             };
             // An event carrying a version *older* than the row held is
             // stale, and applying it would put back fields a later event
-            // already replaced. Ids are assigned before commit, so a lower
-            // id can arrive after a higher one: the stream's order is not
-            // the version's (`device.md` 13).
+            // already replaced. The device takes an event by its version
+            // rather than by its arrival, so a server handing versions the
+            // other way round changes nothing (`device.md` 13).
             //
             // **Strictly older, not "no newer".** The version moves on a
             // write to an item's fields and on nothing else: a transition,

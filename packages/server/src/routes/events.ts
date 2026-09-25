@@ -12,11 +12,10 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import {
   eventMatchesTypeFilter,
-  subscribe,
-  subscribeEdges,
+  subscribeAll,
   wireEventName,
 } from "../pubsub.js";
-import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
+import type { EdgeEventWithId, ItemEventWithId, LiveFrame } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata } from "@withmarfa/shared";
 import { filterMetadataForCaller } from "./util.js";
@@ -164,9 +163,10 @@ type StreamIncompleteReason =
   | "replay_failed"
   /** Live frames held during the prologue outgrew {@link MAX_HELD_FRAMES}. */
   | "backlog_overflow"
-  /** The item subscription failed for a reason that was not the client leaving. */
+  /** The subscription failed for a reason that was not the client leaving. */
   | "live_delivery_failed"
-  /** The edge subscription did, which stops half the stream and nothing else. */
+  /** An edge frame could not be sent: the read that decides whether the
+   *  subscriber may see it failed. */
   | "edge_delivery_failed";
 
 /**
@@ -218,9 +218,7 @@ type StreamIncompleteReason =
 const MAX_HELD_FRAMES = 500;
 
 /** A live frame published while the stream was still holding delivery. */
-type HeldFrame =
-  | { kind: "item"; event: ItemEventWithId }
-  | { kind: "edge"; event: EdgeEventWithId };
+type HeldFrame = LiveFrame;
 
 export interface EventRoutesOptions {
   /** Override for the head-read budget; tests drive the degraded path —
@@ -508,21 +506,22 @@ export function eventRoutes(
            * `id:` is actually written — a frame the filter withheld moved
            * no client cursor.
            *
-           * The last id written is also the highest, because the log
-           * issues ids in commit order: an event is appended once its
-           * write has committed, as one statement, so no lower id reaches
-           * a client after a higher one. A reader resuming from this value
-           * therefore misses nothing, which `sync/resume.test.ts` holds
-           * the stream to.
+           * The last id written is also the highest: the log issues ids
+           * in commit order, and this stream sends frames in that order,
+           * edge frames beside item frames, so a reader resuming from this
+           * value misses nothing. `events-live-order.test.ts` holds the
+           * stream to it and `sync/resume.test.ts` a resuming reader.
            */
           let lastSentId: bigint | null = null;
 
-          // Subscribe BEFORE replay starts to avoid gaps.
-          const events = subscribe({
+          // Subscribed before the replay starts, so nothing falls between
+          // the two. One subscription for both kinds of frame, in publish
+          // order: a frame sent ahead of a lower id would move a
+          // subscriber's cursor past an event it never saw.
+          const frames = subscribeAll({
             typeFilter: typeParam,
             signal: subscriptionAbort.signal,
-          });
-          const reader = events[Symbol.asyncIterator]();
+          })[Symbol.asyncIterator]();
 
           /**
            * Whether an item frame survives the caller's type projection.
@@ -610,19 +609,12 @@ export function eventRoutes(
           // because it holds a page of up to `REPLAY_BATCH_SIZE` rows; see
           // `replay` below.
           //
-          // Async, which the item path is not, and three call sites carry
-          // the consequence. The pump awaits it. The prologue's drain
-          // stays held for the whole release, so a held frame cannot be
-          // overtaken across the await. And in steady state an edge frame
-          // now reaches a subscriber a round trip behind an item frame
-          // published beside it: the relative order of the two kinds is
-          // not a guarantee this stream makes — they travel through
-          // independent subscriptions — and the single held buffer exists
-          // against the prologue's *systematic* reordering, where two
-          // buffers drained in turn would put every held edge after every
-          // held item whatever the writer did. This widens a race rather
-          // than breaking a promise, and it is stated here because the
-          // buffer's own comment reads as though order were promised.
+          // Async, which the item path is not, and both call sites wait on
+          // it: the prologue's drain stays held for the whole release, and
+          // the live pump sends nothing else until it settles, so no frame
+          // published after this edge is written ahead of it. Publish
+          // order is id order, and a subscriber's cursor is the last id it
+          // received.
           const sendEdgeEvent = async (
             eventId: bigint | undefined,
             event: EdgeEventWithId,
@@ -645,9 +637,9 @@ export function eventRoutes(
           };
 
           const pump = () => {
-            reader
+            frames
               .next()
-              .then(({ value: event, done }) => {
+              .then(async ({ value: frame, done }) => {
                 if (done || state.closed) {
                   // Capture before cleanup flips it, or the close below
                   // could never run and a terminated pump would leave
@@ -666,9 +658,27 @@ export function eventRoutes(
                 }
 
                 if (holding) {
-                  holdFrame({ kind: "item", event });
+                  holdFrame(frame);
+                } else if (frame.kind === "item") {
+                  sendEvent(frame.event.eventId, frame.event);
                 } else {
-                  sendEvent(event.eventId, event);
+                  // Awaited, so the next frame waits behind the source
+                  // read this one needs: that wait is what a frame
+                  // published after this edge would otherwise overtake. A
+                  // failure ends the stream, because a subscriber silently
+                  // stopped hearing about relationships is the one shape a
+                  // durable client cannot detect.
+                  try {
+                    await sendEdgeEvent(frame.event.eventId, frame.event);
+                  } catch (err: unknown) {
+                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this callback; TS narrows it to `false` from the check above but at runtime it can flip to true.
+                    if (state.closed) return;
+                    console.warn(
+                      `[events] closing the stream: edge delivery failed (${String(err)})`,
+                    );
+                    failStream("edge_delivery_failed");
+                    return;
+                  }
                 }
                 pump();
               })
@@ -678,59 +688,20 @@ export function eventRoutes(
                 // the subscription ending, not a failure.
                 if (state.closed) return;
                 console.warn(
-                  `[events] closing the stream: item delivery failed (${String(err)})`,
+                  `[events] closing the stream: live delivery failed (${String(err)})`,
                 );
                 failStream("live_delivery_failed");
               });
           };
 
-          // The pumps run before the helpers they call are initialized,
-          // which is safe and deliberate: only their `.then`/`.catch`
+          // The pump runs before the helpers it calls are initialized,
+          // which is safe and deliberate: only its `.then`/`.catch`
           // callbacks reach those, and the first of those cannot run
-          // until this synchronous body has finished. Starting them here
+          // until this synchronous body has finished. Starting it here
           // is what attaches the emitter listeners, and moving that later
           // would widen the window in which a publish has nobody
           // listening.
           pump();
-
-          const edgeIter = subscribeEdges({
-            signal: subscriptionAbort.signal,
-          })[Symbol.asyncIterator]();
-          const pumpEdges = () => {
-            edgeIter
-              .next()
-              .then(async ({ value: event, done }) => {
-                if (done || state.closed) return;
-                if (holding) {
-                  holdFrame({ kind: "edge", event });
-                } else {
-                  // Awaited, so the source read a frame needs cannot be
-                  // overtaken by the next frame's. A failure reaches the
-                  // catch below and ends the stream, which is the same
-                  // decision delivery failure already takes: a subscriber
-                  // silently stopped hearing about half its events is the
-                  // one shape a durable client cannot detect.
-                  await sendEdgeEvent(event.eventId, event);
-                }
-                pumpEdges();
-              })
-              .catch((err: unknown) => {
-                // The same discrimination the item pump makes, and the
-                // same handling, because the alternative is worse here
-                // rather than better: swallowing this ends edge delivery
-                // for the life of the connection while item delivery
-                // carries on, so the client keeps receiving events and
-                // never learns it has stopped hearing about half of
-                // them. Half a stream that looks whole is the one shape
-                // a durable client cannot detect.
-                if (state.closed) return;
-                console.warn(
-                  `[events] closing the stream: edge delivery failed (${String(err)})`,
-                );
-                failStream("edge_delivery_failed");
-              });
-          };
-          pumpEdges();
 
           /**
            * End the stream from a terminal decision rather than from a
@@ -740,8 +711,7 @@ export function eventRoutes(
           const endStream = (): void => {
             const wasOpen = !state.closed;
             cleanup();
-            void reader.return(undefined);
-            void edgeIter.return(undefined);
+            void frames.return(undefined);
             if (wasOpen) {
               try {
                 controller.close();
@@ -782,10 +752,8 @@ export function eventRoutes(
           /**
            * Hold one live frame until the prologue is done with it.
            *
-           * The cap is enforced here rather than at the two call sites,
-           * for the reason the single buffer exists at all: a rule
-           * written twice is a rule one of the two kinds of frame will
-           * eventually stop obeying.
+           * The cap is enforced here, beside the buffer it bounds, so a
+           * frame of either kind meets the one rule.
            *
            * **A frame that will not be delivered is not held, and this is
            * the load-bearing half.** A cap that counted frames the
@@ -1346,14 +1314,12 @@ export function eventRoutes(
 
           c.req.raw.signal.addEventListener("abort", () => {
             cleanup();
-            void reader.return(undefined);
-            void edgeIter.return(undefined);
+            void frames.return(undefined);
           });
 
           onCancel = () => {
             cleanup();
-            void reader.return(undefined);
-            void edgeIter.return(undefined);
+            void frames.return(undefined);
           };
         },
         cancel() {
