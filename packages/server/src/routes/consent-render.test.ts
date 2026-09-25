@@ -84,6 +84,26 @@ const PARAMS = {
   },
 };
 
+describe("consent copy names only types that exist", () => {
+  it("has no label or description for a concrete type the registry does not hold", () => {
+    // Coverage runs from type to copy; this runs the other way, so a
+    // sentence left behind for a removed type fails rather than waiting for
+    // a scope nobody can request.
+    const concrete = (key: string) =>
+      /^(core|system)\.[^*]+$/.test(key) && !key.endsWith(".*");
+    const keys = [
+      ...Object.keys(SCOPE_LABELS),
+      ...Object.keys(CONSENT_SCOPE_DESCRIPTIONS),
+    ].filter(concrete);
+    // Witness: both maps name concrete types, so the filter reached rows.
+    expect(keys).toContain("core.note");
+    expect(keys).toContain("system.connection");
+    for (const key of keys) {
+      expect(TYPE_REGISTRY.has(key), `${key} names no shipped type`).toBe(true);
+    }
+  });
+});
+
 describe("renderConsentScreen — layout + form contract", () => {
   it("links to the shared stylesheet and carries no inline <style> block", () => {
     const html = renderConsentScreen(PARAMS);

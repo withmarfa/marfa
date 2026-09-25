@@ -733,8 +733,10 @@ export function isValidScope(scope: string): boolean {
  *   `SYSTEM_TYPE_IDS` and keeping this string is the change to refuse: every
  *   system type ships under `system.`, so the swap looks equivalent and
  *   stops being so the moment a system-family type is named anything else.
- * - **`marfa.*` reads but does not write.** A `marfa.*` type is outside the
- *   system family, so it is in the category and its reads are unrestricted.
+ * - **`marfa.*` reads but does not write.** The build ships no `marfa.*`
+ *   type, but an instance can hold a platform row under the root. It is
+ *   outside the system family, so it is in the category and its reads are
+ *   unrestricted.
  *   But the middleware refuses every `marfa.*` write from a credential that
  *   is not `is_operator`, and an OAuth token is not. **A parent must never claim
  *   what a hard gate will refuse**: a grant that reads as covering a write

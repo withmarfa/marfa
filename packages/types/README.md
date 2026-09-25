@@ -6,7 +6,7 @@ Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generat
 
 - `core/*.json` — the core type schemas
 - `core/edges/*.json` — the core edge types
-- `core/system/*.json` — the `system.*` types the server writes
+- `core/system/*.json` — the `system.*` types, the platform's own records
 - `scripts/validate.ts` — JSON shape validator (runs in CI)
 - `scripts/generate.ts` — codegen: JSON → the two registries below
 - `generated/type-registry.ts` — auto-generated; do not edit

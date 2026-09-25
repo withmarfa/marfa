@@ -725,24 +725,31 @@ describe("an archive carries where a type came from", () => {
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
 
-  it("replays a row's provenance instead of defaulting it", async () => {
-    // The laundering this exists to stop. The column defaults to `user`,
-    // and `user` is what the consent screen offers a read-and-write
-    // wildcard over, so a row nobody recorded would come back from a backup
-    // as a type the person registered, through a first-party operation
-    // described to them as a restore.
+  it("replays each row's provenance rather than one default", async () => {
+    // Both directions, because each has a different fallback to hide
+    // behind. The column defaults to `user`, the one the consent screen
+    // offers a read-and-write wildcard over, so a row nobody recorded would
+    // come back as the person's own; and a line carrying no provenance
+    // restores as `unknown`, so a person's own type would come back
+    // read-only if the export stopped writing it.
     const source = await newContext();
     const destination = await newContext();
-    const typeId = `salvage.widget_${uniqueSuffix()}`;
+    const recorded = `salvage.widget_${uniqueSuffix()}`;
+    const own = `mine.widget_${uniqueSuffix()}`;
 
     await source.storage.types.create(
-      { id: typeId, ...baseType },
+      { id: recorded, ...baseType },
       { origin: "unknown" },
+    );
+    await source.storage.types.create(
+      { id: own, ...baseType },
+      { origin: "user" },
     );
 
     const res = await restore(destination, await exportArchive(source));
     expect(res.status).toBe(200);
-    expect(await storedOrigin(destination, typeId)).toBe("unknown");
+    expect(await storedOrigin(destination, recorded)).toBe("unknown");
+    expect(await storedOrigin(destination, own)).toBe("user");
   });
 
   it("records an archive with no provenance as unrecorded", async () => {

@@ -70,7 +70,7 @@ export function deriveWildcardDescription(
 }
 
 /**
- * A root as a person should read it: `readwise` becomes "Readwise",
+ * A root as a person should read it: `acme` becomes "Acme",
  * `acme-corp` becomes "Acme Corp".
  *
  * **The friendly rendering is deliberate and was ruled on.** The proposal

@@ -16,6 +16,7 @@ import {
   validateTypeSchema,
   isPlatformTypeFamily,
   PLATFORM_TYPE_FAMILIES,
+  TYPE_ORIGINS,
 } from "./type-registry.js";
 import { ErrorCode, MarfaError } from "./errors.js";
 import type { ItemState } from "@withmarfa/types";
@@ -1678,5 +1679,14 @@ describe("isPlatformTypeFamily", () => {
     // the contents means a family added without a decision about which id
     // set it joins fails here as well as there.
     expect([...PLATFORM_TYPE_FAMILIES]).toEqual(["core", "system"]);
+  });
+});
+
+describe("TYPE_ORIGINS", () => {
+  it("declares exactly the origins something writes", () => {
+    // The seed writes `platform`, `POST /types` writes `user`, and a restore
+    // writes `unknown` for a line whose provenance it cannot read. An origin
+    // added without a writer is one no bundle rule was decided for.
+    expect([...TYPE_ORIGINS]).toEqual(["platform", "user", "unknown"]);
   });
 });

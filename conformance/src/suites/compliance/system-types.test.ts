@@ -49,7 +49,7 @@ describe("system.* set", () => {
     expect(r.error?.error.code).toBe("type_not_permitted");
   });
 
-  it("ships no system.connection field that nothing writes", async () => {
+  it("ships none of the eight system.connection fields no door accepts", async () => {
     // No door accepts these fields and no server path stamps them, so the
     // type declares none of them and its description has nothing to
     // explain about them.
