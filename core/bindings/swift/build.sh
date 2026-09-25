@@ -43,3 +43,7 @@ grep -q "\.macOS(\"${macos}.0\"), \.iOS(\"${ios}.0\")" "${manifest}" || {
   echo "build.sh: ${manifest} does not declare macOS ${macos} and iOS ${ios}" >&2
   exit 1
 }
+
+# Every object in every slice built for the systems named above, so an app on
+# the oldest of them links a framework it can load.
+./check-targets.sh

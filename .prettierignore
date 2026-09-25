@@ -23,5 +23,5 @@ _ignore/
 **/.marfa-state/
 **/reports/
 
-# The Rust core workspace: Cargo, Swift and generated Node output, none of it Prettier's.
+# The Rust core workspace: Cargo and generated Node output, none of it Prettier's.
 core/

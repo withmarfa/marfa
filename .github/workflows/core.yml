@@ -2,10 +2,10 @@ name: Core
 
 # Path-gated, which ci.yml deliberately is not. The trade is the same one
 # ci.yml weighs for its freshness jobs — a gate that skips is a gate that can
-# be wrong — and it lands the other way here: an XCFramework with its iOS
-# slices, both bindings' consumers and a server booted from this checkout,
-# which only the core, the three packages the server is built from and the
-# workspace's own manifests can change.
+# be wrong — and it lands the other way here: the Swift FFI crate built for
+# release, the Node binding and its consumer, and a server booted from this
+# checkout, which only the core, the three packages the server is built from
+# and the workspace's own manifests can change.
 # The core's own three commands run on every pull request, as `Core checks`
 # in ci.yml.
 on:
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # Homebrew's rustup is keg-only, so nothing it installs is on the
-      # default PATH, and cargo-swift is wherever `cargo install` put it.
+      # default PATH.
       - name: Put the Rust toolchain on PATH
         run: |
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
@@ -110,15 +110,11 @@ jobs:
           eval "${server_env}"
           cargo test --locked --workspace --exclude marfa-client -- --ignored
 
-      - name: Package the Swift bindings
-        run: core/bindings/swift/build.sh
-      # Every object in every slice built for the systems build.sh names, so
-      # an app on the oldest of them links a framework it can load.
-      - name: Hold the framework to its deployment targets
-        run: core/bindings/swift/check-targets.sh
-      - name: Build the Swift example
-        working-directory: core/bindings/swift/Example
-        run: swift build
+      # The crate marfa-swift packages with `build.sh` at the commit it
+      # pins; the framework, its glue and its consumer are built there.
+      - name: Build the Swift FFI crate
+        working-directory: core/bindings/swift
+        run: cargo build --locked --release
 
       # Outside the pnpm workspace, so every call carries the flag. `check`
       # holds the Node proof and tests to the declarations the build
@@ -133,10 +129,11 @@ jobs:
           pnpm --ignore-workspace run check
           pnpm --ignore-workspace run test
 
-      # Each binding's consumer, driven against a server stopped and started
-      # again: queued writes answered once it is back, a blob fetched, and a
-      # change the binary makes arriving through a held stream.
-      - name: Prove both bindings against a booted server
+      # The Node binding's consumer, driven against a server stopped and
+      # started again: queued writes answered once it is back, a blob
+      # fetched, and a change the binary makes arriving through a held
+      # stream.
+      - name: Prove the Node binding against a booted server
         working-directory: core
         run: |
           cargo build -p marfa-cli

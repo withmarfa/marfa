@@ -7,7 +7,7 @@ What it does is written down in `conformance/spec/device.md`, `queue-and-verdict
 - `marfa-core`: the library. `src/contract.rs`, the contract version it was built for, is written from `openapi.json` by `pnpm generate` (`scripts/generate-core-contract.ts`) and never edited by hand; the core keeps its own transport rather than `marfa-client`, so it takes the number there rather than from that crate.
 - `marfa-client`: the Rust client, generated from `openapi.json` by OpenAPI Generator under `pnpm generate` and never edited by hand. `openapitools.json` pins the generator and its settings, and `templates/lib.mustache` adds the `CONTRACT_VERSION` the crate was generated for. The generator is a Java program, so `pnpm generate` needs a Java runtime on the path, 11 or later; CI's freshness job installs Temurin 21.
 - `marfa-cli`: the `marfa` binary.
-- `bindings/swift`: UniFFI bindings packaged as an XCFramework and a Swift package, with an example target. Its own cargo workspace, for the reason `Cargo.toml` gives.
+- `bindings/swift`: the UniFFI crate, and the script that packages it as an XCFramework and its Swift glue for `withmarfa/marfa-swift`. Its own cargo workspace, for the reason `Cargo.toml` gives.
 - `bindings/node`: a napi-rs module with a proof script.
 - `scripts`: boot a server, mint a key, seed items, for the live lane below.
 
@@ -55,8 +55,8 @@ the tests; formatting takes it too, since the generator formats what it writes.
 built from, or to the workspace's manifests: a lane against a real server, where
 `scripts/server-up.sh` boots one and mints a key and
 `cargo test --workspace --exclude marfa-client -- --ignored` runs the tests
-that need one, the XCFramework, and both bindings' proofs. That is what
-`scripts` is for.
+that need one, the Swift FFI crate's release build, and the Node binding's
+proof. That is what `scripts` is for.
 
 The device fixtures under `conformance/` drive the built binary and refuse one
 older than the source it came from, so build it before running them:
@@ -69,7 +69,7 @@ cargo build -p marfa-cli
 
 Both open a store on a file with a server and reach the reads, hydrate and catch-up, a held stream (`follow`, with a listener and a subscription to stop it), every queued write, uploads, attachments and a blob's bytes, the queue, drain, release, forget, and the six verdicts as a typed value carrying what each one says. Both also open a store to read (`openReader`) and read its change signal (`dataVersion`). An in-memory store and catch-up's idle setting stay in Rust, where the tests use them.
 
-Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`, with macOS, iOS and simulator slices; the example in `bindings/swift/Example` runs with `swift run`.
+Swift: `bindings/swift/build.sh` packages the FFI crate with cargo-swift into `bindings/swift/MarfaCore`, with macOS, iOS and simulator slices, and holds every slice to its deployment targets with `check-targets.sh`. `withmarfa/marfa-swift` runs it at the commit it pins; the Swift package, its generated types and its sample live there.
 
 Node: the package sits outside the pnpm workspace, so every pnpm call carries the flag:
 
@@ -83,4 +83,4 @@ pnpm --ignore-workspace run test
 
 `check` holds the proof script and the tests to the `index.d.ts` the build generates. `test` drives the held stream, the reading open, and a drain whose create names a source its key does not claim, against a server it scripts itself.
 
-`scripts/binding-proof.sh` drives both, after both are built, through a write made offline and its verdict once the server returns: each hydrates, the server stops, each queues writes and drains into nothing, the server comes back on the same origin with the same data, and each drains again. Then each is told of a note the binary makes while it holds the stream, and reads, from a store of its own, the thumbnails of a type the binary registers.
+`scripts/binding-proof.sh` drives the Node binding, once it is built, through a write made offline and its verdict once the server returns: it hydrates, the server stops, it queues writes and drains into nothing, the server comes back on the same origin with the same data, and it drains again. Then it is told of a note the binary makes while it holds the stream, and reads, from a store of its own, the thumbnails of a type the binary registers.

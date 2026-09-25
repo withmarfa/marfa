@@ -4,8 +4,7 @@ name: Release
 # it plus 0.0.1, starting at 0.0.1. Pushing `v<version>` builds the artifacts
 # from that commit, uploads them to the run, and publishes them: the npm
 # packages `@withmarfa/core` and `@withmarfa/client`, the `marfa-client`
-# crate, the Swift types as a pull request to marfa-swift-sdk, and a GitHub
-# release carrying every artifact.
+# crate, and a GitHub release carrying every artifact.
 #
 # A dispatch with a `version` is a dry run: it runs the same build a tag
 # would, and skips only the publish job. It is how the workflow is exercised
@@ -253,25 +252,6 @@ jobs:
           cargo package -p marfa-client --allow-dirty
           cp "target/package/marfa-client-$VERSION.crate" "$RUNNER_TEMP/artifacts/"
 
-      # The Swift types as the source package a consumer depends on: the
-      # manifest, its resolution, the generated sources, and the tests the
-      # manifest declares, without which SwiftPM refuses the package.
-      - name: Zip the Swift types
-        working-directory: swift
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          swift build
-          # zip names a missing path in a warning and zips the rest, so each
-          # is asked for first.
-          for path in Package.swift Package.resolved README.md Sources/MarfaTypes Tests; do
-            if [ ! -e "$path" ]; then
-              echo "::error::The Swift package has no $path to zip."
-              exit 1
-            fi
-          done
-          zip -qr "$RUNNER_TEMP/artifacts/MarfaTypes-$VERSION.zip" Package.swift Package.resolved README.md Sources Tests
-
       # What the release moved on the published surface, against the lock
       # at the release before it. The first release has none to compare.
       - name: Write the published surface's delta
@@ -289,15 +269,14 @@ jobs:
           fi
           cat "$out"
 
-      # Exactly the six the publish job reads, by name: an upload that only
+      # Exactly the five the publish job reads, by name: an upload that only
       # refuses an empty folder would carry a run missing one.
-      - name: Hold the artifacts to the six a release carries
+      - name: Hold the artifacts to the five a release carries
         working-directory: ${{ runner.temp }}/artifacts
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           expected=$(printf '%s\n' \
-            "MarfaTypes-$VERSION.zip" \
             "marfa-$VERSION-darwin-arm64.tar.gz" \
             "marfa-client-$VERSION.crate" \
             "surface-delta-$VERSION.md" \
@@ -305,7 +284,7 @@ jobs:
             "withmarfa-core-$VERSION.tgz" | LC_ALL=C sort)
           found=$(for file in *; do printf '%s\n' "$file"; done | LC_ALL=C sort)
           if [ "$found" != "$expected" ]; then
-            echo "::error::The artifacts are not the six a release carries."
+            echo "::error::The artifacts are not the five a release carries."
             diff <(echo "$expected") <(echo "$found") || true
             exit 1
           fi
@@ -325,9 +304,9 @@ jobs:
 
   # Never reached by a dry run. Ordered so a failure part way leaves what a
   # re-run of the same tag can finish, and never a version half out: every
-  # credential is checked before anything is sent; the steps that can be
-  # undone, the Swift pull request and the draft release, come first; the
-  # registries, which never take a version back, come last; and the release
+  # credential is checked before anything is sent; the draft release, which
+  # can be undone, comes first; the registries, which never take a version
+  # back, come after it; and the release
   # is made public only once everything is out. Every step asks whether its
   # version is already there and skips if it is, so a re-run repeats nothing.
   publish:
@@ -340,7 +319,6 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.build.outputs.version }}
-      SWIFT_SDK: withmarfa/marfa-swift-sdk
     steps:
       # Named one by one, so the message says which is missing. Before the
       # checkout, so a tag without them costs nothing.
@@ -348,10 +326,9 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          SWIFT_SDK_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
         run: |
           missing=()
-          for name in NPM_TOKEN CARGO_REGISTRY_TOKEN SWIFT_SDK_TOKEN; do
+          for name in NPM_TOKEN CARGO_REGISTRY_TOKEN; do
             if [ -z "${!name}" ]; then missing+=("$name"); fi
           done
           if [ "${#missing[@]}" -gt 0 ]; then
@@ -374,71 +351,17 @@ jobs:
 
       # A set secret can still be the wrong one. npm names the account a
       # token signs in as, though whether it may publish under the scope is
-      # known only at the publish; the Swift SDK's token has to reach the
-      # repository with push. crates.io has no read that proves a publish
-      # token, so that one is known only by its publish, which is why the
-      # crate goes before the npm packages.
-      - name: Check the credentials reach what they publish to
+      # known only at the publish. crates.io has no read that proves a
+      # publish token, so that one is known only by its publish.
+      - name: Check the npm credential signs in
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          GH_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
         run: |
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$RUNNER_TEMP/.npmrc"
           if ! npm whoami --userconfig "$RUNNER_TEMP/.npmrc" > /dev/null; then
             echo "::error::NPM_TOKEN does not sign in to npm."
             exit 1
           fi
-          if [ "$(gh api "repos/$SWIFT_SDK" --jq .permissions.push)" != "true" ]; then
-            echo "::error::SWIFT_SDK_TOKEN cannot push to $SWIFT_SDK."
-            exit 1
-          fi
-
-      # The Swift types land in marfa-swift-sdk as a pull request that puts
-      # this release's generated sources at `Sources/MarfaTypes/`, on the
-      # branch `release/v<version>`. Nothing lands until the SDK merges it:
-      # the SDK owns its manifest, its target list and its own versions, so
-      # the release proposes the sources and leaves the rest to the SDK. The
-      # zip on the GitHub release carries the same sources as a package of
-      # their own.
-      - name: Propose the Swift types to marfa-swift-sdk
-        env:
-          GH_TOKEN: ${{ secrets.SWIFT_SDK_TOKEN }}
-        run: |
-          branch="release/v$VERSION"
-          # Assigned, so a failed lookup fails the step rather than reading
-          # as a pull request that exists.
-          proposed=$(gh pr list -R "$SWIFT_SDK" --head "$branch" --state all --json number --jq length)
-          if [ "$proposed" != "0" ]; then
-            echo "$SWIFT_SDK already has a pull request from $branch"
-            exit 0
-          fi
-          sdk="$RUNNER_TEMP/swift-sdk"
-          auth="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
-          git -c http.extraheader="$auth" clone --quiet --depth 1 "https://github.com/$SWIFT_SDK.git" "$sdk"
-          if git -C "$sdk" -c http.extraheader="$auth" ls-remote --exit-code --heads origin "$branch" > /dev/null; then
-            echo "$branch is on $SWIFT_SDK from an earlier run; opening its pull request"
-          else
-            unzip -q "artifacts/MarfaTypes-$VERSION.zip" 'Sources/MarfaTypes/*' -d "$RUNNER_TEMP/types"
-            git -C "$sdk" checkout --quiet -b "$branch"
-            rm -rf "$sdk/Sources/MarfaTypes"
-            mkdir -p "$sdk/Sources"
-            cp -R "$RUNNER_TEMP/types/Sources/MarfaTypes" "$sdk/Sources/MarfaTypes"
-            git -C "$sdk" add Sources/MarfaTypes
-            # A release that changed nothing the types describe has nothing
-            # to propose.
-            if git -C "$sdk" diff --cached --quiet; then
-              echo "$SWIFT_SDK already holds these types"
-              exit 0
-            fi
-            git -C "$sdk" \
-              -c user.name="github-actions[bot]" \
-              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
-              commit --quiet -m "feat(types): MarfaTypes from marfa v$VERSION"
-            git -C "$sdk" -c http.extraheader="$auth" push --quiet origin "$branch"
-          fi
-          gh pr create -R "$SWIFT_SDK" --base main --head "$branch" \
-            --title "feat(types): MarfaTypes from marfa v$VERSION" \
-            --body "The Swift types generated from the API document at marfa v$VERSION, as the monorepo's release built them, at \`Sources/MarfaTypes/\`. They need \`swift-openapi-runtime\`, as the zip on the monorepo's v$VERSION release declares."
 
       # A draft, so it can be removed, and seen by nobody until it is made
       # public at the end. A release already there keeps every file it holds,

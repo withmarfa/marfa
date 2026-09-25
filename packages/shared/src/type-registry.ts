@@ -229,8 +229,8 @@ export function seedPlatformTypes(seeded: readonly SeededPlatformType[]): void {
 /**
  * The shipped set as the build carries it, for seeding an instance that has
  * no rows yet. The repo's JSON files stay canonical: they are what a fresh
- * instance is seeded from, and what the codegen and the Swift wrapper
- * generation read when no server exists to ask.
+ * instance is seeded from, and what the codegen reads when no server exists
+ * to ask.
  */
 export function shippedPlatformTypes(): SeededPlatformType[] {
   return [
