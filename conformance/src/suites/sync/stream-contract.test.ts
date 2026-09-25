@@ -279,6 +279,23 @@ describe("the stream says when it is live", () => {
     expect(itemIds(resumed).has(note)).toBe(false);
     expect(itemIds(resumed).has(bookmark.data.item.id)).toBe(false);
     expect(itemIds(resumed).has(after)).toBe(true);
+
+    // The witness for the bookmark's absence: an unfiltered resume from
+    // the older cursor does carry it, so it is the marker's cursor that
+    // left it out and not this key or the type.
+    const { events: fromBefore } = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: eventId },
+      (stream) =>
+        collectUntil(
+          stream,
+          (evts) => itemIds(evts).has(after),
+          `the older resume to reach ${after}`,
+          context.signal,
+        ),
+    );
+    expect(itemIds(fromBefore).has(bookmark.data.item.id)).toBe(true);
   });
 });
 

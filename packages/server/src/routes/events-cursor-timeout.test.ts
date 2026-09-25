@@ -149,7 +149,7 @@ describe("GET /events — the cursor announcement is bounded", () => {
     // expires rather than stranded behind a read that never returns.
     wake("evt-cursor-timeout-held");
 
-    const text = await readUntil(open, "evt-cursor-timeout-held");
+    const text = await readUntil(open, "event: stream_live");
     try {
       expect(
         text,
@@ -159,6 +159,13 @@ describe("GET /events — the cursor announcement is bounded", () => {
         text,
         "a head read that never returned has no cursor to announce",
       ).not.toContain("event: stream_cursor");
+      // The prologue still ends, and says so; with no head and nothing
+      // replayed, the position it names is none.
+      expect(text).toContain("event: stream_live");
+      expect(text).toContain('"cursor":null');
+      expect(text.indexOf("event: stream_live")).toBeGreaterThan(
+        text.indexOf("evt-cursor-timeout-held"),
+      );
     } finally {
       await open.reader.cancel();
     }
