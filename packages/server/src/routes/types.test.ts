@@ -767,10 +767,9 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
         key: ctx.workingKey,
         body: { id: `${tier}.runtime-authored-probe`, ...baseType },
       });
-      // Previously 201: the gate admitted the operator key, which put
-      // registration and archive restore in disagreement. An archive
-      // carrying such a type is refused whatever credential restores it,
-      // so the row could only ever have made the exports un-restorable.
+      // The operator key too: an archive carrying such a type is refused
+      // whatever credential restores it, so a registration here could only
+      // make the exports un-restorable.
       expect(res.status).toBe(403);
       const body = (await res.json()) as { error: { message: string } };
       expect(body.error.message).toContain("platform-shipped");

@@ -13,11 +13,10 @@
  * edge events say nothing about the item they hung off — an item with no
  * edges cascades nothing and was therefore completely silent.
  *
- * **Three doors, because a purge has three ways in.** The single-item route,
- * the bulk action, and the credential teardown an uninstall runs. They share
- * no code, so covering one proves nothing about the others; the bulk door in
- * particular is the one whose silence costs the most, because it removes
- * thousands of rows per call.
+ * **Two doors, because a purge has two ways in.** The single-item route and
+ * the bulk action share no code, so covering one proves nothing about the
+ * other; the bulk door is the one whose silence costs the most, because it
+ * removes thousands of rows per call.
  *
  * The retention sweep is deliberately not among them, and that absence is a
  * decision rather than a gap: it runs a 60-day cutoff against a 7-day event

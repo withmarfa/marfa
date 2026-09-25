@@ -1003,8 +1003,7 @@ export function occurrenceRoutes(
       // Every count here is scoped to what this request read, and it
       // read nothing, so the zeros are true rather than a claim about
       // the rest. `scan.series_errors` says the same on every other
-      // path: a credential permissioned for one event type is told
-      // about that type's rules and about no others.
+      // path: a request is told about the rules it read and no others.
       return c.json(
         {
           data: [],

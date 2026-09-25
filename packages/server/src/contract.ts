@@ -21,7 +21,7 @@
  * others. Whether it moved when the wire did is a judgment, stated here so
  * it is applied without one.
  */
-export const CONTRACT_VERSION = 2;
+export const CONTRACT_VERSION = 3;
 
 /**
  * The response header that carries the contract version. On every answer

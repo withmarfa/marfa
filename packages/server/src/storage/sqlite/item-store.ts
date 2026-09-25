@@ -1214,9 +1214,8 @@ export class SqliteItemStore implements ItemStore {
 
   async purgeRevokedAppGrantsOlderThan(beforeDate: string): Promise<number> {
     // A grant revoked through the user-facing path keeps
-    // `state: "active"`, so this asks `properties`
-    // rather than the lifecycle, and `kind = 'app'` keeps a connector
-    // uninstall's routine `revoked` row out of a tombstone sweep.
+    // `state: "active"`, so this asks `properties` rather than the
+    // lifecycle, and `kind = 'app'` keeps the sweep to application grants.
     const where = and(
       eq(items.type, "system.connection"),
       sql`json_extract(${items.properties}, '$.kind') = 'app'`,

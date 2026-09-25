@@ -1,7 +1,7 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream \u2014 a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier.",
+  "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (a connector acting on this user's behalf, whatever its upstream). Lifecycle bounded to active | revoked. Has no tier.",
   "version": 5,
   "fields": {
     "kind": {
@@ -43,15 +43,15 @@
     },
     "connector_id": {
       "type": "string",
-      "description": "For kind: connector \u2014 id of the Connector manifest this connection implements"
+      "description": "For kind: connector \u2014 id of the connector this connection belongs to"
     },
     "credential_id": {
       "type": "string",
-      "description": "For kind: connector \u2014 id of a system.credential item holding the credential the connector authenticates its upstream with"
+      "description": "For kind: connector \u2014 id of the credential the connector authenticates its upstream with"
     },
     "configuration": {
       "type": "object",
-      "description": "For kind: connector \u2014 per-Connector JSON config payload (shape determined by the Connector manifest)"
+      "description": "For kind: connector \u2014 the connector's own configuration, shaped by the connector"
     },
     "direction": {
       "type": "enum",

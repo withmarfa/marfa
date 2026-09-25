@@ -558,7 +558,7 @@ const systemApp: TypeSchema = {
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (anything installed from a manifest, whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier.",
+  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (a connector acting on this user's behalf, whatever its upstream). Lifecycle bounded to active | revoked. Has no tier.",
   version: 5,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "connector"] },
@@ -568,9 +568,9 @@ const systemConnection: TypeSchema = {
     granted_at: { type: "datetime", description: "When the grant was approved", required: true },
     last_used_at: { type: "datetime", description: "Most recent successful use of any token issued under this grant" },
     revoked_at: { type: "datetime", description: "When the grant was revoked, if any" },
-    connector_id: { type: "string", description: "For kind: connector — id of the Connector manifest this connection implements" },
-    credential_id: { type: "string", description: "For kind: connector — id of a system.credential item holding the credential the connector authenticates its upstream with" },
-    configuration: { type: "object", description: "For kind: connector — per-Connector JSON config payload (shape determined by the Connector manifest)" },
+    connector_id: { type: "string", description: "For kind: connector — id of the connector this connection belongs to" },
+    credential_id: { type: "string", description: "For kind: connector — id of the credential the connector authenticates its upstream with" },
+    configuration: { type: "object", description: "For kind: connector — the connector's own configuration, shaped by the connector" },
     direction: { type: "enum", description: "For kind: connector — does this connector read from its upstream, write to it, or both", enum_values: ["read", "write", "both"] },
     mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Validated as a whole document rather than field by field; shape and semantics live with the shared mapping module, not this schema." },
   },

@@ -1759,16 +1759,15 @@ function describeScope(scope: ParsedScope): string | undefined {
       // Deliberately absent. `scopeName` in `consent.ts` and
       // `describeScope` in `device-pages.ts` both resolve an OIDC
       // literal through `oidc-labels.ts` and return before they look at this
-      // map, so anything written here for one was computed and discarded. A
-      // third register existed to fill it and is gone with it.
+      // map, so anything written here for one would be computed and
+      // discarded.
       return undefined;
     case "permission":
       // Deliberately absent, for the reason above. `scopeName` in
       // `consent.ts` and `describeScope` in `device-pages.ts` both
       // resolve a permission literal through `permission-labels.ts` and
-      // return before they look at this map,
-      // so anything written here for one was computed and discarded. The
-      // branch that filled it is gone with it.
+      // return before they look at this map, so anything written here for
+      // one would be computed and discarded.
       //
       // Absent here is not a gap waiting on permissions reaching a
       // consent screen. They are already described when they get there, on

@@ -18,6 +18,8 @@ class DerivedKeyError extends Error {
   }
 }
 
+// The salt is part of every key derived here, so changing its text would
+// change every key and invalidate every blob link already issued.
 const SALT = Buffer.from("marfa-secret-encryption", "utf8");
 const KEY_LENGTH_BYTES = 32;
 

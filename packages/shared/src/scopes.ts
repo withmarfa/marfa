@@ -1506,7 +1506,7 @@ function grantCoversPattern(
  * bundle (e.g. `user.*:read`) narrows as a unit rather than per type.
  */
 export interface PermissionBundle {
-  /** Stable identifier, e.g. "read", "write", "profile", "connected". */
+  /** Stable identifier, e.g. "read", "write", "profile", "custom". */
   id: string;
   /** Plain-language label for the consent toggle, e.g. "Read your content". */
   label: string;

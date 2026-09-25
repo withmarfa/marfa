@@ -174,12 +174,10 @@ const EDGE_KEBAB_NAME = /^[a-z](?:[a-z0-9_-]*[a-z0-9])?$/;
  * axes drift, which is exactly the defect this guards against, arriving
  * from the other direction.
  *
- * What this replaces was not a looser grammar but an escape hatch:
- * `!isValidTypeIdentifier(id) && !id.includes("-")` admitted the kebab set by
- * skipping the check entirely for anything containing a hyphen, so `"-"`,
- * `"MY-EDGE"`, `"a b-c"`, `"../-"` and `"..--.."` all registered. Naming the
- * kebab form admits the nine shipped ids without exempting everything that
- * happens to share a character with them.
+ * Naming the kebab form admits the nine shipped ids without exempting
+ * everything that happens to share a character with them: skipping the check
+ * for anything containing a hyphen would let `"-"`, `"MY-EDGE"`, `"a b-c"`,
+ * `"../-"` and `"..--.."` register.
  */
 export function isValidEdgeTypeIdentifier(value: string): boolean {
   if (typeof value !== "string") return false;
@@ -394,9 +392,8 @@ export function resolveExtensionPermission(
  * Filters extension namespaces to the ones the requesting credential's
  * extension permissions reach, plus its own label's namespace.
  *
- * There is no privileged reader. The parameter that used to name one was
- * passed `false` at every call site, because a rank that saw everything was
- * the thing one permission model removed.
+ * There is no privileged reader: one permission model has no rank that sees
+ * everything.
  */
 export function filterExtensionsByPermission(
   extensions: Record<string, Record<string, unknown>>,

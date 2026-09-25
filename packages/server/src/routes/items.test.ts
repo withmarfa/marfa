@@ -171,9 +171,9 @@ describe("POST /items", () => {
     expect(secondData.item.properties.body).toBe("Second");
 
     // Whole-batch retry shape: a third POST is also idempotent — no new row
-    // is created, the existing row keeps being updated. This is the contract
-    // inbound connector handlers (rss-watcher / Calendar) rely on to recover
-    // from createItem-success / cursor-write-fail without producing duplicates.
+    // is created, the existing row keeps being updated. A writer that
+    // created an item and then failed to record its own cursor recovers by
+    // sending the batch again, without producing duplicates.
     const third = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: {
@@ -746,7 +746,7 @@ describe("POST /items — the operator gate", () => {
     // The positive arm of the gate, and it reaches no row. `is_operator` is
     // exactly what the fence asks for, so the operator key clears it — and is
     // then refused by its own type map, which the one unauthenticated mint
-    // forces empty. Nothing writes a reserved row through a credential now,
+    // forces empty. Nothing writes a reserved row through a credential,
     // which is why the platform's own machinery writes these rows through the
     // storage layer instead.
     //

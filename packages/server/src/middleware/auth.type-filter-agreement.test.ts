@@ -2,12 +2,10 @@
  * The list filter and the point check answer the same question, and this file
  * asks them both about the same concrete ids.
  *
- * `checkTypeAccess` honors a `"none"` entry exactly. The filter for a list
- * read could not express one, so it approximated, and every approximation
- * available leaked in one direction or the other. The three shapes below are
- * the three ways that happened; they are one root cause rather than three
- * bugs, which is why they are pinned together in one file rather than beside
- * whichever compiler each of them reached.
+ * `checkTypeAccess` honors a `"none"` entry exactly, and a list filter that
+ * approximated one would leak in one direction or the other. The three shapes
+ * below are the three ways an approximation leaks; they are one question
+ * rather than three, which is why they are pinned together in one file.
  *
  * **Agreement is asserted per id, not per shape.** A test that only checked
  * "the excluded type is absent" passes on a filter that returns nothing at

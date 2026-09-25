@@ -118,15 +118,11 @@ function distinctPatterns(
  * from their own label maps and return before the description map is read, so
  * they are held to those maps instead, further down.
  *
- * **`content` was listed here before it reached anything, and that is why
- * this guard covered the commit that published it.** The set checked here is
- * derived from the allowlist, so while the category's two literals were
- * withheld `distinctPatterns` found no content pattern and every assertion
- * below passed over an empty arm. Listing it anyway armed the guard for the
- * commit that published them rather than for some later one where a reviewer
- * would have had to notice the omission — which is how the category reached
- * a screen undescribed the first time. It is now a live arm rather than a
- * latch, and the file that held the withholding is gone.
+ * **A kind is listed here whether or not the allowlist publishes it yet.**
+ * The set checked here is derived from the allowlist, so a kind the allowlist
+ * withholds finds no pattern and its arm passes empty; listing it anyway arms
+ * the guard for the change that publishes it, rather than for one where a
+ * reviewer has to notice the omission.
  *
  * A `never` guard here would be the stronger shape and does not fit: the
  * list is deliberately a subset of `ParsedScope["kind"]`, so exhaustiveness
@@ -206,11 +202,9 @@ interface UncoveredPattern {
 /**
  * Patterns a client can request today that no curated copy answers for.
  *
- * **Empty, and the mechanism stays.** Every entry was a scope somebody could
- * be asked to approve while being shown a raw literal or a paragraph of
- * schema rationale. The last of them closed in two changes: sixteen shipped
- * connector types got curated sentences, and the eleven namespace
- * wildcards got a rule deriving one from their root.
+ * **Empty, and the mechanism stays.** An entry is a scope somebody could be
+ * asked to approve while being shown a raw literal or a paragraph of schema
+ * rationale.
  *
  * It is written down rather than filtered out because the alternative shapes
  * are both worse: narrowing the derived set puts the fixture problem back one
@@ -325,10 +319,7 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // swap is the same silent narrowing wearing a stable number.
     //
     // So growth is a digit somebody had to change, which puts it in the
-    // diff and in front of a reviewer. **Lowering these numbers was the
-    // work and it is done**: the wildcards went to zero when a derivation
-    // rule reached them, taking the synthetic pair with them, and the
-    // connector types went to zero when somebody wrote their sentences.
+    // diff and in front of a reviewer.
     //
     // At zero the bound does more rather than less. Every count below is an
     // equality against zero, so re-populating this list is a deliberate

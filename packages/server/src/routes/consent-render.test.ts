@@ -1013,13 +1013,9 @@ describe("a grant that reaches things not yet created says so", () => {
     // `isOpenEnded` the toggle row asks, so what is worth holding is that it
     // arrives, exactly once, on the surface a person actually reads.
     //
-    // The global wildcard runs in this loop like everything else. It used to
-    // be exempted, on the argument that "Everything on your server." cannot
-    // be falsified by a type registered tomorrow and that this was all the
-    // device screen needed, since the device screen had no second line to
-    // state the property on. The device screen composes its own sentence
-    // now, so the exemption has nothing left to buy and is gone rather than
-    // overridden.
+    // The global wildcard runs in this loop like everything else: the device
+    // screen composes its own sentence, so "Everything on your server."
+    // needs no exemption for being unfalsifiable.
     const literals = openEndedLiterals();
     // Every assertion is inside the loop, and the pattern that carried the
     // defect is named, so a derivation that quietly stops finding it fails
@@ -1432,14 +1428,9 @@ describe("a grant that reaches things not yet created says so", () => {
       "Companies, teams, schools, and other organizations.",
     );
 
-    // The general form of this is on now, over both maps. It was held back
-    // while `core.media` still read "Media: books, films, music, podcasts.",
-    // naming four types a bare `core.media` grant reaches none of, because
-    // turning the check on before that sentence was rewritten would only
-    // have invited an exemption for the one case it catches. The sentence is
-    // rewritten, the exception is gone, and the case above runs over the
-    // descriptions unqualified. What stays pinned here is this pair, which
-    // is a copy decision rather than a property and so cannot be derived.
+    // The general form of this runs over both maps in the case above,
+    // unqualified. What stays pinned here is this pair, which is a copy
+    // decision rather than a property and so cannot be derived.
   });
 });
 
@@ -1583,8 +1574,8 @@ describe("renderConsentScreen — default_on", () => {
     // and sits below "New", so nobody sees the choice, and the decision
     // route reads the resulting submission as a narrowing. A narrowing is
     // treated as a promise that the removed access stops working, so it
-    // revokes the client's live tokens. An untouched Continue killed a
-    // working connector.
+    // revokes the client's live tokens, so an untouched Continue would cut
+    // off a working client.
     const html = renderConsentScreen({
       ...PARAMS,
       scopes: REQUESTED,

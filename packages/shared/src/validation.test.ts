@@ -552,7 +552,7 @@ describe("the reserved roots are derived rather than typed out", () => {
     }
   });
 
-  it("refuses `metadata` and `edge` as handles, which it used to admit", () => {
+  it("refuses `metadata` and `edge` as handles", () => {
     // `parseScope` tries the metadata and edge matchers BEFORE the type
     // matcher, so a type registered under a claimed `metadata` handle could
     // never have its own scope literal read as a type grant:
@@ -594,9 +594,9 @@ describe("isValidEdgeTypeIdentifier", () => {
     }
   });
 
-  it("refuses what the hyphen escape hatch used to admit", () => {
-    // `!isValidTypeIdentifier(id) && !id.includes("-")` skipped the check
-    // entirely for anything hyphenated, so every one of these registered.
+  it("refuses what a hyphen exemption would admit", () => {
+    // Skipping the check for anything hyphenated would let every one of
+    // these register.
     for (const id of ["-", "MY-EDGE", "a b-c", "../-", "..--..", "-leading"]) {
       expect(isValidEdgeTypeIdentifier(id), id).toBe(false);
     }

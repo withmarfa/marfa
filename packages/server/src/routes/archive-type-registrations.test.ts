@@ -425,11 +425,8 @@ describe("archives carry type registrations", () => {
     // not reachable from an archive alone. The restore's own loop skips a
     // schema whose immediate parent has not resolved and raises its own
     // error when nothing more can be written, so it reports the stall first. They need
-    // the registry to already hold a chain that points at nothing, and two
-    // paths produce that. Deleting a type does not check for types that
-    // inherit from it, and manifest registration writes a declared schema
-    // without checking its parent resolves at all. Both are defects of their
-    // own, and the cases for these two messages belong with either fix.
+    // the registry to already hold a chain that points at nothing, which no
+    // door produces: a type another inherits from refuses its delete.
     const source = await newContext();
     const destination = await newContext();
     await source.storage.items.create({

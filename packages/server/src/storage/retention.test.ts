@@ -664,10 +664,9 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   });
 
   it("leaves a connector's revoked connection alone", async () => {
-    // **Demonstrated rather than assumed.** An uninstall writes the same
-    // `revoked` status as a matter of routine onto a row somebody may
-    // reinstall against. Widening the predicate to every revoked connection
-    // reddens this and nothing else.
+    // **Demonstrated rather than assumed.** The predicate asks
+    // `kind = 'app'`; widening it to every revoked connection reddens this
+    // and nothing else.
     const connector = await seedTombstone(OLD, "connector");
     const app = await seedTombstone(OLD, "app");
     const deleted =
