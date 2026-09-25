@@ -508,17 +508,12 @@ export function eventRoutes(
            * `id:` is actually written — a frame the filter withheld moved
            * no client cursor.
            *
-           * **The last id written, which is not always the highest, and
-           * that is deliberate.** `event_log.id` is assigned before
-           * commit, so a lower id can commit after a higher one and reach
-           * a client afterwards; the SSE `id:` field has carried that
-           * property since long before this line, and the documented
-           * client rule is written against it — store the last id you
-           * received rather than the highest you have seen. Taking a
-           * maximum here would contradict that rule and skip the
-           * late-committing event. Resuming from this value can therefore
-           * re-deliver a row, which a client applying payloads by id
-           * already absorbs, and cannot skip one.
+           * The last id written is also the highest, because the log
+           * issues ids in commit order: an event is appended once its
+           * write has committed, as one statement, so no lower id reaches
+           * a client after a higher one. A reader resuming from this value
+           * therefore misses nothing, which `sync/resume.test.ts` holds
+           * the stream to.
            */
           let lastSentId: bigint | null = null;
 
