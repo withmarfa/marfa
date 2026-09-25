@@ -1682,10 +1682,14 @@ mod tests {
     /// A second opener is refused at the doors, not merely by the predicate.
     ///
     /// `lock.rs` asserts that `refuse_unless_writer` returns the refusal,
-    /// which is the guard's configuration. This asserts its effect: that
-    /// every write door calls it. Delete the call from `create_item` and the
-    /// lock test still passes and this one does not, which is the difference
-    /// between testing a guard and testing that the guard is consulted.
+    /// which is the guard's configuration. This asserts its effect, in two
+    /// halves. Every door listed refuses a reading handle with
+    /// `ReadingHandle`, so deleting the call from any of them reddens it.
+    /// And every function in this file or `drain.rs` that calls the guard is
+    /// either listed or one of four helpers whose callers are, so a door
+    /// that calls the guard itself and is left off the list reddens it too.
+    /// A new door reaching the guard only through a helper is the one case
+    /// neither half sees.
     #[test]
     fn a_reading_handle_is_refused_at_every_write_door() {
         let dir = tempfile::tempdir().unwrap();
@@ -1726,6 +1730,10 @@ mod tests {
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
+            (
+                "update_item_as_read",
+                reader.update_item_as_read("x", &edit).unwrap_err(),
+            ),
             ("delete_item", reader.delete_item("x").unwrap_err()),
             ("restore_item", reader.restore_item("x").unwrap_err()),
             (
@@ -1769,6 +1777,7 @@ mod tests {
             // missing server, which is why this is a `ReadingHandle` and not
             // a `NoServer`.
             ("drain", reader.drain().unwrap_err()),
+            ("drain_paced", reader.drain_paced().unwrap_err()),
             // Clearing answered rows is a write to the queue like any
             // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
@@ -1783,6 +1792,19 @@ mod tests {
                 "attach",
                 reader
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
+                    .unwrap_err(),
+            ),
+            // The two a folder queues a file through.
+            (
+                "create_file_item",
+                reader
+                    .create_file_item(Path::new("no-such-file.png"), &draft)
+                    .unwrap_err(),
+            ),
+            (
+                "update_file_item",
+                reader
+                    .update_file_item("x", Path::new("no-such-file.png"), &edit, Based::OnHeld)
                     .unwrap_err(),
             ),
             // The three that write the copy from the server's side. Each is
@@ -1809,20 +1831,61 @@ mod tests {
                  queue into one file and neither sees the other's rows"
             );
         }
-        // A plain count, deliberately, and it is worth being exact about
-        // what it catches. There is no expression in Rust that enumerates
-        // the methods calling a guard, so this is a tripwire rather than a
-        // derivation, and it fires in one direction only: an entry removed
-        // from the list above reddens it, a door added to `Core` and never
-        // listed does not. The list is the coverage; this only keeps the
-        // list from quietly shrinking.
         assert_eq!(
             refusals.len(),
-            22,
-            "an entry has gone from the list above. Every method on `Core` \
-             that calls `refuse_unless_writer` belongs in it, and a door \
-             dropped from it is a door nothing here covers."
+            26,
+            "an entry has gone from the list above, and a door dropped from \
+             it is a door nothing here covers"
         );
+
+        // The functions that call the guard themselves, read from the
+        // source. A helper is covered by the doors that reach it, which are
+        // listed above.
+        let helpers = [
+            "transition_locally",
+            "tag_write",
+            "extension_write",
+            "with_upload",
+        ];
+        let listed: Vec<&str> = refusals.iter().map(|(door, _)| *door).collect();
+        let mut guarded = Vec::new();
+        for source in [include_str!("lib.rs"), include_str!("drain.rs")] {
+            let mut current: Option<&str> = None;
+            for line in source.lines() {
+                if line.starts_with("mod tests") {
+                    break;
+                }
+                let declared = line.trim_start();
+                let declared = declared
+                    .strip_prefix("pub(crate) ")
+                    .or_else(|| declared.strip_prefix("pub "))
+                    .unwrap_or(declared);
+                if let Some(name) = declared.strip_prefix("fn ") {
+                    let end = name
+                        .find(|glyph: char| !(glyph.is_alphanumeric() || glyph == '_'))
+                        .unwrap_or(name.len());
+                    current = Some(&name[..end]);
+                }
+                if line.contains("refuse_unless_writer()")
+                    && let Some(name) = current
+                {
+                    guarded.push(name);
+                }
+            }
+        }
+        assert!(
+            guarded.len() >= 20,
+            "the scan found {} guarded functions, so it is reading the wrong \
+             source rather than finding every door listed",
+            guarded.len()
+        );
+        for name in guarded {
+            assert!(
+                listed.contains(&name) || helpers.contains(&name),
+                "{name} calls `refuse_unless_writer` and is not in the list \
+                 above, so a reading handle reaching it is never tried"
+            );
+        }
 
         // The control: the writer is not refused, so the refusals above are
         // the handle rather than a store that refuses everybody.
@@ -1876,7 +1939,15 @@ mod tests {
         );
         // The witness: the dead row is one a release takes, by its id.
         assert!(core.release("dead").unwrap());
-        assert_eq!(core.queue().unwrap().iter().find(|row| row.id == "dead").unwrap().verdict, None);
+        assert_eq!(
+            core.queue()
+                .unwrap()
+                .iter()
+                .find(|row| row.id == "dead")
+                .unwrap()
+                .verdict,
+            None
+        );
     }
 
     #[test]
