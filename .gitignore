@@ -42,8 +42,10 @@ data/
 .claude/worktrees/
 
 # The local server the conformance suite boots: its SQLite file, blob
-# folder, log, pid and env file. Written per run, never part of the tree.
-.marfa-state/
+# folder, log, pid and env file. Written per run, never part of the tree,
+# and a run may name its own folder, so every name with this prefix goes,
+# at any depth.
+.marfa-state*
 # The restore drill's two instances and its Litestream state, likewise.
 .marfa-drill/
 
