@@ -156,10 +156,10 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
  * alone: an edge carries no item type, so `?type=` has nothing to say
  * about one, and a client watching two types needs to hear about the
  * edges joining them. `?edges=none` is the opt-out, and it is
- * independent of the type filter. Silencing every edge whenever a type
- * filter was set is the behavior this replaced, and it left a filtered
- * client with no way to reconstruct its graph — an edge has no row to
- * re-read and leaves no tombstone when it goes.
+ * independent of the type filter. Silencing every edge under a type
+ * filter would leave a filtered client with no way to reconstruct its
+ * graph — an edge has no row to re-read and leaves no tombstone when it
+ * goes.
  */
 export async function publishEdge(
   event: EdgeEvent,
@@ -219,8 +219,7 @@ export interface SubscribeOptions {
    * `iterator.return()` alone cannot unwind a generator suspended on an
    * event that never comes, so a quiet instance accumulates one listener
    * per departed viewer indefinitely. Long-lived per-request consumers
-   * (the SSE route) pass one, at both its `subscribe` and `subscribeEdges`
-   * call sites.
+   * (the SSE route) pass one to `subscribeAll`.
    *
    * The webhook delivery consumer is the only process-lifetime consumer,
    * and it passes none from either of its two loops, items and edges.
@@ -243,8 +242,8 @@ export interface SubscribeOptions {
 /**
  * Iterator cleanup contract.
  *
- * `subscribe()` and `subscribeEdges()` return `AsyncGenerator`s backed by
- * `events.on(emitter, ...)`. When the consumer is done — SSE client
+ * `subscribe()`, `subscribeEdges()` and `subscribeAll()` return
+ * `AsyncGenerator`s over the emitter's listeners. When the consumer is done — SSE client
  * disconnects, request handler completes, etc. — the consumer MUST close
  * the iterator so the underlying EventEmitter listener is removed:
  *
@@ -268,10 +267,9 @@ export interface SubscribeOptions {
  * `/search` and `/export` compile into SQL for this parameter: the global
  * wildcard, the named type and everything under its name, and the types
  * that declare their way there. Deferring to it rather than restating it
- * is the whole point — this used to walk declared parentage alone, so the
- * stream answered a narrower question than every other surface reading the
- * same parameter, and answered it with an empty stream and a 200 rather
- * than with an error.
+ * is the whole point: a walk of its own would answer a narrower question
+ * than every other surface reading the same parameter, with an empty
+ * stream and a 200 rather than with an error.
  *
  * **What resolving the registry per live event costs, and what that was
  * judged against.** The yardstick is `matchesTypeFilter`, the permission

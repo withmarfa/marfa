@@ -251,10 +251,9 @@ describe("a repeated create is acknowledged", () => {
 
       const repeat = await client.createEdge(body);
 
-      // The sentinel, as above, and an edge rather than an item. Item and
-      // edge events reach a subscriber through independent pipelines, so an
-      // item arriving says nothing about an edge still in flight; only
-      // another edge orders against this one.
+      // The sentinel, as above, an edge here: the stream delivers both
+      // kinds in id order, so an item would order against the repeat's
+      // edge too, and an edge keeps the case to one kind of frame.
       const sentinel = await client.createEdge({
         source_id: source.data.item.id,
         target_id: spare.data.item.id,

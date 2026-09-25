@@ -9,7 +9,6 @@ import {
 } from "../../utils/setup.js";
 import {
   collectUntil,
-  drainAvailable,
   withStream,
   MUTATION_EVENT_NAMES,
 } from "../../utils/stream.js";
@@ -205,27 +204,27 @@ describe("a filtered stream carries the graph", () => {
         expect(edge.ok).toBe(true);
         trackEdge(ctx, edge.data.edge.id);
 
-        // Waits on the item event, not on the edge event. The item event is
-        // the frame a working filtered stream must deliver whatever the
-        // answer about edges is, so waiting on it turns "the edge never
-        // arrived" into a finding rather than into a timeout that names the
-        // wrong thing.
+        // A sentinel note written after the edge. The stream delivers both
+        // kinds in id order, so its frame arriving is proof the edge's
+        // frame, published before it, has arrived or was withheld; and a
+        // note passes the filter whatever the answer about edges is, so a
+        // server withholding edges still ends the read with a finding
+        // rather than a timeout that names the wrong thing.
+        const sentinel = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "filtered-edge-sentinel" },
+        });
+        expect(sentinel.ok).toBe(true);
+        trackItem(ctx, sentinel.data.item.id);
         const seen = await collectUntil(
           stream,
-          (events) => itemIds(events).has(target.data.item.id),
-          `item.created for the filtered note ${target.data.item.id}`,
+          (events) => itemIds(events).has(sentinel.data.item.id),
+          `item.created for the sentinel note ${sentinel.data.item.id}`,
           context.signal,
         );
-        // An edge event follows its endpoints' events and is usually still in
-        // the socket buffer when the predicate above is met. A window rather
-        // than a sentinel, and the one case in this file where no observation
-        // exists: the question here is whether edge frames reach a filtered
-        // stream at all, so a sentinel edge would be withheld by exactly the
-        // server this case exists to fail against, and an item sentinel
-        // orders against nothing because items and edges travel independently.
-        const rest = await drainAvailable(stream, 750, context.signal);
         return {
-          events: [...seen.events, ...rest.events],
+          events: seen.events,
           edgeId: edge.data.edge.id,
           unrelatedId: unrelated.data.item.id,
         };

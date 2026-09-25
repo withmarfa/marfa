@@ -92,8 +92,22 @@ describe("a live stream", () => {
         count(seen, '"edge.deleted"') === 3,
     });
 
+    // The witness that the frames went the live way: the stream announced
+    // its cursor before the first write's frame, and below its id, so the
+    // writes were published after the hold was released rather than held
+    // and drained in order.
+    const announcedAt = text.indexOf("event: stream_cursor");
+    expect(announcedAt).toBeGreaterThanOrEqual(0);
+    expect(announcedAt).toBeLessThan(text.indexOf('"item.created"'));
+    const announced = /"cursor":"(\d+)"/.exec(text)?.[1];
+    expect(announced).toBeDefined();
+
     const ids = frameIds(text);
     expect(ids).toHaveLength(9);
+    expect(
+      ids[0]! > BigInt(announced!),
+      "the first frame sits at or below the announced cursor, so the writes preceded the announcement and were held rather than sent live",
+    ).toBe(true);
     for (let i = 1; i < ids.length; i += 1) {
       expect(
         ids[i]! > ids[i - 1]!,

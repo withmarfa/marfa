@@ -865,7 +865,12 @@ export function eventRoutes(
               // What is safe to discard is an id this replay actually
               // sent, so that is what is recorded rather than the
               // cursor, which advances past every row this loop walks,
-              // rows a filter withheld included. Recorded into a set
+              // rows a filter withheld included. A row the log holds but
+              // cannot serve, one whose payload does not decode, is not
+              // recorded either: its live copy is the one carrier that
+              // event has left, and it goes out after the replay, behind
+              // the ids replayed above it, which `events.md` 3 names as the
+              // one exception to the order. Recorded into a set
               // that belongs to the stream rather than to this function,
               // because the drain it feeds runs whether or not there was
               // a replay to feed it.
@@ -1132,22 +1137,22 @@ export function eventRoutes(
            * applied, so the held copy meets that filter whatever this
            * decides.
            *
-           * An id evicted from the window is sent a second time carrying
-           * the same `id:`, which a client applying a payload by id
-           * already absorbs. The comparison this replaces failed the
-           * other way, by dropping an event the client had no way to
-           * learn it was missing.
+           * An id evicted from the window would be sent a second time
+           * carrying the same `id:`, which a client applying a payload by
+           * id absorbs; while the hold's cap is no larger than the window
+           * the window cannot move past a held frame, so it does not
+           * happen. Dropping an event the client had no way to learn it
+           * was missing is the failure this rule exists against.
            *
            * Stops rather than continuing when the stream closed
            * mid-drain, so nothing is written into a controller that is
            * gone.
            */
           const releaseHold = async (): Promise<void> => {
-            // **`holding` stays true for the whole drain**, which it did
-            // not have to do while every send was synchronous. An edge
-            // frame now awaits a source read, and a live item frame
-            // arriving across that await would be sent immediately and
-            // land in front of held frames that were published before it
+            // **`holding` stays true for the whole drain.** An edge frame
+            // awaits a source read, and a live frame arriving across that
+            // await would otherwise be sent at once and land in front of
+            // held frames that were published before it
             // — reordering the stream, which is the failure the single
             // buffer exists to prevent. Frames that arrive mid-drain are
             // held as usual and this loop keeps going until the buffer is

@@ -3,9 +3,9 @@
  * of it going quiet.
  *
  * An edge frame is written only after a read that decides whether the
- * subscriber may see it. A failure there used to be swallowed, so edge
- * delivery ended while item delivery carried on over the same connection:
- * the client kept receiving events and never learned it had stopped
+ * subscriber may see it. A failure there, swallowed, would end edge
+ * delivery while item delivery carried on over the same connection: the
+ * client would keep receiving events and never learn it had stopped
  * hearing about relationships. Half a stream that looks whole is the one
  * shape a durable client cannot detect, which is what makes silence the
  * wrong default even though the failure is a rare one.

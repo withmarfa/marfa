@@ -4,11 +4,9 @@ import type { TestContext } from "../../client/types.js";
 import { trackItem, trackEdge } from "../../utils/setup.js";
 import {
   collectUntil,
-  drainAvailable,
   withStream,
   MUTATION_EVENT_NAMES,
 } from "../../utils/stream.js";
-import type { EventStream } from "../../utils/sse.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
@@ -843,25 +841,6 @@ async function probeItemPurgedEvent(args: {
 }
 
 /**
- * Everything seen so far, plus whatever else has already arrived.
- *
- * The last place in this file that concludes from a quiet moment, and the one
- * probe where no alternative exists. Every other absence here is settled by
- * waiting for a sentinel of the same kind as the frame being ruled out, but
- * the caller below is asking whether edge frames reach a type-filtered stream
- * at all — so a sentinel edge would be missing on exactly the servers the
- * probe must answer `absent` for, and an item sentinel orders against nothing
- * because items and edges travel independently.
- */
-async function drainInto(
-  stream: EventStream,
-  already: SseEvent[],
-): Promise<{ events: SseEvent[] }> {
-  const more = await drainAvailable(stream, 300);
-  return { events: [...already, ...more.events] };
-}
-
-/**
  * Does a type-filtered stream carry edge events?
  *
  * The control is an item event for the same write on the same filtered
@@ -913,21 +892,33 @@ async function probeEdgeEventsUnderFilter(args: {
       trackEdge(ctx, edge.data.edge.id);
       const edgeId = edge.data.edge.id;
 
-      const { events } = await collectUntil(
+      // A sentinel note written after the edge: the stream delivers both
+      // kinds in id order, so its frame arriving settles whether the edge's
+      // frame came, and a note passes the filter on a server that withholds
+      // edges, so the probe reports `absent` rather than hanging on a
+      // sentinel edge the server would withhold too.
+      const sentinel = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "probe-filter-sentinel" },
+      });
+      if (!sentinel.ok) {
+        throw new IndeterminateProbe(
+          "edgeEventsUnderFilter",
+          `the sentinel note create failed (${sentinel.status})`,
+        );
+      }
+      trackItem(ctx, sentinel.data.item.id);
+      const { events: settled } = await collectUntil(
         stream,
         (evts) =>
           evts.some(
             (e) =>
               (e.data as { item?: { id?: string } })?.item?.id ===
-              target.data.item.id,
+              sentinel.data.item.id,
           ),
-        `item.created for the probe note ${target.data.item.id} on a type-filtered stream`,
+        `item.created for the sentinel note ${sentinel.data.item.id} on a type-filtered stream`,
       );
-      // The window, for the reason `drainInto` gives: this probe cannot use a
-      // sentinel edge, because a server that answers `absent` would withhold
-      // the sentinel too and the probe would hang rather than report.
-      await new Promise((r) => setTimeout(r, 750));
-      const { events: settled } = await drainInto(stream, events);
 
       const sawEdge = settled.some(
         (e) => (e.data as { edge?: { id?: string } })?.edge?.id === edgeId,
