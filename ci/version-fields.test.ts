@@ -5,9 +5,9 @@
  * `scripts/release/stamp-version.sh` in its own checkout, which writes the
  * tag's version into every manifest there, and nothing on a branch runs it.
  * So every manifest here carries the placeholder, and a change that moves
- * one off it is refused, whatever else it does. The placeholder is `0.0.0`, which npm, cargo and SwiftPM all
- * accept as a version and which no release can ever be, so a stamped build
- * and an unstamped one cannot be confused.
+ * one off it is refused, whatever else it does. The placeholder is `0.0.0`,
+ * which npm and cargo both accept as a version and which no release can ever
+ * be, so a stamped build and an unstamped one cannot be confused.
  *
  * Three files carry one: `package.json` (`version`, on every package; the
  * root is a workspace, not a package, and holds none), `Cargo.toml` and
@@ -16,9 +16,8 @@
  * (`version = `, `version.workspace = true`, a dotted key, a commented
  * header) and cargo's own reading is the one a build uses. The lock's
  * entries for the workspace's own crates, the ones with no `source`, are
- * cargo's own formatting and are read directly. `Package.swift` holds no
- * version by construction: SwiftPM versions a package by its tag. The API
- * document's `info.version` is the contract version, not a product version.
+ * cargo's own formatting and are read directly. The API document's
+ * `info.version` is the contract version, not a product version.
  *
  * Two kinds of file that are not manifests are read for a product version
  * written as text: `packages/server/src/contract.ts`, where the contract
@@ -171,15 +170,12 @@ export function versionsWritten(files: readonly Manifest[]): VersionHeld[] {
 /** The file that holds the contract version, beside the build's. */
 const CONTRACT_FILE = "packages/server/src/contract.ts";
 
-/** The Swift package the release zips, which has no manifest to say so. */
-const SWIFT_PACKAGE = "swift";
-
 /**
  * Every directory a published package is built from: a package.json that is
- * not private, a crate cargo would publish, and the Swift package.
+ * not private, and a crate cargo would publish.
  */
 function publishedDirs(manifests: readonly Manifest[]): string[] {
-  const dirs = new Set<string>([SWIFT_PACKAGE]);
+  const dirs = new Set<string>();
   for (const m of manifests) {
     if (!m.path.endsWith("package.json") || m.path === "package.json") continue;
     const pkg = JSON.parse(m.text) as { private?: boolean };
@@ -277,11 +273,9 @@ describe("no file holds a version", () => {
       "core/bindings/node",
       "core/marfa-client",
       "packages/client",
-      SWIFT_PACKAGE,
     ]);
     expect(publishedReadmes(dirs).map((f) => f.path)).toEqual([
       "packages/client/README.md",
-      "swift/README.md",
     ]);
   });
 
@@ -306,8 +300,8 @@ describe("no file holds a version", () => {
           text: "npm install @withmarfa/client@0.0.1\n",
         },
         {
-          path: "swift/README.md",
-          text: '.package(url: "https://example.com/marfa-swift", from: "v1.2.3")\n',
+          path: "packages/client/README.md",
+          text: "Tagged as v1.2.3.\n",
         },
         {
           path: CONTRACT_FILE,
@@ -320,7 +314,7 @@ describe("no file holds a version", () => {
       ]),
     ).toEqual([
       { path: "packages/client/README.md", version: "0.0.1" },
-      { path: "swift/README.md", version: "v1.2.3" },
+      { path: "packages/client/README.md", version: "v1.2.3" },
       { path: CONTRACT_FILE, version: "0.0.4" },
     ]);
   });

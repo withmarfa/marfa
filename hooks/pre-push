@@ -32,8 +32,8 @@
 # The cost, and why it is paid. A pre-push that runs the whole suite is slow
 # enough that contributors and agents bypass it with `--no-verify`, and a
 # hook that's bypassed isn't a gate. So what is here is not everything CI
-# runs: the live-server Rust tests, the iOS builds, the Swift packaging and
-# the full conformance suite all stay in CI. What is here is the set that
+# runs: the live-server Rust tests, the Node binding's proof and the full
+# conformance suite all stay in CI. What is here is the set that
 # fails on the pool after passing locally, which is a different and much
 # shorter list.
 #

@@ -72,6 +72,3 @@ _tmp/
 _local/
 _ignore/
 
-# SwiftPM build output
-.build/
-.swiftpm/

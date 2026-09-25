@@ -4,7 +4,7 @@
 # system than build.sh names, and the newest any of them needs is exactly
 # that one, which is what shows the deployment targets reached the compilers.
 #
-#   bindings/swift/check-targets.sh     # after build.sh
+# build.sh runs it once the framework is built.
 set -euo pipefail
 cd "$(dirname "$0")"
 
