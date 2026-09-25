@@ -111,10 +111,16 @@ jobs:
           cargo test --locked --workspace --exclude marfa-client -- --ignored
 
       # The crate marfa-swift packages with `build.sh` at the commit it
-      # pins; the framework, its glue and its consumer are built there.
+      # pins, built here for each system that script targets, so a change
+      # that compiles for the Mac and not for the phone is refused before it
+      # merges. The framework, its glue and its consumer are built there.
       - name: Build the Swift FFI crate
         working-directory: core/bindings/swift
-        run: cargo build --locked --release
+        run: |
+          cargo build --locked --release \
+            --target aarch64-apple-darwin \
+            --target aarch64-apple-ios \
+            --target aarch64-apple-ios-sim
 
       # Outside the pnpm workspace, so every call carries the flag. `check`
       # holds the Node proof and tests to the declarations the build

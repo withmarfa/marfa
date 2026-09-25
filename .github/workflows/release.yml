@@ -307,8 +307,8 @@ jobs:
   # credential is checked before anything is sent; the draft release, which
   # can be undone, comes first; the registries, which never take a version
   # back, come after it; and the release is made public only once everything
-  # is out. Every step asks whether its
-  # version is already there and skips if it is, so a re-run repeats nothing.
+  # is out. Every step asks whether its version is already there and skips if
+  # it is, so a re-run repeats nothing.
   publish:
     name: Publish
     needs: build
