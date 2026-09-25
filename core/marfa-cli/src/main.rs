@@ -395,6 +395,17 @@ mod tests {
                 other => panic!("{other:?}"),
             }
         }
+        // The witness for `!reader` above: named, before or after the leaf,
+        // it parses true.
+        for named in [
+            ["marfa", "device", "--db", "s", "--reader", "queue"],
+            ["marfa", "device", "queue", "--db", "s", "--reader"],
+        ] {
+            match Cli::try_parse_from(named).unwrap().command {
+                Command::Device(DeviceArgs { reader, .. }) => assert!(reader),
+                other => panic!("{other:?}"),
+            }
+        }
         assert!(
             Cli::try_parse_from(["marfa", "folders", "scan", ".", "--db", "s"]).is_err(),
             "a folder command took --db, so two folders could share one mapping"
