@@ -23,7 +23,7 @@
     "test:conformance": "vitest run --project correctness --project compliance --project sync --project device",
     "load:cleanup": "tsx src/suites/load/cleanup-cli.ts",
     "check:statuses": "tsx scripts/check-statuses.ts",
-    "marfa:up": "RATE_LIMIT_ENABLED=false tsx scripts/marfa-server.ts up",
+    "marfa:up": "RATE_LIMIT_ENABLED=false MARFA_ENRICHMENT_ENABLED=false MARFA_ENRICHMENT_OCR_ENABLED=false tsx scripts/marfa-server.ts up",
     "marfa:down": "tsx scripts/marfa-server.ts down",
     "marfa:status": "tsx scripts/marfa-server.ts status",
     "garage:up": "tsx scripts/garage.ts up",

@@ -3,6 +3,7 @@ import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { extractText, isEnrichableMime } from "./extract.js";
+import { Worker } from "node:worker_threads";
 import { TesseractOcr } from "./ocr.js";
 import type { OcrEngine } from "./ocr.js";
 
@@ -156,43 +157,166 @@ describe("extractText", () => {
 });
 
 describe("TesseractOcr", () => {
-  it("creates the worker lazily and reuses it", async () => {
-    let created = 0;
-    const worker = {
-      recognize: () => Promise.resolve({ data: { text: "from worker" } }),
-      terminate: () => Promise.resolve(),
-    };
+  /** A thread answering every job with `text`, or ending on the first job
+   *  when `dies` is set, the way the library throws out of a listener. */
+  function fakeThread(behavior: { text?: string; dies?: boolean }): Worker {
+    return new Worker(
+      `const { parentPort, workerData } = require("node:worker_threads");
+       parentPort.on("message", ({ id }) => {
+         if (workerData.dies) throw new Error("refused out of band");
+         parentPort.postMessage({ id, text: workerData.text });
+       });`,
+      { eval: true, workerData: behavior },
+    );
+  }
+
+  it("starts the thread lazily and reuses it", async () => {
+    let spawned = 0;
     const ocr = new TesseractOcr({
       cachePath: "/tmp/unused",
-      createWorkerFn: (() => {
-        created += 1;
-        return Promise.resolve(worker);
-      }) as never,
+      spawnThread: () => {
+        spawned += 1;
+        return fakeThread({ text: "from worker" });
+      },
     });
-    expect(created).toBe(0);
-    expect(await ocr.recognize(Buffer.from(""))).toBe("from worker");
-    expect(await ocr.recognize(Buffer.from(""))).toBe("from worker");
-    expect(created).toBe(1);
+    try {
+      expect(spawned).toBe(0);
+      expect(await ocr.recognize(Buffer.from(""))).toBe("from worker");
+      expect(await ocr.recognize(Buffer.from(""))).toBe("from worker");
+      expect(spawned).toBe(1);
+    } finally {
+      await ocr.terminate();
+    }
   });
 
   it("recovers after termination", async () => {
-    let created = 0;
+    let spawned = 0;
     const ocr = new TesseractOcr({
       cachePath: "/tmp/unused",
-      createWorkerFn: (() => {
-        created += 1;
-        return Promise.resolve({
-          recognize: () => Promise.resolve({ data: { text: "ok" } }),
-          terminate: () => Promise.resolve(),
-        });
-      }) as never,
+      spawnThread: () => {
+        spawned += 1;
+        return fakeThread({ text: "ok" });
+      },
     });
     await ocr.recognize(Buffer.from(""));
     await ocr.terminate();
-    // Idempotent: a second terminate with no live worker is not an error.
+    // Idempotent: a second terminate with no live thread is not an error.
     await ocr.terminate();
     await ocr.recognize(Buffer.from(""));
-    expect(created).toBe(2);
+    expect(spawned).toBe(2);
+    await ocr.terminate();
+  });
+
+  it("fails the job of a thread that dies, and starts afresh for the next", async () => {
+    // What the library does with an image its decoder cannot read, or a
+    // language model it cannot load: it throws where nothing can catch it.
+    let spawned = 0;
+    const ocr = new TesseractOcr({
+      cachePath: "/tmp/unused",
+      spawnThread: () => {
+        spawned += 1;
+        return spawned === 1
+          ? fakeThread({ dies: true })
+          : fakeThread({ text: "second" });
+      },
+    });
+    try {
+      await expect(ocr.recognize(Buffer.from(""))).rejects.toThrow();
+      expect(await ocr.recognize(Buffer.from(""))).toBe("second");
+      expect(spawned).toBe(2);
+    } finally {
+      await ocr.terminate();
+    }
+  });
+
+  it("ends a thread that answers a refusal, rather than trusting it to", async () => {
+    const threads: Worker[] = [];
+    const ocr = new TesseractOcr({
+      cachePath: "/tmp/unused",
+      spawnThread: () => {
+        const thread =
+          threads.length === 0
+            ? new Worker(
+                `const { parentPort } = require("node:worker_threads");
+                 parentPort.on("message", ({ id }) =>
+                   parentPort.postMessage({ id, error: "refused" }));`,
+                { eval: true },
+              )
+            : fakeThread({ text: "second" });
+        threads.push(thread);
+        return thread;
+      },
+    });
+    try {
+      const first = await new Promise<Worker>((resolve) => {
+        void ocr.recognize(Buffer.from("")).catch(() => {
+          resolve(threads[0]!);
+        });
+      });
+      // It stays alive of its own accord, so only the engine can end it.
+      await new Promise<void>((resolve) =>
+        first.once("exit", () => {
+          resolve();
+        }),
+      );
+      expect(await ocr.recognize(Buffer.from(""))).toBe("second");
+      expect(threads).toHaveLength(2);
+    } finally {
+      await ocr.terminate();
+    }
+  });
+
+  it("fails the job of a thread that exits without a word", async () => {
+    let spawned = 0;
+    const ocr = new TesseractOcr({
+      cachePath: "/tmp/unused",
+      spawnThread: () => {
+        spawned += 1;
+        return spawned === 1
+          ? new Worker(
+              `const { parentPort } = require("node:worker_threads");
+               parentPort.on("message", () => process.exit(1));`,
+              { eval: true },
+            )
+          : fakeThread({ text: "second" });
+      },
+    });
+    try {
+      await expect(ocr.recognize(Buffer.from(""))).rejects.toThrow(
+        "ended with code 1",
+      );
+      expect(await ocr.recognize(Buffer.from(""))).toBe("second");
+    } finally {
+      await ocr.terminate();
+    }
+  });
+
+  it("takes one recognition at a time, each answered as itself", async () => {
+    // A thread that, like the library's, holds one job and answers whichever
+    // it holds last: two sent at once would lose the first and answer the
+    // second twice.
+    const ocr = new TesseractOcr({
+      cachePath: "/tmp/unused",
+      spawnThread: () =>
+        new Worker(
+          `const { parentPort } = require("node:worker_threads");
+           let current = null;
+           parentPort.on("message", ({ id }) => {
+             current = id;
+             setTimeout(() => parentPort.postMessage({ id: current, text: "job " + current }), 20);
+           });`,
+          { eval: true },
+        ),
+    });
+    try {
+      const [a, b] = await Promise.all([
+        ocr.recognize(Buffer.from("")),
+        ocr.recognize(Buffer.from("")),
+      ]);
+      expect([a, b]).toEqual(["job 0", "job 1"]);
+    } finally {
+      await ocr.terminate();
+    }
   });
 });
 
