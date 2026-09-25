@@ -1,8 +1,8 @@
 /**
  * What the stream does when it cannot deliver what it opened with.
  *
- * One answer, in two places that used to give different ones: it stops,
- * says so in a frame, and closes. It never carries on in a state the
+ * One answer, whichever path meets it: it stops, says so in a frame, and
+ * closes. It never carries on in a state the
  * client cannot observe, because every such state ends the same way — a
  * cursor sitting past events that were never delivered and will never be
  * asked for again.
@@ -22,10 +22,15 @@
  * survival were the same defect.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { Hono } from "hono";
-import type { ApiKey } from "@withmarfa/shared";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
-import { createTestContext, request, readSse, settle } from "../test-utils.js";
+import {
+  createTestContext,
+  eventsAppWithKey,
+  gatedEventLog,
+  request,
+  readSse,
+  settle,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   emitWake,
@@ -33,9 +38,6 @@ import {
   type EdgeEventWithId,
   type ItemEventWithId,
 } from "../pubsub.js";
-import { eventRoutes } from "./events.js";
-import type { AppEnv } from "../middleware/auth.js";
-import type { PersistedEvent, Storage } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -51,60 +53,6 @@ afterAll(async () => {
 async function latestEventId(): Promise<bigint> {
   const rows = await ctx.storage.eventLog.getAfter(0n, 1000);
   return rows.reduce((max, row) => (row.id > max ? row.id : max), 0n);
-}
-
-/** Default is a key with no permission map, so nothing is
- *  filtered and every emitted event reaches the hold. The probes below
- *  override the permission map to narrow what may be delivered. */
-function makeApp(storage: Storage, key: Partial<ApiKey> = {}): Hono<AppEnv> {
-  const app = new Hono<AppEnv>();
-  app.use("*", async (c, next) => {
-    c.set("apiKey", {
-      id: "key-events-overflow",
-      name: "overflow viewer",
-      key_hash: "unused",
-      is_operator: true,
-      type_permissions: { "*": "read" },
-      extension_permissions: {},
-      edge_permissions: {},
-      metadata_permissions: {},
-      created_at: new Date().toISOString(),
-      ...key,
-    } as unknown as ApiKey);
-    await next();
-  });
-  app.route("/events", eventRoutes(storage));
-  return app;
-}
-
-/** A storage whose first replay read blocks until the returned `open`
- *  is called, so the prologue is held by the test rather than a clock. */
-function gatedStorage(): { storage: Storage; open: () => void } {
-  let open = (): void => undefined;
-  const gate = new Promise<PersistedEvent[]>((resolve) => {
-    open = () => {
-      resolve([]);
-    };
-  });
-  let firstRead = true;
-  const storage: Storage = {
-    ...ctx.storage,
-    eventLog: {
-      ...ctx.storage.eventLog,
-      append: (entry) => ctx.storage.eventLog.append(entry),
-      getMinRetainedId: () => ctx.storage.eventLog.getMinRetainedId(),
-      getMaxId: () => ctx.storage.eventLog.getMaxId(),
-      cleanup: (hours) => ctx.storage.eventLog.cleanup(hours),
-      getAfter: (afterId, limit) => {
-        if (firstRead) {
-          firstRead = false;
-          return gate;
-        }
-        return ctx.storage.eventLog.getAfter(afterId, limit);
-      },
-    },
-  };
-  return { storage, open };
 }
 
 function emitNotes(count: number, tag: string): void {
@@ -138,9 +86,9 @@ describe("a catch-up that throws partway through", () => {
   /**
    * A declared chain that closes on itself, which `isSubtypeOf` refuses
    * to walk rather than looping on. It is the reachable way into this
-   * failure now that the replay resolves subtypes: on the live path the
-   * same throw already ends the stream where the client can see it, and
-   * the replay swallowed it.
+   * failure, because the replay resolves subtypes: the same throw on the
+   * live path ends the stream where the client can see it, and the
+   * replay has to end it the same way.
    *
    * Registered into the runtime overlay, which is what the
    * credential opening the stream below resolves against.
@@ -233,15 +181,10 @@ describe("a catch-up that throws partway through", () => {
 
 describe("live frames held past the limit while the catch-up runs", () => {
   /**
-   * One more than the buffer holds.
-   *
-   * **Deliberately not an account of where the cap comes from.** It used to
-   * say the cap was derived from the dedupe window, which the constant's own
-   * comment in `routes/events.ts` refutes in as many words: the two bound
-   * different populations from different sides and neither is a function of
-   * the other. Read that comment before moving either number. What this one
-   * is for is the reminder that raising the cap means raising this, and a red
-   * here is the intended way to be told so.
+   * One more than the buffer holds. The cap is the replay's dedupe window,
+   * and the constant's comment in `routes/events.ts` says why it can be no
+   * larger; moving either number moves this, and a red here is the
+   * intended way to be told so.
    */
   const OVER_THE_CAP = 501;
 
@@ -253,8 +196,8 @@ describe("live frames held past the limit while the catch-up runs", () => {
     expect(seed.status).toBe(201);
     const cursor = await latestEventId();
 
-    const { storage, open } = gatedStorage();
-    const res = await makeApp(storage).request("/events", {
+    const { storage, open } = gatedEventLog(ctx.storage);
+    const res = await eventsAppWithKey(storage).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -310,8 +253,8 @@ describe("frames the subscriber would never receive", () => {
     expect(seed.status).toBe(201);
     const cursor = await latestEventId();
 
-    const { storage, open } = gatedStorage();
-    const res = await makeApp(storage).request("/events?edges=none", {
+    const { storage, open } = gatedEventLog(ctx.storage);
+    const res = await eventsAppWithKey(storage).request("/events?edges=none", {
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -342,10 +285,10 @@ describe("frames the subscriber would never receive", () => {
     expect(seed.status).toBe(201);
     const cursor = await latestEventId();
 
-    const { storage, open } = gatedStorage();
+    const { storage, open } = gatedEventLog(ctx.storage);
     // The permission map is what this probe is about, so it names one
     // narrower than the default rather than inheriting it.
-    const res = await makeApp(storage, {
+    const res = await eventsAppWithKey(storage, {
       type_permissions: { "core.task": "read" },
     }).request("/events", { headers: { "Last-Event-ID": String(cursor) } });
     expect(res.status).toBe(200);

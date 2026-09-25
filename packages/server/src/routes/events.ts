@@ -12,11 +12,10 @@ import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import {
   eventMatchesTypeFilter,
-  subscribe,
-  subscribeEdges,
+  subscribeAll,
   wireEventName,
 } from "../pubsub.js";
-import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
+import type { EdgeEventWithId, ItemEventWithId, LiveFrame } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata } from "@withmarfa/shared";
 import { filterMetadataForCaller } from "./util.js";
@@ -164,63 +163,54 @@ type StreamIncompleteReason =
   | "replay_failed"
   /** Live frames held during the prologue outgrew {@link MAX_HELD_FRAMES}. */
   | "backlog_overflow"
-  /** The item subscription failed for a reason that was not the client leaving. */
+  /** The subscription failed for a reason that was not the client leaving. */
   | "live_delivery_failed"
-  /** The edge subscription did, which stops half the stream and nothing else. */
+  /** An edge frame could not be sent: the read that decides whether the
+   *  subscriber may see it failed. */
   | "edge_delivery_failed";
 
 /**
  * Most live frames one connection holds while its prologue runs.
  *
- * **Chosen as a memory bound, not derived from anything.** It does not
- * follow from `REPLAY_DEDUPE_WINDOW`, though the two look like bounds on
- * the same population from opposite sides. They are not: that window
- * holds the last few ids the replay actually SENT, after filtering, while
- * this holds live frames on their way in — and
- * whether a held frame's id is still inside that window depends on how
- * many rows the replay sent after it, which is a property of the
- * backlog's length rather than of this buffer's. Neither number is a
- * function of the other, and moving one does not require moving the
- * other.
+ * **A memory bound, held to the dedupe window.** The hold lasts only as
+ * long as the prologue, one head read plus a replay when the client sent
+ * a cursor, and the buffer grows as the product of the instance's write
+ * rate and that duration. The prologue does not get faster because the
+ * buffer got bigger, so past some size holding more only defers the same
+ * answer at a higher cost. The job of the number is to sit above what an
+ * ordinary prologue on a busy instance reaches and below what would
+ * matter if a pathological one did not stop.
  *
- * **What the number is actually for.** The hold lasts only as long as the
- * prologue — one head read, plus a replay when the client sent a cursor.
- * The buffer grows as the product of the instance's write rate and that
- * duration, and the prologue does not get faster because the buffer got
- * bigger, so past some size holding more only defers the same answer at a
- * higher cost. The job of the number is to sit above what an ordinary
- * prologue on a busy instance reaches and below what would matter if a
- * pathological one did not stop.
- *
- * Five hundred because that is what this route already treats as a
- * sensible number of event-shaped things for one connection to hold at
- * once — `REPLAY_BATCH_SIZE` is the same figure for the replay's own
- * read. That is a precedent being reused, not a derivation: if the batch
- * size moves for reasons of its own, this does not have to follow.
+ * It is no larger than `REPLAY_DEDUPE_WINDOW`, and that is a constraint
+ * rather than a coincidence. A held frame was published after the
+ * subscription attached, so every row the replay sends after it was
+ * published after it too and is held beside it; while the hold is under
+ * the cap, fewer rows than the window have been sent past any held frame,
+ * so the frame's id is still inside the window when the release asks
+ * whether the replay already sent it. A cap above the window would let
+ * the window move past a held frame, and the release would send that
+ * frame a second time. `releaseHold` relies on this.
  *
  * **What it costs at the boundary, stated because it is a real cost.**
- * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge — past it a
- * client receives a second copy carrying an id it already absorbed, which
- * is why that number can be a judgment rather than a proof. This one does
- * not degrade: at the cap the stream terminates where nothing worse than
- * a duplicate would otherwise have happened. That is the deliberate
- * trade — a bounded, announced, resumable termination in place of a
- * buffer with no ceiling — and it is worth knowing it is a trade.
+ * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge: past it a
+ * client receives a second copy carrying an id it already absorbed. This
+ * one does not degrade: at the cap the stream terminates where nothing
+ * worse than a duplicate would otherwise have happened. That is the
+ * deliberate trade, a bounded, announced, resumable termination in place
+ * of a buffer with no ceiling, and it is worth knowing it is a trade.
  *
  * **What it costs per holding viewer.** A held frame is a two-field
- * wrapper around the event object the emitter broadcast — the same object
- * every other subscriber received, not a copy — so the marginal cost is
- * the wrappers, and the retained cost is keeping up to this many
+ * wrapper around the event object the emitter broadcast, the same object
+ * every other subscriber received rather than a copy, so the marginal
+ * cost is the wrappers, and the retained cost is keeping up to this many
  * already-published events alive until the prologue ends. The viewer
  * ceiling bounds how many connections can be holding at once; this bounds
- * what each one accumulates, which is the half nothing bounded before.
+ * what each one accumulates.
  */
-const MAX_HELD_FRAMES = 500;
+const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
 
 /** A live frame published while the stream was still holding delivery. */
-type HeldFrame =
-  | { kind: "item"; event: ItemEventWithId }
-  | { kind: "edge"; event: EdgeEventWithId };
+type HeldFrame = LiveFrame;
 
 export interface EventRoutesOptions {
   /** Override for the head-read budget; tests drive the degraded path —
@@ -508,26 +498,27 @@ export function eventRoutes(
            * `id:` is actually written — a frame the filter withheld moved
            * no client cursor.
            *
-           * **The last id written, which is not always the highest, and
-           * that is deliberate.** `event_log.id` is assigned before
-           * commit, so a lower id can commit after a higher one and reach
-           * a client afterwards; the SSE `id:` field has carried that
-           * property since long before this line, and the documented
-           * client rule is written against it — store the last id you
-           * received rather than the highest you have seen. Taking a
-           * maximum here would contradict that rule and skip the
-           * late-committing event. Resuming from this value can therefore
-           * re-deliver a row, which a client applying payloads by id
-           * already absorbs, and cannot skip one.
+           * The log issues ids in commit order and this stream sends
+           * frames in that order, edge frames beside item frames, so the
+           * last id written is the highest and a reader resuming from it
+           * misses nothing. The one exception is a stored row the replay
+           * could not decode, whose live copy goes out after the replay
+           * under its lower id (`events-replay-dedupe.test.ts`): then
+           * this is that lower id, and a reader resuming from it repeats
+           * the replayed frames above it and still misses nothing.
+           * `events-live-order.test.ts` holds the stream to the order and
+           * `sync/resume.test.ts` a resuming reader.
            */
           let lastSentId: bigint | null = null;
 
-          // Subscribe BEFORE replay starts to avoid gaps.
-          const events = subscribe({
+          // Subscribed before the replay starts, so nothing falls between
+          // the two. One subscription for both kinds of frame, in publish
+          // order: a frame sent ahead of a lower id would move a
+          // subscriber's cursor past an event it never saw.
+          const frames = subscribeAll({
             typeFilter: typeParam,
             signal: subscriptionAbort.signal,
-          });
-          const reader = events[Symbol.asyncIterator]();
+          })[Symbol.asyncIterator]();
 
           /**
            * Whether an item frame survives the caller's type projection.
@@ -615,19 +606,12 @@ export function eventRoutes(
           // because it holds a page of up to `REPLAY_BATCH_SIZE` rows; see
           // `replay` below.
           //
-          // Async, which the item path is not, and three call sites carry
-          // the consequence. The pump awaits it. The prologue's drain
-          // stays held for the whole release, so a held frame cannot be
-          // overtaken across the await. And in steady state an edge frame
-          // now reaches a subscriber a round trip behind an item frame
-          // published beside it: the relative order of the two kinds is
-          // not a guarantee this stream makes — they travel through
-          // independent subscriptions — and the single held buffer exists
-          // against the prologue's *systematic* reordering, where two
-          // buffers drained in turn would put every held edge after every
-          // held item whatever the writer did. This widens a race rather
-          // than breaking a promise, and it is stated here because the
-          // buffer's own comment reads as though order were promised.
+          // Async, which the item path is not, and both call sites wait on
+          // it: the prologue's drain stays held for the whole release, and
+          // the live pump sends nothing else until it settles, so no frame
+          // published after this edge is written ahead of it. Publish
+          // order is id order, and a subscriber's cursor is the last id it
+          // received.
           const sendEdgeEvent = async (
             eventId: bigint | undefined,
             event: EdgeEventWithId,
@@ -650,9 +634,9 @@ export function eventRoutes(
           };
 
           const pump = () => {
-            reader
+            frames
               .next()
-              .then(({ value: event, done }) => {
+              .then(async ({ value: frame, done }) => {
                 if (done || state.closed) {
                   // Capture before cleanup flips it, or the close below
                   // could never run and a terminated pump would leave
@@ -671,9 +655,27 @@ export function eventRoutes(
                 }
 
                 if (holding) {
-                  holdFrame({ kind: "item", event });
+                  holdFrame(frame);
+                } else if (frame.kind === "item") {
+                  sendEvent(frame.event.eventId, frame.event);
                 } else {
-                  sendEvent(event.eventId, event);
+                  // Awaited, so the next frame waits behind the source
+                  // read this one needs: that wait is what a frame
+                  // published after this edge would otherwise overtake. A
+                  // failure ends the stream, because a subscriber silently
+                  // stopped hearing about relationships is the one shape a
+                  // durable client cannot detect.
+                  try {
+                    await sendEdgeEvent(frame.event.eventId, frame.event);
+                  } catch (err: unknown) {
+                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this callback; TS narrows it to `false` from the check above but at runtime it can flip to true.
+                    if (state.closed) return;
+                    console.warn(
+                      `[events] closing the stream: edge delivery failed (${String(err)})`,
+                    );
+                    failStream("edge_delivery_failed");
+                    return;
+                  }
                 }
                 pump();
               })
@@ -683,59 +685,20 @@ export function eventRoutes(
                 // the subscription ending, not a failure.
                 if (state.closed) return;
                 console.warn(
-                  `[events] closing the stream: item delivery failed (${String(err)})`,
+                  `[events] closing the stream: live delivery failed (${String(err)})`,
                 );
                 failStream("live_delivery_failed");
               });
           };
 
-          // The pumps run before the helpers they call are initialized,
-          // which is safe and deliberate: only their `.then`/`.catch`
+          // The pump runs before the helpers it calls are initialized,
+          // which is safe and deliberate: only its `.then`/`.catch`
           // callbacks reach those, and the first of those cannot run
-          // until this synchronous body has finished. Starting them here
+          // until this synchronous body has finished. Starting it here
           // is what attaches the emitter listeners, and moving that later
           // would widen the window in which a publish has nobody
           // listening.
           pump();
-
-          const edgeIter = subscribeEdges({
-            signal: subscriptionAbort.signal,
-          })[Symbol.asyncIterator]();
-          const pumpEdges = () => {
-            edgeIter
-              .next()
-              .then(async ({ value: event, done }) => {
-                if (done || state.closed) return;
-                if (holding) {
-                  holdFrame({ kind: "edge", event });
-                } else {
-                  // Awaited, so the source read a frame needs cannot be
-                  // overtaken by the next frame's. A failure reaches the
-                  // catch below and ends the stream, which is the same
-                  // decision delivery failure already takes: a subscriber
-                  // silently stopped hearing about half its events is the
-                  // one shape a durable client cannot detect.
-                  await sendEdgeEvent(event.eventId, event);
-                }
-                pumpEdges();
-              })
-              .catch((err: unknown) => {
-                // The same discrimination the item pump makes, and the
-                // same handling, because the alternative is worse here
-                // rather than better: swallowing this ends edge delivery
-                // for the life of the connection while item delivery
-                // carries on, so the client keeps receiving events and
-                // never learns it has stopped hearing about half of
-                // them. Half a stream that looks whole is the one shape
-                // a durable client cannot detect.
-                if (state.closed) return;
-                console.warn(
-                  `[events] closing the stream: edge delivery failed (${String(err)})`,
-                );
-                failStream("edge_delivery_failed");
-              });
-          };
-          pumpEdges();
 
           /**
            * End the stream from a terminal decision rather than from a
@@ -745,8 +708,7 @@ export function eventRoutes(
           const endStream = (): void => {
             const wasOpen = !state.closed;
             cleanup();
-            void reader.return(undefined);
-            void edgeIter.return(undefined);
+            void frames.return(undefined);
             if (wasOpen) {
               try {
                 controller.close();
@@ -761,9 +723,10 @@ export function eventRoutes(
            *
            * The one exit every "this stream can no longer honor what it
            * opened with" path takes, so the four causes cannot drift into
-           * four different behaviors — which is how one of them came to
-           * end the connection, one to end half of it silently, and one
-           * to carry on as though nothing had happened.
+           * four different behaviors: a failure that ended the
+           * connection, one that ended half of it silently and one that
+           * carried on as though nothing had happened would each leave a
+           * client unable to tell which it had met.
            *
            * The held frames go unsent, and that is the point rather than
            * a side effect: they sit after the gap, so delivering them
@@ -787,10 +750,8 @@ export function eventRoutes(
           /**
            * Hold one live frame until the prologue is done with it.
            *
-           * The cap is enforced here rather than at the two call sites,
-           * for the reason the single buffer exists at all: a rule
-           * written twice is a rule one of the two kinds of frame will
-           * eventually stop obeying.
+           * The cap is enforced here, beside the buffer it bounds, so a
+           * frame of either kind meets the one rule.
            *
            * **A frame that will not be delivered is not held, and this is
            * the load-bearing half.** A cap that counted frames the
@@ -902,7 +863,12 @@ export function eventRoutes(
               // What is safe to discard is an id this replay actually
               // sent, so that is what is recorded rather than the
               // cursor, which advances past every row this loop walks,
-              // rows a filter withheld included. Recorded into a set
+              // rows a filter withheld included. A row the log holds but
+              // cannot serve, one whose payload does not decode, is not
+              // recorded either: its live copy is the one carrier that
+              // event has left, and it goes out after the replay, behind
+              // the ids replayed above it, which `events.md` 3 names as the
+              // one exception to the order. Recorded into a set
               // that belongs to the stream rather than to this function,
               // because the drain it feeds runs whether or not there was
               // a replay to feed it.
@@ -1169,22 +1135,22 @@ export function eventRoutes(
            * applied, so the held copy meets that filter whatever this
            * decides.
            *
-           * An id evicted from the window is sent a second time carrying
-           * the same `id:`, which a client applying a payload by id
-           * already absorbs. The comparison this replaces failed the
-           * other way, by dropping an event the client had no way to
-           * learn it was missing.
+           * An id evicted from the window would be sent a second time
+           * carrying the same `id:`, which a client applying a payload by
+           * id absorbs; `MAX_HELD_FRAMES` is no larger than the window so
+           * that the window cannot move past a held frame, and it does
+           * not happen. Dropping an event the client had no way to learn
+           * it was missing is the failure this rule exists against.
            *
            * Stops rather than continuing when the stream closed
            * mid-drain, so nothing is written into a controller that is
            * gone.
            */
           const releaseHold = async (): Promise<void> => {
-            // **`holding` stays true for the whole drain**, which it did
-            // not have to do while every send was synchronous. An edge
-            // frame now awaits a source read, and a live item frame
-            // arriving across that await would be sent immediately and
-            // land in front of held frames that were published before it
+            // **`holding` stays true for the whole drain.** An edge frame
+            // awaits a source read, and a live frame arriving across that
+            // await would otherwise be sent at once and land in front of
+            // held frames that were published before it
             // — reordering the stream, which is the failure the single
             // buffer exists to prevent. Frames that arrive mid-drain are
             // held as usual and this loop keeps going until the buffer is
@@ -1351,14 +1317,12 @@ export function eventRoutes(
 
           c.req.raw.signal.addEventListener("abort", () => {
             cleanup();
-            void reader.return(undefined);
-            void edgeIter.return(undefined);
+            void frames.return(undefined);
           });
 
           onCancel = () => {
             cleanup();
-            void reader.return(undefined);
-            void edgeIter.return(undefined);
+            void frames.return(undefined);
           };
         },
         cancel() {

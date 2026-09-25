@@ -92,9 +92,9 @@ Everything in the repository's contributing rules, plus these.
 - **An absence is settled by a later frame, never by a quiet window.** A fixed
   window cannot tell "nothing more is coming" from "not yet". Write a sentinel
   row after the one under test and wait for the sentinel's own event. **The
-  proof holds only between frames of the same kind**, because item events and
-  edge events reach a subscriber through independent pipelines and their
-  relative order is not a guarantee the stream makes.
+  proof holds across both kinds**: the stream delivers item and edge frames
+  in id order, so a sentinel of either kind orders against every frame
+  published before it.
 - **No hand-rolled deadline.** A `while (cond && Date.now() < deadline)`
   followed by an assertion on `cond` takes the timeout away from the runner
   and re-emits it as a logic failure. Wait on the runner's budget, and pass

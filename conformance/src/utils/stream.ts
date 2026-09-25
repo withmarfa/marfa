@@ -36,6 +36,15 @@ export interface CollectResult {
 /**
  * Read an open stream until `done` says enough has arrived.
  *
+ * **An absence is settled by a later frame, never by a quiet window**, which
+ * cannot tell "nothing more is coming" from "not yet". Write a sentinel row
+ * after the one under test and wait for the sentinel's own event here: the
+ * stream delivers item and edge frames in id order (`events.md` 3), so a
+ * sentinel of either kind arriving is proof that everything published
+ * before it has arrived or was withheld. Where the rule under test is
+ * whether edge frames arrive at all, an item written after the edge is the
+ * sentinel, since a sentinel edge could not arrive on a server that fails it.
+ *
  * The deadline belongs to the test runner, not to this helper. A hand-rolled
  * `Date.now()` bound re-emits a timeout as a logic failure: the assertion
  * below it reads `expected false to be true` with no elapsed figure and no
@@ -107,79 +116,6 @@ function describe(events: SseEvent[]): string {
   const counts = new Map<string, number>();
   for (const e of events) counts.set(e.event, (counts.get(e.event) ?? 0) + 1);
   return [...counts].map(([name, n]) => `${name} x${n}`).join(", ");
-}
-
-/**
- * Read whatever a stream has already delivered, without waiting for more.
- *
- * **A quiet window cannot tell "nothing more is coming" from "not yet", so
- * prefer an observation wherever one is constructible.** That means writing a
- * sentinel row after the one under test and waiting for the sentinel's own
- * event through `collectUntil`: the runner owns the deadline, and a sentinel
- * that has arrived is proof that anything published before it has arrived too.
- *
- * **The proof holds only between frames of the same kind.** Item events and
- * edge events reach a subscriber through independent pipelines, so their
- * relative order is not a guarantee the stream makes — an item sentinel says
- * nothing about whether an edge frame is still to come. Where the frame in
- * question is an edge and the sentinel would have to be an item, or where the
- * rule under test is precisely whether edge frames arrive at all (so a
- * sentinel edge could not arrive either), no such observation exists and this
- * helper's window is what remains. Every caller left on it is one of those,
- * and each says so at its call site.
- *
- * Its other use is the settling window after a `collectUntil`, where an event
- * that follows the one the predicate matched is usually already in the socket
- * buffer and reading it costs a few hundred milliseconds rather than a
- * decision.
- */
-export async function drainAvailable(
-  stream: EventStream,
-  quietMs: number,
-  signal?: AbortSignal,
-): Promise<CollectResult> {
-  const body = stream.response.body;
-  if (!body) {
-    throw new Error(
-      `event stream returned no body (status ${stream.response.status})`,
-    );
-  }
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
-  const onAbort = () => void reader.cancel().catch(() => undefined);
-  signal?.addEventListener("abort", onAbort, { once: true });
-
-  try {
-    for (;;) {
-      // Cleared on every path out of the race. Left running, a chatty stream
-      // accumulates one live timer per chunk, and the process then waits on
-      // them after the suite has finished with the stream.
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const quiet = new Promise<"quiet">((resolve) => {
-        timer = setTimeout(() => resolve("quiet"), quietMs);
-      });
-      const next = reader.read();
-      const winner = await Promise.race([next, quiet]);
-      clearTimeout(timer);
-      if (winner === "quiet") {
-        // The pending read is abandoned deliberately; cancel() below settles
-        // it. Leaving it pending would keep the socket's reader locked.
-        void next.catch(() => undefined);
-        break;
-      }
-      if (winner.value) {
-        chunks.push(decoder.decode(winner.value, { stream: true }));
-      }
-      if (winner.done) break;
-    }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-    await reader.cancel().catch(() => undefined);
-    reader.releaseLock();
-  }
-  const raw = chunks.join("");
-  return { events: parseSse(raw), raw };
 }
 
 /**

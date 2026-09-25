@@ -9,10 +9,10 @@ import type { SyncCapabilities } from "./capabilities.js";
  * "A modification time moves when the item changes": every reconnect runs an
  * incremental catch-up before resuming the stream, bounded by that time.
  *
- * The catch-up exists because the event log's ids can commit out of order, so
- * resuming from a cursor alone can miss a row. Reading everything modified
- * since the last pass closes that gap — but only if "modified" means what a
- * client thinks it means. Tags and extensions live in a sidecar table, and a
+ * The catch-up exists because a cursor the log no longer serves leaves a
+ * client with nothing to resume from. Reading everything modified since the
+ * last pass closes that gap — but only if "modified" means what a client
+ * thinks it means. Tags and extensions live in a sidecar table, and a
  * server that writes the sidecar without moving the item's modification time
  * makes a metadata change invisible to this read. What comes back is a short
  * list that looks complete: nothing errors, and the client believes it is

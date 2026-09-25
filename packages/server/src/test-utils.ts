@@ -12,9 +12,11 @@ import { DiskBlobStore, type BlobStore } from "./storage/blob-store.js";
 import type { Stores } from "./housekeeping/blob-delete.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
 import { hashApiKey } from "./middleware/auth.js";
-import type { Storage } from "./storage/interface.js";
-import type { Hono } from "hono";
+import type { PersistedEvent, Storage } from "./storage/interface.js";
+import { Hono } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
+import type { ApiKey } from "@withmarfa/shared";
+import { eventRoutes } from "./routes/events.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -822,6 +824,14 @@ export interface SseReadOptions {
    */
   untilClosed?: boolean;
   /**
+   * Called with everything read so far after each chunk, whatever stops
+   * the read. For a test that writes once it has seen a frame: the write
+   * is then placed by an observation of the stream rather than by a
+   * pause, which is what makes "sent live" a fact rather than a likely
+   * outcome.
+   */
+  onChunk?: (text: string) => void;
+  /**
    * Read the whole window, then require this of what arrived. Absence
    * assertions use it to prove they were reading a live stream: "no
    * `catchup_too_old` arrived" says nothing if nothing arrived at all.
@@ -842,7 +852,7 @@ export async function readSse(
   res: Response,
   opts: SseReadOptions = {},
 ): Promise<{ text: string; closed: boolean }> {
-  const { until, requireSeen } = opts;
+  const { until, requireSeen, onChunk } = opts;
   const untilClosed = opts.untilClosed === true;
   const timeoutMs =
     opts.timeoutMs ??
@@ -891,6 +901,7 @@ export async function readSse(
     }
     if (result.value) {
       text += decoder.decode(result.value, { stream: true });
+      onChunk?.(text);
       if (!untilClosed && until?.(text) === true) {
         satisfied = true;
         break;
@@ -982,6 +993,117 @@ export function collectEdgeEvents(signal: AbortSignal): {
     }
   })();
   return { events, done };
+}
+
+/**
+ * A storage whose first replay read blocks until the returned `open` is
+ * called, so the stream's prologue is held by the test rather than by a
+ * clock: everything published while it is held goes into the hold and is
+ * released, in order, when the test lets go. `reached` settles when the
+ * prologue asks for that read, which is the observation that the
+ * subscription is attached and a write made now will be held rather than
+ * missed; the read answers no rows, so nothing is replayed.
+ */
+export function gatedEventLog(base: Storage): {
+  storage: Storage;
+  open: () => void;
+  reached: Promise<void>;
+} {
+  let open = (): void => undefined;
+  const gate = new Promise<PersistedEvent[]>((resolve) => {
+    open = () => {
+      resolve([]);
+    };
+  });
+  let arrive = (): void => undefined;
+  const reached = new Promise<void>((resolve) => {
+    arrive = resolve;
+  });
+  let firstRead = true;
+  const storage: Storage = {
+    ...base,
+    eventLog: {
+      ...base.eventLog,
+      append: (entry) => base.eventLog.append(entry),
+      getMinRetainedId: () => base.eventLog.getMinRetainedId(),
+      getMaxId: () => base.eventLog.getMaxId(),
+      cleanup: (hours) => base.eventLog.cleanup(hours),
+      getAfter: (afterId, limit) => {
+        if (firstRead) {
+          firstRead = false;
+          arrive();
+          return gate;
+        }
+        return base.eventLog.getAfter(afterId, limit);
+      },
+    },
+  };
+  return { storage, open, reached };
+}
+
+/**
+ * The events route alone, on the given storage, answering to a credential
+ * the test shapes. The default is an operator holding every type and no
+ * edge permission, so nothing is filtered on the item side and edge frames
+ * reach a stream only when the test grants them.
+ */
+export function eventsAppWithKey(
+  storage: Storage,
+  key: Partial<ApiKey> = {},
+): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("apiKey", {
+      id: "key-events-test",
+      name: "events viewer",
+      key_hash: "unused",
+      is_operator: true,
+      type_permissions: { "*": "read" },
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      created_at: new Date().toISOString(),
+      ...key,
+    } as unknown as ApiKey);
+    await next();
+  });
+  app.route("/events", eventRoutes(storage));
+  return app;
+}
+
+/**
+ * A read whose writes are placed on an observed frame: once `probe`'s
+ * frame has arrived, `write` runs, and the read goes on until `until`
+ * holds, or until the server closes the stream when `untilClosed` is set.
+ * A failure inside `write` ends the read with its own message rather than
+ * as a read that timed out waiting for what was never sent.
+ */
+export async function readSseWriting(
+  res: Response,
+  probe: string,
+  write: () => Promise<void>,
+  until: SseReadOptions["until"] | { untilClosed: true },
+): Promise<{ text: string; closed: boolean }> {
+  let failed: (err: unknown) => void = () => undefined;
+  const failure = new Promise<never>((_, reject) => {
+    failed = reject;
+  });
+  let writes: Promise<void> | undefined;
+  const read = readSse(res, {
+    onChunk: (seen) => {
+      if (writes === undefined && seen.includes(probe)) {
+        writes = write();
+        // Handled here so a failure while the read is still going ends
+        // the race, and the promise itself is awaited below so one that
+        // lands after the read has finished is not lost.
+        writes.catch(failed);
+      }
+    },
+    ...(typeof until === "function" ? { until } : until),
+  });
+  const result = await Promise.race([read, failure]);
+  await writes;
+  return result;
 }
 
 /**

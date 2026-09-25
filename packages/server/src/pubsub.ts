@@ -98,6 +98,18 @@ export function __resetEventLogForTests(): void {
 }
 
 /**
+ * How many listeners the bus holds across both kinds (test-only): what a
+ * subscription that closed properly leaves behind is nothing, and only a
+ * count can say so.
+ */
+export function __listenerCountForTests(): number {
+  return (
+    emitter.listenerCount("ITEM_CHANGED") +
+    emitter.listenerCount("EDGE_CHANGED")
+  );
+}
+
+/**
  * Maps an internal event type to its wire string.
  *   item.* for item events (created / updated / deleted / restored /
  *     purged / state_changed)
@@ -156,10 +168,10 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
  * alone: an edge carries no item type, so `?type=` has nothing to say
  * about one, and a client watching two types needs to hear about the
  * edges joining them. `?edges=none` is the opt-out, and it is
- * independent of the type filter. Silencing every edge whenever a type
- * filter was set is the behavior this replaced, and it left a filtered
- * client with no way to reconstruct its graph — an edge has no row to
- * re-read and leaves no tombstone when it goes.
+ * independent of the type filter. Silencing every edge under a type
+ * filter would leave a filtered client with no way to reconstruct its
+ * graph — an edge has no row to re-read and leaves no tombstone when it
+ * goes.
  */
 export async function publishEdge(
   event: EdgeEvent,
@@ -196,11 +208,10 @@ export async function publishEdge(
  * local for-await loops, and it does not belong in event_log.
  */
 export function emitWake(event: PubsubEventWithId): void {
-  // `isEdgeEvent` rather than a list of edge type names. This once
-  // enumerated the two that existed, so adding a third meant remembering a
-  // site that mentions neither edges nor events in its name — and an event
-  // routed to the wrong emitter is delivered to nobody rather than failing. The discriminant is the payload shape,
-  // which cannot fall behind the union.
+  // `isEdgeEvent` rather than a list of edge type names: a list has to be
+  // kept in step with the union by hand, and an event routed to the wrong
+  // emitter is delivered to nobody rather than failing. The payload shape
+  // cannot fall behind.
   if (isEdgeEvent(event)) {
     emitter.emit("EDGE_CHANGED", event);
   } else {
@@ -219,8 +230,7 @@ export interface SubscribeOptions {
    * `iterator.return()` alone cannot unwind a generator suspended on an
    * event that never comes, so a quiet instance accumulates one listener
    * per departed viewer indefinitely. Long-lived per-request consumers
-   * (the SSE route) pass one, at both its `subscribe` and `subscribeEdges`
-   * call sites.
+   * (the SSE route) pass one to `subscribeAll`.
    *
    * The webhook delivery consumer is the only process-lifetime consumer,
    * and it passes none from either of its two loops, items and edges.
@@ -243,8 +253,8 @@ export interface SubscribeOptions {
 /**
  * Iterator cleanup contract.
  *
- * `subscribe()` and `subscribeEdges()` return `AsyncGenerator`s backed by
- * `events.on(emitter, ...)`. When the consumer is done — SSE client
+ * `subscribe()`, `subscribeEdges()` and `subscribeAll()` return
+ * `AsyncGenerator`s over the emitter's listeners. When the consumer is done — SSE client
  * disconnects, request handler completes, etc. — the consumer MUST close
  * the iterator so the underlying EventEmitter listener is removed:
  *
@@ -268,10 +278,9 @@ export interface SubscribeOptions {
  * `/search` and `/export` compile into SQL for this parameter: the global
  * wildcard, the named type and everything under its name, and the types
  * that declare their way there. Deferring to it rather than restating it
- * is the whole point — this used to walk declared parentage alone, so the
- * stream answered a narrower question than every other surface reading the
- * same parameter, and answered it with an empty stream and a 200 rather
- * than with an error.
+ * is the whole point: a walk of its own would answer a narrower question
+ * than every other surface reading the same parameter, with an empty
+ * stream and a 200 rather than with an error.
  *
  * **What resolving the registry per live event costs, and what that was
  * judged against.** The yardstick is `matchesTypeFilter`, the permission
@@ -363,6 +372,74 @@ export async function* subscribeEdges(options?: {
     if (typeof iter.return === "function") {
       await iter.return();
     }
+  }
+}
+
+/** A frame of either kind, as one subscription hands them on. */
+export type LiveFrame =
+  | { kind: "item"; event: ItemEventWithId }
+  | { kind: "edge"; event: EdgeEventWithId };
+
+/**
+ * Both kinds of event in one sequence, in the order they were published,
+ * which is the order of their ids.
+ *
+ * One generator per kind cannot keep that order: each hands its next event
+ * on through its own chain of promise jobs, so a burst of item events
+ * queued on one side is still being consumed while an edge published after
+ * them is handed on by the other, and a subscriber sees a higher id before
+ * a lower one. A subscriber that keeps the last id it received as its
+ * cursor, which is what the stream tells it to do, then resumes past the
+ * lower one for good. One queue fed by both listeners keeps the order the
+ * emitter saw.
+ *
+ * Same cleanup contract as `subscribe()`, with the same limit: closing the
+ * iterator takes both listeners off once the generator resumes, which for
+ * one parked on a quiet bus is when the next event arrives; a signal takes
+ * them off the moment it aborts. The route hands one over.
+ */
+export async function* subscribeAll(
+  options?: SubscribeOptions,
+): AsyncGenerator<LiveFrame> {
+  const queue: LiveFrame[] = [];
+  let wake: (() => void) | undefined;
+  let ended = options?.signal?.aborted === true;
+  const push = (frame: LiveFrame): void => {
+    queue.push(frame);
+    wake?.();
+  };
+  const onItem = (event: ItemEventWithId): void => {
+    if (eventMatchesTypeFilter(event.item.type, options?.typeFilter)) {
+      push({ kind: "item", event });
+    }
+  };
+  const onEdge = (event: EdgeEventWithId): void => {
+    push({ kind: "edge", event });
+  };
+  const onAbort = (): void => {
+    ended = true;
+    wake?.();
+  };
+  emitter.on("ITEM_CHANGED", onItem);
+  emitter.on("EDGE_CHANGED", onEdge);
+  options?.signal?.addEventListener("abort", onAbort, { once: true });
+  try {
+    for (;;) {
+      if (ended) return;
+      const frame = queue.shift();
+      if (frame === undefined) {
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+        wake = undefined;
+        continue;
+      }
+      yield frame;
+    }
+  } finally {
+    emitter.off("ITEM_CHANGED", onItem);
+    emitter.off("EDGE_CHANGED", onEdge);
+    options?.signal?.removeEventListener("abort", onAbort);
   }
 }
 
