@@ -1,23 +1,22 @@
 /**
  * The hold the announcement takes is bounded.
  *
- * Every connection now withholds live delivery from its first moment, so
- * that the cursor can be the stream's first frame, and the frames it
- * withholds accumulate in memory with no ceiling of their own. The read
- * that ends the hold goes to the database like any other, so a database
- * slow enough is enough to leave it outstanding — and a viewer that never drains is
+ * Every connection withholds live delivery from its first moment, so that
+ * the cursor can be the stream's first frame, and the frames it withholds
+ * accumulate in memory with no ceiling of their own. The read that ends
+ * the hold goes to the database like any other, so a database slow enough
+ * is enough to leave it outstanding, and a viewer that never drains is
  * still counted against the viewer cap and still holds its two emitter
- * listeners. On `main` the only hold was the replay's, and the
- * reservation in front of it was already bounded, so nothing else in this
- * route has this shape.
+ * listeners.
  *
  * The degradation is deliberately the weaker of the two available ones.
- * A client that receives no `stream_cursor` frame is exactly where every
- * client stood before the frame existed: connected, live, holding no
- * cursor of its own, with a reconnect path that already covers it. A
- * client whose frames are held forever is in no documented state at all.
- * So the budget expiring announces nothing and releases the hold rather
- * than closing the stream, which is what a genuine read *failure* does.
+ * A client that receives no `stream_cursor` frame is connected and live,
+ * holding no cursor of its own, with a reconnect path that already covers
+ * it; the marker that ends its prologue names no position either, since
+ * the stream knows none. A client whose frames are held forever is in no
+ * documented state at all. So the budget expiring announces no cursor and
+ * releases the hold rather than closing the stream, which is what a
+ * genuine read *failure* does.
  *
  * With `rlsEnforce: false` the head read is a plain call into the
  * event-log store, which is what this stalls.
@@ -48,8 +47,9 @@ function workingKey(): ApiKey {
     id: "key_events_cursor_timeout",
     name: "events cursor timeout",
     key_hash: "unused",
-    // The rank this fixture used to carry admitted it past its own maps, so
-    // the map has to say what the rank granted silently.
+    // Read on every type: the frame the test publishes has to pass the
+    // projection, or its absence would be the filter's rather than the
+    // hold's.
     type_permissions: { "*": "read" },
     extension_permissions: {},
     edge_permissions: {},
@@ -109,18 +109,34 @@ async function openStream(app: Hono<AppEnv>): Promise<OpenStream> {
   return { res, reader, firstChunk };
 }
 
+/** Long past the head read's budget, so what it catches is a frame
+ *  that is never written rather than one still on its way. */
+const READ_DEADLINE_MS = 5_000;
+
 /**
- * Read until `marker` appears. No deadline of its own — the runner's
- * budget is what ends a run that never gets one, and a deadline written
- * here would re-emit a timeout as a logic failure that names nothing.
+ * Read until `marker` appears, or fail naming it. A stream that never
+ * writes the frame would otherwise run out the runner's budget, and that
+ * failure says nothing about which frame was missing.
  */
 async function readUntil(open: OpenStream, marker: string): Promise<string> {
   const decoder = new TextDecoder();
   let text = open.firstChunk;
-  while (!text.includes(marker)) {
-    const chunk = await open.reader.read();
-    if (chunk.done) break;
-    text += decoder.decode(chunk.value);
+  const deadline = setTimeout(() => {
+    void open.reader.cancel();
+  }, READ_DEADLINE_MS);
+  try {
+    while (!text.includes(marker)) {
+      const chunk = await open.reader.read();
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value);
+    }
+  } finally {
+    clearTimeout(deadline);
+  }
+  if (!text.includes(marker)) {
+    throw new Error(
+      `the stream never wrote "${marker}" within ${String(READ_DEADLINE_MS)}ms; received: ${JSON.stringify(text)}`,
+    );
   }
   return text;
 }
@@ -149,7 +165,7 @@ describe("GET /events — the cursor announcement is bounded", () => {
     // expires rather than stranded behind a read that never returns.
     wake("evt-cursor-timeout-held");
 
-    const text = await readUntil(open, "evt-cursor-timeout-held");
+    const text = await readUntil(open, "event: stream_live");
     try {
       expect(
         text,
@@ -159,6 +175,13 @@ describe("GET /events — the cursor announcement is bounded", () => {
         text,
         "a head read that never returned has no cursor to announce",
       ).not.toContain("event: stream_cursor");
+      // The prologue still ends, and says so; with no head and nothing
+      // replayed, the position it names is none.
+      expect(text).toContain("event: stream_live");
+      expect(text).toContain('"cursor":null');
+      expect(text.indexOf("event: stream_live")).toBeGreaterThan(
+        text.indexOf("evt-cursor-timeout-held"),
+      );
     } finally {
       await open.reader.cancel();
     }

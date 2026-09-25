@@ -170,6 +170,9 @@ describe("a catch-up that throws partway through", () => {
     expect(closed).toBe(true);
     expect(text).toContain("event: stream_incomplete");
     expect(text).toContain('"reason":"replay_failed"');
+    // A stream that ended short never became live: the marker would tell
+    // the client to resume past the gap.
+    expect(text).not.toContain("event: stream_live");
     // Everything up to the failure was delivered, and the cursor the
     // client should reconnect with is the last of it — not where the
     // catch-up was going, and not the cursor it arrived with.
@@ -213,6 +216,8 @@ describe("live frames held past the limit while the catch-up runs", () => {
     expect(closed).toBe(true);
     expect(text).toContain("event: stream_incomplete");
     expect(text).toContain('"reason":"backlog_overflow"');
+    // A stream that ended short never became live.
+    expect(text).not.toContain("event: stream_live");
     // Held frames go unsent rather than partly sent: they sit after the
     // gap, and delivering some of them is what presents a short
     // catch-up as a complete one.

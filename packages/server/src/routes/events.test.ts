@@ -134,6 +134,11 @@ describe("GET /events — catchup_too_old", () => {
     // own, so the close is what is asserted.
     expect(closed).toBe(true);
     expect(text).not.toContain("item.");
+    // A stream that ended short is never said to be live: the marker's
+    // cursor is one a client may adopt, and this stream has none to
+    // offer. `events-cursor.test.ts` is the witness that a stream which
+    // finishes its prologue does send it.
+    expect(text).not.toContain("event: stream_live");
   });
 
   it("replays from a cursor one below the oldest retained id, which is a client exactly in step", async () => {

@@ -36,19 +36,19 @@ const REPLAY_BATCH_SIZE = 500;
  * answering, sized to ride out a burst of stream turnover without leaving
  * a client hanging.
  *
- * A bound is needed at all because the hold is new. Every connection now
- * withholds live delivery from its first moment so the announcement can
- * be the first frame, and the frames it withholds accumulate with no
- * ceiling. On `main` a connection held only while replaying, and that
- * wait was already bounded — so an unbounded read here is the one way a
- * saturated app pool could leave a viewer counted, subscribed, and
- * buffering forever.
+ * A bound is needed because every connection withholds live delivery from
+ * its first moment so the announcement can be the first frame, and the
+ * frames it withholds accumulate with no ceiling while the head read is
+ * out. The replay's own wait is bounded by its batches; this read is the
+ * one way a saturated app pool could leave a viewer counted, subscribed,
+ * and buffering forever.
  *
  * **What it degrades to is the point.** Announcing nothing and releasing
- * the hold leaves the client exactly where every client stood before the
- * announcement existed: connected, live, holding no cursor of its own.
- * That is a documented state its reconnect path already handles. A client
- * whose frames are held indefinitely is in no state at all.
+ * the hold leaves the client connected, live, and holding no cursor of
+ * its own, which is a state its reconnect path handles: it reads the
+ * marker that ends the prologue, whose cursor is then whatever the
+ * replay or the drained frames reached, or null. A client whose frames
+ * are held indefinitely is in no state at all.
  */
 const HEAD_READ_TIMEOUT_MS = 5_000;
 
@@ -72,6 +72,20 @@ const HEAD_READ_TIMED_OUT = Symbol("head-read-timed-out");
  * exactly the backlog the reconnect existed to fetch.
  */
 const STREAM_CURSOR_EVENT = "stream_cursor";
+
+/**
+ * The frame that says the prologue is over: everything up to the cursor
+ * it carries has been sent or withheld, and what follows is live.
+ *
+ * A subscriber cannot otherwise tell. A frame the filter or the
+ * permission projection withholds is not written at all, so the frame
+ * that would show the announced head reached can be one this subscriber
+ * is never sent, and a reader waiting for it waits for good. Carrying no
+ * `id:`, so a client keeping the last id it received is not moved by it;
+ * carrying a cursor at or past the announced head, so a client may adopt
+ * it and resume past the events it was not sent.
+ */
+const STREAM_LIVE_EVENT = "stream_live";
 
 /**
  * Most types one `?type=` may name.
@@ -220,9 +234,9 @@ export interface EventRoutesOptions {
   /**
    * Ceiling on concurrent viewers per route instance — one per server
    * process in production, where the app is built once. `0` = uncapped (the
-   * default). A deliberate memory bound, not a pool artifact: viewers
-   * no longer hold database connections, so the cap exists for
-   * deployments that want a stated limit rather than discovering one.
+   * default). A deliberate memory bound, not a pool artifact: a viewer
+   * holds no database connection, so the cap exists for deployments that
+   * want a stated limit rather than discovering one.
    */
   maxViewers?: number;
 }
@@ -510,6 +524,16 @@ export function eventRoutes(
            * `sync/resume.test.ts` a resuming reader.
            */
           let lastSentId: bigint | null = null;
+          /**
+           * The highest id the replay read, withheld rows included, and
+           * null where it read none: what the marker that ends the
+           * prologue names beside the head and the last id written, since
+           * a reader may resume past everything the replay covered whether
+           * or not it was sent it. Never the cursor the client arrived
+           * with, which may sit past the head and would then be named back
+           * to it as a position the stream had reached.
+           */
+          let replayedTo: bigint | null = null;
 
           // Subscribed before the replay starts, so nothing falls between
           // the two. One subscription for both kinds of frame, in publish
@@ -576,19 +600,17 @@ export function eventRoutes(
 
           // Edge events don't carry an item type, so `?type=` says nothing
           // about them: it names the item types this subscriber wants, and
-          // an edge is not an item. Silencing them under a type filter was
-          // the wrong reading of that — it left a filtered client watching
-          // two types and never learning about the edges joining them,
-          // which is the half nothing else can reconstruct. `?edges=none`
-          // is the opt-out, and it is independent of the type filter.
+          // an edge is not an item. Silencing them under a type filter
+          // would leave a filtered client watching two types and never
+          // learning about the edges joining them, which is the half
+          // nothing else can reconstruct. `?edges=none` is the opt-out,
+          // and it is independent of the type filter.
           //
-          // **`?edges=none` was the only thing narrowing this frame, and a
-          // subscriber's own parameter is not a permission.** Every
-          // authenticated credential therefore received every edge the
-          // instance wrote — both endpoints, the kind of relationship and
-          // the properties on it — live, for rows `GET /edges/{id}`
-          // refused it one at a time. The two questions that door asks are
-          // asked here now, per subscriber, before the frame is written,
+          // **A subscriber's own parameter is not a permission.** An edge
+          // frame discloses both endpoints, the kind of relationship and
+          // the properties on it, which `GET /edges/{id}` refuses a
+          // credential one at a time; the two questions that door asks
+          // are asked here, per subscriber, before the frame is written,
           // through the function the plural doors call.
           //
           // **The lookup is per frame on the live path, and it is a
@@ -827,6 +849,9 @@ export function eventRoutes(
             // Above the `try` because the catch reports it: a catch-up
             // that stopped is only actionable if it says where.
             let lastReplayedId: bigint = afterIdResolved;
+            // The last row read, as against where the read started: the
+            // position the marker may name.
+            let lastRead: bigint | null = null;
             try {
               // A cursor is too old when the log no longer holds the event
               // after it: the oldest retained id is greater than the cursor
@@ -899,9 +924,8 @@ export function eventRoutes(
                 // to.** A page here is up to `REPLAY_BATCH_SIZE` rows
                 // and a catch-up walks page after page with no cap of
                 // its own, so a source read per edge row would be that
-                // many serial round trips — the defect the edge listing
-                // was corrected for, on the one path with no `limit` to
-                // bound it. The live pump is the other half and cannot
+                // many serial round trips, on the one path with no
+                // `limit` to bound it. The live pump is the other half and cannot
                 // batch, because it holds one frame; `sendEdgeEvent`
                 // says so there.
                 //
@@ -938,6 +962,7 @@ export function eventRoutes(
                   // it, and only `?edges=none` withholds it.
                   if (isEdge && edgeMode === "none") {
                     lastReplayedId = event.id;
+                    lastRead = event.id;
                     continue;
                   }
                   // Decoded once for the whole row, shared by the type
@@ -981,6 +1006,7 @@ export function eventRoutes(
                         `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
                       );
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                   }
@@ -1017,6 +1043,7 @@ export function eventRoutes(
                         : undefined;
                     if (typeof named !== "string") {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                     // The same function the live path filters on, and
@@ -1031,6 +1058,7 @@ export function eventRoutes(
                       !eventMatchesTypeFilter(named, typeParam)
                     ) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                     if (
@@ -1038,6 +1066,7 @@ export function eventRoutes(
                       !matchesTypeFilter(named, typeFilter)
                     ) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                   }
@@ -1047,7 +1076,7 @@ export function eventRoutes(
                   // frame is the same disclosure as a live one, reached
                   // through a cursor instead of a subscription, so a
                   // catch-up that skipped this would hand back
-                  // everything the live stream now withholds.
+                  // everything the live stream withholds.
                   //
                   // Withheld where the payload cannot be read as an
                   // edge, for the reason an unclassifiable item row is
@@ -1059,6 +1088,7 @@ export function eventRoutes(
                     const storedEdge = replayEdges.get(event.id);
                     if (storedEdge === undefined) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                     if (
@@ -1069,6 +1099,7 @@ export function eventRoutes(
                       )
                     ) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                   }
@@ -1095,10 +1126,12 @@ export function eventRoutes(
                   // sent, so its live copy is not a duplicate.
                   rememberReplayed(event.id);
                   lastReplayedId = event.id;
+                  lastRead = event.id;
                 }
 
                 if (batch.length < REPLAY_BATCH_SIZE) break;
               }
+              replayedTo = lastRead;
               return true;
             } catch (err) {
               // A catch-up that failed leaves the client short of events
@@ -1191,7 +1224,10 @@ export function eventRoutes(
             // mid-drain, in which case what is left goes unsent — the
             // same decision `failStream` takes, and for the same reason.
             // Nothing can be appended between the loop ending and the
-            // flag dropping, because no await separates them.
+            // flag dropping, because no await separates them; and the
+            // marker is written in the same breath, before the flag
+            // drops, so no live frame can be written ahead of it.
+            announceLive();
             holding = false;
             heldFrames.length = 0;
           };
@@ -1230,6 +1266,9 @@ export function eventRoutes(
               if (timer !== undefined) clearTimeout(timer);
             });
           };
+
+          /** The head the stream announced, once it has. */
+          let announcedHead: bigint | null = null;
 
           /**
            * Say where the stream is, before it says anything else.
@@ -1271,9 +1310,10 @@ export function eventRoutes(
               // database is busy. Closing here would turn a slow database
               // into a disconnect for every connecting client at once,
               // and each would reconnect onto the same database. So the
-              // stream stays open with no announcement, which is the
-              // state every client was in before this frame existed, and
-              // the caller releases the hold on its way past.
+              // stream stays open with no announcement: the caller
+              // releases the hold on its way past, and the marker that
+              // ends the prologue then names whatever position the
+              // replay or the drained frames reached, or none.
               console.warn(
                 `[events] announcing no cursor: the event-log head did not arrive within ${String(
                   options.headReadTimeoutMs ?? HEAD_READ_TIMEOUT_MS,
@@ -1284,12 +1324,40 @@ export function eventRoutes(
             // An empty log announces 0, which is a cursor the replay
             // accepts and the retention check passes: `getMinRetainedId`
             // answers null on an empty log, so nothing reads 0 as stale.
+            announcedHead = head ?? 0n;
             const payload = JSON.stringify({
               type: STREAM_CURSOR_EVENT,
-              cursor: String(head ?? 0n),
+              cursor: String(announcedHead),
             });
             send(`event: ${STREAM_CURSOR_EVENT}\ndata: ${payload}\n\n`);
             return true;
+          };
+
+          /**
+           * The prologue is over. The cursor is the furthest position this
+           * stream knows: the announced head, the highest id the replay
+           * walked past (rows it withheld included) and the highest id
+           * written, since a held live frame drained after the replay
+           * carries an id past the head and a subscriber resuming from the
+           * head alone would be sent it again. Null where none is known:
+           * a head read that outran its budget with nothing to replay.
+           */
+          const announceLive = (): void => {
+            if (state.closed) return;
+            let reached: bigint | null = null;
+            for (const candidate of [announcedHead, replayedTo, lastSentId]) {
+              if (
+                candidate !== null &&
+                (reached === null || candidate > reached)
+              ) {
+                reached = candidate;
+              }
+            }
+            const payload = JSON.stringify({
+              type: STREAM_LIVE_EVENT,
+              cursor: reached === null ? null : String(reached),
+            });
+            send(`event: ${STREAM_LIVE_EVENT}\ndata: ${payload}\n\n`);
           };
 
           // The prologue, in the order a client has to receive it:
