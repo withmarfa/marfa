@@ -291,6 +291,7 @@ impl Remote {
         Err(CliError::ContractMismatch {
             origin: self.origin.clone(),
             served: match served {
+                Some(Value::String(served)) => format!("answers contract {served}"),
                 Some(served) => format!("answers contract {served}"),
                 None => "answers no contract at its root".into(),
             },
@@ -383,18 +384,27 @@ impl Remote {
     /// this is, and that it speaks another contract, is what reading it is
     /// for.
     ///
-    /// Its `contract` is the one the answer's header names, where it names
-    /// one: every other answer is held to its header, so a body claiming the
-    /// built-for contract under a header naming another must not let a
-    /// command read on as though the server spoke it.
+    /// Its `contract` is the one the answer's header names, and none where
+    /// the header names none: every other answer is held to its header, so a
+    /// body claiming the built-for contract must not let a command read on,
+    /// or send a mint, as though the server spoke it. A header this binary
+    /// would not read as the built-for contract elsewhere is kept as the
+    /// text it came as.
     pub fn root(&self) -> Result<Value, CliError> {
         let (mut instance, served) = self.describe(&crate::commands::status::root_request())?;
-        if let (Some(served), Some(fields)) = (served, instance.as_object_mut()) {
-            let value = served
-                .trim()
-                .parse::<u64>()
-                .map_or(Value::String(served), Value::from);
-            fields.insert("contract".into(), value);
+        if let Some(fields) = instance.as_object_mut() {
+            match served {
+                Some(served) => {
+                    let value = match served.parse::<u64>() {
+                        Ok(number) if number.to_string() == served => Value::from(number),
+                        _ => Value::String(served),
+                    };
+                    fields.insert("contract".into(), value);
+                }
+                None => {
+                    fields.remove("contract");
+                }
+            }
         }
         Ok(instance)
     }

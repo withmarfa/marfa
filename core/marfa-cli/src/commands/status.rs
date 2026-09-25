@@ -96,10 +96,11 @@ pub fn contract_report(instance: &Value) -> Value {
 
 /// What a person reads when the server speaks another contract.
 pub fn contract_line(instance: &Value) -> String {
-    let served = instance
-        .get("contract")
-        .map(Value::to_string)
-        .unwrap_or_else(|| "none".into());
+    let served = match instance.get("contract") {
+        Some(Value::String(served)) => served.clone(),
+        Some(served) => served.to_string(),
+        None => "none".into(),
+    };
     format!(
         "contract {served}; this marfa was built for contract {}, so nothing past this description was read: use a marfa built for the server's contract",
         marfa_client::CONTRACT_VERSION
