@@ -1628,8 +1628,7 @@ describe("identity", () => {
       const queued = await harness.folder.device().queue();
       expect(queued.ok).toBe(true);
       const kept = queued.ok
-        ? (queued.value.find((row) => row.kind === "create_item")?.answer ??
-          "")
+        ? (queued.value.find((row) => row.kind === "create_item")?.answer ?? "")
         : "";
       expect(kept).toContain("type_not_permitted");
       return { kept };
@@ -2056,33 +2055,63 @@ describe("identity", () => {
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "stale.md",
     };
+    // The control for the overwrite count: a file whose key another
+    // device's row holds, which this copy never read, with other content.
+    // Its edit goes over what it never read, and the scan says so.
+    const other = "01a00000-0000-7000-8000-0000000000f1";
+    const theirs = wireItem({
+      id: other,
+      version: 1,
+      source_id: "other.md",
+      properties: { title: "Other", body: "theirs, never read\n" },
+    });
     scriptWrites(harness.server, {
       create: [
-        answers.versionConflict(
-          newer,
-          {
-            ...newer,
-            version: 1,
-            properties: { title: "Read", body: "what the folder read\n" },
-          },
-          ["body", "title"],
-          {
-            fields: { body: "keep_both_copies", notes: "keep_both_copies" },
-            default: "last_writer_wins",
-          },
-        ),
+        (request) =>
+          (JSON.parse(request.body) as { source_id?: string }).source_id ===
+          "other.md"
+            ? answers.ancestorUnavailable(
+                {
+                  ...newer,
+                  id: other,
+                  version: 1,
+                  properties: { title: "Other", body: "theirs, never read\n" },
+                  source_id: "other.md",
+                },
+                0,
+              )
+            : answers.versionConflict(
+                newer,
+                {
+                  ...newer,
+                  version: 1,
+                  properties: { title: "Read", body: "what the folder read\n" },
+                },
+                ["body", "title"],
+                {
+                  fields: {
+                    body: "keep_both_copies",
+                    notes: "keep_both_copies",
+                  },
+                  default: "last_writer_wins",
+                },
+              ),
       ],
+      read: [answers.updated(theirs)],
       update: [
-        answers.resolved(
-          wireItem({
-            id,
-            version: 10,
-            source_id: "stale.md",
-            properties: newerProperties,
-          }),
-          { body: "keep_both_copies", title: "last_writer_wins" },
-          "01a00000-0000-7000-8000-0000000000cd",
-        ),
+        (request) =>
+          request.pathname === `/items/${other}`
+            ? answers.updated({ ...theirs, version: 2 })
+            : answers.resolved(
+                wireItem({
+                  id,
+                  version: 10,
+                  source_id: "stale.md",
+                  properties: newerProperties,
+                }),
+                { body: "keep_both_copies", title: "last_writer_wins" },
+                "01a00000-0000-7000-8000-0000000000cd",
+              ),
       ],
     });
     put(
@@ -2090,6 +2119,7 @@ describe("identity", () => {
       "stale.md",
       "---\ntitle: Stale\n---\nthe stale machine's copy\n",
     );
+    put(harness, "other.md", "---\ntitle: Other\n---\nmine\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
@@ -2108,16 +2138,28 @@ describe("identity", () => {
     const again = await harness.folder.push();
     expect(again.ok, JSON.stringify(again)).toBe(true);
     if (!again.ok) return;
-    const patch = harness.server.requests.find(
+    const patches = harness.server.requests.filter(
       (request) => request.method === "PATCH",
     );
-    expect(patch?.pathname).toBe(`/items/${id}`);
+    expect(patches.map((request) => request.pathname).sort()).toEqual(
+      [`/items/${id}`, `/items/${other}`].sort(),
+    );
+    const patch = patches.find(
+      (request) => request.pathname === `/items/${id}`,
+    );
     expect(
       (JSON.parse(patch?.body ?? "{}") as { version?: number }).version,
       "the stale edit went on the version the catch-up brought in, so the server takes it as newer and replaces what it never merged",
     ).toBe(1);
-    expect(again.value.scan.overwrote).toBe(0);
-    expect(again.value.drain.verdicts[0]?.verdict).toBe("conflicted");
+    // The control is the one overwrite: the stale edit was merged against
+    // what it read, the catch-up since notwithstanding.
+    expect(
+      again.value.scan.overwrote,
+      "the scan counted the stale edit merged against what it read as an overwrite, or missed the one that was",
+    ).toBe(1);
+    expect(
+      again.value.drain.verdicts.find((entry) => entry.item_id === id)?.verdict,
+    ).toBe("conflicted");
   });
 
   it("sends a stale folder's edit over a row whose read version is thinned, and says so", async () => {
@@ -3365,71 +3407,112 @@ describe("writing", () => {
     // names where it does not hold it.
     const unread = "01a00000-0000-7000-8000-0000000000f0";
     const theirs = { title: "Fresh", body: "from elsewhere\n" };
+    // And the control for the overwrite count: a file whose key another
+    // device's row holds, which this copy never read, with other content.
+    // Its edit goes over what it never read, and the scan says so.
+    const other = "01a00000-0000-7000-8000-0000000000f1";
+    const otherTheirs = { title: "Other", body: "theirs, never read\n" };
     scriptWrites(harness.server, {
       create: [
         (request) =>
           (JSON.parse(request.body) as { source_id?: string }).source_id ===
-          "fresh.md"
+          "other.md"
             ? answers.ancestorUnavailable(
                 {
                   ...newer,
-                  id: unread,
+                  id: other,
                   version: 1,
-                  properties: theirs,
-                  source_id: "fresh.md",
+                  properties: otherTheirs,
+                  source_id: "other.md",
                 },
                 0,
               )
-            : answers.versionConflict(
-                newer,
-                {
-                  ...newer,
-                  version: 1,
-                  properties: { title: "Read", body: "what the folder read\n" },
-                },
-                ["body", "title"],
-                {
-                  fields: {
-                    body: "keep_both_copies",
-                    notes: "keep_both_copies",
+            : (JSON.parse(request.body) as { source_id?: string }).source_id ===
+                "fresh.md"
+              ? answers.ancestorUnavailable(
+                  {
+                    ...newer,
+                    id: unread,
+                    version: 1,
+                    properties: theirs,
+                    source_id: "fresh.md",
                   },
-                  default: "last_writer_wins",
-                },
-              ),
+                  0,
+                )
+              : answers.versionConflict(
+                  newer,
+                  {
+                    ...newer,
+                    version: 1,
+                    properties: {
+                      title: "Read",
+                      body: "what the folder read\n",
+                    },
+                  },
+                  ["body", "title"],
+                  {
+                    fields: {
+                      body: "keep_both_copies",
+                      notes: "keep_both_copies",
+                    },
+                    default: "last_writer_wins",
+                  },
+                ),
       ],
       // The rows as the server holds them now, for a device that reads
       // them: this one holds the stale row already and must not read it.
       read: [
         (request) =>
           answers.updated(
-            request.pathname === `/items/${unread}`
+            request.pathname === `/items/${other}`
               ? wireItem({
-                  id: unread,
+                  id: other,
                   version: 1,
-                  source_id: "fresh.md",
-                  properties: theirs,
+                  source_id: "other.md",
+                  properties: otherTheirs,
                 })
-              : wireItem({
-                  id,
-                  version: 9,
-                  source_id: "stale.md",
-                  properties: newer.properties,
-                }),
+              : request.pathname === `/items/${unread}`
+                ? wireItem({
+                    id: unread,
+                    version: 1,
+                    source_id: "fresh.md",
+                    properties: theirs,
+                  })
+                : wireItem({
+                    id,
+                    version: 9,
+                    source_id: "stale.md",
+                    properties: newer.properties,
+                  }),
           ),
       ],
       // The server merges an edit based on what the folder read, keeping
       // both bodies (`versions.md` 13).
       update: [
-        answers.resolved(
-          wireItem({
-            id,
-            version: 10,
-            source_id: "stale.md",
-            properties: newer.properties,
-          }),
-          { body: "keep_both_copies", title: "last_writer_wins" },
-          "01a00000-0000-7000-8000-0000000000cc",
-        ),
+        (request) =>
+          request.pathname === `/items/${other}`
+            ? answers.updated(
+                wireItem({
+                  id: other,
+                  version: 2,
+                  source_id: "other.md",
+                  properties: (
+                    JSON.parse(request.body) as {
+                      properties: Record<string, unknown>;
+                    }
+                  ).properties,
+                }),
+              )
+            : answers.resolved(
+                wireItem({
+                  id,
+                  version: 10,
+                  source_id: "stale.md",
+                  properties: newer.properties,
+                }),
+                { body: "keep_both_copies", title: "last_writer_wins" },
+                "01a00000-0000-7000-8000-0000000000cc",
+              ),
       ],
     });
     put(
@@ -3438,6 +3521,7 @@ describe("writing", () => {
       "---\ntitle: Stale\n---\nthe stale machine's copy\n",
     );
     put(harness, "fresh.md", "---\ntitle: Fresh\n---\nfrom elsewhere\n");
+    put(harness, "other.md", "---\ntitle: Other\n---\nmine\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
@@ -3488,22 +3572,37 @@ describe("writing", () => {
       sentCreates(harness).length,
       "the stale create went a second time, so a folder left running keeps trying to overwrite newer content",
     ).toBe(before);
-    const patch = harness.server.requests.find(
+    const patches = harness.server.requests.filter(
       (request) => request.method === "PATCH",
     );
-    expect(patch?.pathname).toBe(`/items/${id}`);
+    const patch = patches.find(
+      (request) => request.pathname === `/items/${id}`,
+    );
     expect(
       (JSON.parse(patch?.body ?? "{}") as { version?: number }).version,
       "the stale edit was based on the server's newest version, which takes it as newer and overwrites what the other machine wrote",
     ).toBe(1);
     expect(patch?.query.get("conflict")).toBe("auto");
-    expect(again.value.drain.verdicts[0]?.verdict).toBe("conflicted");
-    // Merged against what it read, so not an overwrite; and the file whose
-    // row it never read holds what that row holds, so nothing went for it.
-    expect(again.value.scan.overwrote).toBe(0);
     expect(
-      harness.server.requests.filter((request) => request.method === "PATCH"),
-    ).toHaveLength(1);
+      again.value.drain.verdicts.find((entry) => entry.item_id === id)?.verdict,
+    ).toBe("conflicted");
+    // The control went over the row it never read, on the version the copy
+    // holds, and is the one overwrite the scan counts: the stale edit was
+    // merged against what it read, so it is not one; and the file whose row
+    // it never read holds what that row holds, so nothing went for it.
+    const overwritten = patches.find(
+      (request) => request.pathname === `/items/${other}`,
+    );
+    expect(
+      (JSON.parse(overwritten?.body ?? "{}") as { version?: number }).version,
+    ).toBe(1);
+    expect(
+      again.value.scan.overwrote,
+      "the scan counted the stale edit merged against what it read as an overwrite, or missed the one that was",
+    ).toBe(1);
+    expect(patches.map((request) => request.pathname).sort()).toEqual(
+      [`/items/${id}`, `/items/${other}`].sort(),
+    );
   });
 
   it("does not read its own writes back as changes", async () => {
@@ -3678,10 +3777,34 @@ describe("writing", () => {
     // The file ends on the second save, under the other machine's title.
     expect(read(harness, "note.md")).toContain("second save");
     expect(read(harness, "note.md")).toContain("title: Retitled");
+    const copiesIn = (held: Iterable<DoorRow>) =>
+      [...held].filter((row) => (row.tags ?? []).includes(CONFLICTED_COPY_TAG));
+    // The witness: the same two saves, each sent on the version the file
+    // was read at, leave a conflicted copy on this door, tagged.
+    const control = new FolderDoor([
+      [
+        noteId,
+        {
+          properties: { title: "Note", body: "as read\n" },
+          source: FOLDER_SOURCE,
+          source_id: "note.md",
+          type: "core.note",
+          version: 1,
+        },
+      ],
+    ]);
+    control.update(noteId, { properties: { title: "Retitled" }, version: 1 });
+    for (const body of ["first save", "second save"]) {
+      control.update(
+        noteId,
+        { properties: { title: "Note", body: `${body}\n` }, version: 1 },
+        { resolve: true },
+      );
+    }
+    expect(copiesIn(control.rows.values())).toHaveLength(1);
     expect(
-      [...rows.values()].filter((row) =>
-        (row.tags ?? []).includes(CONFLICTED_COPY_TAG),
-      ),
+      copiesIn(rows.values()),
+      "a save was set aside in a conflicted copy",
     ).toEqual([]);
   });
 

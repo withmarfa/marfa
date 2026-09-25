@@ -1508,7 +1508,12 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     scriptWrites(server, {
-      create: [answers.ancestorUnavailable(current, 0)],
+      // First an answer the device cannot read, which is counted, so the
+      // count below is one that moves on this row.
+      create: [
+        { kind: "json", status: 200, body: "not an answer" },
+        answers.ancestorUnavailable(current, 0),
+      ],
       read: [
         { kind: "drop" },
         answers.serverFault(),
@@ -1516,6 +1521,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
         theirs,
       ],
     });
+    const counted = await device.drain();
+    expect(counted.ok, JSON.stringify(counted)).toBe(true);
+    if (!counted.ok) return;
+    expect(
+      [counted.value.verdicts[0]?.verdict, counted.value.verdicts[0]?.refusals],
+      "an answer the device could not read was not counted, so a count that stays put below says nothing",
+    ).toEqual([null, 1]);
     const reads = () =>
       server.requests.filter(
         (request) =>
@@ -1534,8 +1546,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
           drained.value.verdicts[0]?.verdict,
           drained.value.verdicts[0]?.refusals,
         ],
-        `the create was settled on ${attempt} while reading the row it landed on, although that clears on its own`,
-      ).toEqual([null, 0]);
+        `the create was settled or counted on ${attempt} while reading the row it landed on, although that clears on its own`,
+      ).toEqual([null, 1]);
       expect(drained.value.retry_after_seconds).toBe(waited);
     }
     expect(reads()).toBe(3);
@@ -2570,8 +2582,22 @@ describe("an upload is a queued write", () => {
     const bytes = Buffer.from("held and locked for now\n");
     expect((await device.putBlob(fileOf("locked.txt", bytes))).ok).toBe(true);
     const heldAt = `${device.store}.blobs/${hashOf(bytes).slice("sha256:".length)}`;
+    // First an answer naming other bytes, which is counted, so the count
+    // the locked drain leaves is one that moves on this row.
+    server.answer(
+      "POST",
+      "/blobs",
+      uploaded(`sha256:${"b".repeat(64)}`),
+      uploaded(),
+    );
+    const counted = await device.drain();
+    expect(counted.ok).toBe(true);
+    if (!counted.ok) return;
+    expect(
+      [counted.value.verdicts[0]?.verdict, counted.value.verdicts[0]?.refusals],
+      "an upload answered under another name was not counted, so a count that stays put below says nothing",
+    ).toEqual([null, 1]);
     chmodSync(heldAt, 0o000);
-    acceptUploads(server);
     try {
       const drained = await device.drain();
       expect(drained.ok).toBe(true);
@@ -2583,7 +2609,10 @@ describe("an upload is a queued write", () => {
       expect(drained.value.verdicts[0]?.reason).toContain(
         "could not be opened",
       );
-      expect(drained.value.verdicts[0]?.refusals).toBe(0);
+      expect(
+        drained.value.verdicts[0]?.refusals,
+        "bytes that could not be opened for now were counted as a refusal the server gave",
+      ).toBe(1);
     } finally {
       chmodSync(heldAt, 0o644);
     }
@@ -3833,7 +3862,22 @@ describe("an edit behind an edit of the same row", () => {
       "accepted",
       "accepted",
     ]);
-    expect(copies(door)).toEqual([]);
+    // The witness: the three sent on the version they were queued against
+    // leave the first on the row and set the other two aside in copies.
+    const control = newDoor();
+    elsewhere(control, HELD.id, { title: "elsewhere" });
+    for (const body of ["first", "second", "third"]) {
+      control.update(
+        HELD.id,
+        { properties: { body }, version: HELD.version },
+        { resolve: true },
+      );
+    }
+    expect(copies(control)).toEqual(["second", "third"]);
+    expect(
+      copies(door),
+      "an edit of the chain was set aside in a conflicted copy, colliding with the device's own edit ahead of it",
+    ).toEqual([]);
     expect(door.rows.get(HELD.id)?.properties).toEqual({
       title: "elsewhere",
       body: "third",
