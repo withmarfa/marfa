@@ -57,6 +57,32 @@ export function isDimensionMime(mime: string): boolean {
  * rejected: they would be the first native binary and the first subprocess
  * in this server, which the handful of extra containers does not pay for.
  */
+const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** The largest width or height any of these formats can state. */
+const MAX_SIDE = 2 ** 31 - 1;
+
+/**
+ * Whether a size read from a header can be a real one. The reader looks at
+ * a signature and then at fixed offsets, so bytes that merely start like a
+ * PNG yield whatever sits at those offsets; a PNG states its size in the
+ * `IHDR` chunk that has to come first (Apple's variant puts `CgBI` there),
+ * and no format states a side of zero or past `MAX_SIDE`.
+ */
+function plausibleHeader(
+  data: Uint8Array,
+  size: { width: number; height: number },
+): boolean {
+  const inRange = (side: number) =>
+    Number.isInteger(side) && side > 0 && side <= MAX_SIDE;
+  if (!inRange(size.width) || !inRange(size.height)) return false;
+  if (PNG_SIGNATURE.every((byte, i) => data[i] === byte)) {
+    const chunk = String.fromCharCode(...data.subarray(12, 16));
+    if (chunk === "CgBI") return true;
+    return chunk === "IHDR";
+  }
+  return true;
+}
+
 export async function deriveDimensions(
   bytes: Buffer,
   mimeType: string,
@@ -71,6 +97,9 @@ export async function deriveDimensions(
     // record rather than an error to classify.
     const size = imageDimensionsFromData(data);
     if (!size) return { kind: "unreadable", reason: "no image reader" };
+    if (!plausibleHeader(data, size)) {
+      return { kind: "unreadable", reason: "no image header" };
+    }
     return {
       kind: "dimensions",
       values: { width: size.width, height: size.height },

@@ -107,6 +107,8 @@ export async function bootFreshServer(
         ...process.env,
         PORT: "",
         RATE_LIMIT_ENABLED: "false",
+        MARFA_ENRICHMENT_ENABLED: "false",
+        MARFA_ENRICHMENT_OCR_ENABLED: "false",
         ...extraEnv,
       },
       // Bounded, because the call blocks the worker and vitest's own hook

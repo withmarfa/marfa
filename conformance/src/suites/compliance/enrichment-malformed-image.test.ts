@@ -4,8 +4,8 @@
  * The enrichment sweep reads an image file item's bytes with OCR. An image
  * whose bytes are not an image is the ordinary case of a broken upload, and
  * the sweep's answer to it is a failure recorded for that item: the server
- * goes on answering, the item goes on reading, and the next sweep meets the
- * same bytes the same way.
+ * goes on answering, the item goes on reading with no size made up from
+ * its bytes, and the next sweep meets the same bytes the same way.
  *
  * Enrichment is off on the run's own server, so this boots one of its own
  * with enrichment and OCR on. The language model OCR loads is cached where
@@ -77,9 +77,9 @@ describe("a malformed image", () => {
       const run = await operator.runHousekeeping("enrichment-sweep");
       expect(run.status, `sweep ${String(attempt)}`).toBe(200);
       expect(run.data.outcome, `sweep ${String(attempt)}`).toBe("ok");
-      // Failed, which is the OCR reading the bytes and refusing them; an
-      // image the sweep never read would be skipped, and one it read would
-      // be extracted.
+      // Failed, and the only way to failure this item has is the OCR
+      // refusing the bytes: the blob is there, the sweep's time budget is a
+      // minute, and a size read from them would have counted as extracted.
       expect(run.data.result, `sweep ${String(attempt)}`).toEqual({
         extracted: 0,
         skipped: 0,
@@ -91,6 +91,9 @@ describe("a malformed image", () => {
     expect(health.status).toBe(200);
     const read = await client.getItem(id);
     expect(read.status).toBe(200);
+    // Witness that the read is the item: its own blob is there.
     expect(read.data.item.properties.blob_ref).toBe(upload.data.hash);
+    expect(read.data.item.properties.width).toBeUndefined();
+    expect(read.data.item.properties.height).toBeUndefined();
   }, 180_000);
 });

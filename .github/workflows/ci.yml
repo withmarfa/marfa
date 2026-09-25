@@ -73,9 +73,9 @@ jobs:
           echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts).
-      # `MARFA_ENRICHMENT_TESSDATA_DIR` is a cache path the engine may write
-      # to; the test resolves its model from the installed package, so
-      # nothing here is load bearing.
+      # The engine fetches its language model on first use and caches it
+      # under `MARFA_ENRICHMENT_TESSDATA_DIR`, kept in the runner's home so a
+      # later run fetches nothing.
       - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
 
   # The core's three commands on every pull request, not only on those that
