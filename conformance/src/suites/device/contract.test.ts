@@ -232,6 +232,55 @@ describe("the contract the binary was built for", () => {
     expect(sent(server)).toEqual(["GET /", "GET /health"]);
   });
 
+  it("takes the served contract from the answer's header, whatever the root's body says", async () => {
+    // Every answer names its contract in the header, and that is what every
+    // other door is held to; a root whose body claimed the built-for
+    // contract would otherwise let `status` read on and `whoami` name the
+    // server as speaking it.
+    const served = builtFor + 1;
+    for (const [command, header, body] of [
+      ["status", served, builtFor],
+      ["whoami", served, builtFor],
+      // The witness: the other way about, a body naming another contract
+      // under a header naming the built-for one, reports the built-for one.
+      ["status", builtFor, served],
+      ["whoami", builtFor, served],
+    ] as const) {
+      server = await ScriptedServer.start();
+      server.contract = String(header);
+      server.answer("GET", "/", answers.root(body));
+      server.answer("GET", "/health", {
+        kind: "json",
+        status: 200,
+        body: { status: "ok" },
+      });
+      server.answer("GET", "/items/stats", {
+        kind: "json",
+        status: 200,
+        body: {},
+      });
+      const outcome = await marfa([
+        "--json",
+        "--url",
+        server.url,
+        "--key",
+        KEY,
+        command,
+      ]);
+      const label = `${command} under contract ${String(header)}: ${outcome.stderr}`;
+      expect(outcome.code, label).toBe(0);
+      const report = JSON.parse(outcome.stdout) as {
+        contract: { served: number; built_for: number };
+      };
+      expect(report.contract, label).toEqual({
+        served: header,
+        built_for: builtFor,
+      });
+      await server.stop();
+      server = undefined;
+    }
+  });
+
   it("refuses an event stream on another contract, and reads one on its own", async () => {
     const events = async (contract?: string) => {
       const started = await ScriptedServer.start();
@@ -402,6 +451,68 @@ const beyondTheTable: Record<string, () => string[]> = {
   "keys bootstrap": () => ["--secret", "s"],
 };
 
+/**
+ * Commands beyond the table driven only to their refusal, so their silence
+ * there has no witness here: `keys keep` would write the operating system's
+ * keychain on the built-for contract, and `items attach` cannot succeed
+ * against a door whose `{}` is no upload's answer.
+ */
+const refusedOnly: Record<string, () => string[]> = {
+  "items attach": () => [ID, fileOf("attached.txt", "bytes")],
+  "keys keep": () => [],
+};
+
+/**
+ * Commands the binary has that no case here drives, each with why: the
+ * completeness check below holds the binary's own command tree to the
+ * driven set and this list, so a command added later is driven or said to
+ * need no driving.
+ */
+const NOT_DRIVEN: Record<string, string> = {
+  status: "describes a server on another contract; held by its own case",
+  whoami: "describes a server on another contract; held by its own case",
+  logout: "revokes and forgets the token, printing nothing it was answered",
+  "keys forget": "forgets a kept credential, sending nothing",
+  operations: "prints the table, sending nothing; held by its own case",
+};
+
+/**
+ * Group commands whose subcommands each send the one operation the table
+ * names for the group, so the group's invocation speaks for them. Named, so
+ * a subcommand added under any other command is its own to drive.
+ */
+const GROUPS = ["items bulk-action"];
+
+/**
+ * Roots whose every command goes through the core's transport rather than
+ * the binary's, which the working-copy block below holds to the contract.
+ */
+const THROUGH_THE_CORE = ["device", "folders"];
+
+/** Every leaf command the binary has, read off its own help. */
+async function commandTree(path: string[] = []): Promise<string[]> {
+  const outcome = await marfa([...path, "--help"]);
+  const section =
+    (outcome.stdout.split(/^Commands:$/m)[1] ?? "").split(/^\S/m)[0] ?? "";
+  // Every line that opens a command, read whole, so a name this pattern
+  // does not expect fails here rather than being skipped.
+  const lines = section.split("\n").filter((line) => /^ {2}\S/.test(line));
+  const names = lines
+    .map((line) => {
+      const name = /^ {2}(\S+)/.exec(line)?.[1] ?? "";
+      if (!/^[a-z][a-z0-9-]*$/.test(name)) {
+        throw new Error(`\`marfa ${path.join(" ")} --help\` lists ${name}`);
+      }
+      return name;
+    })
+    .filter((name) => name !== "help");
+  if (names.length === 0) return [path.join(" ")];
+  const leaves: string[] = [];
+  for (const name of names)
+    leaves.push(...(await commandTree([...path, name])));
+  return leaves;
+}
+
 /** Every command driven here, as the table names it and beyond it. */
 async function driven(): Promise<{ command: string }[]> {
   const outcome = await marfa(["--json", "operations"]);
@@ -435,13 +546,21 @@ describe("every command holds the server to the contract", () => {
   }
 
   /** A server that answers every door alike, on the given contract. */
-  async function everyDoor(contract: string): Promise<ScriptedServer> {
+  async function everyDoor(
+    contract: string,
+    root: string | null = BUILT_FOR,
+  ): Promise<ScriptedServer> {
     const started = await ScriptedServer.start();
     started.contract = contract;
-    // The root's body names the contract the binary was built for, whatever
-    // its header says, so a write that reads the root before it mints is
-    // sent, and it is the mint's own answer that has to be refused.
-    started.answer("GET", "/", answers.root(builtFor));
+    // The root answers the contract the binary was built for, header and
+    // body, unless a case says otherwise, so a write that reads the root
+    // before it mints is sent, and it is the mint's own answer that has to
+    // be refused.
+    started.answer(
+      "GET",
+      "/",
+      Object.assign(answers.root(builtFor), { contract: root }),
+    );
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
       started.answer(method, /^\/.+/, { kind: "json", status: 200, body: {} });
     }
@@ -457,13 +576,90 @@ describe("every command holds the server to the contract", () => {
     expect(commands).toContain(DESCRIBES);
   });
 
+  it("sends nothing to print the table", async () => {
+    server = await everyDoor(String(builtFor + 1));
+    const outcome = await marfa(["--json", "--url", server.url, "operations"]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    // Witness: it printed the table it was asked for.
+    expect(JSON.parse(outcome.stdout)).not.toHaveLength(0);
+    expect(server.requests).toEqual([]);
+  });
+
+  it("sends no mint to a server whose root names another contract, or none", async () => {
+    // The root's header decides, whatever its body says, so the only
+    // request is the root's; the witness is the same mint sent on to a
+    // root on the built-for contract.
+    const mints: Record<string, string[]> = {
+      "keys create": invocations["keys create"]?.() ?? [],
+      "keys bootstrap": beyondTheTable["keys bootstrap"]?.() ?? [],
+      "webhooks create": invocations["webhooks create"]?.() ?? [],
+    };
+    for (const [command, argv] of Object.entries(mints)) {
+      for (const header of [String(builtFor + 1), null, BUILT_FOR]) {
+        server = await everyDoor(BUILT_FOR, header);
+        const outcome = await marfa([
+          "--json",
+          "--url",
+          server.url,
+          "--key",
+          KEY,
+          ...command.split(" "),
+          ...argv,
+        ]);
+        const label = `${command} under a root naming ${String(header)}: ${outcome.stderr.slice(0, 300)}`;
+        if (header === BUILT_FOR) {
+          expect(sent(server).length, label).toBeGreaterThan(1);
+        } else {
+          expect(outcome.code, label).toBe(1);
+          expect(codeOf(outcome.stderr), label).toBe("contract_mismatch");
+          expect(sent(server), label).toEqual(["GET /"]);
+        }
+        await server.stop();
+        server = undefined;
+      }
+    }
+  });
+
+  it("drives every command the binary has, or says why not", async () => {
+    const tree = await commandTree();
+    // Witness: the tree is read, and reaches below the roots.
+    expect(tree).toContain("items create");
+    expect(tree).toContain("keys bootstrap");
+    const driven = new Set([
+      ...(await table()).map((row) => row.command),
+      ...Object.keys(beyondTheTable),
+      ...Object.keys(refusedOnly),
+      ...Object.keys(NOT_DRIVEN),
+    ]);
+    // A command the table names may have subcommands that each send the
+    // same operation, as `items bulk-action` does, so one driven among them
+    // speaks for the rest.
+    const accounted = (command: string) =>
+      driven.has(command) ||
+      GROUPS.some((group) => command.startsWith(`${group} `));
+    const unaccounted = tree.filter(
+      (command) =>
+        !accounted(command) &&
+        !THROUGH_THE_CORE.includes(command.split(" ")[0] ?? ""),
+    );
+    expect(unaccounted).toEqual([]);
+  });
+
   it("refuses contract_mismatch from every command but status", async () => {
     const served = String(builtFor + 1);
-    for (const row of await driven()) {
+    const rows = [
+      ...(await driven()),
+      ...Object.keys(refusedOnly).map((command) => ({ command })),
+    ];
+    for (const row of rows) {
       if (row.command === DESCRIBES) continue;
       server = await everyDoor(served);
       const argv =
-        (invocations[row.command] ?? beyondTheTable[row.command])?.() ?? [];
+        (
+          invocations[row.command] ??
+          beyondTheTable[row.command] ??
+          refusedOnly[row.command]
+        )?.() ?? [];
       const outcome = await marfa(
         [
           "--json",
@@ -479,7 +675,9 @@ describe("every command holds the server to the contract", () => {
       const label = `marfa ${row.command} ${argv.join(" ")}: ${outcome.stderr.slice(0, 300)}`;
       expect.soft(outcome.code, label).toBe(1);
       expect.soft(codeOf(outcome.stderr), label).toBe("contract_mismatch");
-      // Every command's silence has a witness but `login`'s (`SILENT_HERE`).
+      // Silence is asserted for every command; its witness is the case
+      // below, which holds every table command and `keys bootstrap` but
+      // `login` (`SILENT_HERE`) and the refusal-only ones to printing.
       if (row.command !== "login") {
         expect.soft(outcome.stdout, label).toBe("");
       }

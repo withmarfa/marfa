@@ -291,6 +291,7 @@ impl Remote {
         Err(CliError::ContractMismatch {
             origin: self.origin.clone(),
             served: match served {
+                Some(Value::String(served)) => format!("answers contract {served}"),
                 Some(served) => format!("answers contract {served}"),
                 None => "answers no contract at its root".into(),
             },
@@ -382,26 +383,50 @@ impl Remote {
     /// The root, read whatever contract its answer names: saying which server
     /// this is, and that it speaks another contract, is what reading it is
     /// for.
+    ///
+    /// Its `contract` is the one the answer's header names, and none where
+    /// the header names none: every other answer is held to its header, so a
+    /// body claiming the built-for contract must not let a command read on,
+    /// or send a mint, as though the server spoke it. A header this binary
+    /// would not read as the built-for contract elsewhere is kept as the
+    /// text it came as.
     pub fn root(&self) -> Result<Value, CliError> {
-        self.describe(&crate::commands::status::root_request())
+        let (mut instance, served) = self.describe(&crate::commands::status::root_request())?;
+        if let Some(fields) = instance.as_object_mut() {
+            match served {
+                Some(served) => {
+                    let value = match served.parse::<u64>() {
+                        Ok(number) if number.to_string() == served => Value::from(number),
+                        _ => Value::String(served),
+                    };
+                    fields.insert("contract".into(), value);
+                }
+                None => {
+                    fields.remove("contract");
+                }
+            }
+        }
+        Ok(instance)
     }
 
     /// The health door, read whatever contract its answer names, for the
     /// same reason as the root.
     pub fn health(&self) -> Result<Value, CliError> {
-        self.describe(&crate::commands::status::health_request())
+        Ok(self.describe(&crate::commands::status::health_request())?.0)
     }
 
-    /// The one read that skips the contract check. Private, and reached only
-    /// through `root` and `health`, so no other door can be read unchecked:
-    /// a command handed this with its own request would print an answer on
-    /// a contract it cannot read.
-    fn describe(&self, request: &Request) -> Result<Value, CliError> {
+    /// The one read that skips the contract check, answering the body and
+    /// the contract the header names. Private, and reached only through
+    /// `root` and `health`, so no other door can be read unchecked: a
+    /// command handed this with its own request would print an answer on a
+    /// contract it cannot read.
+    fn describe(&self, request: &Request) -> Result<(Value, Option<String>), CliError> {
         let reply = self.send(request, false)?;
         if let Some(redirect) = self.redirected(&reply) {
             return Err(redirect);
         }
-        read_json(reply, request)
+        let served = reply.contract.clone();
+        Ok((read_json(reply, request)?, served))
     }
 
     /// Sends a streamed request and hands back the body as a reader on a
