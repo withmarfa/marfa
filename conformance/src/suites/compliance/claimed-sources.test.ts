@@ -410,9 +410,10 @@ describe("a write naming a source", () => {
       JSON.stringify(refused),
       "the refusal names the type of a row its key may not read",
     ).not.toContain("core.bookmark");
-    // Its witnesses: the id is what the `acknowledged` entry above carries
-    // on this same path, where its gates pass; and the key that may write
-    // the trashed row is told its type in `details.actual_type`, below.
+    // Its witness is below: the same entry from the key that may write the
+    // trashed row is refused on this same path too, and that refusal names
+    // the row, its id in `details.item_id` and its type in
+    // `details.actual_type`.
 
     const mismatched = await both.bulkItems({ atomic: false, items: [entry] });
     expect(
@@ -432,29 +433,10 @@ describe("a write naming a source", () => {
       declared?.error?.details?.actual_type,
       "the declared type was not held to the trashed row's own",
     ).toBe("core.bookmark");
-
-    // A live bookmark under the same source, and the same note entry from
-    // the key that may write it: refused for the type it declares, and the
-    // refusal names the row. An errored entry on the trashed path names no
-    // id to anyone, so this is on the live path, and shows only that an
-    // errored entry on this door is a shape that can carry one.
-    const live = await both.createItem({
-      type: "core.bookmark",
-      source: folder,
-      source_id: `${sourceId}-live`,
-      properties: bookmark,
-    });
-    expect(live.status, JSON.stringify(live.error)).toBe(201);
-    trackItem(ctx, live.data.item.id);
-    const named = await both.bulkItems({
-      atomic: false,
-      items: [{ ...entry, source_id: `${sourceId}-live` }],
-    });
-    expect(named.status).toBe(200);
     expect(
-      [named.data.results[0]?.error?.code, named.data.results[0]?.id],
-      "an errored entry on this door names no row even to a key that may write it on the live path",
-    ).toEqual(["type_mismatch", live.data.item.id]);
+      declared?.error?.details?.item_id,
+      "the refusal to the key that may write the trashed row does not name it, so nothing shows this path can carry an id at all",
+    ).toBe(created.data.item.id);
   });
 
   it("tells a key its natural key is taken, and nothing of a row it may not read", async () => {

@@ -3079,7 +3079,12 @@ describe("identity", () => {
     // incumbent still holds the name at that moment.
     renameSync(join(harness.dir, "a-note.md"), join(harness.dir, "z-note.md"));
     put(harness, "a-note.md", "---\ntitle: A\n---\nbrand new\n");
-    expect((await harness.folder.push()).ok).toBe(true);
+    const handedOver = await harness.folder.push();
+    expect(handedOver.ok, JSON.stringify(handedOver)).toBe(true);
+    expect(
+      handedOver.ok && handedOver.value.scan.parked,
+      "the incumbent was not parked before the new file's create took its name",
+    ).toBe(1);
 
     const survivor = held.get(incumbent);
     expect(
@@ -3098,6 +3103,60 @@ describe("identity", () => {
       newcomer?.[1]?.properties?.body,
       "the new file never became an item of its own, so its contents live nowhere on the server",
     ).toBe("brand new\n");
+  });
+
+  it("takes back a park its move left standing, on the next scan", async () => {
+    harness = await folderHarness("folder-park-left-standing");
+    // The move that follows the park is refused once, as a refusal or a
+    // blocked queue would leave it, so the parked item sits under a name
+    // that is not a path until a scan takes it back (`folders.md` 24).
+    let refuseTheMove = true;
+    const held = scriptFolderWrites(harness, {
+      door: (door) => {
+        const update = door.update.bind(door);
+        door.update = (id, sent, options) => {
+          if (refuseTheMove && sent.source_id === "two.md") {
+            refuseTheMove = false;
+            return refusal(
+              409,
+              "source_id_conflict",
+              "The natural key is held by another item",
+            );
+          }
+          return update(id, sent, options);
+        };
+      },
+    });
+    put(harness, "one.md", "---\ntitle: One\n---\nfirst\n");
+    put(harness, "two.md", "---\ntitle: Two\n---\nsecond\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const one = itemFor(keysByItem(harness), "one.md");
+
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, ".swap"));
+    renameSync(join(harness.dir, "two.md"), join(harness.dir, "one.md"));
+    renameSync(join(harness.dir, ".swap"), join(harness.dir, "two.md"));
+    const swapped = await harness.folder.push();
+    expect(swapped.ok, JSON.stringify(swapped)).toBe(true);
+    if (!swapped.ok) return;
+    expect(swapped.value.scan.parked).toBe(1);
+    // The witness: the move was refused, so the item is left parked.
+    expect(
+      refuseTheMove,
+      "the move after the park was never sent, so nothing here is left standing",
+    ).toBe(false);
+    expect(held.get(one)?.source_id).toBe(`../parked/${one}`);
+
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    if (!again.ok) return;
+    expect(
+      again.value.scan.parked,
+      "the scan took no park back, or did not count the one it took",
+    ).toBe(1);
+    expect(
+      held.get(one)?.source_id,
+      "the parked item was left under a name that is not a path, where a second device makes a second item of its file",
+    ).toBe("two.md");
   });
 
   it("keeps a binding for every file after a swap that also edits both", async () => {

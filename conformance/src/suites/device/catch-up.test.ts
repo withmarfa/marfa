@@ -699,6 +699,7 @@ describe("catch-up replays from the cursor", () => {
             version: 2,
             properties: { title: "as hydrated", body: "changed elsewhere" },
           }),
+          { tags: ["from elsewhere"] },
         ),
       ]),
     );
@@ -723,15 +724,88 @@ describe("catch-up replays from the cursor", () => {
     expect(held.value.properties.body).toBe("changed elsewhere");
     expect(held.value.version).toBe(2);
     expect(
+      held.value.tags,
+      "the held stream applied the row and not the tags its event carried",
+    ).toEqual(["from elsewhere"]);
+    expect(
       held.value.properties.title,
       "an event on the held stream erased an edit the device has not had answered, so a screen following the copy shows the write as undone while the queue still sends it",
     ).toBe("edited here, not yet sent");
   });
 
+  it("applies an edge event on a held stream beneath an edge edit it has not had answered", async () => {
+    harness = await startHarness("follow-edge-beneath-write");
+    const { server, device } = harness;
+    const edge = {
+      id: "link",
+      source_id: "from",
+      target_id: "to",
+      edge_type: "references",
+      properties: { weight: 1 },
+      version: 1,
+      created_at: "2026-09-18T00:00:00.000Z",
+      updated_at: "2026-09-18T00:00:00.000Z",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "from",
+              edges: {
+                references: { data: [edge], next_cursor: null },
+              },
+            },
+          },
+          { item: { id: "to" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      heldLog([
+        edgeEvent("11", "edge.updated", {
+          ...edge,
+          version: 2,
+          properties: { weight: 1, note: "changed elsewhere" },
+        }),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const edit = await device.updateEdge("link", {
+      properties: { weight: 2 },
+      version: 1,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+
+    const edges = await device.edgesFrom("from");
+    expect(edges.ok).toBe(true);
+    const held = edges.ok
+      ? edges.value.find((row) => row.id === "link")
+      : undefined;
+    // The witness: the event was applied.
+    expect(
+      held?.properties.note,
+      "the held stream did not apply the edge event, so nothing here is about applying one beneath a waiting edit",
+    ).toBe("changed elsewhere");
+    expect(held?.version).toBe(2);
+    expect(
+      held?.properties.weight,
+      "an edge event on the held stream erased an edit the device has not had answered",
+    ).toBe(2);
+  });
+
   it("applies nothing on a held stream from outside its slice", async () => {
     harness = await startHarness("follow-outside-slice");
     const { server, device } = harness;
-    scriptHydration(server, { head: "10" });
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "leaving", version: 1 } }] },
+    });
     server.answer(
       "GET",
       "/events",
@@ -747,17 +821,25 @@ describe("catch-up replays from the cursor", () => {
           "item.created",
           wireItem({ id: "other-tier", tier: "feed" }),
         ),
+        // A row the copy holds, moved out of the slice's tier.
+        itemEvent(
+          "14",
+          "item.updated",
+          wireItem({ id: "leaving", version: 2, tier: "feed" }),
+        ),
       ]),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness for the eviction below: the row was held.
+    expect((await device.get("leaving")).ok).toBe(true);
     const followed = await device.follow(3);
     expect(followed.ok, JSON.stringify(followed)).toBe(true);
     if (!followed.ok) return;
     expect(
       followed.value.report.cursor,
       "the held stream did not reach the last event, so the rows below were never offered to it",
-    ).toBe("13");
+    ).toBe("14");
     const held = await device.list({ allStates: true });
     const ids = held.ok ? held.value.map((item) => item.id) : [];
     expect(
@@ -770,9 +852,13 @@ describe("catch-up replays from the cursor", () => {
     ).not.toContain("undeclared");
     expect(ids).not.toContain("other-tier");
     expect(
+      ids,
+      "a held row that left the slice stayed in the copy on the held stream, where a catch-up drops it",
+    ).not.toContain("leaving");
+    expect(
       followed.value.changes.map((change) => change.item_id),
-      "a row outside the slice was told as a change",
-    ).toEqual(["declared"]);
+      "a row outside the slice was told as a change, or the row that left was not",
+    ).toEqual(["declared", "leaving"]);
   });
 
   it("asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes", async () => {

@@ -1490,6 +1490,18 @@ mod tests {
             matches!(core.thumbnail("not-held"), Err(CoreError::NotFound { code, .. }) if code == "not_held"),
             "an item the copy does not hold read as one that carries no thumbnail"
         );
+        // A photo that carries none, and one whose image does not decode:
+        // each is answered from the row, as the others are.
+        let bare = create("acme.photo", serde_json::json!({ "title": "Bare" }));
+        assert_eq!(core.thumbnail(&bare).unwrap(), None);
+        let broken = create(
+            "acme.photo",
+            serde_json::json!({ "title": "Broken", "thumbnail": "data:image/png;base64,***" }),
+        );
+        assert!(matches!(
+            core.thumbnail(&broken),
+            Err(CoreError::Decoding(_))
+        ));
         assert_eq!(
             server.asked(),
             0,
@@ -1685,11 +1697,12 @@ mod tests {
     /// which is the guard's configuration. This asserts its effect, in two
     /// halves. Every door listed refuses a reading handle with
     /// `ReadingHandle`, so deleting the call from any of them reddens it.
-    /// And every function in this file or `drain.rs` that calls the guard is
-    /// either listed or one of four helpers whose callers are, so a door
-    /// that calls the guard itself and is left off the list reddens it too.
-    /// A new door reaching the guard only through a helper is the one case
-    /// neither half sees.
+    /// And every function in the crate's sources that calls the guard is
+    /// either listed or one of the helpers whose callers are, so a door that
+    /// calls the guard itself and is left off the list reddens it too. The
+    /// queue and the items are compared before and after, so a door whose
+    /// guard comes after its write reddens it as well. A new door reaching
+    /// the guard only through a helper is the one case none of it sees.
     #[test]
     fn a_reading_handle_is_refused_at_every_write_door() {
         let dir = tempfile::tempdir().unwrap();
@@ -1710,6 +1723,48 @@ mod tests {
             )
             .unwrap();
         }
+
+        // Something for a door that ran before its guard to change: a row
+        // answered, one blocked and one dead, which forgetting and the
+        // releases would clear, and the queue and the items as they stand.
+        {
+            let conn = writer.conn().unwrap();
+            for (id, verdict, reason) in [
+                ("answered", "accepted", None),
+                ("blocked", "blocked", Some("key_spent")),
+                ("dead", "dead", None),
+            ] {
+                conn.execute(
+                    "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, queued_at)
+                     VALUES (?1, 'update_item', ?1, '{}', ?2, ?3, 1, '2026-01-01T00:00:00Z')",
+                    rusqlite::params![id, verdict, reason],
+                )
+                .unwrap();
+            }
+        }
+        let held = || {
+            let conn = writer.conn().unwrap();
+            let queue: Vec<String> = conn
+                .prepare("SELECT id, verdict, reason, idempotency_key FROM queue ORDER BY seq")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok(format!(
+                        "{}:{:?}:{:?}:{}",
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?
+                    ))
+                })
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap();
+            let items: i64 = conn
+                .query_row("SELECT count(*) FROM items", [], |row| row.get(0))
+                .unwrap();
+            (queue, items)
+        };
+        let before = held();
 
         let reader = Core::open(&path, None).unwrap();
         assert_eq!(reader.handle(), Handle::Reader);
@@ -1767,7 +1822,7 @@ mod tests {
                 "delete_extension",
                 reader.delete_extension("x", "ns").unwrap_err(),
             ),
-            ("release", reader.release("x").unwrap_err()),
+            ("release", reader.release("blocked").unwrap_err()),
             (
                 "release_reason",
                 reader.release_reason(BlockedReason::KeySpent).unwrap_err(),
@@ -1832,6 +1887,11 @@ mod tests {
             );
         }
         assert_eq!(
+            held(),
+            before,
+            "a door refused a reading handle only after it had written"
+        );
+        assert_eq!(
             refusals.len(),
             26,
             "an entry has gone from the list above, and a door dropped from \
@@ -1843,7 +1903,26 @@ mod tests {
         // listed above.
         let listed: Vec<&str> = refusals.iter().map(|(door, _)| *door).collect();
         let mut guarded = Vec::new();
+        let others: &[&str] = &[];
         for (source, helpers) in [
+            (include_str!("blob.rs"), others),
+            (include_str!("catalog.rs"), others),
+            (include_str!("catch_up.rs"), others),
+            (include_str!("contract.rs"), others),
+            (include_str!("error.rs"), others),
+            (include_str!("lock.rs"), others),
+            (include_str!("http.rs"), others),
+            (include_str!("hydrate.rs"), others),
+            (include_str!("model.rs"), others),
+            (include_str!("query.rs"), others),
+            (include_str!("search.rs"), others),
+            (include_str!("sse.rs"), others),
+            (include_str!("store.rs"), others),
+            (include_str!("wire.rs"), others),
+            (include_str!("folder/mod.rs"), others),
+            (include_str!("folder/document.rs"), others),
+            (include_str!("folder/identity.rs"), others),
+            (include_str!("folder/state.rs"), others),
             (
                 include_str!("lib.rs"),
                 &[
@@ -1857,9 +1936,16 @@ mod tests {
             (include_str!("drain.rs"), &["drain"][..]),
         ] {
             let mut current: Option<&str> = None;
+            let mut in_tests = false;
             for line in source.lines() {
+                // A test module, top level and closed at column 0, is
+                // passed over; anything after it is read again.
                 if line.starts_with("mod tests") {
-                    break;
+                    in_tests = true;
+                }
+                if in_tests {
+                    in_tests = line != "}";
+                    continue;
                 }
                 let declared = line.trim_start();
                 let declared = declared
