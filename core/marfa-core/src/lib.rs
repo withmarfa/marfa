@@ -1401,11 +1401,22 @@ mod tests {
     /// A thumbnail is read from the held row with no request, through the
     /// type that declares it or a parent that does, and the local index
     /// leaves its base64 out as the server's own index does.
+    ///
+    /// The copy is bound to a server that records every request, so "no
+    /// request" is asserted against a transport the core could have used.
     #[test]
     fn a_thumbnail_is_read_from_the_held_row_and_never_searched() {
         use base64::Engine;
         let dir = tempfile::tempdir().unwrap();
-        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let server = scripted::Scripted::start();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -1479,6 +1490,11 @@ mod tests {
             matches!(core.thumbnail("not-held"), Err(CoreError::NotFound { code, .. }) if code == "not_held"),
             "an item the copy does not hold read as one that carries no thumbnail"
         );
+        assert_eq!(
+            server.asked(),
+            0,
+            "a thumbnail was asked of the server rather than read from the row the copy holds"
+        );
 
         let found = |query: &str| {
             core.search(query, &SearchFilters::default(), 10)
@@ -1494,6 +1510,19 @@ mod tests {
         );
         assert_eq!(found("unicornsXYZ"), vec![witness]);
         assert_eq!(found("Holiday"), vec![photo]);
+
+        assert_eq!(
+            server.asked(),
+            0,
+            "a read or a search asked the server rather than the copy"
+        );
+        // The witness: this copy does reach the server over that transport,
+        // and the server records it.
+        let _ = core.drain();
+        assert!(
+            server.asked() > 0,
+            "the drain reached no server, so the silence above is the transport's"
+        );
     }
 
     /// What the local index holds follows the catalog: a thumbnail the

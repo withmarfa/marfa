@@ -257,8 +257,12 @@ describe("the working copy holds one slice", () => {
     expect(
       (await device.hydrate(["user.snapshot", "core.note"], "library")).ok,
     ).toBe(true);
-    const asked = server.requests.length;
 
+    // The command opens the store with no transport, so it has no server to
+    // ask and a count of requests here could never move. That the core
+    // reads the held row rather than asking is the core's own test, over a
+    // server that records every request:
+    // `a_thumbnail_is_read_from_the_held_row_and_never_searched`.
     const out = `${device.store}.thumbnail.png`;
     const held = await device.thumbnail("snap", out);
     expect(held.ok, JSON.stringify(held)).toBe(true);
@@ -268,10 +272,6 @@ describe("the working copy holds one slice", () => {
       readFileSync(out),
       "the thumbnail's bytes are not the image the item carried",
     ).toEqual(Buffer.from(image.replace(/^data:[^,]*,/, ""), "base64"));
-    expect(
-      server.requests.length,
-      "the thumbnail was fetched rather than read from the item held",
-    ).toBe(asked);
 
     // An item whose type declares none carries none, and an item the copy
     // does not hold is refused as that rather than answered as one that

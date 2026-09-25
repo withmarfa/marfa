@@ -124,6 +124,11 @@ impl Scripted {
             .collect()
     }
 
+    /// Every request made of this server so far, whatever its path.
+    pub fn asked(&self) -> usize {
+        self.script.lock().unwrap().seen.len()
+    }
+
     /// Waits until `path` has been asked for `count` times.
     pub fn wait_for(&self, path: &str, count: usize, within: Duration) {
         let until = Instant::now() + within;
