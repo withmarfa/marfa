@@ -132,6 +132,10 @@ const ConflictSnapshotSchema = z
     tier: TierEnum,
     occurred_at: z.string(),
     source_id: z.string().nullable(),
+    // And the type, because a stale move onto a row moved since collides
+    // on it: the refusal shows the type the row has and the one the
+    // caller read.
+    type: z.string(),
   })
   .openapi("ConflictSnapshot");
 
@@ -2522,6 +2526,7 @@ export function itemRoutes(storage: Storage) {
               tier: current.tier ?? "library",
               occurred_at: current.occurred_at,
               source_id: current.source_id ?? null,
+              type: current.type,
             },
           );
         }

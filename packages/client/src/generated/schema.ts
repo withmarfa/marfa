@@ -1381,6 +1381,7 @@ export interface components {
             tier: components["schemas"]["Tier"];
             occurred_at: string;
             source_id: string | null;
+            type: string;
         };
         MergePolicy: {
             fields?: {

@@ -521,7 +521,7 @@ CREATE TABLE IF NOT EXISTS `versions` (
 	`tier` text,
 	`occurred_at` text,
 	`source_id` text,
-	`type` text,
+	`type` text NOT NULL,
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );

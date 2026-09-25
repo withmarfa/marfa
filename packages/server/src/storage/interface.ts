@@ -896,10 +896,9 @@ export interface VersionedItemFields {
    * The type the row had at this version. A stale write that moves the
    * row is judged against it: two writers who read one version and each
    * moved the row somewhere else would otherwise land one over the other
-   * with nothing refused. Null on a snapshot written before it was
-   * recorded, which reads as the row's current type.
+   * with nothing refused.
    */
-  type: string | null;
+  type: string;
 }
 
 /** A version row as the update path reads it. */

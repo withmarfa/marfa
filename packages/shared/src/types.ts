@@ -450,6 +450,9 @@ export interface ConflictSnapshot {
   tier: Tier;
   occurred_at: string;
   source_id: string | null;
+  /** The type the row had at this version, so a collision naming `type`
+   *  shows both sides of the move. */
+  type: string;
 }
 
 /** Enriched 409 conflict response, which a client reads to resolve the conflict. */

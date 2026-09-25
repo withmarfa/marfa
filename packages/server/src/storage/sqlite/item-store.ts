@@ -811,6 +811,7 @@ export class SqliteItemStore implements ItemStore {
         tier: row.tier as Tier,
         occurred_at: row.occurred_at,
         source_id: row.source_id,
+        type: row.type,
       };
 
       // The version store's own write, inside this transaction, so the
@@ -983,12 +984,9 @@ export class SqliteItemStore implements ItemStore {
 
       // A move onto a row another writer has moved since the version the
       // caller read collides on the type, whatever else the write carries:
-      // landing it would undo a move the caller never saw. The snapshot
-      // records the type for this; one written before it did reads as the
-      // row's current type, so nothing collides on it.
+      // landing it would undo a move the caller never saw.
       const movedSince =
-        input.type !== undefined &&
-        row.type !== (ancestor.item_fields.type ?? row.type);
+        input.type !== undefined && row.type !== ancestor.item_fields.type;
 
       const ancestorFields = {
         current: snapshotFields,
@@ -997,6 +995,7 @@ export class SqliteItemStore implements ItemStore {
           tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
           occurred_at: ancestor.item_fields.occurred_at ?? row.occurred_at,
           source_id: ancestor.item_fields.source_id,
+          type: ancestor.item_fields.type,
         },
       };
       if (movedSince) {

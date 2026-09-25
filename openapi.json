@@ -384,6 +384,9 @@
               "string",
               "null"
             ]
+          },
+          "type": {
+            "type": "string"
           }
         },
         "required": [
@@ -392,7 +395,8 @@
           "properties",
           "tier",
           "occurred_at",
-          "source_id"
+          "source_id",
+          "type"
         ]
       },
       "MergePolicy": {

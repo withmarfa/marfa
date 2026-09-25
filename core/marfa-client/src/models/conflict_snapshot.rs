@@ -25,6 +25,8 @@ pub struct ConflictSnapshot {
     pub occurred_at: String,
     #[serde(rename = "source_id", deserialize_with = "Option::deserialize")]
     pub source_id: Option<String>,
+    #[serde(rename = "type")]
+    pub r#type: String,
 }
 
 impl ConflictSnapshot {
@@ -35,6 +37,7 @@ impl ConflictSnapshot {
         tier: models::Tier,
         occurred_at: String,
         source_id: Option<String>,
+        r#type: String,
     ) -> ConflictSnapshot {
         ConflictSnapshot {
             id,
@@ -43,6 +46,7 @@ impl ConflictSnapshot {
             tier,
             occurred_at,
             source_id,
+            r#type,
         }
     }
 }

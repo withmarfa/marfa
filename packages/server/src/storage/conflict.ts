@@ -41,7 +41,7 @@ export type ItemFieldValues = Partial<
  *  time and either holds a natural-key identifier or does not. */
 export type SnapshotItemFields = Pick<
   ConflictSnapshot,
-  "id" | "tier" | "occurred_at" | "source_id"
+  "id" | "tier" | "occurred_at" | "source_id" | "type"
 >;
 
 export interface ConflictInput {

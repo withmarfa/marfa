@@ -699,21 +699,59 @@ describe("item versioning", () => {
     expect(first.status, JSON.stringify(first.error)).toBe(200);
     expect(first.data.item.version).toBe(2);
 
-    const second = await client.updateItem(r.data.item.id, {
-      type: typeId,
-      retype: true,
-      version: 1,
-    });
+    const target = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "Target" } }),
+    );
+    expect(target.ok).toBe(true);
+    trackItem(ctx, target.data.item.id);
+
+    // With edges beside the move, so the refusal is seen to write nothing:
+    // a door that refused the move and applied the edges would answer 409
+    // over a row it had changed.
+    const second = await client.rawRequest<{ item: MarfaItem }>(
+      `/items/${r.data.item.id}`,
+      {
+        method: "PATCH",
+        body: {
+          type: typeId,
+          retype: true,
+          version: 1,
+          edges: { references: [target.data.item.id] },
+        },
+      },
+    );
     expect(second.status).toBe(409);
     expect(second.error?.error.code).toBe("version_conflict");
-    expect(
-      (second.error as unknown as { conflicting_fields?: string[] })
-        .conflicting_fields,
-    ).toContain("type");
+    const envelope = second.error as unknown as {
+      conflicting_fields?: string[];
+      current?: { type?: string; version?: number };
+      ancestor?: { type?: string; version?: number };
+    };
+    expect(envelope.conflicting_fields).toContain("type");
+    // Both sides of the move, so the caller can see what it read and what
+    // the row has become.
+    expect(envelope.current?.type).toBe("core.bookmark");
+    expect(envelope.ancestor?.type).toBe("core.note");
     const fetched = await client.getItem(r.data.item.id);
     expect(fetched.ok).toBe(true);
     expect(fetched.data.item.type).toBe("core.bookmark");
     expect(fetched.data.item.version).toBe(2);
+    const edges = await client.listEdges({ edge_type: "references" });
+    expect(edges.ok).toBe(true);
+    expect(
+      edges.data.data.filter((edge) => edge.source_id === r.data.item.id),
+    ).toHaveLength(0);
+
+    // A stale write that does not move the row still lands after the
+    // other writer's move: only a move collides with a move.
+    const still = await client.updateItem(r.data.item.id, {
+      properties: { title: "Still contested" },
+      version: 1,
+    });
+    expect(still.status, JSON.stringify(still.error)).toBe(200);
+    expect(still.data.item.type).toBe("core.bookmark");
+    expect(still.data.item.version).toBe(3);
+    expect(still.data.item.properties.title).toBe("Still contested");
   });
 
   it("reads a null on a move by the type entered", async () => {
@@ -871,6 +909,17 @@ describe("item versioning", () => {
     });
     expect(stale.status, JSON.stringify(stale.error)).toBe(200);
     expect(stale.data.item.properties).toEqual({ body: "Advanced" });
+
+    // And once it is gone, a second stale replace leaving it out is an
+    // echo, not a clear that collides with the first: the row no longer
+    // holds the key, whatever every object answers for the name.
+    const echo = await client.updateItem(r.data.item.id, {
+      properties: { body: "Body" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(echo.status, JSON.stringify(echo.error)).toBe(200);
+    expect(echo.data.item.properties).toEqual({ body: "Advanced" });
   });
 
   it("indexes a row under the type it entered on a stale move", async () => {
