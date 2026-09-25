@@ -14,6 +14,25 @@ name: Release
 # The version is the tag's, and nowhere else: `scripts/release/stamp-version.sh`
 # writes it into every manifest in this checkout, which is why no manifest in
 # the repository holds one (`ci/version-fields.test.ts`).
+#
+# The registries are published to by trusted publishing, with no stored
+# token: npm and crates.io each trust this workflow's OIDC identity, and the
+# GitHub release is made with the job's own token. Trusted publishing is
+# configured per package, at npmjs.com for `@withmarfa/core` and
+# `@withmarfa/client` and at crates.io for `marfa-client`, and only on a
+# package that already exists. So each package's first version is published
+# by hand from a run's artifacts, its trusted publisher configured, and only
+# then does this workflow publish it. A tag before that stops at the publish
+# job's preflight, which names the package it cannot publish, with nothing
+# sent.
+#
+# Each trusted publisher names the owner `withmarfa`, the repository
+# `marfa`, the workflow `release.yml` and no environment; npm's must allow
+# `npm publish`. crates.io records the repository's owner by id, so a
+# transferred repository needs its publisher made again. Neither registry
+# checks the ref, so what keeps a publish to a tag is this file's own
+# condition on the publish job: a branch that edits it can publish, which is
+# why only the maintainer's tags reach it and why it is reviewed like code.
 
 on:
   push:
@@ -303,77 +322,190 @@ jobs:
           if-no-files-found: error
 
   # Never reached by a dry run. Ordered so a failure part way leaves what a
-  # re-run of the same tag can finish, and never a version half out: every
-  # credential is checked before anything is sent; the draft release, which
-  # can be undone, comes first; the registries, which never take a version
-  # back, come after it; and the release is made public only once everything
-  # is out. Every step asks whether its version is already there and skips if
-  # it is, so a re-run repeats nothing.
+  # re-run of the same tag can finish, and never a version half out: the
+  # preflight asks every registry what it holds, and every registry that
+  # will be published to is shown to trust this run, before anything is
+  # made; the draft release, which can be undone, comes next; the
+  # registries, which never take a version back, come after it; and the
+  # release is made public only once everything is out. Every step asks
+  # whether its version is already there and skips if it is, so a re-run
+  # repeats nothing.
+  #
+  # The one job off the runner pool, and the only one allowed to be
+  # (`ci/workflow-runner.test.ts`): npm's trusted publishing accepts the
+  # OIDC identity of a GitHub-hosted runner only. It builds nothing; it
+  # publishes what the build job made on the pool.
   publish:
     name: Publish
     needs: build
     if: github.event_name == 'push'
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      id-token: write
       contents: write
     env:
       VERSION: ${{ needs.build.outputs.version }}
     steps:
-      # Named one by one, so the message says which is missing. Before the
-      # checkout, so a tag without them costs nothing.
-      - name: Require every publishing credential
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Node 24's npm, rather than a newer one installed into a job that can
+      # mint publishing identities. 11.5.1 is the first npm that publishes by
+      # trusted publishing, so an older one stops the job here.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Require an npm that publishes by OIDC
         run: |
-          missing=()
-          for name in NPM_TOKEN CARGO_REGISTRY_TOKEN; do
-            if [ -z "${!name}" ]; then missing+=("$name"); fi
-          done
-          if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::error::Nothing was published: the repository has no secret ${missing[*]}."
+          version=$(npm --version)
+          if ! node -e '
+            const [major, minor, patch] = process.argv[1].split(".").map(Number);
+            process.exit(major > 11 || (major === 11 && (minor > 5 || (minor === 5 && patch >= 1))) ? 0 : 1);
+          ' "$version"; then
+            echo "::error::npm $version cannot publish by trusted publishing; 11.5.1 is the first that can."
             exit 1
           fi
+          echo "npm $version"
+
+      # Trusted publishing is configured per package, and only on a package
+      # that exists, so a package this workflow has never published stops
+      # the job here, before anything is sent, until its first version is
+      # published by hand and its trusted publisher configured. Said plainly:
+      # what will be published, what is already there, and what cannot be.
+      - name: Say what will be published
+        id: plan
+        run: |
+          publish=()
+          present=()
+          missing=()
+          npm_packages=()
+          crate=false
+          # `npm view` answers a version it has, nothing for a version it has
+          # not of a package it has, and E404 for a package it has not. Each
+          # answer is assigned before it is read, so a lookup that errs fails
+          # the step rather than reading as either answer.
+          npm_state() {
+            local found err
+            err=$(mktemp)
+            if found=$(npm view "$1" version 2> "$err"); then
+              [ -n "$found" ] && echo present || echo absent
+            elif grep -q E404 "$err"; then
+              echo absent
+            else
+              echo "::error::npm could not be asked about $1:" >&2
+              cat "$err" >&2
+              return 1
+            fi
+          }
+          for name in @withmarfa/core @withmarfa/client; do
+            version_state=$(npm_state "$name@$VERSION")
+            package_state=$(npm_state "$name")
+            if [ "$version_state" = present ]; then
+              present+=("$name@$VERSION on npm")
+            elif [ "$package_state" = present ]; then
+              publish+=("$name@$VERSION to npm")
+              npm_packages+=("$name")
+            else
+              missing+=("$name, which npm has never published")
+            fi
+          done
+          # crates.io answers 200 for a crate or version it has and 404 for
+          # one it has not.
+          crate_state() {
+            local status
+            status=$(curl -s -o /dev/null -w '%{http_code}' -A "withmarfa-release" "https://crates.io/api/v1/crates/$1")
+            case "$status" in
+              200) echo present ;;
+              404) echo absent ;;
+              *) echo "::error::crates.io answered $status for $1." >&2; return 1 ;;
+            esac
+          }
+          version_state=$(crate_state "marfa-client/$VERSION")
+          package_state=$(crate_state marfa-client)
+          if [ "$version_state" = present ]; then
+            present+=("marfa-client $VERSION on crates.io")
+          elif [ "$package_state" = present ]; then
+            publish+=("marfa-client $VERSION to crates.io")
+            crate=true
+          else
+            missing+=("marfa-client, which crates.io has never published")
+          fi
+          for line in "${publish[@]}"; do echo "will publish $line"; done
+          for line in "${present[@]}"; do echo "already there: $line"; done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            for line in "${missing[@]}"; do
+              echo "::error::Nothing was published: $line. Publish its first version by hand from this run's artifacts (a .crate is unpacked and published from its directory), configure trusted publishing for it, then re-run this job."
+            done
+            exit 1
+          fi
+          echo "npm=${npm_packages[*]}" >> "$GITHUB_OUTPUT"
+          echo "crate=$crate" >> "$GITHUB_OUTPUT"
+
+      # npm checks a trusted publisher only when a publish asks for one, so a
+      # package whose publisher is missing or misspelled would otherwise be
+      # found only after the crate had gone out. This asks npm for the same
+      # exchange `npm publish` makes, for each package about to be
+      # published, and publishes nothing: the token it answers with expires
+      # unused.
+      - name: Require npm to trust this run
+        if: steps.plan.outputs.npm != ''
+        env:
+          PACKAGES: ${{ steps.plan.outputs.npm }}
+        run: |
+          for name in $PACKAGES; do
+            # A fresh identity for each exchange, as `npm publish` mints one.
+            if ! identity=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value) \
+              || [ -z "$identity" ] || [ "$identity" = null ]; then
+              echo "::error::GitHub minted no OIDC identity for npm. Nothing was published."
+              exit 1
+            fi
+            escaped=${name/\//%2f}
+            if ! status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $identity" -H "Content-Length: 0" \
+              "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/$escaped"); then
+              echo "::error::npm could not be reached to ask whether it trusts this run for $name. Nothing was published."
+              exit 1
+            fi
+            case "$status" in
+              2??) echo "npm trusts this run for $name" ;;
+              5??)
+                echo "::error::npm answered $status when asked whether it trusts this run for $name. Nothing was published."
+                exit 1
+                ;;
+              *)
+                echo "::error::npm answered $status to this run's identity for $name: its trusted publisher is not this repository and release.yml. Nothing was published."
+                exit 1
+                ;;
+            esac
+          done
+
+      # A token crates.io mints for this run from the job's OIDC identity,
+      # scoped to the crates that trust this workflow, and revoked when the
+      # job ends; it would expire thirty minutes after minting in any case,
+      # which is the job's own limit. Before anything is made, so a crate
+      # that does not trust this workflow stops the job with nothing sent.
+      - name: Authenticate to crates.io
+        id: crates-io
+        if: steps.plan.outputs.crate == 'true'
+        uses: rust-lang/crates-io-auth-action@v1
 
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
         with:
           name: release-${{ needs.build.outputs.version }}
           path: artifacts
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-      - name: Put the Rust toolchain on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      # A set secret can still be the wrong one. npm names the account a
-      # token signs in as, though whether it may publish under the scope is
-      # known only at the publish. crates.io has no read that proves a
-      # publish token, so that one is known only by its publish, which is why
-      # the crate goes before the npm packages.
-      - name: Check the npm credential signs in
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$RUNNER_TEMP/.npmrc"
-          if ! npm whoami --userconfig "$RUNNER_TEMP/.npmrc" > /dev/null; then
-            echo "::error::NPM_TOKEN does not sign in to npm."
-            exit 1
-          fi
 
       # A draft, so it can be removed, and seen by nobody until it is made
       # public at the end. A release already there keeps every file it holds,
       # which are the ones a registry may already have: re-running the failed
       # job reads this run's artifacts, but a full re-run builds them again.
       # A draft is given only the files it lacks; a public one is left alone.
+      # A lookup that errs fails the step rather than reading as no release,
+      # which would make a second draft for the same tag.
       - name: Draft the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if draft=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2> /dev/null); then
+          if draft=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2> "$RUNNER_TEMP/release-view.err"); then
             if [ "$draft" = "false" ]; then
               echo "v$VERSION is already released"
               exit 0
@@ -384,17 +516,24 @@ jobs:
                 gh release upload "v$VERSION" "$file"
               fi
             done
-          else
+          elif grep -q "release not found" "$RUNNER_TEMP/release-view.err"; then
             gh release create "v$VERSION" artifacts/* \
               --draft \
               --title "v$VERSION" \
               --notes-file "artifacts/surface-delta-$VERSION.md" \
               --verify-tag
+          else
+            echo "::error::Could not ask whether v$VERSION has a release:"
+            cat "$RUNNER_TEMP/release-view.err"
+            exit 1
           fi
 
+      # `CARGO_REGISTRY_TOKEN` is the variable cargo reads, holding the
+      # token the step above minted for this run, never a stored one.
       - name: Publish marfa-client to crates.io
+        if: steps.plan.outputs.crate == 'true'
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io.outputs.token }}
         run: |
           status=$(curl -s -o /dev/null -w '%{http_code}' -A "withmarfa-release" \
             "https://crates.io/api/v1/crates/marfa-client/$VERSION")
@@ -411,24 +550,26 @@ jobs:
           esac
           mkdir -p "$RUNNER_TEMP/crate"
           tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
-          # The package is the one the build job made and checked, published
-          # from where it was unpacked rather than from the checkout, which
-          # would need the version stamped again. Its manifest is the
-          # normalized one cargo wrote; the original beside it is a name
-          # cargo reserves for itself and refuses to package.
+          # Published from the build job's archive, unpacked, rather than from
+          # the checkout, which would need the version stamped again. Its
+          # manifest is the normalized one cargo wrote; the original beside it
+          # is a name cargo reserves for itself and refuses to package. cargo
+          # packs these sources again to send them, outside git, so the
+          # archive crates.io holds has the same manifest and sources as the
+          # one the release carries but not its VCS record or the generator's
+          # dotfiles, and its checksum differs. `--no-verify` because
+          # `cargo package` in the build job already built these sources.
           rm "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml.orig"
-          cargo publish --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
+          cargo publish --no-verify --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
 
-      # No `--provenance`: npm attests provenance only from a GitHub-hosted
-      # runner's OIDC identity, and every job here runs on the self-hosted
-      # pool. `npm view` answers a version it has, and E404 for a package or
-      # version it has not; anything else fails the step rather than being
-      # read as either.
+      # By trusted publishing: npm exchanges the job's OIDC identity itself,
+      # so no token is set anywhere. No `--provenance`: npm attests
+      # provenance from a public repository only.
       - name: Publish @withmarfa/core and @withmarfa/client to npm
         run: |
           for package in core client; do
             name="@withmarfa/$package"
-            if found=$(npm view "$name@$VERSION" version --userconfig "$RUNNER_TEMP/.npmrc" 2> "$RUNNER_TEMP/npm-view.err"); then
+            if found=$(npm view "$name@$VERSION" version 2> "$RUNNER_TEMP/npm-view.err"); then
               if [ "$found" = "$VERSION" ]; then
                 echo "$name@$VERSION is already on npm"
                 continue
@@ -437,7 +578,7 @@ jobs:
               cat "$RUNNER_TEMP/npm-view.err"
               exit 1
             fi
-            npm publish "artifacts/withmarfa-$package-$VERSION.tgz" --access public --userconfig "$RUNNER_TEMP/.npmrc"
+            npm publish "artifacts/withmarfa-$package-$VERSION.tgz" --access public
           done
 
       - name: Make the GitHub release public

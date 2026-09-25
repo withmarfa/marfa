@@ -44,10 +44,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Self-hosted with no hosted fallback, like every workflow here. No cache
-# action anywhere in this file: the pool keeps its pnpm store and cargo
-# registry between jobs, so a cache would restore nothing and its post step
-# would tar both.
+# Self-hosted with no hosted fallback, like every job but the release's
+# publish. No cache action anywhere in this file: the pool keeps its pnpm
+# store and cargo registry between jobs, so a cache would restore nothing and
+# its post step would tar both.
 jobs:
   core:
     name: Core (Rust, bindings, live)

@@ -1,5 +1,6 @@
 /**
- * Every job runs on the pool, and nothing asks `setup-node` to cache pnpm.
+ * Every job runs on the pool but one, and nothing asks `setup-node` to cache
+ * pnpm.
  *
  * Both rules are stated in prose at the top of `ci.yml` and `core.yml`, and
  * prose is what a fourth workflow does not read. Neither rule fails visibly
@@ -20,6 +21,12 @@
  *
  * The cost is that a genuine change to either rule is a two-file change,
  * which is the intended friction.
+ *
+ * ## The one hosted job
+ *
+ * `release.yml`'s publish job runs on `ubuntu-latest`, because npm's trusted
+ * publishing accepts the OIDC identity of a GitHub-hosted runner only. It is
+ * named here by file and job, so no other job can follow it off the pool.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -35,7 +42,25 @@ const WORKFLOWS = resolve(
 
 const RUNNER = "self-hosted";
 
-const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml"));
+/** The jobs allowed off the pool, as `<file>:<job>`, and where they run. */
+const HOSTED: Record<string, string> = {
+  "release.yml:publish": "ubuntu-latest",
+};
+
+/** Each job's name and the `runs-on` it declares, in file order. */
+function runnersOf(text: string): { job: string; runner: string }[] {
+  const jobs = text.split(/^jobs:\s*$/m)[1] ?? "";
+  return jobs
+    .split(/^(?= {2}[A-Za-z0-9_-]+:\s*$)/m)
+    .map((block) => ({
+      job: /^ {2}([A-Za-z0-9_-]+):/.exec(block)?.[1] ?? "",
+      runner: /^ {4}runs-on:\s*(.+)$/m.exec(block)?.[1]?.trim() ?? "",
+    }))
+    .filter((entry) => entry.job !== "");
+}
+
+// GitHub runs both extensions, so both are read.
+const files = readdirSync(WORKFLOWS).filter((f) => /\.ya?ml$/.test(f));
 
 describe("every job runs on the pool", () => {
   it("finds the workflows, so an empty pass cannot be a missing directory", () => {
@@ -45,11 +70,26 @@ describe("every job runs on the pool", () => {
 
   it.each(files)("%s names the pool and nothing else", (file) => {
     const text = readFileSync(join(WORKFLOWS, file), "utf8");
-    const found = [...text.matchAll(/^\s*runs-on:\s*(.+)$/gm)].map((m) =>
-      (m[1] ?? "").trim(),
-    );
-    expect(found.length, `${file} declares no runs-on`).toBeGreaterThan(0);
-    for (const value of found) expect(value).toBe(RUNNER);
+    const found = runnersOf(text);
+    expect(found.length, `${file} declares no jobs`).toBeGreaterThan(0);
+    for (const { job, runner } of found) {
+      expect(runner, `${file}: ${job}`).toBe(
+        HOSTED[`${file}:${job}`] ?? RUNNER,
+      );
+    }
+  });
+
+  it("finds every hosted exception where it is named", () => {
+    // An exception naming a job that no longer exists would widen nothing,
+    // and would read as though it still did.
+    for (const key of Object.keys(HOSTED)) {
+      const [file = "", job = ""] = key.split(":");
+      const text = readFileSync(join(WORKFLOWS, file), "utf8");
+      expect(
+        runnersOf(text).some((entry) => entry.job === job),
+        `${key} names no job`,
+      ).toBe(true);
+    }
   });
 
   it.each(files)("%s gives every job a runs-on", (file) => {
