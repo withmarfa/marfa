@@ -534,6 +534,88 @@ describe("item versioning", () => {
     expect(fetched.data.item.version).toBe(1);
   });
 
+  it("moves nothing when retype names the type the row already has", async () => {
+    // A corpus re-type sends `retype` to every row it means to move, rows
+    // already at the destination included. A move to the type a row has
+    // is not a move: the row is answered as it is, at its version, with
+    // no snapshot written.
+    const r = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "Staying" } }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const same = await client.updateItem(r.data.item.id, {
+      type: "core.note",
+      retype: true,
+      version: 1,
+    });
+    expect(same.status, JSON.stringify(same.error)).toBe(200);
+    expect(same.data.item.type).toBe("core.note");
+    expect(same.data.item.version).toBe(1);
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.ok).toBe(true);
+    expect(history.data.data).toHaveLength(0);
+  });
+
+  it("holds a stale write to the type only where it carries properties or a move", async () => {
+    // A type may gain a required field while rows that lack it stand. A
+    // write that changes nothing a schema has an opinion about, a tier
+    // alone here, lands at the current version without being judged, and
+    // a stale one is judged the same way: what is applied is what is
+    // held to the type, and a tier is not a property.
+    const typeId = `user.gains-required-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: typeId,
+      label: "Gains a required field",
+      version: 1,
+      fields: { title: { type: "string" } },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const r = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      properties: { title: "Before the field" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    // Advanced, so the tier write below is stale.
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Advanced" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    expect(advanced.data.item.version).toBe(2);
+
+    const gained = await client.updateType(typeId, {
+      id: typeId,
+      label: "Gains a required field",
+      version: 2,
+      fields: {
+        title: { type: "string" },
+        due: { type: "string", required: true },
+      },
+    });
+    expect(gained.ok, JSON.stringify(gained.error)).toBe(true);
+    // The witness: the row no longer satisfies its type, and a write that
+    // carries properties is held to it.
+    const judged = await client.updateItem(r.data.item.id, {
+      properties: { title: "Judged" },
+      version: 2,
+    });
+    expect(judged.status).toBe(400);
+    expect(judged.error?.error.code).toBe("invalid_properties");
+
+    const stale = await client.updateItem(r.data.item.id, {
+      tier: "feed",
+      version: 1,
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    expect(stale.data.item.tier).toBe("feed");
+    expect(stale.data.item.version).toBe(3);
+    expect(stale.data.item.properties.title).toBe("Advanced");
+  });
+
   it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
     // `versions.md` 11 applies a stale write's genuine changes over the
     // current row. Under `properties_mode: replace` the body is the whole of

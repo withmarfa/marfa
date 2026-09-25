@@ -1053,9 +1053,14 @@ export class SqliteItemStore implements ItemStore {
       // row, and a stale merge is made against the ancestor: a field the
       // body echoes at the ancestor's value is not applied, so where the
       // other writer removed it since, a move into a type that requires it
-      // would land a row that type never admits.
+      // would land a row that type never admits. Judged only where the
+      // write carries properties or a move, as the route judges a current
+      // one: a type may gain a required field while rows that lack it
+      // stand, and a write that changes nothing a schema has an opinion
+      // about is not the write that has to satisfy it.
       const resultingType = input.type ?? row.type;
-      if (getTypeSchema(resultingType)) {
+      const judged = input.properties !== undefined || input.type !== undefined;
+      if (judged && getTypeSchema(resultingType)) {
         const validation = validateProperties(
           resultingType,
           resolvedProperties,

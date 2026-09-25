@@ -120,8 +120,9 @@ describe("the instant columns on the write path", () => {
 
   it("leaves the column alone when a patch sends a null that means nothing", async () => {
     // A null on an optional field means "leave unset", so the property
-    // survives and the column has to survive with it. The column agreeing with the row is the whole
-    // invariant; agreeing with the request body would break it here.
+    // survives and the column has to survive with it. The column agreeing
+    // with the row is the whole invariant; agreeing with the request body
+    // would break it here.
     const id = await createItem({
       title: "Still dated",
       starts_at: "2026-04-06T09:00:00.000Z",
