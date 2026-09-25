@@ -17,7 +17,8 @@ import type {
   QueuedWrite,
 } from "../../device/protocol.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
-import { chmodSync, existsSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import {
   KEY,
   acceptUploads,
@@ -1507,7 +1508,12 @@ describe("an answer the device applies keeps what it has not had answered", () =
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     scriptWrites(server, {
-      create: [answers.ancestorUnavailable(current, 0)],
+      // First an answer the device cannot read, which is counted, so the
+      // count below is one that moves on this row.
+      create: [
+        { kind: "json", status: 200, body: "not an answer" },
+        answers.ancestorUnavailable(current, 0),
+      ],
       read: [
         { kind: "drop" },
         answers.serverFault(),
@@ -1515,6 +1521,13 @@ describe("an answer the device applies keeps what it has not had answered", () =
         theirs,
       ],
     });
+    const counted = await device.drain();
+    expect(counted.ok, JSON.stringify(counted)).toBe(true);
+    if (!counted.ok) return;
+    expect(
+      [counted.value.verdicts[0]?.verdict, counted.value.verdicts[0]?.refusals],
+      "an answer the device could not read was not counted, so a count that stays put below says nothing",
+    ).toEqual([null, 1]);
     const reads = () =>
       server.requests.filter(
         (request) =>
@@ -1533,8 +1546,8 @@ describe("an answer the device applies keeps what it has not had answered", () =
           drained.value.verdicts[0]?.verdict,
           drained.value.verdicts[0]?.refusals,
         ],
-        `the create was settled on ${attempt} while reading the row it landed on, although that clears on its own`,
-      ).toEqual([null, 0]);
+        `the create was settled or counted on ${attempt} while reading the row it landed on, although that clears on its own`,
+      ).toEqual([null, 1]);
       expect(drained.value.retry_after_seconds).toBe(waited);
     }
     expect(reads()).toBe(3);
@@ -2359,6 +2372,92 @@ describe("an upload is a queued write", () => {
     ).toBe(`Bearer ${KEY}`);
   });
 
+  it("names an upload's bytes in the queue and never holds them", async () => {
+    harness = await hydratedHarness("upload-named-not-held", { rows: held() });
+    const { device } = harness;
+    const marker = "upload-bytes-f3a9c1e7";
+    const bytes = Buffer.from(`${marker}\n`);
+    const queued = await device.putBlob(fileOf("note.txt", bytes));
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    // Nowhere in the store at all, in any table, before anything else put
+    // the text there: the file and its log, read as bytes.
+    const inTheStore = () =>
+      [device.store, `${device.store}-wal`]
+        .filter((path) => existsSync(path))
+        .some((path) => readFileSync(path).includes(marker));
+    expect(
+      inTheStore(),
+      "the upload's bytes are somewhere in the store itself",
+    ).toBe(false);
+    // Beside it, a create whose body carries the same text, so the scans
+    // below are shown to find what the store does hold.
+    const control = await device.create({
+      type: "core.note",
+      properties: { title: "control", body: marker },
+    });
+    expect(control.ok, JSON.stringify(control)).toBe(true);
+    if (!control.ok) return;
+
+    // What each queue row holds, read from the store itself: the queue's
+    // own report is a projection, and bytes could sit in a column it leaves
+    // out.
+    const store = new DatabaseSync(device.store, { readOnly: true });
+    let rows: Array<Record<string, unknown>>;
+    try {
+      rows = store.prepare("SELECT * FROM queue").all() as Array<
+        Record<string, unknown>
+      >;
+    } finally {
+      store.close();
+    }
+    const encodings = [
+      marker,
+      bytes.toString("base64"),
+      bytes.toString("hex"),
+      Buffer.from(marker).toString("base64"),
+    ];
+    const holdsTheBytes = (row: Record<string, unknown>) =>
+      Object.values(row).some((value) =>
+        value instanceof Uint8Array
+          ? Buffer.from(value).includes(bytes) ||
+            Buffer.from(value).includes(marker)
+          : typeof value === "string" &&
+            encodings.some((encoded) => value.includes(encoded)),
+      );
+    const rowOf = (id: string) => rows.find((row) => row.id === id);
+    const upload = rowOf(queued.value.id);
+    expect(
+      upload,
+      "the upload is not a row of the queue table, so nothing here reads it",
+    ).toBeDefined();
+    if (upload === undefined) return;
+    expect(
+      holdsTheBytes(rowOf(control.value.id) ?? {}),
+      "the scan did not find text a create's row holds, so it cannot find bytes either",
+    ).toBe(true);
+    expect(
+      inTheStore(),
+      "the store scan did not find text a create put in the store",
+    ).toBe(true);
+    // What the row carries is the name and the type, and nothing else.
+    expect(
+      JSON.parse(String(upload.payload)),
+      "the upload's payload carries something besides the bytes' name and type",
+    ).toEqual({ hash: hashOf(bytes), mime_type: "text/plain" });
+    expect(upload.blob).toBe(hashOf(bytes));
+    expect(
+      holdsTheBytes(upload),
+      "the upload's queue row holds the bytes themselves, so a queue of photos is a copy of every photo in the store",
+    ).toBe(false);
+    // Where they are held: beside the store, under their hash.
+    expect(
+      readFileSync(
+        `${device.store}.blobs/${hashOf(bytes).slice("sha256:".length)}`,
+      ),
+    ).toEqual(bytes);
+  });
+
   it("attaches a file as an upload, a file item and an edge, each waiting on the one before", async () => {
     harness = await hydratedHarness("upload-attach", { rows: held() });
     const { device, server } = harness;
@@ -2499,8 +2598,22 @@ describe("an upload is a queued write", () => {
     const bytes = Buffer.from("held and locked for now\n");
     expect((await device.putBlob(fileOf("locked.txt", bytes))).ok).toBe(true);
     const heldAt = `${device.store}.blobs/${hashOf(bytes).slice("sha256:".length)}`;
+    // First an answer naming other bytes, which is counted, so the count
+    // the locked drain leaves is one that moves on this row.
+    server.answer(
+      "POST",
+      "/blobs",
+      uploaded(`sha256:${"b".repeat(64)}`),
+      uploaded(),
+    );
+    const counted = await device.drain();
+    expect(counted.ok).toBe(true);
+    if (!counted.ok) return;
+    expect(
+      [counted.value.verdicts[0]?.verdict, counted.value.verdicts[0]?.refusals],
+      "an upload answered under another name was not counted, so a count that stays put below says nothing",
+    ).toEqual([null, 1]);
     chmodSync(heldAt, 0o000);
-    acceptUploads(server);
     try {
       const drained = await device.drain();
       expect(drained.ok).toBe(true);
@@ -2512,7 +2625,14 @@ describe("an upload is a queued write", () => {
       expect(drained.value.verdicts[0]?.reason).toContain(
         "could not be opened",
       );
-      expect(drained.value.verdicts[0]?.refusals).toBe(0);
+      expect(
+        drained.value.verdicts[0]?.refusals,
+        "bytes that could not be opened for now were counted as a refusal the server gave",
+      ).toBe(1);
+      expect(
+        (await queueOf(device)).map((row) => row.refusals),
+        "the queue counted the bytes that could not be opened, whatever the drain reported",
+      ).toEqual([1]);
     } finally {
       chmodSync(heldAt, 0o644);
     }
@@ -3741,6 +3861,33 @@ describe("an edit behind an edit of the same row", () => {
     });
   });
 
+  it("sends an edit on the answer to one the server answered merged, where the collision left what it carries alone", async () => {
+    harness = await hydratedHarness("edit-behind-merged", { rows: rows() });
+    const { device } = harness;
+    await edit(device, HELD.id, { title: "mine" }, HELD.version);
+    await edit(device, HELD.id, { body: "second" }, HELD.version);
+    const door = scriptDoor(harness);
+    // Another device retitles the row first, so the device's own title
+    // collides and the server resolves it by the last writer: an answer of
+    // `merged`, not `accepted`, naming the title.
+    elsewhere(door, HELD.id, { title: "elsewhere" });
+    const report = await drained(device);
+
+    expect(
+      verdictsOf(report, "update_item", HELD.id),
+      "the first edit was not answered merged, so nothing here is about moving onto a merged answer",
+    ).toEqual(["merged", "accepted"]);
+    expect(
+      sentOn(harness, `/items/${HELD.id}`),
+      "the edit behind a merged one did not move onto its answer, which holds the body it was made against, and went out on the version both were queued against",
+    ).toEqual([HELD.version, HELD.version + 2]);
+    expect(copies(door)).toEqual([]);
+    expect(door.rows.get(HELD.id)?.properties).toEqual({
+      title: "mine",
+      body: "second",
+    });
+  });
+
   it("sends each of three edits on the answer ahead of it, the first merged over another device's write", async () => {
     harness = await hydratedHarness("edit-chain-behind-merge", {
       rows: rows(),
@@ -3762,7 +3909,22 @@ describe("an edit behind an edit of the same row", () => {
       "accepted",
       "accepted",
     ]);
-    expect(copies(door)).toEqual([]);
+    // The witness: the three sent on the version they were queued against
+    // leave the first on the row and set the other two aside in copies.
+    const control = newDoor();
+    elsewhere(control, HELD.id, { title: "elsewhere" });
+    for (const body of ["first", "second", "third"]) {
+      control.update(
+        HELD.id,
+        { properties: { body }, version: HELD.version },
+        { resolve: true },
+      );
+    }
+    expect(copies(control)).toEqual(["second", "third"]);
+    expect(
+      copies(door),
+      "an edit of the chain was set aside in a conflicted copy, colliding with the device's own edit ahead of it",
+    ).toEqual([]);
     expect(door.rows.get(HELD.id)?.properties).toEqual({
       title: "elsewhere",
       body: "third",

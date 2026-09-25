@@ -1401,11 +1401,22 @@ mod tests {
     /// A thumbnail is read from the held row with no request, through the
     /// type that declares it or a parent that does, and the local index
     /// leaves its base64 out as the server's own index does.
+    ///
+    /// The copy is bound to a server that records every request, so "no
+    /// request" is asserted against a transport the core could have used.
     #[test]
     fn a_thumbnail_is_read_from_the_held_row_and_never_searched() {
         use base64::Engine;
         let dir = tempfile::tempdir().unwrap();
-        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let server = scripted::Scripted::start();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -1479,6 +1490,23 @@ mod tests {
             matches!(core.thumbnail("not-held"), Err(CoreError::NotFound { code, .. }) if code == "not_held"),
             "an item the copy does not hold read as one that carries no thumbnail"
         );
+        // A photo that carries none, and one whose image does not decode:
+        // each is answered from the row, as the others are.
+        let bare = create("acme.photo", serde_json::json!({ "title": "Bare" }));
+        assert_eq!(core.thumbnail(&bare).unwrap(), None);
+        let broken = create(
+            "acme.photo",
+            serde_json::json!({ "title": "Broken", "thumbnail": "data:image/png;base64,***" }),
+        );
+        assert!(matches!(
+            core.thumbnail(&broken),
+            Err(CoreError::Decoding(_))
+        ));
+        assert_eq!(
+            server.asked(),
+            0,
+            "a thumbnail was asked of the server rather than read from the row the copy holds"
+        );
 
         let found = |query: &str| {
             core.search(query, &SearchFilters::default(), 10)
@@ -1494,6 +1522,19 @@ mod tests {
         );
         assert_eq!(found("unicornsXYZ"), vec![witness]);
         assert_eq!(found("Holiday"), vec![photo]);
+
+        assert_eq!(
+            server.asked(),
+            0,
+            "a read or a search asked the server rather than the copy"
+        );
+        // The witness: this copy does reach the server over that transport,
+        // and the server records it.
+        let _ = core.drain();
+        assert!(
+            server.asked() > 0,
+            "the drain reached no server, so the silence above is the transport's"
+        );
     }
 
     /// What the local index holds follows the catalog: a thumbnail the
@@ -1653,10 +1694,15 @@ mod tests {
     /// A second opener is refused at the doors, not merely by the predicate.
     ///
     /// `lock.rs` asserts that `refuse_unless_writer` returns the refusal,
-    /// which is the guard's configuration. This asserts its effect: that
-    /// every write door calls it. Delete the call from `create_item` and the
-    /// lock test still passes and this one does not, which is the difference
-    /// between testing a guard and testing that the guard is consulted.
+    /// which is the guard's configuration. This asserts its effect, in two
+    /// halves. Every door listed refuses a reading handle with
+    /// `ReadingHandle`, so deleting the call from any of them reddens it.
+    /// And every function in the crate's sources that calls the guard is
+    /// either listed or one of the helpers whose callers are, so a door that
+    /// calls the guard itself and is left off the list reddens it too. The
+    /// queue and the items are compared before and after, so a door whose
+    /// guard comes after its write reddens it as well. A new door reaching
+    /// the guard only through a helper is the one case none of it sees.
     #[test]
     fn a_reading_handle_is_refused_at_every_write_door() {
         let dir = tempfile::tempdir().unwrap();
@@ -1678,6 +1724,48 @@ mod tests {
             .unwrap();
         }
 
+        // Something for a door that ran before its guard to change: a row
+        // answered, one blocked and one dead, which forgetting and the
+        // releases would clear, and the queue and the items as they stand.
+        {
+            let conn = writer.conn().unwrap();
+            for (id, verdict, reason) in [
+                ("answered", "accepted", None),
+                ("blocked", "blocked", Some("key_spent")),
+                ("dead", "dead", None),
+            ] {
+                conn.execute(
+                    "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, queued_at)
+                     VALUES (?1, 'update_item', ?1, '{}', ?2, ?3, 1, '2026-01-01T00:00:00Z')",
+                    rusqlite::params![id, verdict, reason],
+                )
+                .unwrap();
+            }
+        }
+        let held = || {
+            let conn = writer.conn().unwrap();
+            let queue: Vec<String> = conn
+                .prepare("SELECT id, verdict, reason, idempotency_key FROM queue ORDER BY seq")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok(format!(
+                        "{}:{:?}:{:?}:{}",
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, String>(3)?
+                    ))
+                })
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap();
+            let items: i64 = conn
+                .query_row("SELECT count(*) FROM items", [], |row| row.get(0))
+                .unwrap();
+            (queue, items)
+        };
+        let before = held();
+
         let reader = Core::open(&path, None).unwrap();
         assert_eq!(reader.handle(), Handle::Reader);
         assert_eq!(writer.handle(), Handle::Writer);
@@ -1697,6 +1785,10 @@ mod tests {
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
+            (
+                "update_item_as_read",
+                reader.update_item_as_read("x", &edit).unwrap_err(),
+            ),
             ("delete_item", reader.delete_item("x").unwrap_err()),
             ("restore_item", reader.restore_item("x").unwrap_err()),
             (
@@ -1730,7 +1822,7 @@ mod tests {
                 "delete_extension",
                 reader.delete_extension("x", "ns").unwrap_err(),
             ),
-            ("release", reader.release("x").unwrap_err()),
+            ("release", reader.release("blocked").unwrap_err()),
             (
                 "release_reason",
                 reader.release_reason(BlockedReason::KeySpent).unwrap_err(),
@@ -1740,6 +1832,7 @@ mod tests {
             // missing server, which is why this is a `ReadingHandle` and not
             // a `NoServer`.
             ("drain", reader.drain().unwrap_err()),
+            ("drain_paced", reader.drain_paced().unwrap_err()),
             // Clearing answered rows is a write to the queue like any
             // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
@@ -1754,6 +1847,19 @@ mod tests {
                 "attach",
                 reader
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
+                    .unwrap_err(),
+            ),
+            // The two a folder queues a file through.
+            (
+                "create_file_item",
+                reader
+                    .create_file_item(Path::new("no-such-file.png"), &draft)
+                    .unwrap_err(),
+            ),
+            (
+                "update_file_item",
+                reader
+                    .update_file_item("x", Path::new("no-such-file.png"), &edit, Based::OnHeld)
                     .unwrap_err(),
             ),
             // The three that write the copy from the server's side. Each is
@@ -1780,20 +1886,98 @@ mod tests {
                  queue into one file and neither sees the other's rows"
             );
         }
-        // A plain count, deliberately, and it is worth being exact about
-        // what it catches. There is no expression in Rust that enumerates
-        // the methods calling a guard, so this is a tripwire rather than a
-        // derivation, and it fires in one direction only: an entry removed
-        // from the list above reddens it, a door added to `Core` and never
-        // listed does not. The list is the coverage; this only keeps the
-        // list from quietly shrinking.
+        assert_eq!(
+            held(),
+            before,
+            "a door refused a reading handle only after it had written"
+        );
         assert_eq!(
             refusals.len(),
-            22,
-            "an entry has gone from the list above. Every method on `Core` \
-             that calls `refuse_unless_writer` belongs in it, and a door \
-             dropped from it is a door nothing here covers."
+            26,
+            "an entry has gone from the list above, and a door dropped from \
+             it is a door nothing here covers"
         );
+
+        // The functions that call the guard themselves, read from the
+        // source. A helper is covered by the doors that reach it, which are
+        // listed above.
+        let listed: Vec<&str> = refusals.iter().map(|(door, _)| *door).collect();
+        let mut guarded = Vec::new();
+        let others: &[&str] = &[];
+        for (source, helpers) in [
+            (include_str!("blob.rs"), others),
+            (include_str!("catalog.rs"), others),
+            (include_str!("catch_up.rs"), others),
+            (include_str!("contract.rs"), others),
+            (include_str!("error.rs"), others),
+            (include_str!("lock.rs"), others),
+            (include_str!("http.rs"), others),
+            (include_str!("hydrate.rs"), others),
+            (include_str!("model.rs"), others),
+            (include_str!("query.rs"), others),
+            (include_str!("search.rs"), others),
+            (include_str!("sse.rs"), others),
+            (include_str!("store.rs"), others),
+            (include_str!("wire.rs"), others),
+            (include_str!("folder/mod.rs"), others),
+            (include_str!("folder/document.rs"), others),
+            (include_str!("folder/identity.rs"), others),
+            (include_str!("folder/state.rs"), others),
+            (
+                include_str!("lib.rs"),
+                &[
+                    "transition_locally",
+                    "tag_write",
+                    "extension_write",
+                    "with_upload",
+                ][..],
+            ),
+            // `drain::drain`, which `Core::drain` and `drain_paced` reach.
+            (include_str!("drain.rs"), &["drain"][..]),
+        ] {
+            let mut current: Option<&str> = None;
+            let mut in_tests = false;
+            for line in source.lines() {
+                // A test module, top level and closed at column 0, is
+                // passed over; anything after it is read again.
+                if line.starts_with("mod tests") {
+                    in_tests = true;
+                }
+                if in_tests {
+                    in_tests = line != "}";
+                    continue;
+                }
+                let declared = line.trim_start();
+                let declared = declared
+                    .strip_prefix("pub(crate) ")
+                    .or_else(|| declared.strip_prefix("pub "))
+                    .unwrap_or(declared);
+                if let Some(name) = declared.strip_prefix("fn ") {
+                    let end = name
+                        .find(|glyph: char| !(glyph.is_alphanumeric() || glyph == '_'))
+                        .unwrap_or(name.len());
+                    current = Some(&name[..end]);
+                }
+                if line.contains("refuse_unless_writer()")
+                    && let Some(name) = current
+                {
+                    guarded.push((name, helpers));
+                }
+            }
+        }
+        // The witness that the scan reads the doors at all.
+        assert!(
+            guarded.iter().any(|(name, _)| *name == "create_item"),
+            "the scan did not find `create_item`, so it is reading the wrong \
+             source and the check below passes on nothing"
+        );
+        for (name, helpers) in guarded {
+            assert!(
+                listed.contains(&name) || helpers.contains(&name),
+                "{name} calls `refuse_unless_writer` and is not in the list \
+                 above, so a reading handle reaching it is never tried"
+            );
+        }
 
         // The control: the writer is not refused, so the refusals above are
         // the handle rather than a store that refuses everybody.
@@ -1822,6 +2006,14 @@ mod tests {
                 )
                 .unwrap();
             }
+            // A dead row carrying the reason's own text, so a release that
+            // read the reason column without the verdict would take it too.
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, queued_at)
+                 VALUES ('dead', 'update_item', 'dead', '{}', 'dead', 'key_spent', 1, '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
         }
         assert_eq!(core.release_reason(BlockedReason::KeySpent).unwrap(), 1);
         let rows = core.queue().unwrap();
@@ -1831,6 +2023,22 @@ mod tests {
             still("conflict_unresolved"),
             Some(Verdict::Blocked),
             "a release by one reason released a row blocked for another"
+        );
+        assert_eq!(
+            still("dead"),
+            Some(Verdict::Dead),
+            "a release by reason released a dead write, which is released one id at a time"
+        );
+        // The witness: the dead row is one a release takes, by its id.
+        assert!(core.release("dead").unwrap());
+        assert_eq!(
+            core.queue()
+                .unwrap()
+                .iter()
+                .find(|row| row.id == "dead")
+                .unwrap()
+                .verdict,
+            None
         );
     }
 

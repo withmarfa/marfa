@@ -17,6 +17,7 @@ import {
   ScriptedServer,
   type Answer,
 } from "../../device/scripted-server.js";
+import type { HeldCommand } from "../../device/cli-adapter.js";
 import {
   KEY,
   acceptUploads,
@@ -913,7 +914,25 @@ describe("the contract the working copy was built for", () => {
    * headers is refused well inside this.
    */
   const endless: Answer = { kind: "sse", frames: [], hold: true };
-  const PROMPTLY_MS = 20_000;
+  const PROMPTLY_MS = 5_000;
+
+  /**
+   * The control each case below starts with: the same call on the core's
+   * own contract, which reads the body, is still waiting on it once the
+   * bound has passed. Without it the bound holds for a device that never
+   * reads a body at all.
+   */
+  async function waitsOnTheBody(held: HeldCommand): Promise<void> {
+    try {
+      await new Promise((resolve) => setTimeout(resolve, PROMPTLY_MS));
+      expect(
+        held.running(),
+        `the call on the core's own contract did not wait on the endless body, so the bound below measures nothing: ${held.stderr}`,
+      ).toBe(true);
+    } finally {
+      await held.stop();
+    }
+  }
 
   it("refuses a catalog on another contract on its headers, without waiting on its body", async () => {
     harness = await startHarness("contract-catalog-endless");
@@ -922,6 +941,7 @@ describe("the contract the working copy was built for", () => {
     scripted.answer("GET", "/types", typeCatalog(), endless);
     scripted.answer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    await waitsOnTheBody(device.hold(["catch-up"]));
 
     scripted.contract = other;
     const started = Date.now();
@@ -941,6 +961,7 @@ describe("the contract the working copy was built for", () => {
     });
     expect(queued.ok).toBe(true);
     scripted.answer("POST", "/items", endless);
+    await waitsOnTheBody(device.hold(["drain"]));
 
     scripted.contract = other;
     const started = Date.now();
@@ -956,6 +977,7 @@ describe("the contract the working copy was built for", () => {
     const { server: scripted, device } = harness;
     const hash = `sha256:${"c".repeat(64)}`;
     scripted.answer("GET", `/blobs/${hash}/url`, endless);
+    await waitsOnTheBody(device.hold(["blobs", "get", hash]));
 
     scripted.contract = other;
     const started = Date.now();

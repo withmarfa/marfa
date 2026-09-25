@@ -410,8 +410,10 @@ describe("a write naming a source", () => {
       JSON.stringify(refused),
       "the refusal names the type of a row its key may not read",
     ).not.toContain("core.bookmark");
-    // Its witness is below: the key that may write the row, declaring
-    // another type, is told the row's type in `details.actual_type`.
+    // Its witness is below: the same entry from the key that may write the
+    // trashed row is refused on this same path too, and that refusal names
+    // the row, its id in `details.item_id` and its type in
+    // `details.actual_type`.
 
     const mismatched = await both.bulkItems({ atomic: false, items: [entry] });
     expect(
@@ -431,6 +433,10 @@ describe("a write naming a source", () => {
       declared?.error?.details?.actual_type,
       "the declared type was not held to the trashed row's own",
     ).toBe("core.bookmark");
+    expect(
+      declared?.error?.details?.item_id,
+      "the refusal to the key that may write the trashed row does not name it, so nothing shows this path can carry an id at all",
+    ).toBe(created.data.item.id);
   });
 
   it("tells a key its natural key is taken, and nothing of a row it may not read", async () => {

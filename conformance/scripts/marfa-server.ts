@@ -219,6 +219,10 @@ export async function bootServer(args: BootOptions): Promise<void> {
     );
   }
   mkdirSync(p.blobs, { recursive: true });
+  // The folder holds the server's keys, and `--state` takes any name, so
+  // it ignores itself rather than relying on the root `.gitignore` knowing
+  // the name.
+  writeFileSync(resolve(args.state, ".gitignore"), "*\n");
   ensureBuilt();
 
   // `--port`, then `PORT`, then one the kernel says is free.

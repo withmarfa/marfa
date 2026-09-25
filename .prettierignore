@@ -20,7 +20,7 @@ _tmp/
 _ignore/
 # Written by a conformance run: the booted server's state directory and
 # the JSON reports the load and performance lanes emit.
-**/.marfa-state/
+**/.marfa-state*
 **/reports/
 
 # The Rust core workspace: Cargo and generated Node output, none of it Prettier's.

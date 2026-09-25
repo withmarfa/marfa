@@ -151,6 +151,9 @@ async function up(args: Args): Promise<void> {
   rmSync(args.state, { recursive: true, force: true });
   mkdirSync(p.meta, { recursive: true });
   mkdirSync(p.data, { recursive: true });
+  // The node's secrets are in here and `--state` takes any name, so the
+  // folder ignores itself.
+  writeFileSync(resolve(args.state, ".gitignore"), "*\n");
 
   const s3Port = args.port ?? (await freePort());
   const rpcPort = await freePort();

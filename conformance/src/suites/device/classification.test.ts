@@ -616,6 +616,88 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(2);
   });
 
+  it("releases by reason the rows blocked for it, and never a dead one", async () => {
+    const DEAD = { id: "01a00000-0000-7000-8000-00000000000d", version: 2 };
+    harness = await hydratedHarness("class-release-reason", {
+      rows: {
+        "core.note": [
+          ...held()["core.note"],
+          {
+            item: {
+              id: DEAD.id,
+              version: DEAD.version,
+              properties: { title: "dying", body: "dying" },
+            },
+          },
+        ],
+      },
+    });
+    const { device, server } = harness;
+    for (const [id, version] of [
+      [HELD.id, HELD.version],
+      [DEAD.id, DEAD.version],
+    ] as const) {
+      const edit = await device.update(id, {
+        properties: { title: "edited" },
+        version,
+      });
+      expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    }
+    // One row meets a spent key and is blocked on the first answer; the
+    // other is answered unreadably until the ceiling kills it.
+    scriptWrites(server, {
+      update: [
+        (request) =>
+          request.pathname === `/items/${HELD.id}`
+            ? refusal(
+                422,
+                "idempotency_key_reused",
+                "answered for another body",
+              )
+            : { kind: "json", status: 200, body: "not an answer" },
+      ],
+    });
+    for (let pass = 0; pass < 5; pass += 1) {
+      expect((await device.drain()).ok).toBe(true);
+    }
+    const settled = await queueOf(harness);
+    const settledOf = (id: string) => {
+      const row = settled.find((queued) => queued.item_id === id);
+      return [row?.verdict, row?.reason];
+    };
+    // The blocked row's reason is the witness that the queue reports the
+    // column the dead row leaves empty.
+    expect(
+      [settledOf(HELD.id), settledOf(DEAD.id)],
+      "the fixture did not reach one row blocked for a spent key and one dead one carrying no reason, so the release below is about neither",
+    ).toEqual([
+      ["blocked", "key_spent"],
+      ["dead", null],
+    ]);
+
+    const released = await device.release({ reason: "key_spent" });
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    if (!released.ok) return;
+    expect(
+      released.value,
+      "a release by reason took a row it does not name, and a dead write goes out again under a fresh key with nobody having asked for it",
+    ).toBe(1);
+    const after = await queueOf(harness);
+    const now = (id: string) => after.find((row) => row.item_id === id);
+    expect(now(HELD.id)?.verdict).toBeNull();
+    expect(
+      now(DEAD.id)?.verdict,
+      "a release by reason released a dead write",
+    ).toBe("dead");
+
+    // The witness: the dead row is one a release takes, by its id.
+    const dead = now(DEAD.id);
+    expect(dead).toBeDefined();
+    if (dead === undefined) return;
+    const byId = await device.release({ id: dead.id });
+    expect(byId.ok && byId.value).toBe(1);
+  });
+
   it("blocks a create naming a source its key does not claim, and sends it once the key does", async () => {
     harness = await hydratedHarness("class-unclaimed-source", {
       rows: held(),
