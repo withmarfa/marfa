@@ -668,6 +668,113 @@ describe("catch-up replays from the cursor", () => {
     ).toBe(true);
   });
 
+  it("applies an event on a held stream beneath a write it has not had answered", async () => {
+    harness = await startHarness("follow-beneath-write");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "row",
+              version: 1,
+              properties: { title: "as hydrated", body: "as hydrated" },
+            },
+          },
+        ],
+      },
+    });
+    // The same event the catch-up fixture applies beneath a waiting write,
+    // here on the path a held stream takes.
+    server.answer(
+      "GET",
+      "/events",
+      heldLog([
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 2,
+            properties: { title: "as hydrated", body: "changed elsewhere" },
+          }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const edit = await device.update("row", {
+      properties: { title: "edited here, not yet sent" },
+      version: 1,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.changes.map((change) => [change.item_id, change.cursor]),
+      "the held stream did not apply the event, so nothing here is about applying one beneath a waiting write",
+    ).toEqual([["row", "11"]]);
+
+    const held = await device.get("row");
+    expect(held.ok).toBe(true);
+    if (!held.ok) return;
+    expect(held.value.properties.body).toBe("changed elsewhere");
+    expect(held.value.version).toBe(2);
+    expect(
+      held.value.properties.title,
+      "an event on the held stream erased an edit the device has not had answered, so a screen following the copy shows the write as undone while the queue still sends it",
+    ).toBe("edited here, not yet sent");
+  });
+
+  it("applies nothing on a held stream from outside its slice", async () => {
+    harness = await startHarness("follow-outside-slice");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      heldLog([
+        itemEvent("11", "item.created", wireItem({ id: "declared" })),
+        itemEvent(
+          "12",
+          "item.created",
+          wireItem({ id: "undeclared", type: "core.bookmark" }),
+        ),
+        itemEvent(
+          "13",
+          "item.created",
+          wireItem({ id: "other-tier", tier: "feed" }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(3);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.report.cursor,
+      "the held stream did not reach the last event, so the rows below were never offered to it",
+    ).toBe("13");
+    const held = await device.list({ allStates: true });
+    const ids = held.ok ? held.value.map((item) => item.id) : [];
+    expect(
+      ids,
+      "the declared type's event did not land on the held stream, so the assertion below passes against a follow that applied nothing",
+    ).toContain("declared");
+    expect(
+      ids,
+      "an event from outside the slice was applied on the held stream, so a copy left following grows with every type and tier anybody writes",
+    ).not.toContain("undeclared");
+    expect(ids).not.toContain("other-tier");
+    expect(
+      followed.value.changes.map((change) => change.item_id),
+      "a row outside the slice was told as a change",
+    ).toEqual(["declared"]);
+  });
+
   it("asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes", async () => {
     harness = await startHarness("follow-backoff");
     const { server, device } = harness;
