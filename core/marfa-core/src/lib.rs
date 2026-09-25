@@ -1822,6 +1822,14 @@ mod tests {
                 )
                 .unwrap();
             }
+            // A dead row carrying the reason's own text, so a release that
+            // read the reason column without the verdict would take it too.
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, queued_at)
+                 VALUES ('dead', 'update_item', 'dead', '{}', 'dead', 'key_spent', 1, '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
         }
         assert_eq!(core.release_reason(BlockedReason::KeySpent).unwrap(), 1);
         let rows = core.queue().unwrap();
@@ -1832,6 +1840,14 @@ mod tests {
             Some(Verdict::Blocked),
             "a release by one reason released a row blocked for another"
         );
+        assert_eq!(
+            still("dead"),
+            Some(Verdict::Dead),
+            "a release by reason released a dead write, which is released one id at a time"
+        );
+        // The witness: the dead row is one a release takes, by its id.
+        assert!(core.release("dead").unwrap());
+        assert_eq!(core.queue().unwrap().iter().find(|row| row.id == "dead").unwrap().verdict, None);
     }
 
     #[test]
