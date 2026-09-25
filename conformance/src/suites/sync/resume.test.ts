@@ -133,64 +133,90 @@ describe("resuming from the head", () => {
       before.push(await makeNote(`resume-before-${String(n)}`));
     }
 
-    // Writes issued while the stream is open, an edge among them and a
-    // purge last. A purge announces every edge of the row before the row,
-    // and an edge frame waits on a read before it is sent, which is where
-    // a frame published after it could overtake it. The first read ends
-    // on the purge's own frame, so it carries live frames of both kinds
-    // past the head it was announced, and the last id it received is the
-    // cursor the second read resumes from. Whichever side of the head
-    // each write lands on, it has to arrive exactly once across the two.
+    // Writes issued once the stream has announced its head, an edge
+    // among them and a purge last. Started from inside the read the
+    // moment the announcement arrives, so they land past the head by
+    // observation rather than by a pause: a server slow to read its head
+    // would otherwise see them all land before it and replay the lot,
+    // and the read would never leave the replay. A purge announces every
+    // edge of the row before the row, and an edge frame waits on a read
+    // before it is sent, which is where a frame published after it could
+    // overtake it. The first read ends on the purge's own frame, so it
+    // carries live frames of both kinds past the head, and the last id it
+    // received is the cursor the second read resumes from. Whichever side
+    // of the head each write lands on, it has to arrive exactly once
+    // across the two.
     let during: string[] = [];
     let duringEdge = "";
     let doomed = "";
     const doomedEdges: string[] = [];
+    const write = async (): Promise<void> => {
+      const [one, edge, two] = await Promise.all([
+        makeNote("resume-during-1"),
+        makeEdge(before[0]!, before[1]!),
+        makeNote("resume-during-2"),
+      ]);
+      during = [one, two];
+      duringEdge = edge;
+      // The row is gone by the time the reads are judged, so neither it
+      // nor its edges are tracked for teardown.
+      const created = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "resume-purged" },
+      });
+      expect(created.ok, "the row to purge could not be created").toBe(true);
+      doomed = created.data.item.id;
+      for (const target of [before[2]!, before[3]!]) {
+        const made = await client.createEdge({
+          source_id: doomed,
+          target_id: target,
+          edge_type: "about",
+        });
+        expect(made.ok, "an edge of the row to purge failed").toBe(true);
+        doomedEdges.push(made.data.edge.id);
+      }
+      const trashed = await client.deleteItem(doomed);
+      expect(trashed.ok, "the row could not be trashed").toBe(true);
+      const purged = await client.purgeItem(doomed);
+      expect(purged.ok, "the row could not be purged").toBe(true);
+    };
     const first = await withStream(
       apiUrl,
       apiKey,
       { lastEventId: eventId },
       async (stream) => {
-        const [one, edge, two] = await Promise.all([
-          makeNote("resume-during-1"),
-          makeEdge(before[0]!, before[1]!),
-          makeNote("resume-during-2"),
-        ]);
-        during = [one, two];
-        duringEdge = edge;
-        // The row is gone by the time the reads are judged, so neither it
-        // nor its edges are tracked for teardown.
-        const created = await client.createItem({
-          type: "core.note",
-          source: ctx.source,
-          properties: { body: "resume-purged" },
+        // A failure inside the writes ends the read with its own message
+        // rather than as a read that timed out waiting for the purge.
+        let failed: (err: unknown) => void = () => undefined;
+        const failure = new Promise<never>((_, reject) => {
+          failed = reject;
         });
-        expect(created.ok, "the row to purge could not be created").toBe(true);
-        doomed = created.data.item.id;
-        for (const target of [before[2]!, before[3]!]) {
-          const made = await client.createEdge({
-            source_id: doomed,
-            target_id: target,
-            edge_type: "about",
-          });
-          expect(made.ok, "an edge of the row to purge failed").toBe(true);
-          doomedEdges.push(made.data.edge.id);
-        }
-        const trashed = await client.deleteItem(doomed);
-        expect(trashed.ok, "the row could not be trashed").toBe(true);
-        const purged = await client.purgeItem(doomed);
-        expect(purged.ok, "the row could not be purged").toBe(true);
-
-        const { events } = await collectUntil(
+        let writes: Promise<void> | undefined;
+        const read = collectUntil(
           stream,
-          (evts) =>
-            evts.some(
-              (e) =>
-                e.event === "item.purged" &&
-                (e.data as { item?: { id?: string } })?.item?.id === doomed,
-            ),
-          `the purge of ${doomed} to reach the stream`,
+          (evts) => {
+            if (
+              writes === undefined &&
+              evts.some((e) => e.event === "stream_cursor")
+            ) {
+              writes = write();
+              writes.catch(failed);
+            }
+            return (
+              doomed !== "" &&
+              evts.some(
+                (e) =>
+                  e.event === "item.purged" &&
+                  (e.data as { item?: { id?: string } })?.item?.id === doomed,
+              )
+            );
+          },
+          "the announced head, then the purge of the row written after it to reach the stream",
           context.signal,
         );
+        const { events } = await Promise.race([read, failure]);
+        await writes;
         return events;
       },
     );
