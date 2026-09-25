@@ -939,6 +939,16 @@ export class SqliteItemStore implements ItemStore {
         ...(input.source_id !== undefined && { source_id: input.source_id }),
       };
 
+      // Under `replace` the body is the whole of the caller's properties,
+      // so a key the ancestor had and the body lacks is a change the caller
+      // made: the caller cleared it.
+      const clearedProperties =
+        input.properties_mode === "replace" && incomingProps !== undefined
+          ? Object.keys(ancestor.properties).filter(
+              (key) => !(key in incomingProps),
+            )
+          : [];
+
       const result = detectConflict({
         clientProperties: incomingProps ?? {},
         currentProperties: currentProps,
@@ -946,6 +956,7 @@ export class SqliteItemStore implements ItemStore {
         clientFields,
         currentFields,
         ancestorFields: ancestor.item_fields,
+        clearedProperties,
       });
 
       const policy = resolveMergePolicy(row.type, (id) => getTypeSchema(id));
@@ -993,6 +1004,7 @@ export class SqliteItemStore implements ItemStore {
           conflictingFields: result.conflicting_fields,
           collidingItemFields: result.collidingItemFields,
           policy,
+          clearedProperties,
         });
 
         // The sibling is written here, inside the transaction that moves the
@@ -1010,6 +1022,7 @@ export class SqliteItemStore implements ItemStore {
               clientProperties: incomingProps ?? {},
               currentProperties: currentProps,
               keepBothFields: plan.keepBothFields,
+              clearedProperties,
             }),
           });
         }

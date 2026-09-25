@@ -53,6 +53,33 @@ export interface ConflictInput {
   clientFields: ItemFieldValues;
   currentFields: ItemFieldValues;
   ancestorFields: ItemFieldValues;
+  /**
+   * The properties the write clears. Under `properties_mode: replace` the
+   * body is the whole of the caller's properties, so a key the ancestor had
+   * and the body lacks is a change the caller made, as much as a new value
+   * is, and it collides with a change the server made to that key since.
+   */
+  clearedProperties?: readonly string[];
+}
+
+/**
+ * The keys a write clears that are still there to clear: in the ancestor
+ * the caller read, not in the body, and not already gone from the row,
+ * where clearing again is an echo of the server's own clear rather than a
+ * change.
+ */
+function clearedKeys(input: {
+  clearedProperties?: readonly string[];
+  clientProperties: Record<string, unknown>;
+  currentProperties: Record<string, unknown>;
+  ancestorProperties: Record<string, unknown>;
+}): string[] {
+  return (input.clearedProperties ?? []).filter(
+    (key) =>
+      key in input.ancestorProperties &&
+      !(key in input.clientProperties) &&
+      key in input.currentProperties,
+  );
 }
 
 /**
@@ -152,9 +179,13 @@ export function detectConflict(input: ConflictInput): ConflictResult {
     }
   }
 
+  // A key the write clears is a client change to that key, and collides
+  // with a server change to it on the same rule as a value would.
+  const cleared = clearedKeys(input);
+
   // Conflicting = both client and server changed the same field
   const conflictingFields: string[] = [];
-  for (const field of clientChangedFields) {
+  for (const field of [...clientChangedFields, ...cleared]) {
     if (serverChangedFields.has(field)) {
       conflictingFields.push(field);
     }
@@ -197,6 +228,9 @@ export function detectConflict(input: ConflictInput): ConflictResult {
   for (const key of clientChangedFields) {
     merged[key] = clientProperties[key];
   }
+  for (const key of cleared) {
+    Reflect.deleteProperty(merged, key);
+  }
   return {
     type: "no_conflict",
     merged,
@@ -226,6 +260,8 @@ export interface AutoMergeInput {
    *  in the report rather than looked up in the policy. */
   collidingItemFields: readonly VersionedItemField[];
   policy: MergePolicy;
+  /** As {@link ConflictInput.clearedProperties}. */
+  clearedProperties?: readonly string[];
 }
 
 export interface AutoMergePlan {
@@ -303,6 +339,22 @@ export function planAutoMerge(input: AutoMergeInput): AutoMergePlan {
     merged[key] = value;
   }
 
+  // A cleared key is the caller's change to "absent", resolved as a value
+  // is: applied where nothing collided, by the policy where something did.
+  for (const key of clearedKeys(input)) {
+    if (!colliding.has(key)) {
+      Reflect.deleteProperty(merged, key);
+      continue;
+    }
+    const strategy = strategyFor(key, policy);
+    strategyByField[key] = strategy;
+    if (strategy === "keep_both_copies") {
+      keepBothFields.push(key);
+      continue;
+    }
+    Reflect.deleteProperty(merged, key);
+  }
+
   return { merged, keepBothFields: keepBothFields.sort(), strategyByField };
 }
 
@@ -319,10 +371,18 @@ export function conflictedSiblingProperties(input: {
   clientProperties: Record<string, unknown>;
   currentProperties: Record<string, unknown>;
   keepBothFields: string[];
+  /** As {@link ConflictInput.clearedProperties}: a losing clear leaves the
+   *  sibling without the field rather than with a value of nothing. */
+  clearedProperties?: readonly string[];
 }): Record<string, unknown> {
   const properties: Record<string, unknown> = { ...input.currentProperties };
+  const cleared = new Set(input.clearedProperties ?? []);
   for (const field of input.keepBothFields) {
-    properties[field] = input.clientProperties[field];
+    if (cleared.has(field) && !(field in input.clientProperties)) {
+      Reflect.deleteProperty(properties, field);
+    } else {
+      properties[field] = input.clientProperties[field];
+    }
   }
   return properties;
 }

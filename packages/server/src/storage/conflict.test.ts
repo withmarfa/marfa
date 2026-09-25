@@ -219,4 +219,81 @@ describe("detectConflict", () => {
       collidingItemFields: [],
     });
   });
+
+  it("clears a key a replace left out, where the server did not touch it", () => {
+    // The client read v1 { title, body, notes } and replaced it with
+    // { title, body }: the notes are a change to "absent". The server moved
+    // the title since, which does not collide with a clear of the notes.
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: {
+        title: "server title",
+        body: "original body",
+        notes: "to clear",
+      },
+      ancestorProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "to clear",
+      },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "no_conflict",
+      merged: { title: "server title", body: "original body" },
+      changedFields: {},
+    });
+  });
+
+  it("conflicts on a key a replace left out that the server changed since", () => {
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "changed since",
+      },
+      ancestorProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "mine",
+      },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "conflict",
+      conflicting_fields: ["notes"],
+      changedFields: {},
+      collidingItemFields: [],
+    });
+  });
+
+  it("takes a key both sides cleared as an echo, not a change", () => {
+    // The witness for the two above: the same clear against a row the
+    // server has already cleared neither conflicts nor counts.
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: { title: "original title", body: "original body" },
+      ancestorProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "gone on both sides",
+      },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "no_conflict",
+      merged: { title: "original title", body: "original body" },
+      changedFields: {},
+    });
+  });
 });

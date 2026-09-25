@@ -380,6 +380,81 @@ describe("item versioning", () => {
     expect(stale.data.item.properties.title).toBe("Server title");
   });
 
+  it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
+    // `versions.md` 11 applies a stale write's genuine changes over the
+    // current row. Under `properties_mode: replace` the body is the whole of
+    // the caller's properties, so a field the ancestor had and the body
+    // lacks is one of those changes: the caller cleared it.
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Replace", body: "Original", notes: "To clear" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    // The witness: the field is there to be cleared.
+    expect(advanced.data.item.properties.notes).toBe("To clear");
+
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { title: "Replace", body: "Original" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    expect(stale.data.item.properties).not.toHaveProperty("notes");
+    expect(stale.data.item.properties.title).toBe("Server title");
+    expect(stale.data.item.properties.body).toBe("Original");
+    // A merge is told from a clean write by its version: more than one step
+    // past the one the caller named.
+    expect(stale.data.item.version).toBe(3);
+
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.properties).not.toHaveProperty("notes");
+  });
+
+  it("refuses a stale replace that leaves out a field the other writer changed since", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Replace", body: "Original", notes: "Mine" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { notes: "Changed since" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    expect(advanced.data.item.version).toBe(2);
+
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { title: "Replace", body: "Original" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+    const body = stale.error as unknown as ConflictResponse;
+    expect(body.conflicting_fields).toEqual(["notes"]);
+    expect(body.current.version).toBe(2);
+    expect(body.current.properties.notes).toBe("Changed since");
+
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.version).toBe(2);
+    expect(fetched.data.item.properties.notes).toBe("Changed since");
+  });
+
   it("answers an edges-only stale write with the envelope minus its merge half", async () => {
     // The third shape this code is answered in, and the one a client is
     // most likely to be surprised by: there is nothing to merge, so there
