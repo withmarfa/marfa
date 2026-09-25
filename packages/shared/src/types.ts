@@ -151,9 +151,9 @@ export interface UpdateItemInput {
    * — the same constraint enforced at create time — so the server rejects
    * the update with HTTP 409 `source_id_conflict` if the target value is
    * already taken by a different item. PATCHing the same value the item
-   * already carries is a no-op success. Used by the sync agent to preserve
-   * item identity through file renames without losing the path-derived
-   * natural key.
+   * already carries is a no-op success. Used by folders to preserve item
+   * identity through file renames without losing the path-derived natural
+   * key.
    */
   source_id?: string;
 }

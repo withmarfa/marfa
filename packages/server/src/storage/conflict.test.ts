@@ -398,6 +398,6 @@ describe("planAutoMerge with a cleared key", () => {
         keepBothFields: ["notes"],
         clearedProperties: ["title", "notes"],
       }),
-    ).toEqual({ title: "T2", body: "b" });
+    ).toStrictEqual({ title: "T2", body: "b" });
   });
 });

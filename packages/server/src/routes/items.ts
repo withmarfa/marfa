@@ -663,7 +663,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -2381,13 +2381,6 @@ export function itemRoutes(storage: Storage) {
         await readInstanceConfig(storage.settings),
         c.get("apiKey"),
       );
-      // Through the shared helper rather than a shallow spread of its own,
-      // because this has to predict what the store writes at the current
-      // version: a copy that validated the merged set while the store wrote
-      // the replaced one would pass a write dropping a required field on
-      // the strength of the value it was removing. At a stale version the
-      // store merges against the ancestor instead, and judges the result
-      // against the type it ends up as before it writes.
       // The type the row ends up as, which is what the resulting
       // properties have to satisfy. Validating against the type being left
       // would admit a move whose result the destination calls invalid,
@@ -2419,21 +2412,33 @@ export function itemRoutes(storage: Storage) {
               body.properties,
             );
       if (undeclared) throw undeclared;
-      const merged = mergeUpdateProperties(
-        item.properties,
-        resolveIncomingProperties(resultingType, body.properties),
-        body.properties_mode ?? "merge",
-      );
-      if (getTypeSchema(resultingType)) {
-        const validation = validateProperties(resultingType, merged);
-        if (!validation.success) {
-          throw new MarfaError(
-            ErrorCode.INVALID_PROPERTIES,
-            "Invalid properties",
-            {
-              errors: validation.errors,
-            },
-          );
+      // The verdict on the row's resulting properties belongs to whoever
+      // computes them. At the current version that is this door, through
+      // the shared helper rather than a shallow spread of its own: a copy
+      // that validated the merged set while the store wrote the replaced
+      // one would pass a write dropping a required field on the strength
+      // of the value it was removing. At a stale version the store merges
+      // against the ancestor and judges that result before it writes; the
+      // body laid over the current row is not what lands, and judging it
+      // would refuse a write whose merge keeps a field the other writer
+      // added since.
+      if (body.version === item.version) {
+        const merged = mergeUpdateProperties(
+          item.properties,
+          resolveIncomingProperties(resultingType, body.properties),
+          body.properties_mode ?? "merge",
+        );
+        if (getTypeSchema(resultingType)) {
+          const validation = validateProperties(resultingType, merged);
+          if (!validation.success) {
+            throw new MarfaError(
+              ErrorCode.INVALID_PROPERTIES,
+              "Invalid properties",
+              {
+                errors: validation.errors,
+              },
+            );
+          }
         }
       }
     }
@@ -2479,11 +2484,11 @@ export function itemRoutes(storage: Storage) {
     let patchedEdgeChanges: InlineEdgeChanges | undefined;
     const txResult = await storage.runInTransaction(async () => {
       // The version is enforced here for the one arm that never reaches the
-      // store: a write carrying only `edges`, or only `retype`, applies over
-      // whatever the row has become, so without this the door would collect
-      // a required precondition and discard it — worse than not asking at
-      // all, because a caller reads a refusal that never came as proof it
-      // was current.
+      // store: a write carrying only `edges`, or a `retype` naming the type
+      // the row already has, applies over whatever the row has become, so
+      // without this the door would collect a required precondition and
+      // discard it — worse than not asking at all, because a caller reads
+      // a refusal that never came as proof it was current.
       //
       // Inside the transaction and re-reading the row, not against the copy
       // read before it: a check outside is advisory, and any write landing

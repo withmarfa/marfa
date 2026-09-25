@@ -36,6 +36,7 @@ export class SqliteVersionStore implements VersionStore {
       tier: itemFields.tier,
       occurred_at: itemFields.occurred_at,
       source_id: itemFields.source_id,
+      type: itemFields.type,
       created_at: now,
     };
     await db.insert(versions).values(row).run();
@@ -76,6 +77,7 @@ export class SqliteVersionStore implements VersionStore {
         tier: row.tier,
         occurred_at: row.occurred_at,
         source_id: row.source_id,
+        type: row.type,
       },
     };
   }

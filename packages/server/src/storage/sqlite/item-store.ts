@@ -787,8 +787,11 @@ export class SqliteItemStore implements ItemStore {
         {},
         "item update properties",
       );
+      // Nulls are read by the type the row ends up as: on a move, a null
+      // clears a field the destination declares optional and is refused
+      // on one it requires, whatever the type being left said about it.
       const incomingProps = resolveIncomingProperties(
-        row.type,
+        input.type ?? row.type,
         input.properties,
       );
       const now = new Date().toISOString();
@@ -823,6 +826,7 @@ export class SqliteItemStore implements ItemStore {
             tier: row.tier,
             occurred_at: row.occurred_at,
             source_id: row.source_id,
+            type: row.type,
           },
           tx,
         );
@@ -977,6 +981,39 @@ export class SqliteItemStore implements ItemStore {
       // Null on the idempotent retry, where the row already existed.
       let sibling: Item | null = null;
 
+      // A move onto a row another writer has moved since the version the
+      // caller read collides on the type, whatever else the write carries:
+      // landing it would undo a move the caller never saw. The snapshot
+      // records the type for this; one written before it did reads as the
+      // row's current type, so nothing collides on it.
+      const movedSince =
+        input.type !== undefined &&
+        row.type !== (ancestor.item_fields.type ?? row.type);
+
+      const ancestorFields = {
+        current: snapshotFields,
+        ancestor: {
+          id,
+          tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
+          occurred_at: ancestor.item_fields.occurred_at ?? row.occurred_at,
+          source_id: ancestor.item_fields.source_id,
+        },
+      };
+      if (movedSince) {
+        return versionConflict(
+          row.version,
+          currentProps,
+          input.version,
+          ancestor.properties,
+          [
+            ...(result.type === "conflict" ? result.conflicting_fields : []),
+            "type",
+          ].sort(),
+          policy,
+          ancestorFields,
+        );
+      }
+
       if (result.type === "conflict") {
         // A colliding write that also moves the type is not resolved: the
         // policy is the type being left's, and a copy the resolution wrote
@@ -989,16 +1026,7 @@ export class SqliteItemStore implements ItemStore {
             ancestor.properties,
             result.conflicting_fields,
             policy,
-            {
-              current: snapshotFields,
-              ancestor: {
-                id,
-                tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
-                occurred_at:
-                  ancestor.item_fields.occurred_at ?? row.occurred_at,
-                source_id: ancestor.item_fields.source_id,
-              },
-            },
+            ancestorFields,
           );
         }
 
@@ -1399,6 +1427,7 @@ export class SqliteItemStore implements ItemStore {
       tier: row.tier ?? null,
       occurred_at: row.occurred_at,
       source_id: row.source_id ?? null,
+      type: row.type,
     });
 
     const now = new Date().toISOString();

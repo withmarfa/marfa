@@ -254,6 +254,52 @@ describe("the server resolves a conflict", () => {
     expect(sibling.data.metadata.tags).toContain("conflicted-copy");
   });
 
+  it("applies a clear nobody collided with under conflict=auto, and resolves nothing", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        title: "shared title",
+        body: "shared body",
+        notes: "to clear",
+      },
+    });
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const base = seed.data.item.version;
+
+    const other = await client.updateItem(id, {
+      properties: { title: "title from the other writer" },
+      version: base,
+    });
+    expect(other.ok).toBe(true);
+
+    // The replace echoes the title at the value it read and leaves the
+    // notes out: the clear is a genuine change nobody else touched, so it
+    // lands as a merge would land it, and the flag has nothing to resolve.
+    const cleared = await client.rawRequest<{
+      item: { version: number; properties: Record<string, unknown> };
+      conflict_resolution?: unknown;
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { title: "shared title", body: "shared body" },
+        properties_mode: "replace",
+        version: base,
+      },
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.item.version).toBe(base + 2);
+    expect(cleared.data.item.properties).toEqual({
+      title: "title from the other writer",
+      body: "shared body",
+    });
+    expect(cleared.data.conflict_resolution).toBeUndefined();
+  });
+
   it("refuses to resolve a colliding write that also moves the type", async () => {
     requireRule(caps, "serverSideMerge");
 

@@ -616,6 +616,315 @@ describe("item versioning", () => {
     expect(stale.data.item.properties.title).toBe("Advanced");
   });
 
+  it("moves the type with retype alone at a stale version", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Alone", body: "Kept" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+
+    const moved = await client.updateItem(r.data.item.id, {
+      type: "core.bookmark",
+      retype: true,
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.bookmark");
+    expect(moved.data.item.version).toBe(3);
+    expect(moved.data.item.properties).toEqual({
+      title: "Server title",
+      body: "Kept",
+    });
+  });
+
+  it("refuses a retype naming the row's own type at a stale version, as any stale write that changes nothing", async () => {
+    const r = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "Staying" } }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { body: "Advanced" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+
+    const same = await client.updateItem(r.data.item.id, {
+      type: "core.note",
+      retype: true,
+      version: 1,
+    });
+    expect(same.status).toBe(409);
+    expect(same.error?.error.code).toBe("version_conflict");
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.version).toBe(2);
+  });
+
+  it("refuses a stale move onto a row another writer moved since, naming type", async () => {
+    // Two writers reading one version and each moving the row somewhere
+    // else: the second cannot land over the first without silently
+    // undoing a move it never saw. A snapshot records the type the row
+    // had, so the collision is visible whatever the write carries.
+    const typeId = `user.third-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: typeId,
+      label: "A third type",
+      version: 1,
+      fields: { title: { type: "string" } },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Contested", body: "Body" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const first = await client.updateItem(r.data.item.id, {
+      type: "core.bookmark",
+      retype: true,
+      version: 1,
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    expect(first.data.item.version).toBe(2);
+
+    const second = await client.updateItem(r.data.item.id, {
+      type: typeId,
+      retype: true,
+      version: 1,
+    });
+    expect(second.status).toBe(409);
+    expect(second.error?.error.code).toBe("version_conflict");
+    expect(
+      (second.error as unknown as { conflicting_fields?: string[] })
+        .conflicting_fields,
+    ).toContain("type");
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.bookmark");
+    expect(fetched.data.item.version).toBe(2);
+  });
+
+  it("reads a null on a move by the type entered", async () => {
+    // A null on a field the type declares optional means "unset" under a
+    // merge, so the field survives and no null is stored; on one the type
+    // requires it is kept for the validation to refuse. On a move, the
+    // type that decides is the one the row enters. A note's body is
+    // required and a bookmark's is optional, so the null is dropped, the
+    // body stays, and nothing is stored under the key as null.
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Nulled", body: "Staying" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const moved = await client.updateItem(r.data.item.id, {
+      type: "core.bookmark",
+      retype: true,
+      properties: { url: "https://example.com/nulled", body: null },
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe("core.bookmark");
+    expect(moved.data.item.properties).toEqual({
+      title: "Nulled",
+      body: "Staying",
+      url: "https://example.com/nulled",
+    });
+
+    // Under `replace` a null is a key left out, so the same move at the
+    // new version clears the body the bookmark does not require.
+    const cleared = await client.updateItem(r.data.item.id, {
+      properties: {
+        title: "Nulled",
+        url: "https://example.com/nulled",
+        body: null,
+      },
+      properties_mode: "replace",
+      version: 2,
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.item.properties).toEqual({
+      title: "Nulled",
+      url: "https://example.com/nulled",
+    });
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.properties).not.toHaveProperty("body");
+  });
+
+  it("judges a stale write by its merged result, not by the body laid over the current row", async () => {
+    // A field added and made required after the caller read: the other
+    // writer set it, the caller's replace does not name it, and the
+    // ancestor never had it, so the merge keeps the other writer's value
+    // and the result satisfies the type. A verdict taken on the body
+    // alone, as if at the current version, would refuse it.
+    const typeId = `user.gains-later-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: typeId,
+      label: "Gains a field later",
+      version: 1,
+      fields: { title: { type: "string" }, due: { type: "string" } },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const r = await client.createItem({
+      type: typeId,
+      source: ctx.source,
+      properties: { title: "First" },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const other = await client.updateItem(r.data.item.id, {
+      properties: { due: "2026-10-01" },
+      version: 1,
+    });
+    expect(other.ok).toBe(true);
+    const required = await client.updateType(typeId, {
+      id: typeId,
+      label: "Gains a field later",
+      version: 2,
+      fields: {
+        title: { type: "string" },
+        due: { type: "string", required: true },
+      },
+    });
+    expect(required.ok, JSON.stringify(required.error)).toBe(true);
+
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { title: "Second" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    expect(stale.data.item.version).toBe(3);
+    expect(stale.data.item.properties).toEqual({
+      title: "Second",
+      due: "2026-10-01",
+    });
+  });
+
+  it("takes a clear both writers made as an echo", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Echo", body: "Body", notes: "Both clear" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const other = await client.updateItem(r.data.item.id, {
+      properties: { title: "Echo", body: "Body" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(other.ok).toBe(true);
+    expect(other.data.item.properties).not.toHaveProperty("notes");
+
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { title: "Echo", body: "Body" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    expect(stale.data.item.properties).toEqual({
+      title: "Echo",
+      body: "Body",
+    });
+  });
+
+  it("clears a field named like a prototype member as any other", async () => {
+    // A key a JavaScript object inherits has to be judged by what the row
+    // holds, not by what the language answers for every object.
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { body: "Body", constructor: "own value" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    expect(r.data.item.properties.constructor).toBe("own value");
+    const other = await client.updateItem(r.data.item.id, {
+      properties: { body: "Advanced" },
+      version: 1,
+    });
+    expect(other.ok).toBe(true);
+
+    const stale = await client.updateItem(r.data.item.id, {
+      properties: { body: "Body" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(200);
+    expect(stale.data.item.properties).toEqual({ body: "Advanced" });
+  });
+
+  it("indexes a row under the type it entered on a stale move", async () => {
+    // A field one type keeps out of search and the other does not: after
+    // a stale move the row is found by it, which only an index built for
+    // the type entered can answer.
+    const quiet = `user.quiet-${ctx.runId}`;
+    const loud = `user.loud-${ctx.runId}`;
+    const marker = `zebra${ctx.runId}`;
+    for (const [id, searchable] of [
+      [quiet, false],
+      [loud, true],
+    ] as const) {
+      const registered = await client.registerType({
+        id,
+        label: id,
+        version: 1,
+        fields: {
+          title: { type: "string" },
+          secret: { type: "string", searchable },
+        },
+      });
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    }
+    const r = await client.createItem({
+      type: quiet,
+      source: ctx.source,
+      properties: { title: "Hidden", secret: marker },
+    });
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const hidden = await client.search(marker);
+    expect(hidden.ok).toBe(true);
+    expect(hidden.data.data.map((hit) => hit.item.id)).not.toContain(
+      r.data.item.id,
+    );
+    const other = await client.updateItem(r.data.item.id, {
+      properties: { title: "Renamed" },
+      version: 1,
+    });
+    expect(other.ok).toBe(true);
+
+    const moved = await client.updateItem(r.data.item.id, {
+      type: loud,
+      retype: true,
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe(loud);
+    const found = await client.search(marker);
+    expect(found.ok).toBe(true);
+    expect(found.data.data.map((hit) => hit.item.id)).toContain(r.data.item.id);
+  });
+
   it("clears a field a stale replace leaves out, where nobody changed it since", async () => {
     // `versions.md` 11 applies a stale write's genuine changes over the
     // current row. Under `properties_mode: replace` the body is the whole of
