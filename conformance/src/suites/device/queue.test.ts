@@ -17,7 +17,8 @@ import type {
   QueuedWrite,
 } from "../../device/protocol.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
-import { chmodSync, existsSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import {
   KEY,
   acceptUploads,
@@ -2357,6 +2358,76 @@ describe("an upload is a queued write", () => {
       sent?.headers.authorization,
       "the upload went without the credential, so the server refuses every one",
     ).toBe(`Bearer ${KEY}`);
+  });
+
+  it("names an upload's bytes in the queue and never holds them", async () => {
+    harness = await hydratedHarness("upload-named-not-held", { rows: held() });
+    const { device } = harness;
+    const marker = "upload-bytes-f3a9c1e7";
+    const bytes = Buffer.from(`${marker}\n`);
+    const queued = await device.putBlob(fileOf("note.txt", bytes));
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    // Beside it, a create whose body carries the same text, so the scan
+    // below is shown to find what a queue row does hold.
+    const control = await device.create({
+      type: "core.note",
+      properties: { title: "control", body: marker },
+    });
+    expect(control.ok, JSON.stringify(control)).toBe(true);
+    if (!control.ok) return;
+
+    // What each queue row holds, read from the store itself: the queue's
+    // own report is a projection, and bytes could sit in a column it leaves
+    // out.
+    const store = new DatabaseSync(device.store, { readOnly: true });
+    let rows: Array<Record<string, unknown>>;
+    try {
+      rows = store.prepare("SELECT * FROM queue").all() as Array<
+        Record<string, unknown>
+      >;
+    } finally {
+      store.close();
+    }
+    const encodings = [
+      marker,
+      bytes.toString("base64"),
+      bytes.toString("hex"),
+      Buffer.from(marker).toString("base64"),
+    ];
+    const holdsTheBytes = (row: Record<string, unknown>) =>
+      Object.values(row).some((value) =>
+        value instanceof Uint8Array
+          ? Buffer.from(value).includes(bytes) ||
+            Buffer.from(value).includes(marker)
+          : typeof value === "string" &&
+            encodings.some((encoded) => value.includes(encoded)),
+      );
+    const rowOf = (id: string) => rows.find((row) => row.id === id);
+    const upload = rowOf(queued.value.id);
+    expect(
+      upload,
+      "the upload is not a row of the queue table, so nothing here reads it",
+    ).toBeDefined();
+    if (upload === undefined) return;
+    expect(
+      holdsTheBytes(rowOf(control.value.id) ?? {}),
+      "the scan did not find text a create's row holds, so it cannot find bytes either",
+    ).toBe(true);
+    expect(
+      JSON.stringify(upload),
+      "the upload's row does not name the bytes by their hash",
+    ).toContain(hashOf(bytes));
+    expect(
+      holdsTheBytes(upload),
+      "the upload's queue row holds the bytes themselves, so a queue of photos is a copy of every photo in the store",
+    ).toBe(false);
+    // Where they are held: beside the store, under their hash.
+    expect(
+      readFileSync(
+        `${device.store}.blobs/${hashOf(bytes).slice("sha256:".length)}`,
+      ),
+    ).toEqual(bytes);
   });
 
   it("attaches a file as an upload, a file item and an edge, each waiting on the one before", async () => {
