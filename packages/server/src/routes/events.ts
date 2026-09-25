@@ -46,8 +46,9 @@ const REPLAY_BATCH_SIZE = 500;
  * **What it degrades to is the point.** Announcing nothing and releasing
  * the hold leaves the client connected, live, and holding no cursor of
  * its own, which is a state its reconnect path handles: it reads the
- * marker that ends the prologue, whose cursor is then null. A client
- * whose frames are held indefinitely is in no state at all.
+ * marker that ends the prologue, whose cursor is then whatever the
+ * replay or the drained frames reached, or null. A client whose frames
+ * are held indefinitely is in no state at all.
  */
 const HEAD_READ_TIMEOUT_MS = 5_000;
 
@@ -524,21 +525,15 @@ export function eventRoutes(
            */
           let lastSentId: bigint | null = null;
           /**
-           * The highest `id:` this stream wrote, and the highest id its
-           * replay walked past, withheld rows included: what the marker
-           * that ends the prologue names, since a reader may resume past
-           * everything the replay covered whether or not it was sent it.
-           * Apart from `lastSentId` only in the undecodable-row case,
-           * where the last id written is the lower one.
+           * The highest id the replay read, withheld rows included, and
+           * null where it read none: what the marker that ends the
+           * prologue names beside the head and the last id written, since
+           * a reader may resume past everything the replay covered whether
+           * or not it was sent it. Never the cursor the client arrived
+           * with, which may sit past the head and would then be named back
+           * to it as a position the stream had reached.
            */
-          let highestSentId: bigint | null = null;
           let replayedTo: bigint | null = null;
-          const noteSent = (eventId: bigint): void => {
-            lastSentId = eventId;
-            if (highestSentId === null || eventId > highestSentId) {
-              highestSentId = eventId;
-            }
-          };
 
           // Subscribed before the replay starts, so nothing falls between
           // the two. One subscription for both kinds of frame, in publish
@@ -597,7 +592,7 @@ export function eventRoutes(
 
             const idField =
               eventId !== undefined ? `id: ${String(eventId)}\n` : "";
-            if (eventId !== undefined) noteSent(eventId);
+            if (eventId !== undefined) lastSentId = eventId;
             send(
               `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
             );
@@ -654,7 +649,7 @@ export function eventRoutes(
             const sseData = { type: wireType, edge: event.edge };
             const idField =
               eventId !== undefined ? `id: ${String(eventId)}\n` : "";
-            if (eventId !== undefined) noteSent(eventId);
+            if (eventId !== undefined) lastSentId = eventId;
             send(
               `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
             );
@@ -854,6 +849,9 @@ export function eventRoutes(
             // Above the `try` because the catch reports it: a catch-up
             // that stopped is only actionable if it says where.
             let lastReplayedId: bigint = afterIdResolved;
+            // The last row read, as against where the read started: the
+            // position the marker may name.
+            let lastRead: bigint | null = null;
             try {
               // A cursor is too old when the log no longer holds the event
               // after it: the oldest retained id is greater than the cursor
@@ -964,6 +962,7 @@ export function eventRoutes(
                   // it, and only `?edges=none` withholds it.
                   if (isEdge && edgeMode === "none") {
                     lastReplayedId = event.id;
+                    lastRead = event.id;
                     continue;
                   }
                   // Decoded once for the whole row, shared by the type
@@ -1007,6 +1006,7 @@ export function eventRoutes(
                         `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
                       );
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                   }
@@ -1043,6 +1043,7 @@ export function eventRoutes(
                         : undefined;
                     if (typeof named !== "string") {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                     // The same function the live path filters on, and
@@ -1057,6 +1058,7 @@ export function eventRoutes(
                       !eventMatchesTypeFilter(named, typeParam)
                     ) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                     if (
@@ -1064,6 +1066,7 @@ export function eventRoutes(
                       !matchesTypeFilter(named, typeFilter)
                     ) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                   }
@@ -1085,6 +1088,7 @@ export function eventRoutes(
                     const storedEdge = replayEdges.get(event.id);
                     if (storedEdge === undefined) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                     if (
@@ -1095,6 +1099,7 @@ export function eventRoutes(
                       )
                     ) {
                       lastReplayedId = event.id;
+                      lastRead = event.id;
                       continue;
                     }
                   }
@@ -1113,7 +1118,7 @@ export function eventRoutes(
                   // re-serialized, so an edge frame pays nothing for
                   // this narrowing in particular. Its own gate above is
                   // what it pays for, and that is batched.
-                  noteSent(event.id);
+                  lastSentId = event.id;
                   send(
                     `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
                   );
@@ -1121,11 +1126,12 @@ export function eventRoutes(
                   // sent, so its live copy is not a duplicate.
                   rememberReplayed(event.id);
                   lastReplayedId = event.id;
+                  lastRead = event.id;
                 }
 
                 if (batch.length < REPLAY_BATCH_SIZE) break;
               }
-              replayedTo = lastReplayedId;
+              replayedTo = lastRead;
               return true;
             } catch (err) {
               // A catch-up that failed leaves the client short of events
@@ -1307,7 +1313,7 @@ export function eventRoutes(
               // stream stays open with no announcement: the caller
               // releases the hold on its way past, and the marker that
               // ends the prologue then names whatever position the
-              // replay reached, or none.
+              // replay or the drained frames reached, or none.
               console.warn(
                 `[events] announcing no cursor: the event-log head did not arrive within ${String(
                   options.headReadTimeoutMs ?? HEAD_READ_TIMEOUT_MS,
@@ -1339,11 +1345,7 @@ export function eventRoutes(
           const announceLive = (): void => {
             if (state.closed) return;
             let reached: bigint | null = null;
-            for (const candidate of [
-              announcedHead,
-              replayedTo,
-              highestSentId,
-            ]) {
+            for (const candidate of [announcedHead, replayedTo, lastSentId]) {
               if (
                 candidate !== null &&
                 (reached === null || candidate > reached)

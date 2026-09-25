@@ -247,7 +247,11 @@ describe("the stream says when it is live", () => {
     const head = BigInt(
       String((announced?.data as { cursor?: unknown })?.cursor),
     );
-    const cursor = BigInt(String((live?.data as { cursor?: unknown })?.cursor));
+    const rawCursor = (live?.data as { cursor?: unknown })?.cursor;
+    // A string, as the header carries it and as the announcement is: a
+    // number would lose precision above 2^53 on the client.
+    expect(typeof rawCursor).toBe("string");
+    const cursor = BigInt(String(rawCursor));
     expect(
       cursor >= head,
       `the live cursor ${String(cursor)} sits below the announced head ${String(head)}`,

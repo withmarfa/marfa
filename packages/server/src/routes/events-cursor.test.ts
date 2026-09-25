@@ -31,6 +31,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
+import type { PersistedEvent } from "../storage/interface.js";
 
 let ctx: TestContext;
 
@@ -85,6 +86,56 @@ function dataOf(frame: string): Record<string, unknown> {
   const line = frame.split("\n").find((l) => l.startsWith("data: "));
   if (line === undefined) throw new Error(`frame carried no data: ${frame}`);
   return JSON.parse(line.slice("data: ".length)) as Record<string, unknown>;
+}
+
+/**
+ * Park the replay's first log read until `open()`, after the head has been
+ * announced, and hand back the rows that read returned once it has run.
+ *
+ * `rows` is the guard: a read that ran before the writes it was meant to
+ * walk would come back short, and the test would pass having exercised
+ * none of its own arrangement.
+ */
+function gateFirstReplayRead(): {
+  reached: Promise<void>;
+  open: () => void;
+  rows: Promise<PersistedEvent[]>;
+  restore: () => void;
+} {
+  const store = ctx.storage.eventLog;
+  const real = store.getAfter.bind(store);
+  let arrive: () => void = () => undefined;
+  const reached = new Promise<void>((resolve) => {
+    arrive = resolve;
+  });
+  let release: () => void = () => undefined;
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let seen: (rows: PersistedEvent[]) => void = () => undefined;
+  const rows = new Promise<PersistedEvent[]>((resolve) => {
+    seen = resolve;
+  });
+  let armed = true;
+  store.getAfter = async (afterId, limit) => {
+    if (!armed) return real(afterId, limit);
+    armed = false;
+    arrive();
+    await opened;
+    const batch = await real(afterId, limit);
+    seen(batch);
+    return batch;
+  };
+  return {
+    reached,
+    open: () => {
+      release();
+    },
+    rows,
+    restore: () => {
+      store.getAfter = real;
+    },
+  };
 }
 
 /** Open a stream, read to its announcement, and close it again. */
@@ -243,6 +294,92 @@ describe("GET /events says when it is live", () => {
     const at = text.indexOf("event: stream_live");
     expect(at).toBeGreaterThan(text.indexOf(backlog));
     expect(at).toBeLessThan(text.indexOf(live!));
+    // Once. A second marker would name a position past frames the
+    // client has already been sent, and a client that treats the marker
+    // as the end of its replay would treat the frames between as replay.
+    expect(text.split("event: stream_live").length - 1).toBe(1);
+  });
+
+  it("names the head, not the cursor, when the client resumes from above the head", async () => {
+    // A client whose cursor came from elsewhere, or from a log since
+    // rebuilt, can ask to resume from an id the log has not reached. The
+    // marker covers what the stream has sent or withheld, and that is the
+    // head: a marker naming the client's own cursor would have it skip
+    // every id up to there on its next replay, and the live frames below
+    // it follow the marker as the proof that they were not covered.
+    await createNote("seed");
+    const head = await latestEventId();
+
+    const res = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(head + 1000n) },
+    });
+    expect(res.status).toBe(200);
+    let live: string | undefined;
+    const { text } = await readSseWriting(
+      res,
+      "event: stream_live",
+      async () => {
+        live = await createNote("written below the client's cursor");
+      },
+      (seen) => seen.includes("written below the client's cursor"),
+    );
+
+    expect(dataOf(frameNamed(text, "stream_live") ?? "").cursor).toBe(
+      String(head),
+    );
+    const at = text.indexOf("event: stream_live");
+    expect(at).toBeLessThan(text.indexOf(live!));
+    const liveId = /^id: (\d+)$/m.exec(text.slice(at))?.[1];
+    expect(liveId).toBeDefined();
+    expect(BigInt(liveId!) > head).toBe(true);
+    expect(BigInt(liveId!) < head + 1000n).toBe(true);
+  });
+
+  it("names the last row the replay walked, past the head, when every row past it was withheld", async () => {
+    // The head is read before the replay, so rows written between the two
+    // are walked by the replay and lie past the head. When the filter
+    // withholds every one of them nothing is sent, and the marker still
+    // has to name the last of them: a client resuming from the head
+    // would have them walked, and withheld, again.
+    await createNote("seed");
+    const cursor = await latestEventId();
+    await createItem("core.bookmark", { url: "https://example.com/walked" });
+    const head = await latestEventId();
+
+    const gate = gateFirstReplayRead();
+    try {
+      const res = await request(ctx.app, "GET", "/events?type=core.bookmark", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      expect(res.status).toBe(200);
+      await gate.reached;
+      // Past the head the stream announced, and withheld by its filter.
+      const first = await createNote("walked and withheld");
+      const last = await createNote("walked and withheld, last");
+      const walkedTo = await latestEventId();
+      expect(walkedTo > head).toBe(true);
+      gate.open();
+
+      const { text } = await readSse(res, {
+        until: (t) => t.includes("event: stream_live"),
+      });
+      // The gated read is what walked the rows, or the arrangement
+      // proved nothing.
+      const walked = (await gate.rows).map((row) => row.id);
+      expect(walked).toContain(walkedTo);
+      expect(text).not.toContain(first);
+      expect(text).not.toContain(last);
+      expect(dataOf(frameNamed(text, "stream_cursor") ?? "").cursor).toBe(
+        String(head),
+      );
+      expect(dataOf(frameNamed(text, "stream_live") ?? "").cursor).toBe(
+        String(walkedTo),
+      );
+    } finally {
+      gate.restore();
+    }
   });
 
   it("names the head even when the frame that reached it is withheld from this stream", async () => {

@@ -249,12 +249,14 @@ describe("the prologue's hold", () => {
   });
 
   it("names a cursor that covers every frame before the marker and none after, however the gate and a publish align", async () => {
-    // The hold drops in the same breath as the marker is written, so a
-    // frame published as the gate opens is held and drained before the
-    // marker or goes live after it, never written between the flag and
-    // the marker. Swept over a few tick offsets between the publish and
-    // the gate, since which of the two it is depends on how many awaits
-    // the replay's last step takes; the cursor tells them apart.
+    // A frame published as the gate opens is either held and drained
+    // before the marker or sent live after it, and which depends on how
+    // many awaits the replay's last step takes against the pump's own.
+    // Swept over a few tick offsets between the publish and the gate so
+    // that both alignments are seen, and the sweep says so: a run in
+    // which every tick landed on one side would prove the cursor right
+    // for that side alone.
+    const alignments = new Set<"held" | "live">();
     for (let ticks = 0; ticks < 4; ticks += 1) {
       // Seeded, so the cursor names a real position and the replay runs.
       await note(`gate-open-seed-${String(ticks)}`);
@@ -283,13 +285,12 @@ describe("the prologue's hold", () => {
         until: (seen) =>
           seen.includes("event: stream_live") && seen.includes(marker),
       });
-      // Whether the frame was held and drained before the marker or went
-      // live after it depends on the tick; what holds either way is that
-      // the marker's cursor covers everything before it and nothing after,
-      // so a reader adopting it is neither sent a frame again nor skips
-      // one.
+      // Whichever side the frame landed, the marker's cursor covers
+      // everything before it and nothing after, so a reader adopting it
+      // is neither sent a frame again nor skips one.
       const at = text.indexOf("event: stream_live");
       expect(at).toBeGreaterThanOrEqual(0);
+      alignments.add(text.indexOf(marker) < at ? "held" : "live");
       const cursor = BigInt(
         /"cursor":"(\d+)"/.exec(text.slice(at))?.[1] ?? "-1",
       );
@@ -306,6 +307,43 @@ describe("the prologue's hold", () => {
         ).toBe(true);
       }
     }
+    expect(
+      [...alignments].sort(),
+      "the sweep has to see the frame on both sides of the marker",
+    ).toEqual(["held", "live"]);
+  });
+
+  it("names a drained edge frame past the head when it is the last frame before the marker", async () => {
+    // The marker's cursor is the furthest id written, and an edge frame
+    // drained from the hold is written by its own path, so that path has
+    // to record it too: a cursor stopping at the head would have a
+    // resuming reader sent the edge again.
+    const a = await note("drained-edge-a");
+    const b = await note("drained-edge-b");
+    const cursor = await ctx.storage.eventLog.getMaxId();
+
+    const { storage, open, reached } = gatedEventLog(ctx.storage);
+    const res = await eventsAppWithKey(storage, {
+      edge_permissions: { "*": "read" },
+    }).request("/events", {
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    await reached;
+
+    await edge(a, b);
+    const edgeId = await ctx.storage.eventLog.getMaxId();
+    expect(edgeId! > cursor!).toBe(true);
+    open();
+
+    const { text } = await readSse(res, {
+      until: (seen) => seen.includes("event: stream_live"),
+    });
+    expect(count(text, '"edge.created"')).toBe(1);
+    expect(frameIds(text)).toEqual([edgeId!]);
+    const live = text.indexOf("event: stream_live");
+    expect(live).toBeGreaterThan(text.indexOf("event: edge.created"));
+    expect(text.slice(live)).toContain(`"cursor":"${String(edgeId!)}"`);
   });
 
   it("keeps holding while the release waits on an edge send", async () => {
@@ -375,5 +413,9 @@ describe("the prologue's hold", () => {
     expect(text).toContain("event: stream_incomplete");
     expect(text).toContain('"reason":"edge_delivery_failed"');
     expect(text).toContain(`"cursor":"${String(itemId)}"`);
+    // A drain that failed never finished the prologue, so the stream is
+    // not said to be live; the tests above are the witness that a drain
+    // which finishes is followed by the marker.
+    expect(text).not.toContain("event: stream_live");
   });
 });
