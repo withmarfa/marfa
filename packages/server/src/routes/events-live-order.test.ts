@@ -12,7 +12,7 @@
  * row last.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, readSse, request, settle } from "../test-utils.js";
+import { createTestContext, readSse, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
@@ -54,30 +54,36 @@ describe("a live stream", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    // The stream announces its cursor and releases live delivery only
-    // after a read of the log head; frames published before that are held
-    // and drained in order, which is not the path under test.
-    await settle();
-    await settle();
 
-    const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.workingKey,
-      body: {
-        type: "core.note",
-        properties: { body: "live-order-source" },
-        edges: { references: targets },
-      },
-    });
-    expect(created.status).toBe(201);
-    const id = ((await created.json()) as { item: { id: string } }).item.id;
-    const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.workingKey,
-    });
-    expect(trashed.status).toBe(200);
-    const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
-      key: ctx.workingKey,
-    });
-    expect(purged.status).toBe(200);
+    // The writes are issued from inside the read, once the probe's frame
+    // has arrived. Frames published before the prologue has read the log
+    // head are held and drained in order, which is not the path under
+    // test; a frame delivered means the hold has been released, since the
+    // release flips its flag with no await after the last frame it sends,
+    // so everything published after it takes the live path. Observed
+    // rather than waited for.
+    const probe = await note("live-order-probe");
+    let writes: Promise<void> | undefined;
+    const write = async (): Promise<void> => {
+      const created = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.note",
+          properties: { body: "live-order-source" },
+          edges: { references: targets },
+        },
+      });
+      expect(created.status).toBe(201);
+      const id = ((await created.json()) as { item: { id: string } }).item.id;
+      const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
+        key: ctx.workingKey,
+      });
+      expect(trashed.status).toBe(200);
+      const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+        key: ctx.workingKey,
+      });
+      expect(purged.status).toBe(200);
+    };
 
     // Read until every frame the writes produce has arrived, whatever
     // order it arrived in: one created, three edges created, one deleted,
@@ -86,28 +92,21 @@ describe("a live stream", () => {
     const count = (seen: string, needle: string): number =>
       seen.split(needle).length - 1;
     const { text } = await readSse(res, {
+      onChunk: (seen) => {
+        if (writes === undefined && seen.includes(probe)) writes = write();
+      },
       until: (seen) =>
         seen.includes('"item.purged"') &&
         count(seen, '"edge.created"') === 3 &&
         count(seen, '"edge.deleted"') === 3,
     });
+    await writes;
 
-    // The witness that the frames went the live way: the stream announced
-    // its cursor before the first write's frame, and below its id, so the
-    // writes were published after the hold was released rather than held
-    // and drained in order.
-    const announcedAt = text.indexOf("event: stream_cursor");
-    expect(announcedAt).toBeGreaterThanOrEqual(0);
-    expect(announcedAt).toBeLessThan(text.indexOf('"item.created"'));
-    const announced = /"cursor":"(\d+)"/.exec(text)?.[1];
-    expect(announced).toBeDefined();
-
-    const ids = frameIds(text);
-    expect(ids).toHaveLength(9);
-    expect(
-      ids[0]! > BigInt(announced!),
-      "the first frame sits at or below the announced cursor, so the writes preceded the announcement and were held rather than sent live",
-    ).toBe(true);
+    // From the probe's frame on: what was published after the hold was
+    // seen to be released.
+    const live = text.slice(text.lastIndexOf("\nid: ", text.indexOf(probe)));
+    const ids = frameIds(live);
+    expect(ids).toHaveLength(10);
     for (let i = 1; i < ids.length; i += 1) {
       expect(
         ids[i]! > ids[i - 1]!,

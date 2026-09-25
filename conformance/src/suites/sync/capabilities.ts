@@ -929,9 +929,12 @@ async function probeEdgeEventsUnderFilter(args: {
           evidence: `a stream filtered to type=core.note delivered edge.created for ${edgeId}`,
         };
       }
+      // Absent, or delivered out of order: a server that sends the edge's
+      // frame after the sentinel written behind it reads the same way
+      // here, and `sync/resume.test.ts` is what tells the two apart.
       return {
         present: false,
-        evidence: `a stream filtered to type=core.note delivered the notes' item events but not edge.created for ${edgeId}, so a filtered client's graph goes stale`,
+        evidence: `a stream filtered to type=core.note delivered the notes' item events but not edge.created for ${edgeId} ahead of the sentinel written after it, so either edges are withheld under a filter and a filtered client's graph goes stale, or edge frames are delivered out of id order, which sync/resume.test.ts holds separately`,
       };
     },
   );

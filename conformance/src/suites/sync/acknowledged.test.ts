@@ -29,10 +29,10 @@ import type { SseEvent } from "../../utils/sse.js";
  * harmless; on one it has since edited locally it is a rollback nobody asked
  * for. So each case here waits for a sentinel written *after* the repeat, and
  * of the same kind as the frame it is ruling out: a sentinel that has arrived
- * is proof that anything published ahead of it on that pipeline has arrived
- * too, so an empty result is an observation rather than a quiet moment. Item
- * events and edge events travel independently, so only a like sentinel orders
- * against a like frame.
+ * is proof that anything published ahead of it has arrived too, since the
+ * stream delivers both kinds in id order, so an empty result is an observation
+ * rather than a quiet moment. A like sentinel keeps each case to one kind of
+ * frame, so what it rules out is named by the same event it is counting.
  *
  * The `Idempotency-Key` header in `idempotency.test.ts` is a different
  * mechanism for the same problem, and the two are easy to confuse: one

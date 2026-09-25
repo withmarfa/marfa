@@ -132,9 +132,11 @@ function rawQuery(sql: string): Promise<unknown> {
 describe("GET /events replay dedupe", () => {
   it("delivers the live copy of a row the replay skipped, exactly once", async () => {
     const SKIPPED = "ZZskippedrowZZ";
+    const HEALTHY = "ZZhealthyrowZZ";
     const END = "ZZskipdrainedZZ";
 
     const skippedItem = await createNote(SKIPPED);
+    const healthyItem = await createNote(HEALTHY);
     const endItem = await createNote(END);
     const cursor = await latestEventId();
 
@@ -161,6 +163,15 @@ describe("GET /events replay dedupe", () => {
       if (skippedId === undefined) {
         throw new Error("publish appended no event id; the log is unwired");
       }
+      // A healthy row beside it, walked by the same replay and held by
+      // the same buffer: the replay sends it, and the release must then
+      // drop its held copy. Without it, a release that sent every held
+      // frame would pass on the damaged row alone, whose only copy is
+      // the held one.
+      const healthyId = await publish({ type: "updated", item: healthyItem });
+      if (healthyId === undefined) {
+        throw new Error("publish appended no event id; the log is unwired");
+      }
 
       // Now damage the stored row. The replay decodes it, fails, warns
       // and skips — while the buffered live copy is an object and is
@@ -174,9 +185,10 @@ describe("GET /events replay dedupe", () => {
 
       gate.open();
       const replayed = (await gate.rows).map((row) => row.id);
-      // The replay really did walk the damaged row; without this the test
-      // could pass on a read that never reached it.
+      // The replay really did walk both rows; without this the test
+      // could pass on a read that never reached them.
       expect(replayed).toContain(skippedId);
+      expect(replayed).toContain(healthyId);
 
       await settle();
       await publish({ type: "updated", item: endItem });
@@ -188,6 +200,10 @@ describe("GET /events replay dedupe", () => {
       // skipped row is not recorded as sent.
       expect(text).toContain(SKIPPED);
       expect(frames(text, skippedId)).toBe(1);
+      // The healthy row went out with the replay and its held copy was
+      // dropped: once, not twice.
+      expect(text).toContain(HEALTHY);
+      expect(frames(text, healthyId)).toBe(1);
     } finally {
       gate.open();
       gate.restore();

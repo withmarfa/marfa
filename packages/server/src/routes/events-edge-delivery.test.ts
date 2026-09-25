@@ -16,8 +16,9 @@
  * is what decides what happens when one of them changes.
  */
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
-import { createTestContext, readSse, request, settle } from "../test-utils.js";
+import { createTestContext, readSse, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
 vi.mock("./_edge-visibility.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./_edge-visibility.js")>();
@@ -33,9 +34,13 @@ let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  // Frames carry an `id:` only when the log records them, and the cursor
+  // the failure names is one of those ids.
+  initEventLog(ctx.storage.eventLog);
 });
 
 afterAll(async () => {
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 
@@ -57,19 +62,38 @@ describe("a non-abort failure sending an edge frame", () => {
       key: ctx.workingKey,
     });
     expect(res.status).toBe(200);
-    // Past the prologue, so the edge below is sent live rather than held.
-    await settle();
-    await settle();
 
-    const edge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.workingKey,
-      body: { source_id: source, target_id: target, edge_type: "references" },
+    // The edge is written from inside the read, once the probe's frame
+    // has arrived: a frame delivered means the prologue has released its
+    // hold, so the edge takes the live path rather than the release path
+    // that reports the same reason. The probe's frame is also the last
+    // one sent before the failure, so it is the cursor the failure names.
+    const probe = await note("edge-failure-probe");
+    const probeId = await ctx.storage.eventLog.getMaxId();
+    let writes: Promise<void> | undefined;
+    const write = async (): Promise<void> => {
+      const edge = await request(ctx.app, "POST", "/edges", {
+        key: ctx.workingKey,
+        body: {
+          source_id: source,
+          target_id: target,
+          edge_type: "references",
+        },
+      });
+      expect(edge.status).toBe(201);
+    };
+    const { text, closed } = await readSse(res, {
+      untilClosed: true,
+      onChunk: (seen) => {
+        if (writes === undefined && seen.includes(probe)) writes = write();
+      },
     });
-    expect(edge.status).toBe(201);
-
-    const { text, closed } = await readSse(res, { untilClosed: true });
+    await writes;
     expect(closed).toBe(true);
     expect(text).toContain("event: stream_incomplete");
     expect(text).toContain('"reason":"edge_delivery_failed"');
+    // Where to reconnect from: the last frame delivered, not the edge
+    // that never was.
+    expect(text).toContain(`"cursor":"${String(probeId)}"`);
   });
 });

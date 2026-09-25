@@ -84,7 +84,7 @@ describe("the stream announces where it starts", () => {
     // would replay it and fail here.
     const before = await makeNote("announced-cursor-before");
 
-    const announced = await withStream(apiUrl, apiKey, {}, async (stream) => {
+    const opened = await withStream(apiUrl, apiKey, {}, async (stream) => {
       await new Promise((r) => setTimeout(r, 250));
       // A write made after the subscription opens, and what turns the absence
       // below into an observation. An announcement names the point the stream
@@ -109,8 +109,9 @@ describe("the stream announces where it starts", () => {
         frame,
         `a fresh connection sent no frame announcing its position, so a client cannot say which point its hydrating read is relative to (saw: ${events.map((e) => e.event).join(", ") || "no typed events"})`,
       ).toBeDefined();
-      return frame!;
+      return { frame: frame!, probe };
     });
+    const { frame: announced, probe } = opened;
 
     // Whatever the frame is called, the value has to be usable as a resume
     // point. Asserting on the frame's name or shape would pin an announcement
@@ -150,6 +151,14 @@ describe("the stream announces where it starts", () => {
     expect(
       replayed.has(after),
       "resuming from the announced cursor missed a write made after it, so a client hydrating from that point has a hole it will never learn about",
+    ).toBe(true);
+    // The probe was the first write after the announcement, so it is the
+    // one a cursor announced one too high would skip: a resume that
+    // carries the later write and not this one has named a position past
+    // the head rather than at it.
+    expect(
+      replayed.has(probe),
+      "resuming from the announced cursor missed the first write after it, so the announcement names a position past the head",
     ).toBe(true);
   });
 });

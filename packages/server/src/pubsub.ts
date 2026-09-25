@@ -98,6 +98,18 @@ export function __resetEventLogForTests(): void {
 }
 
 /**
+ * How many listeners the bus holds across both kinds (test-only): what a
+ * subscription that closed properly leaves behind is nothing, and only a
+ * count can say so.
+ */
+export function __listenerCountForTests(): number {
+  return (
+    emitter.listenerCount("ITEM_CHANGED") +
+    emitter.listenerCount("EDGE_CHANGED")
+  );
+}
+
+/**
  * Maps an internal event type to its wire string.
  *   item.* for item events (created / updated / deleted / restored /
  *     purged / state_changed)

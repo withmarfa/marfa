@@ -15,16 +15,17 @@ import {
 } from "../../utils/stream.js";
 
 /**
- * A reader that closes at the head and comes back later.
+ * A reader that closes and comes back later.
  *
  * A connector reads the log this way: it opens the stream on each run,
- * takes the head the first frame announces, reads until it has seen an id
- * at or past it, closes, and on its next run resumes from the last id it
- * received. That is a sound cursor only if ids are issued in commit order:
- * an event with an id below the head that committed after the head was
- * announced would sit behind a cursor already past it, and nothing would
- * ever replay it. The gap closes silently, which is why it is asserted
- * rather than assumed.
+ * reads until it has seen what it came for, closes, and on its next run
+ * resumes from the last id it received. That is a sound cursor only if
+ * the stream delivers ids in order, replayed and live alike: a frame with
+ * a lower id that reached the client after a higher one sits behind a
+ * cursor already past it, and nothing ever replays it. An edge frame is
+ * the one that can fall behind, since it waits on a read before it is
+ * sent. The gap closes silently, which is why it is asserted rather than
+ * assumed.
  */
 
 let client: MarfaClient;
@@ -74,12 +75,20 @@ function itemIds(events: SseEvent[]): Set<string> {
   );
 }
 
-/** Every edge id named by any frame in a set. */
-function edgeIds(events: SseEvent[]): Set<string> {
+/**
+ * Every edge frame in a set, as `<event>:<edge id>`. Per frame rather
+ * than per edge, because an edge that was created and then deleted has
+ * two frames, and a read that carried the first and lost the second
+ * would still name the edge.
+ */
+function edgeFrames(events: SseEvent[]): Set<string> {
   return new Set(
     events
-      .map((e) => (e.data as { edge?: { id?: string } })?.edge?.id)
-      .filter((id): id is string => typeof id === "string"),
+      .map((e) => {
+        const id = (e.data as { edge?: { id?: string } })?.edge?.id;
+        return typeof id === "string" ? `${e.event}:${id}` : undefined;
+      })
+      .filter((key): key is string => key !== undefined),
   );
 }
 
@@ -124,52 +133,82 @@ describe("resuming from the head", () => {
       before.push(await makeNote(`resume-before-${String(n)}`));
     }
 
-    // Writes issued while the stream is opening and replaying, an edge
-    // among them: an edge frame waits on a read before it is sent, which
-    // is where an item frame published after it could overtake it.
-    // Whichever side of the announced head each lands on, it has to
-    // arrive exactly once across the two reads.
+    // Writes issued while the stream is open, an edge among them and a
+    // purge last. A purge announces every edge of the row before the row,
+    // and an edge frame waits on a read before it is sent, which is where
+    // a frame published after it could overtake it. The first read ends
+    // on the purge's own frame, so it carries live frames of both kinds
+    // past the head it was announced, and the last id it received is the
+    // cursor the second read resumes from. Whichever side of the head
+    // each write lands on, it has to arrive exactly once across the two.
     let during: string[] = [];
     let duringEdge = "";
+    let doomed = "";
+    const doomedEdges: string[] = [];
     const first = await withStream(
       apiUrl,
       apiKey,
       { lastEventId: eventId },
       async (stream) => {
-        const racing = Promise.all([
+        const [one, edge, two] = await Promise.all([
           makeNote("resume-during-1"),
           makeEdge(before[0]!, before[1]!),
           makeNote("resume-during-2"),
         ]);
-        let events: SseEvent[];
-        try {
-          ({ events } = await collectUntil(
-            stream,
-            (evts) => {
-              const head = announcedHead(evts);
-              return (
-                head !== undefined && eventIds(evts).some((id) => id >= head)
-              );
-            },
-            "the replay to reach the announced head",
-            context.signal,
-          ));
-        } finally {
-          // Settled either way, so a read that failed does not leave the
-          // racing writes rejecting into nothing.
-          const [one, edge, two] = await racing;
-          during = [one, two];
-          duringEdge = edge;
+        during = [one, two];
+        duringEdge = edge;
+        // The row is gone by the time the reads are judged, so neither it
+        // nor its edges are tracked for teardown.
+        const created = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "resume-purged" },
+        });
+        expect(created.ok, "the row to purge could not be created").toBe(true);
+        doomed = created.data.item.id;
+        for (const target of [before[2]!, before[3]!]) {
+          const made = await client.createEdge({
+            source_id: doomed,
+            target_id: target,
+            edge_type: "about",
+          });
+          expect(made.ok, "an edge of the row to purge failed").toBe(true);
+          doomedEdges.push(made.data.edge.id);
         }
+        const trashed = await client.deleteItem(doomed);
+        expect(trashed.ok, "the row could not be trashed").toBe(true);
+        const purged = await client.purgeItem(doomed);
+        expect(purged.ok, "the row could not be purged").toBe(true);
+
+        const { events } = await collectUntil(
+          stream,
+          (evts) =>
+            evts.some(
+              (e) =>
+                e.event === "item.purged" &&
+                (e.data as { item?: { id?: string } })?.item?.id === doomed,
+            ),
+          `the purge of ${doomed} to reach the stream`,
+          context.signal,
+        );
         return events;
       },
     );
 
     const firstIds = eventIds(first);
+    const head = announcedHead(first);
+    expect(head, "the first read was not announced a head").toBeDefined();
     expect(
       firstIds.length,
-      "the first read reached the head without receiving an event with an id",
+      "the first read reached the purge without receiving an event with an id",
     ).toBeGreaterThan(0);
+    // The witness that the first read went past its replay: it received
+    // ids above the head it was announced, which only live delivery
+    // carries.
+    expect(
+      firstIds.some((id) => id > head!),
+      `the first read received no id past the announced head ${String(head!)}, so it never left the replay`,
+    ).toBe(true);
     expectAscending(firstIds, "first");
     // The control: a resume that honors `Last-Event-ID` does not carry the
     // event at the cursor itself.
@@ -224,22 +263,31 @@ describe("resuming from the head", () => {
     }
     const seenFirst = itemIds(first);
     const seenSecond = itemIds(second);
-    for (const id of [...before, ...during, ...after]) {
+    for (const id of [...before, ...during, doomed, ...after]) {
       expect(
         seenFirst.has(id) || seenSecond.has(id),
         `the item ${id} was delivered by neither read, so a reader resuming from the last id it received has a gap it will never learn about`,
       ).toBe(true);
     }
-    const edgesFirst = edgeIds(first);
-    const edgesSecond = edgeIds(second);
-    for (const id of [duringEdge, afterEdge]) {
+    // Every edge frame the writes produced, each in exactly one read: the
+    // purged row's edges were announced twice, created and then deleted,
+    // and the deletions are the frames a row's purge overtakes.
+    const framesFirst = edgeFrames(first);
+    const framesSecond = edgeFrames(second);
+    const expected = [
+      `edge.created:${duringEdge}`,
+      ...doomedEdges.map((id) => `edge.created:${id}`),
+      ...doomedEdges.map((id) => `edge.deleted:${id}`),
+      `edge.created:${afterEdge}`,
+    ];
+    for (const frame of expected) {
       expect(
-        edgesFirst.has(id) || edgesSecond.has(id),
-        `the edge ${id} was delivered by neither read, so an edge frame fell behind the cursor`,
+        framesFirst.has(frame) || framesSecond.has(frame),
+        `the frame ${frame} was delivered by neither read, so an edge frame fell behind the cursor`,
       ).toBe(true);
       expect(
-        edgesFirst.has(id) && edgesSecond.has(id),
-        `the edge ${id} was delivered by both reads`,
+        framesFirst.has(frame) && framesSecond.has(frame),
+        `the frame ${frame} was delivered by both reads`,
       ).toBe(false);
     }
   });
