@@ -1,6 +1,6 @@
 // The single validator for type schemas, shared by both authoring paths: the
-// build-time codegen that reads `core/*.json` and `connectors/*.json`, and the
-// runtime `POST /types` endpoint. Both call `validateTypeSchema` and both get
+// build-time codegen that reads `core/*.json` and `core/system/*.json`, and
+// the runtime `POST /types` endpoint. Both call `validateTypeSchema` and both get
 // the same normalization, the same rules, and the same errors — a schema that
 // is legal in-tree is legal over the wire, byte for byte.
 //

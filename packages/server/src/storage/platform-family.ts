@@ -3,43 +3,33 @@
  * registry is filled from, placing a row this build cannot read at the
  * restrictive end rather than the permissive one.
  *
- * The line it replaces — `family: row.family ?? "core"` — reads as
- * entirely reasonable until you follow what the family
- * decides. It is not a label. `seedPlatformTypes` puts every shipped
- * schema in the registry and then uses the family to decide two things:
- * whether the id joins `SYSTEM_TYPE_IDS`, which rejects a caller-supplied
- * `tier` and pins the type to the bounded `active`/`revoked` lifecycle,
- * and whether it joins `CONNECTOR_TYPE_IDS`.
+ * The family is not a label. `seedPlatformTypes` puts every shipped schema in
+ * the registry and then uses the family to decide whether the id joins
+ * `SYSTEM_TYPE_IDS`, which rejects a caller-supplied `tier` and pins the type
+ * to the bounded `active`/`revoked` lifecycle. `core` misses that set, so
+ * `family: row.family ?? "core"` reads as reasonable and is the most
+ * permissive answer available: a device or app row whose family could
+ * not be read would get the three-state lifecycle and an open `tier`, and a
+ * delete would soft-delete it to `trashed`, a state the system lifecycle has
+ * no transition to and default listings hide.
  *
- * `core` is the family that joins neither set. So defaulting an unreadable
- * row to `core` was not a neutral guess, it was the most permissive answer
- * available: a credential or device row whose family could not be read got
- * the three-state lifecycle and an open `tier`, and a delete soft-deleted
- * it to `trashed`, a state the system lifecycle has no transition to and
- * default listings hide.
+ * **What this does not do.** Family decides no permission category. The
+ * reserved-namespace write gate reads `classifyNamespace`, which is the first
+ * segment of the identifier and nothing else, and the consent bundles group
+ * on the same function. A row that loses its family does not become readable
+ * or writable by anyone new, and a log line saying it did would send
+ * whoever met it hunting a permissions failure that is not there.
  *
- * **What this does not do, despite an earlier draft of this comment saying
- * otherwise.** Family decides no permission category today. The
- * reserved-namespace write gate reads `classifyNamespace`, which is the
- * first segment of the identifier and nothing else, and the consent
- * bundles group on the same function. A row that loses its family does not
- * become readable or writable by anyone new, and saying it did would send
- * whoever met the log line hunting a permissions failure that is not
- * there. The permissions model intends to key on family, which is what
- * makes the default worth fixing before rather than after. It does not
- * make the claim true now.
- *
- * **Why this projects rather than refusing to boot**, which is what this
- * was first written to do. `seedPlatformTypes` upserts a family for every
- * shipped id immediately before these rows are read back, so a shipped
- * type cannot reach here unplaceable. Everything that can is a platform
- * row the current build does not ship: a retired type the seed
- * deliberately leaves registered so existing items keep resolving, a row
- * from an archive, or — the sharp one — a row written by a newer build and
- * met by an older one after a rollback. Refusing to start would make that
- * rollback impossible to complete, from a server that cannot come up to be
- * repaired, over a type nothing is using. A boot refusal is the right
- * severity for a corrupt shipped set and the wrong severity for this.
+ * **Why this projects rather than refusing to boot.** `seedPlatformTypes`
+ * upserts a family for every shipped id immediately before these rows are
+ * read back, so a shipped type cannot reach here unplaceable. Everything
+ * that can is a platform row the current build does not ship: a retired type
+ * the seed deliberately leaves registered so existing items keep resolving,
+ * or a row written by a newer build and met by an older one after a
+ * rollback. Refusing to start would make that rollback impossible to
+ * complete, from a server that cannot come up to be repaired, over a type
+ * nothing is using. A boot refusal is the right severity for a corrupt
+ * shipped set and the wrong severity for this.
  *
  * So the rule is the one its sibling projections take: recognize, or fall
  * back to the least capability and say so loudly enough that the fallback is

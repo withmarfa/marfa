@@ -20,7 +20,6 @@ import {
 
 const typesRoot = resolve(import.meta.dirname, "..");
 const coreDir = join(typesRoot, "core");
-const connectorsDir = join(typesRoot, "connectors");
 const systemDir = join(coreDir, "system");
 const edgesDir = join(coreDir, "edges");
 const outDir = join(typesRoot, "generated");
@@ -47,7 +46,6 @@ function loadDir(dir: string): RawSchema[] {
 }
 
 const coreRaw = loadDir(coreDir);
-const connectorRaw = loadDir(connectorsDir);
 const systemRaw = loadDir(systemDir);
 
 /** The declared identifier, or "" when the file omits one — the validator
@@ -56,11 +54,9 @@ function schemaId(s: RawSchema): string {
   return typeof s.data.id === "string" ? s.data.id : "";
 }
 
-// Parents must be validated and registered before their children, and
-// `compatible_with` targets before the connector types that claim them. The
-// family order below puts core ahead of the connectors that reference it, and
-// within a family a type goes after every ancestor it names: by the length of
-// its `parent` chain, not by its identifier, since a parent need not be its
+// Parents must be validated and registered before their children, so within
+// a family a type goes after every ancestor it names: by the length of its
+// `parent` chain, not by its identifier, since a parent need not be its
 // child's prefix.
 function byAncestry(raws: RawSchema[]): RawSchema[] {
   const parentOf = new Map<string, string>();
@@ -202,7 +198,6 @@ function buildFamily(raws: RawSchema[]): TypeSchema[] {
 }
 
 const coreTypes = buildFamily(coreRaw);
-const connectorTypes = buildFamily(connectorRaw);
 const systemTypes = buildFamily(systemRaw);
 
 if (failures.length > 0) {
@@ -308,7 +303,7 @@ function emitSchema(schema: TypeSchema, lines: string[]): void {
 
 const lines: string[] = [];
 lines.push(
-  "// Auto-generated from core/*.json, connectors/*.json and core/system/*.json — do not edit manually.",
+  "// Auto-generated from core/*.json and core/system/*.json — do not edit manually.",
 );
 lines.push("// Run `pnpm --filter @withmarfa/types generate` to regenerate.");
 lines.push("");
@@ -318,18 +313,6 @@ lines.push("");
 for (const schema of coreTypes) emitSchema(schema, lines);
 lines.push("export const ALL_TYPES: TypeSchema[] = [");
 for (const schema of coreTypes) lines.push(`  ${varName(schema.id)},`);
-lines.push("];");
-lines.push("");
-
-// Connector types ship in the same package but are a separate family: they
-// describe one vendor's payload shape rather than a life-noun the whole
-// platform agrees on, and a deployment that talks to none of those vendors
-// carries them purely as a compatibility target. Emitting them separately is
-// what lets the catalog say which is which; both families register into the
-// same runtime registry, so the identifiers a caller sees are unchanged.
-for (const schema of connectorTypes) emitSchema(schema, lines);
-lines.push("export const ALL_CONNECTOR_TYPES: TypeSchema[] = [");
-for (const schema of connectorTypes) lines.push(`  ${varName(schema.id)},`);
 lines.push("];");
 lines.push("");
 
@@ -345,7 +328,7 @@ lines.push("");
 // The identifier set as literal types, so a consumer that keys a map or a
 // switch by type id is checked by the compiler: a plain `Record<string, …>`
 // cannot tell a live identifier from a dead one.
-const allTypeIds = [...coreTypes, ...connectorTypes, ...systemTypes]
+const allTypeIds = [...coreTypes, ...systemTypes]
   .map((schema) => schema.id)
   .sort();
 lines.push("export const ALL_TYPE_IDS = [");
@@ -415,18 +398,14 @@ function shapesConst(
 }
 
 lines.push(
-  ...shapesConst("SHIPPED_TYPE_SHAPES", [
-    ...coreTypes,
-    ...connectorTypes,
-    ...systemTypes,
-  ]),
+  ...shapesConst("SHIPPED_TYPE_SHAPES", [...coreTypes, ...systemTypes]),
 );
 
 mkdirSync(outDir, { recursive: true });
 const outPath = join(outDir, "type-registry.ts");
 writeFileSync(outPath, lines.join("\n") + "\n");
 console.log(
-  `Generated ${String(coreTypes.length)} core + ${String(connectorTypes.length)} connector + ${String(systemTypes.length)} system types -> ${outPath}`,
+  `Generated ${String(coreTypes.length)} core + ${String(systemTypes.length)} system types -> ${outPath}`,
 );
 
 // ---------------------------------------------------------------------------

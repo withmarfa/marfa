@@ -88,8 +88,8 @@ describe("reportReservedRootRows", () => {
         row({ id: "app.tickets.ticket" }),
         row({ id: "core.note", origin: "platform" }),
         row({ id: "system.connection", origin: "platform" }),
-        row({ id: "marfa.podcast.show", origin: "platform" }),
-        row({ id: "readwise.highlight", origin: "connector" }),
+        row({ id: "marfa.relic", origin: "platform" }),
+        row({ id: "salvage.record", origin: "unknown" }),
         row({ id: "jonah.reading_item" }),
       ]),
     ).toEqual([]);

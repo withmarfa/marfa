@@ -176,10 +176,9 @@ describe("resolveMergePolicy — agreement with codegen-time resolution", () => 
  *
  * `in-collection` constrains its target on `role:container`, and `typeHasRole`
  * answers that by walking the parent chain, so a subtype of a container is
- * already an acceptable target. The type read used to project `roles` away
- * entirely: every type reported none, including the three that declare it, so
- * a client had no way to build the list except by hardcoding names or
- * attempting a write to find out. A generated kit surfaced the field as always
+ * already an acceptable target. A type read that reported no roles would leave
+ * a client no way to build the list except by hardcoding names or attempting a
+ * write to find out, and a generated kit would surface the field as always
  * empty, which reads as a definite "declares no roles" rather than as missing.
  */
 describe("resolveTypeSchema roles", () => {
@@ -207,13 +206,15 @@ describe("resolveTypeSchema roles", () => {
     ]);
   });
 
-  it("returns the role for the connector container too, which has no parent", () => {
-    // The third declaring type, and the only one outside `core.*` with a
-    // chain of length one. A mutation keyed on chain length or namespace
-    // passes against the two core types and breaks this.
-    expect(
-      resolveTypeSchema("marfa.podcast.show", coreResolver)?.roles,
-    ).toEqual(["container"]);
+  it("returns the role for a container outside core with no parent", () => {
+    // A chain of length one outside `core.*`. A mutation keyed on chain
+    // length or namespace passes against the two core types and breaks this.
+    const resolver = makeResolver([
+      { id: "acme.box", version: 1, fields: {}, roles: ["container"] },
+    ]);
+    expect(resolveTypeSchema("acme.box", resolver)?.roles).toEqual([
+      "container",
+    ]);
   });
 
   it("agrees with the check the edge constraint actually runs", () => {
@@ -243,7 +244,6 @@ describe("resolveTypeSchema roles", () => {
     for (const id of [
       "core.media.series",
       "core.media.album",
-      "marfa.podcast.show",
       "core.bookmark",
       "core.note",
       "core.media",

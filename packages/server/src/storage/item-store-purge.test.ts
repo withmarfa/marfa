@@ -418,24 +418,14 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     // every door that could hand it one refuses the state first (the create
     // doors and the archive restore), so the sweep measures from the stamp
     // alone and a row without one is not its to remove.
-    const connection = await ctx.storage.items.create({
-      type: "system.connection",
-      properties: {
-        kind: "connector",
-        status: "active",
-        granted_at: FIXED_NOW.toISOString(),
-      },
-      source: "test/purge",
-    });
     const itemId = id("c16c");
     await ctx.storage.items.create({
       id: itemId,
-      type: "system.activity",
+      type: "system.webhook",
       state: "trashed",
       properties: {
-        connection_id: connection.id,
-        severity: "info",
-        summary: "restored into the bin",
+        url: "https://example.test/restored-into-the-bin",
+        events: ["item.created"],
       },
       source: "test/purge",
     });

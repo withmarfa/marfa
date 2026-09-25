@@ -1,14 +1,13 @@
 /**
- * The natural-key upsert is the one write path that skipped validation, and
- * it is also the one where an explicit null clears a value rather than
- * setting it. So a connector re-sync sending a null title removed a field
- * the type declares required, leaving an item that could not have been
- * created in the state it now sat in, and nothing said so.
+ * The natural-key upsert is the write path where an explicit null clears a
+ * value rather than setting it, so it is validated like every other: a
+ * re-sync sending a null title would otherwise remove a field the type
+ * declares required, leaving an item that could not have been created in the
+ * state it sits in, with nothing said.
  *
- * These drive the connector path specifically: the null-clearing branch is
- * reachable only for a connector credential re-syncing its own connection's
- * rows, so the existing validation tests over `POST /items` and
- * `PATCH /items/:id` never touch it.
+ * These drive the upsert specifically, a create resolved onto an existing row
+ * by its natural key, which the validation tests over `POST /items` and
+ * `PATCH /items/:id` do not reach.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {

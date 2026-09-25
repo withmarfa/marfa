@@ -346,16 +346,12 @@ export const types = sqliteTable(
     id: text("id").primaryKey(),
     schema: text("schema").notNull(),
     // Where the type came from, and who may change it. `platform` is the
-    // seeded vocabulary and is locked; `connector` belongs to the manifest
-    // named in `owner_connector` and only that package may update it;
-    // `user` is a registration through the API. `family` carries the split the
-    // identifier cannot express (core / connector / system), written for
-    // the shipped set and for a connector's own types alike, so a row's
-    // family says what kind of type it is rather than which build shipped
-    // it. Absent for `user` rows, which belong to no platform family.
+    // seeded vocabulary and is locked; `user` is a registration through the
+    // API; `unknown` is a restored row whose archive recorded none. `family`
+    // is the seed's (core or system), the split the lifecycle keys on;
+    // absent on a registration, which belongs to no platform family.
     origin: text("origin").notNull().default("user"),
     family: text("family"),
-    owner_connector: text("owner_connector"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
   },

@@ -2905,8 +2905,8 @@ export function itemRoutes(storage: Storage) {
     // `softDeleteState` resolves `revoked` for a type with a bounded
     // lifecycle, which `system.connection` has; a literal comparison would
     // send every revoked connection down this branch to be refused by the
-    // write rule that no credential passes, leaving the rows uninstall
-    // produces permanently unpurgeable. `items.purge` gates on the same
+    // write rule that no credential passes, leaving every revoked grant
+    // permanently unpurgeable. `items.purge` gates on the same
     // derived state, and the two have to agree or one of them refuses what
     // the other admits.
     if (
@@ -2917,15 +2917,11 @@ export function itemRoutes(storage: Storage) {
     }
 
     // **No provenance guard here**, and that is a finding rather than an
-    // omission: `items.purge` is asked above, and a connector credential's
-    // permissions are projected from its manifest and carry no
-    // permission at all, so a connector is refused before it reaches the
-    // point where provenance would be consulted. A guard here would be
-    // unreachable code no test could pin, which is worse than none because it
-    // reads as a protection somebody is relying on.
-    // `item-write-doors.test.ts` asserts the permission gate instead, so the
-    // day this door widens, the case saying a connector cannot purge is
-    // the one that reddens.
+    // omission: a row is refused or purged by the permission asked above and
+    // the write rule, and nothing marks a row as one writer's rather than
+    // another's. A guard here would be unreachable code no test could pin,
+    // which is worse than none because it reads as a protection somebody is
+    // relying on.
     // Edges have no FK to items — explicit cleanup required before purge.
     // Every edge the purge takes with it, announced individually. A
     // subscriber holding a graph cannot infer these from the item's own

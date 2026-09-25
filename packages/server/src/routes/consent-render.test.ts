@@ -20,7 +20,6 @@ import {
   EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
   grantCoversScope,
-  CONNECTOR_TYPE_IDS,
   scopesToMetadataPermissions,
   seedPlatformTypes,
   shippedPlatformTypes,
@@ -84,6 +83,26 @@ const PARAMS = {
     "core.task": "Tasks and todos.",
   },
 };
+
+describe("consent copy names only types that exist", () => {
+  it("has no label or description for a concrete type the registry does not hold", () => {
+    // Coverage runs from type to copy; this runs the other way, so a
+    // sentence left behind for a removed type fails rather than waiting for
+    // a scope nobody can request.
+    const concrete = (key: string) =>
+      /^(core|system)\.[^*]+$/.test(key) && !key.endsWith(".*");
+    const keys = [
+      ...Object.keys(SCOPE_LABELS),
+      ...Object.keys(CONSENT_SCOPE_DESCRIPTIONS),
+    ].filter(concrete);
+    // Witness: both maps name concrete types, so the filter reached rows.
+    expect(keys).toContain("core.note");
+    expect(keys).toContain("system.connection");
+    for (const key of keys) {
+      expect(TYPE_REGISTRY.has(key), `${key} names no shipped type`).toBe(true);
+    }
+  });
+});
 
 describe("renderConsentScreen — layout + form contract", () => {
   it("links to the shared stylesheet and carries no inline <style> block", () => {
@@ -1014,13 +1033,9 @@ describe("a grant that reaches things not yet created says so", () => {
     // `isOpenEnded` the toggle row asks, so what is worth holding is that it
     // arrives, exactly once, on the surface a person actually reads.
     //
-    // The global wildcard runs in this loop like everything else. It used to
-    // be exempted, on the argument that "Everything on your server." cannot
-    // be falsified by a type registered tomorrow and that this was all the
-    // device screen needed, since the device screen had no second line to
-    // state the property on. The device screen composes its own sentence
-    // now, so the exemption has nothing left to buy and is gone rather than
-    // overridden.
+    // The global wildcard runs in this loop like everything else: the device
+    // screen composes its own sentence, so "Everything on your server."
+    // needs no exemption for being unfalsifiable.
     const literals = openEndedLiterals();
     // Every assertion is inside the loop, and the pattern that carried the
     // defect is named, so a derivation that quietly stops finding it fails
@@ -1128,14 +1143,11 @@ describe("a grant that reaches things not yet created says so", () => {
     // and Organizations", which is the exact sentence this case exists to
     // stop. Lowercased, so a capitalized "And" is caught too.
     //
-    // **The rule is now conditional, and the condition is the whole of what
-    // `SCOPE_SHORT` bought.** A label reaches the summary only where no short
+    // **The rule is conditional, and the condition is the whole of what
+    // `SCOPE_SHORT` is for.** A label reaches the summary only where no short
     // form answers for its pattern, so a pattern WITH one is free to carry a
-    // conjunction on its row: `system.activity` reads "Activity and
-    // notifications" there, where the notifications half is the one a reader
-    // cares about, and summarizes as "activity". That is the same split
-    // `PERMISSION_SHORT` has always had, arriving on the third and last
-    // family in the chain.
+    // conjunction on its row and summarize as its short form. That is the
+    // same split `PERMISSION_SHORT` makes.
     const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
       if (scopeShort(pattern) !== undefined) continue;
@@ -1436,14 +1448,9 @@ describe("a grant that reaches things not yet created says so", () => {
       "Companies, teams, schools, and other organizations.",
     );
 
-    // The general form of this is on now, over both maps. It was held back
-    // while `core.media` still read "Media: books, films, music, podcasts.",
-    // naming four types a bare `core.media` grant reaches none of, because
-    // turning the check on before that sentence was rewritten would only
-    // have invited an exemption for the one case it catches. The sentence is
-    // rewritten, the exception is gone, and the case above runs over the
-    // descriptions unqualified. What stays pinned here is this pair, which
-    // is a copy decision rather than a property and so cannot be derived.
+    // The general form of this runs over both maps in the case above,
+    // unqualified. What stays pinned here is this pair, which is a copy
+    // decision rather than a property and so cannot be derived.
   });
 });
 
@@ -1587,8 +1594,8 @@ describe("renderConsentScreen — default_on", () => {
     // and sits below "New", so nobody sees the choice, and the decision
     // route reads the resulting submission as a narrowing. A narrowing is
     // treated as a promise that the removed access stops working, so it
-    // revokes the client's live tokens. An untouched Continue killed a
-    // working connector.
+    // revokes the client's live tokens, so an untouched Continue would cut
+    // off a working client.
     const html = renderConsentScreen({
       ...PARAMS,
       scopes: REQUESTED,
@@ -1840,8 +1847,8 @@ describe("sentence forms cover every label that can be joined into one", () => {
 // Distinct from the label maps above, and the distinction is what the
 // renderer runs on. A label is the short name on a toggle row; a description
 // is the plain-English line, and `labelFor` falls back from the first to the
-// second. Three maps used to hold descriptions and two of them contradicted
-// each other about whether a metadata scope or a wildcard gets one at all.
+// second. One map holds descriptions, so nothing can disagree about whether a
+// metadata scope or a wildcard gets one.
 // ---------------------------------------------------------------------------
 
 /** Throws rather than filtering, so a fixture typo cannot leave an empty
@@ -1942,32 +1949,18 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
 
   it("describes every type it ships without reaching the registry", () => {
     // The other half of the claim the map's docstring makes, asked of
-    // `TYPE_REGISTRY` rather than read off the map. One sentence covered
-    // both axes and was false on the edge one, so this half is pinned rather
-    // than trusted.
-    //
-    // **This used to exempt the connector namespaces, and the exemption
-    // was the defect.** It read that they "fall back to the registry by
-    // design" — but nobody designed that, and the sixteen types it excused
-    // were reaching a person as up to 796 characters of schema rationale on
-    // the screen where they decide whether to trust an application. An
-    // exemption is what let them accumulate unseen, so the filter is gone
-    // and this asks the whole registry.
-    //
-    // Which makes it the check that stops the next sixteen: a type added to
-    // the shipped set with no curated sentence fails here, and it cannot be
-    // waved through from `consent-copy-coverage.test.ts`, because that
-    // file's known-uncovered list is not read here.
+    // `TYPE_REGISTRY` rather than read off the map, and asked of the whole
+    // registry with no exemption: an uncurated type reaches a person as the
+    // schema's own rationale on the screen where they decide whether to
+    // trust an application. A type added to the shipped set with no curated
+    // sentence fails here, and it cannot be waved through from
+    // `consent-copy-coverage.test.ts`, because that file's known-uncovered
+    // list is not read here.
     const shipped = [...TYPE_REGISTRY.keys()];
-    expect(shipped.length).toBeGreaterThan(20);
-    // The precondition that matters, because the defect was an exemption
-    // rather than an absence. Re-introduce a filter on the line above and
-    // every assertion below still passes on whatever survived it, which is
-    // exactly how sixteen types sat outside this check. Named against
-    // `CONNECTOR_TYPE_IDS` rather than a literal, so a seventeenth is
-    // covered without anybody remembering to add it here.
-    expect(CONNECTOR_TYPE_IDS.size).toBeGreaterThan(0);
-    expect(shipped).toEqual(expect.arrayContaining([...CONNECTOR_TYPE_IDS]));
+    // Both families, so a filter on the line above cannot pass every
+    // assertion below on whatever survived it.
+    expect(shipped.some((id) => id.startsWith("core."))).toBe(true);
+    expect(shipped.some((id) => id.startsWith("system."))).toBe(true);
     const out = buildScopeDescriptions(
       shipped.map((id) => parse(`${id}:read`)),
     );
@@ -1998,8 +1991,8 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // to naming the service and to NOT being any concrete type's copy: the
     // failure this replaces would be one matched type's sentence standing
     // in for a whole namespace, and a bare non-empty check admits that.
-    const derived = describeAll("readwise.*:read")["readwise.*"];
-    expect(derived).toContain("Readwise");
+    const derived = describeAll("acme.*:read")["acme.*"];
+    expect(derived).toContain("Acme");
     for (const id of TYPE_REGISTRY.keys()) {
       expect(derived, id).not.toBe(TYPE_REGISTRY.get(id)?.description);
     }
@@ -2098,19 +2091,14 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
   });
 
   it("prefers curated copy to the registry's, and falls back to it", () => {
-    // **The fixture used to be `google.calendar.event`, and the comment
-    // beside it said the fallback serves a type registered at runtime.**
-    // Neither half survived a check. A runtime registration goes to an
-    // overlay that `TYPE_REGISTRY` does not expose, so it cannot
-    // reach this lookup at all; and a custom type is not requestable as a
-    // row of its own anyway, only through its namespace wildcard. The
-    // fallback's entire population was shipped types nobody had curated,
-    // which is what the sixteen connector entries just closed — so a
-    // fixture drawn from the shipped set now proves the opposite of what it
-    // was written to prove.
+    // The fallback cannot serve a type registered at runtime: such a
+    // registration goes to an overlay that `TYPE_REGISTRY` does not expose,
+    // and a custom type is not requestable as a row of its own anyway, only
+    // through its namespace wildcard. Every shipped type is curated, so a
+    // fixture drawn from the shipped set would prove the opposite.
     //
-    // The population that remains is a platform row this build no longer
-    // ships. `seedPlatformTypes` refills the registry at boot from the rows
+    // The population that remains is a platform row this build does not
+    // ship. `seedPlatformTypes` refills the registry at boot from the rows
     // the instance holds, so an instance carrying a retired type resolves
     // it here, and no curated sentence can ever exist for it. That is what
     // this seeds.
@@ -2122,7 +2110,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
         description:
           "A widget shape a previous build shipped and this one does not.",
       },
-      family: "connector" as const,
+      family: "core" as const,
     };
     seedPlatformTypes([...shippedPlatformTypes(), retired]);
 
@@ -2135,8 +2123,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
 
     const out = describeAll("core.note:read", `${retired.schema.id}:read`);
     // The registry's own sentence is written for a developer reading API
-    // docs. Both screens show the curated one now; the device screen used to
-    // show this.
+    // docs, so both screens show the curated one.
     expect(out["core.note"]).toBe("Notes.");
     expect(out["core.note"]).not.toBe(
       TYPE_REGISTRY.get("core.note")?.description,
@@ -2236,11 +2223,9 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
  */
 describe("the authorize screen and the device screen describe a scope alike", () => {
   // Literals with no `SCOPE_LABELS` entry, which is the population this
-  // describes. `metadata.types:write` used to sit here and no longer
-  // qualifies: it gained a curated label, so the authorize screen now renders
-  // the label where this fixture needs it to render the description.
-  // `edge.about:read` replaces it as a member of the family that still has no
-  // labels at all, so the case keeps the same reach.
+  // describes: a literal with a curated label renders the label on the
+  // authorize screen where this fixture needs the description.
+  // `edge.about:read` stands for the family that has no labels at all.
   const UNLABELED = ["edge.about:read", "core.*:read", "app.*:read", "*:read"];
 
   it("renders the same copy on both, from the one map", () => {

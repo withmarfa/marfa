@@ -2,12 +2,10 @@
  * The list filter and the point check answer the same question, and this file
  * asks them both about the same concrete ids.
  *
- * `checkTypeAccess` honors a `"none"` entry exactly. The filter for a list
- * read could not express one, so it approximated, and every approximation
- * available leaked in one direction or the other. The three shapes below are
- * the three ways that happened; they are one root cause rather than three
- * bugs, which is why they are pinned together in one file rather than beside
- * whichever compiler each of them reached.
+ * `checkTypeAccess` honors a `"none"` entry exactly, and a list filter that
+ * approximated one would leak in one direction or the other. The three shapes
+ * below are the three ways an approximation leaks; they are one question
+ * rather than three, which is why they are pinned together in one file.
  *
  * **Agreement is asserted per id, not per shape.** A test that only checked
  * "the excluded type is absent" passes on a filter that returns nothing at
@@ -78,17 +76,17 @@ describe("the list filter and the point check agree", () => {
   it("under a global wildcard with an exact exclusion", () => {
     const perms: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.credential": "none",
+      "system.device": "none",
     };
     // Precondition: the resolver really does read this map the way the case
     // needs, so a passing assertion below cannot be vacuous.
-    expect(resolveTypePermission("system.credential", perms)).toBe("none");
+    expect(resolveTypePermission("system.device", perms)).toBe("none");
     expect(resolveTypePermission("core.note", perms)).toBe("read");
 
     expectAgreement(memberKey(perms), [
       "core.note",
-      "system.credential",
-      "system.activity",
+      "system.device",
+      "system.webhook",
     ]);
   });
 
@@ -119,7 +117,7 @@ describe("the list filter and the point check agree", () => {
     // dropped it from every listing while the point check still served it.
     const perms: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.credential": "none",
+      "system.device": "none",
     };
     // The type is never registered, which is exactly the orphan's state:
     // rows exist, the registry does not name it.

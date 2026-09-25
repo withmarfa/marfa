@@ -32,8 +32,8 @@ export class SqliteTypeStore implements TypeStore {
     const now = new Date().toISOString();
     try {
       await this.db.run(sql`
-        INSERT INTO types (id, schema, origin, family, owner_connector, created_at, updated_at)
-        VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${provenance?.family ?? null}, ${provenance?.owner_connector ?? null}, ${now}, ${now})
+        INSERT INTO types (id, schema, origin, created_at, updated_at)
+        VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${now}, ${now})
       `);
     } catch (err: unknown) {
       if (
@@ -122,8 +122,8 @@ export class SqliteTypeStore implements TypeStore {
       // identifier somebody already registered rewrote their schema
       // unattended on the next boot.
       await this.db.run(sql`
-        INSERT INTO types (id, schema, origin, family, owner_connector, created_at, updated_at)
-        VALUES (${schema.id}, ${JSON.stringify(schema)}, 'platform', ${family}, NULL, ${now}, ${now})
+        INSERT INTO types (id, schema, origin, family, created_at, updated_at)
+        VALUES (${schema.id}, ${JSON.stringify(schema)}, 'platform', ${family}, ${now}, ${now})
         ON CONFLICT (id) DO UPDATE SET
           schema = excluded.schema,
           origin = 'platform',

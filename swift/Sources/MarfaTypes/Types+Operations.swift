@@ -38883,7 +38883,7 @@ public enum Operations {
     }
     /// List event occurrences in a window
     ///
-    /// Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for every event type, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on expansions that return no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the data gives it work.
+    /// Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on expansions that return no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the data gives it work.
     ///
     /// - Remark: HTTP `GET /occurrences`.
     /// - Remark: Generated from `#/paths//occurrences/get(listOccurrences)`.
@@ -57240,8 +57240,6 @@ public enum Operations {
                     public var eventLogRetentionHours: Swift.Int?
                     /// - Remark: Generated from `#/paths/config/PUT/requestBody/json/trash_retention_days`.
                     public var trashRetentionDays: Swift.Int?
-                    /// - Remark: Generated from `#/paths/config/PUT/requestBody/json/activity_retention_days`.
-                    public var activityRetentionDays: Swift.Int?
                     /// Creates a new `JsonPayload`.
                     ///
                     /// - Parameters:
@@ -57250,21 +57248,18 @@ public enum Operations {
                     ///   - auditRetentionDays:
                     ///   - eventLogRetentionHours:
                     ///   - trashRetentionDays:
-                    ///   - activityRetentionDays:
                     public init(
                         instanceId: Swift.String? = nil,
                         enforcement: Operations.ReplaceConfig.Input.Body.JsonPayload.EnforcementPayload? = nil,
                         auditRetentionDays: Swift.Int? = nil,
                         eventLogRetentionHours: Swift.Int? = nil,
-                        trashRetentionDays: Swift.Int? = nil,
-                        activityRetentionDays: Swift.Int? = nil
+                        trashRetentionDays: Swift.Int? = nil
                     ) {
                         self.instanceId = instanceId
                         self.enforcement = enforcement
                         self.auditRetentionDays = auditRetentionDays
                         self.eventLogRetentionHours = eventLogRetentionHours
                         self.trashRetentionDays = trashRetentionDays
-                        self.activityRetentionDays = activityRetentionDays
                     }
                     public enum CodingKeys: String, CodingKey {
                         case instanceId = "instance_id"
@@ -57272,7 +57267,6 @@ public enum Operations {
                         case auditRetentionDays = "audit_retention_days"
                         case eventLogRetentionHours = "event_log_retention_hours"
                         case trashRetentionDays = "trash_retention_days"
-                        case activityRetentionDays = "activity_retention_days"
                     }
                     public init(from decoder: any Swift.Decoder) throws {
                         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -57296,17 +57290,12 @@ public enum Operations {
                             Swift.Int.self,
                             forKey: .trashRetentionDays
                         )
-                        self.activityRetentionDays = try container.decodeIfPresent(
-                            Swift.Int.self,
-                            forKey: .activityRetentionDays
-                        )
                         try decoder.ensureNoAdditionalProperties(knownKeys: [
                             "instance_id",
                             "enforcement",
                             "audit_retention_days",
                             "event_log_retention_hours",
-                            "trash_retention_days",
-                            "activity_retention_days"
+                            "trash_retention_days"
                         ])
                     }
                 }

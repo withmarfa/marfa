@@ -171,9 +171,9 @@ describe("POST /items", () => {
     expect(secondData.item.properties.body).toBe("Second");
 
     // Whole-batch retry shape: a third POST is also idempotent — no new row
-    // is created, the existing row keeps being updated. This is the contract
-    // inbound connector handlers (rss-watcher / Calendar) rely on to recover
-    // from createItem-success / cursor-write-fail without producing duplicates.
+    // is created, the existing row keeps being updated. A writer that
+    // created an item and then failed to record its own cursor recovers by
+    // sending the batch again, without producing duplicates.
     const third = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: {
@@ -746,7 +746,7 @@ describe("POST /items — the operator gate", () => {
     // The positive arm of the gate, and it reaches no row. `is_operator` is
     // exactly what the fence asks for, so the operator key clears it — and is
     // then refused by its own type map, which the one unauthenticated mint
-    // forces empty. Nothing writes a reserved row through a credential now,
+    // forces empty. Nothing writes a reserved row through a credential,
     // which is why the platform's own machinery writes these rows through the
     // storage layer instead.
     //
@@ -774,30 +774,25 @@ describe("POST /items — the operator gate", () => {
     expect(body.error.message).toContain("system.connection");
   });
 
-  it("refuses the same exact literal on a credential that is not runtime-minted", async () => {
-    // The admit rides the manifest projection, and only runtime mints
-    // project. A hand-minted key naming the literal does not
-    // carry the platform's declaration and stays outside the fence.
+  it("refuses a `marfa.*` write the same way, whatever the type map names", async () => {
+    // The fence answers for the namespace before any lookup, so it refuses a
+    // `marfa.*` literal whether or not a type of that name resolves.
     const humanKey = "marfa_k1_test_human_marfa_literal";
     await ctx.storage.keys.create(
       {
         label: "human-marfa-literal",
         source: "human-marfa-literal",
-        type_permissions: { "marfa.captured_email": "write" },
+        type_permissions: { "marfa.relic": "write" },
       },
       hashApiKey(humanKey, TEST_API_KEY_SALT),
     );
     const res = await request(ctx.app, "POST", "/items", {
       key: humanKey,
-      body: {
-        type: "marfa.captured_email",
-        properties: {
-          from_address: "sender@example.com",
-          to_address: "inbox@example.com",
-        },
-      },
+      body: { type: "marfa.relic", properties: { title: "A relic" } },
     });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("marfa.*");
   });
 
   it("does not gate reads to system.* (a working credential lists its own system.connection rows)", async () => {

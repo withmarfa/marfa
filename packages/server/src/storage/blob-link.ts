@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { deriveKey, SECRET_INFO } from "../crypto/secret-encryption.js";
+import { deriveKey, SECRET_INFO } from "../crypto/derive-key.js";
 
 /**
  * The link the instance serves for a blob no object store can sign a link

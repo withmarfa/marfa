@@ -342,8 +342,7 @@ function syntheticCalendar(
   const storage = {
     items: {
       list: (filters: ItemFilters) => {
-        // Only one of the two event types exists here; the other answers
-        // empty, as an instance with no Google calendar would.
+        // Only the event type holds rows here.
         if (filters.type !== "core.event") {
           return Promise.resolve({ data: [], next_cursor: null });
         }
@@ -798,13 +797,13 @@ describe("the reported expansion failures are bounded", () => {
 });
 
 describe("the reported failures are scoped to what the request read", () => {
-  // Not a defect being fixed but a limit being pinned, because the field
-  // reads like a instance-wide health check and is not one. A request
-  // narrowed by `type` reads one type's rules and counts one type's
-  // failures; a credential permissioned for one event type is in the
-  // same position permanently. Counting the other type would mean
-  // scanning it — the cost the narrowing exists to avoid — and reporting
-  // rows behind a permission the caller does not hold.
+  // A limit being pinned, because the field reads like an instance-wide
+  // health check and is not one. A request narrowed by `type` reads that
+  // type's rules and counts that type's failures, and a credential not
+  // permitted the event type is in the same position permanently. Counting
+  // what it did not read would mean scanning it, the cost the narrowing
+  // exists to avoid, and reporting rows behind a permission the caller does
+  // not hold.
   it("counts nothing for a type it did not read", async () => {
     const rows = Array.from({ length: 600 }, (_, i) => ({
       id: `broken-${String(i)}`,
@@ -822,14 +821,15 @@ describe("the reported failures are scoped to what the request read", () => {
         .series_errors,
     ).toBe(600);
 
-    // The same instance, read as the other event type. Zero here is true of
-    // what was read and says nothing about the 600 rules alongside it,
-    // which is exactly what the field's description claims and no more.
+    // The same instance, narrowed to a type this route does not read. Zero
+    // here is true of what was read and says nothing about the 600 rules
+    // alongside it, which is exactly what the field's description claims
+    // and no more.
     const narrowed = await readWindow(
       app,
       SYNTHETIC_FROM,
       SYNTHETIC_TO,
-      "google.calendar.event",
+      "core.note",
     );
     expect(narrowed.status).toBe(200);
     const body = (await narrowed.json()) as {

@@ -147,7 +147,6 @@ describe("unreadTopLevelKeys", () => {
   it("finds no unread key in any in-tree file", () => {
     const families: { dir: string; kind: "type" | "edge" }[] = [
       { dir: join(typesRoot, "core"), kind: "type" },
-      { dir: join(typesRoot, "connectors"), kind: "type" },
       { dir: join(typesRoot, "core", "system"), kind: "type" },
       { dir: join(typesRoot, "core", "edges"), kind: "edge" },
     ];

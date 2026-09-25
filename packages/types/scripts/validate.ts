@@ -1,8 +1,8 @@
 /**
  * Checks every in-tree JSON schema against the runtime validator.
  *
- * This script owns no rules of its own. It loads `core/`, `connectors/`,
- * `core/system/` and `core/edges/`, resolves each family in dependency order,
+ * This script owns no rules of its own. It loads `core/`, `core/system/`
+ * and `core/edges/`, resolves each family in dependency order,
  * and runs `validateTypeSchema` / `validateEdgeTypeSchema` — the same
  * functions the registration routes call. A schema that passes here is one a
  * client could submit over the wire unchanged. It also asks
@@ -26,7 +26,6 @@ const typesRoot = resolve(import.meta.dirname, "..");
 
 const FAMILIES = [
   { name: "core", dir: join(typesRoot, "core") },
-  { name: "connector", dir: join(typesRoot, "connectors") },
   { name: "system", dir: join(typesRoot, "core", "system") },
 ] as const;
 
@@ -73,9 +72,9 @@ let checked = 0;
 for (const family of FAMILIES) {
   const raws = loadFamily(family.name, family.dir);
   counts[family.name] = raws.length;
-  // Ancestors and `compatible_with` targets must be in the registry before the
-  // schemas that reference them; identifier depth orders parents ahead of
-  // children, and the family order puts core ahead of the connectors.
+  // Ancestors must be in the registry before the schemas that name them;
+  // identifier depth orders parents ahead of children, and the family order
+  // puts core ahead of system.
   raws.sort(
     (a, b) =>
       schemaId(a).split(".").length - schemaId(b).split(".").length ||
@@ -97,8 +96,8 @@ for (const family of FAMILIES) {
       );
       continue;
     }
-    // Register with resolved fields so a child's inheritance check and a
-    // connector's compatible_with check both see the full ancestor set.
+    // Register with resolved fields so a child's inheritance check sees the
+    // full ancestor set.
     const parent = result.data.parent
       ? registry.get(result.data.parent)
       : undefined;

@@ -54,13 +54,11 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     };
     const withExclusion: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.credential": "none",
+      "system.device": "none",
     };
     // Precondition: the resolver honors the entry, so the assertions below
     // cannot hold for the wrong reason.
-    expect(resolveTypePermission("system.credential", withExclusion)).toBe(
-      "none",
-    );
+    expect(resolveTypePermission("system.device", withExclusion)).toBe("none");
     expect(resolveTypePermission("core.note", withExclusion)).toBe("read");
 
     const before = computeTypeFilter(workingKey(granted));
@@ -73,20 +71,20 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       excluded: [],
     });
 
-    // With it: the wildcard SURVIVES. That is the change — it used to be
-    // enumerated into the concrete ids it stood for, which is what lost
-    // types the registry does not name.
+    // With it: the wildcard SURVIVES, rather than being enumerated into the
+    // concrete ids it stands for, which would lose every type the registry
+    // does not name.
     expect(after).toEqual({
       allowed: [GLOBAL_TYPE_WILDCARD],
-      excluded: ["system.credential"],
+      excluded: ["system.device"],
     });
 
     // The divergence this exists to close: the point check refuses the type
     // the filter must also withhold, and admits the one it must keep.
     expect(() => {
-      checkTypeAccess(workingKey(withExclusion), "system.credential", "read");
+      checkTypeAccess(workingKey(withExclusion), "system.device", "read");
     }).toThrow();
-    expect(matchesTypeFilter("system.credential", after)).toBe(false);
+    expect(matchesTypeFilter("system.device", after)).toBe(false);
     expect(matchesTypeFilter("core.note", after)).toBe(true);
   });
 
@@ -98,14 +96,14 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     const filter = computeTypeFilter(workingKey(perms));
     expect(filter.excluded).toEqual(["system.*"]);
     expect(matchesTypeFilter("core.note", filter)).toBe(true);
-    expect(matchesTypeFilter("system.credential", filter)).toBe(false);
-    expect(matchesTypeFilter("system.activity", filter)).toBe(false);
+    expect(matchesTypeFilter("system.device", filter)).toBe(false);
+    expect(matchesTypeFilter("system.webhook", filter)).toBe(false);
   });
 
   it("subtracts an exclusion nested inside a subtree grant", () => {
-    // The shape that had no representation at all: no global wildcard, so
-    // the old filter passed `["user.*"]` through whole and listed the one
-    // type the map exists to withhold.
+    // No global wildcard, so a filter that only subtracted from `*` would
+    // pass `["user.*"]` through whole and list the one type the map exists
+    // to withhold.
     const perms: Record<string, TypePermission> = {
       "user.*": "read",
       "user.secret": "none",

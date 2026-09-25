@@ -137,9 +137,10 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set(RESERVED_ROOT_NAMES);
  * `metadata.types:write` is taken by the metadata family first, and that is
  * the scope gating `POST /types`.
  *
- * **A shipped publisher root is deliberately NOT refused here.** A handle
- * naming one is a namespace collision rather than a grammar confusion, and
- * reserving `google` while admitting `google-drive` is a half-protection:
+ * **A publisher root the registry holds is deliberately NOT refused here.**
+ * A handle naming one is a namespace collision rather than a grammar
+ * confusion, and reserving `acme` while admitting `acme-corp` is a
+ * half-protection:
  * the set matches whole handles only, so the obvious neighbors stay
  * claimable and the list reads as a defense it cannot provide. The collision
  * is answered where it happens, by the seed refusing to overwrite a
@@ -173,12 +174,10 @@ const EDGE_KEBAB_NAME = /^[a-z](?:[a-z0-9_-]*[a-z0-9])?$/;
  * axes drift, which is exactly the defect this guards against, arriving
  * from the other direction.
  *
- * What this replaces was not a looser grammar but an escape hatch:
- * `!isValidTypeIdentifier(id) && !id.includes("-")` admitted the kebab set by
- * skipping the check entirely for anything containing a hyphen, so `"-"`,
- * `"MY-EDGE"`, `"a b-c"`, `"../-"` and `"..--.."` all registered. Naming the
- * kebab form admits the nine shipped ids without exempting everything that
- * happens to share a character with them.
+ * Naming the kebab form admits the nine shipped ids without exempting
+ * everything that happens to share a character with them: skipping the check
+ * for anything containing a hyphen would let `"-"`, `"MY-EDGE"`, `"a b-c"`,
+ * `"../-"` and `"..--.."` register.
  */
 export function isValidEdgeTypeIdentifier(value: string): boolean {
   if (typeof value !== "string") return false;
@@ -189,34 +188,17 @@ export function isValidEdgeTypeIdentifier(value: string): boolean {
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 /**
- * The shape of a handle, with nothing said about whether it may be claimed:
- * lowercase alphanumeric and hyphens, 3–32 characters, no leading, trailing
- * or consecutive hyphens.
- *
- * **Separated from `isValidHandle` because two callers need the grammar
- * without the reserved-root refusal**, and both had been open-coding it.
- * `marfa` is a reserved root, so `isValidHandle("marfa")` is false — which
- * is correct for a claim, since nobody may take the platform's own name,
- * and wrong for every other question about the string. A connector
- * identifier's first segment and a manifest's `publisher` are both that
- * other question: the platform's own connectors live under `marfa/` and
- * are published by `marfa`, so a validator carrying the reserved-root
- * check would refuse the entire first-party set.
+ * Returns true if the value is a valid handle: lowercase alphanumeric and
+ * hyphens, 3–32 characters, no leading, trailing or consecutive hyphens,
+ * and not a reserved root. Comparison is case-insensitive — the canonical
+ * form is lowercase; collision detection at the storage layer also
+ * lowercases.
  */
-export function isValidHandleGrammar(value: string): boolean {
+export function isValidHandle(value: string): boolean {
   if (typeof value !== "string") return false;
   if (value.length < 3 || value.length > 32) return false;
   if (value.includes("--")) return false;
-  return HANDLE_RE.test(value);
-}
-
-/**
- * Returns true if the value is a valid handle: the grammar above, and not a
- * reserved root. Comparison is case-insensitive — the canonical form is
- * lowercase; collision detection at the storage layer also lowercases.
- */
-export function isValidHandle(value: string): boolean {
-  if (!isValidHandleGrammar(value)) return false;
+  if (!HANDLE_RE.test(value)) return false;
   if (isReservedHandle(value)) return false;
   return true;
 }
@@ -280,53 +262,11 @@ export function isValidTypeIdentifier(value: string): boolean {
     default:
       // <publisher>.<type>[.<subtype>...] — at least two segments. Publisher
       // namespaces may carry sub-namespaces just like the reserved roots do
-      // (e.g. `google.calendar.event`, `google.tasks.task`). Publisher handles
-      // cannot collide with reserved roots; see classifyNamespace.
+      // (e.g. `acme.calendar.event`). Publisher handles cannot collide with
+      // reserved roots; see classifyNamespace.
       if (RESERVED_ROOTS.has(root)) return false;
       return segments.length >= 2;
   }
-}
-
-// The name half of a connector identifier: one or more dot-joined
-// segments, so a family can carry a sub-namespace the way types do.
-const CONNECTOR_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
-
-/**
- * Returns true if the value is a syntactically valid connector
- * identifier: `<namespace>/<name>`, for example `readwise/reader` or
- * `marfa/rss-watcher`.
- *
- * **Dots name data; the slash names an installable.** A type identifier is
- * dotted all the way down and never carries a slash; a connector is the
- * one thing a person installs, so it gets the character that says so. The
- * two grammars are deliberately separate functions rather than one loosened
- * regex, because a slash admitted into `isValidTypeIdentifier` would reach
- * every scope literal and permission-map key in the system.
- *
- * Reserved roots are **not** checked here, matching
- * `isValidTypeIdentifier`: whether a caller may publish under a given
- * handle is an authorization question answered at registration, where the
- * credential is in hand. A syntactic validator that refused reserved roots
- * would refuse the platform's own connectors, which live under `marfa/`.
- *
- * The slash is required. An earlier dot form existed while installed
- * connections were migrated onto this grammar; every stored name now carries
- * the slash, so a dotted value names a type and never a connector.
- */
-export function isValidConnectorIdentifier(value: string): boolean {
-  if (typeof value !== "string") return false;
-  if (value.length > 128) return false;
-  const slash = value.indexOf("/");
-  if (slash === -1) return false;
-  // Exactly one slash: the handle is a single segment, never a path.
-  if (value.slice(slash + 1).includes("/")) return false;
-  const handle = value.slice(0, slash);
-  const name = value.slice(slash + 1);
-  // The grammar, deliberately without the reserved-root refusal — see
-  // `isValidHandleGrammar`. Written out here for years, which is how the
-  // rule came to have two copies free to disagree.
-  if (!isValidHandleGrammar(handle)) return false;
-  return CONNECTOR_NAME.test(name);
 }
 
 // A dotted run of identifier segments with no arity rule — the prefix half of
@@ -452,9 +392,8 @@ export function resolveExtensionPermission(
  * Filters extension namespaces to the ones the requesting credential's
  * extension permissions reach, plus its own label's namespace.
  *
- * There is no privileged reader. The parameter that used to name one was
- * passed `false` at every call site, because a rank that saw everything was
- * the thing one permission model removed.
+ * There is no privileged reader: one permission model has no rank that sees
+ * everything.
  */
 export function filterExtensionsByPermission(
   extensions: Record<string, Record<string, unknown>>,

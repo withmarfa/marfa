@@ -116,8 +116,7 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
 
 /**
  * Namespaces whose members the static registry never enumerates: an app's
- * own runtime types (`user.*`, `app.*`) and the connected-service
- * namespaces. A type or edge type in one of these is registered at
+ * own runtime types (`user.*`, `app.*`) and the publisher roots. A type or edge type in one of these is registered at
  * runtime, so it does not exist when the allowed-scope set is built and
  * cannot be named concretely in a grant. The namespace wildcard is the only
  * thing that can name it, which is why these stay requestable while
@@ -125,9 +124,8 @@ const METADATA_SUBRESOURCES = ["types", "edge_types"] as const;
  * is the per-type-narrowable content set, and these appear only when an
  * app opts into them.
  *
- * Derived from the registry (`user` + `app` + every shipped publisher
- * root) rather than enumerated by hand — the hand list drifted the same
- * way the bundle lists did. The namespaces of types a caller registered
+ * Derived from the registry (`user` + `app` + every publisher root it
+ * holds) rather than enumerated by hand. The namespaces of types a caller registered
  * reach the allowlist by the other path, {@link setRuntimeNamespaceRoots},
  * which boot installs from the `types` table.
  */
@@ -164,8 +162,8 @@ export function setRuntimeNamespaceRoots(roots: readonly string[]): void {
  * Includes OIDC literals + every concrete `<type>:<verb>` from the type
  * registry + every `edge.<edgeType>:<verb>` from the edge registry + the
  * metadata sub-resource grammar + the global type wildcards (`*:read` /
- * `*:write`, the "Customize" full-access path) + the runtime / connected-
- * service namespace wildcards (`user.*`, `app.*`, `google.*`, …) + every
+ * `*:write`, the "Customize" full-access path) + the runtime and publisher
+ * namespace wildcards (`user.*`, `app.*`, `acme.*`, …) + every
  * grammatically valid scope referenced by a configured permission bundle.
  *
  * This is the set of scopes that CAN be requested, which is wider than the
@@ -253,8 +251,8 @@ export function buildAllowedScopes(
     // scopes instead; a requested wildcard renders as a single toggle.
     "core.*:read",
     "core.*:write",
-    // Runtime + connected-service namespace wildcards. These cover an app's
-    // own `user.*` / `app.*` runtime types and the connector namespaces the
+    // Runtime and publisher namespace wildcards. These cover an app's own
+    // `user.*` / `app.*` runtime types and the publisher namespaces the
     // static registry never enumerates. They stay REQUESTABLE (an app can ask
     // for them explicitly) but are deliberately NOT in the default consent
     // bundle — the default grant is the curated, per-type-narrowable content

@@ -5554,7 +5554,7 @@ extension Components {
                 ///
                 /// - Remark: Generated from `#/components/schemas/OccurrencePage/scan/max_occurrences`.
                 public var maxOccurrences: Swift.Int
-                /// Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.
+                /// Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.
                 ///
                 /// - Remark: Generated from `#/components/schemas/OccurrencePage/scan/series_errors`.
                 public var seriesErrors: Swift.Int
@@ -5580,7 +5580,7 @@ extension Components {
                 ///   - eventsRead: Event rows this request read, summed across its passes. Two of the three cannot be narrowed by the window, so this grows with the size of the calendar rather than with the window asked for.
                 ///   - occurrences: Occurrences returned, the length of `data`.
                 ///   - maxOccurrences: Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is.
-                ///   - seriesErrors: Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.
+                ///   - seriesErrors: Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to everything stored: a request narrowed by `type`, or a credential not permitted an event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the calendar is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.
                 ///   - maxSeriesErrors: Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these.
                 ///   - unproductiveIterations: Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed. It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one.
                 ///   - maxUnproductiveIterations: Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it.
@@ -7402,8 +7402,6 @@ extension Components {
             public var eventLogRetentionHours: Swift.Int?
             /// - Remark: Generated from `#/components/schemas/InstanceConfig/trash_retention_days`.
             public var trashRetentionDays: Swift.Int?
-            /// - Remark: Generated from `#/components/schemas/InstanceConfig/activity_retention_days`.
-            public var activityRetentionDays: Swift.Int?
             /// Creates a new `InstanceConfig`.
             ///
             /// - Parameters:
@@ -7412,21 +7410,18 @@ extension Components {
             ///   - auditRetentionDays:
             ///   - eventLogRetentionHours:
             ///   - trashRetentionDays:
-            ///   - activityRetentionDays:
             public init(
                 instanceId: Swift.String,
                 enforcement: Components.Schemas.InstanceConfig.EnforcementPayload? = nil,
                 auditRetentionDays: Swift.Int? = nil,
                 eventLogRetentionHours: Swift.Int? = nil,
-                trashRetentionDays: Swift.Int? = nil,
-                activityRetentionDays: Swift.Int? = nil
+                trashRetentionDays: Swift.Int? = nil
             ) {
                 self.instanceId = instanceId
                 self.enforcement = enforcement
                 self.auditRetentionDays = auditRetentionDays
                 self.eventLogRetentionHours = eventLogRetentionHours
                 self.trashRetentionDays = trashRetentionDays
-                self.activityRetentionDays = activityRetentionDays
             }
             public enum CodingKeys: String, CodingKey {
                 case instanceId = "instance_id"
@@ -7434,7 +7429,6 @@ extension Components {
                 case auditRetentionDays = "audit_retention_days"
                 case eventLogRetentionHours = "event_log_retention_hours"
                 case trashRetentionDays = "trash_retention_days"
-                case activityRetentionDays = "activity_retention_days"
             }
         }
         /// - Remark: Generated from `#/components/schemas/TypeLeverStrict`.

@@ -1,15 +1,8 @@
 /**
- * The registration doors used to hold a copy each of this walk and of the
- * depth it stops at, so the archive restore could have started accepting
- * chains `POST /types` refuses without anything failing. They share it now,
- * and nothing here covered the walk itself: the cap, the cycle check and
- * the registry resolution were all untested at every door.
- *
- * There were three callers and this build has two — `POST /types` and the
- * archive restore. The third registered from a connector manifest inside
- * the server, and the fixture covering its ordering and its stalled-batch
- * refusal went with it, so neither is covered and neither has anything
- * left to cover.
+ * The registration doors share this walk and the depth it stops at, so the
+ * archive restore cannot accept chains `POST /types` refuses. Its two
+ * callers are `POST /types` and the archive restore; this covers the walk
+ * itself: the cap, the cycle check and the registry resolution.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {

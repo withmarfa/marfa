@@ -95,7 +95,6 @@ const REQUIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["audit_log", "created_at", "resource_type"],
   ["api_keys", "permissions", "is_operator"],
   ["api_keys", "sources", "is_operator"],
-  ["types", "owner_connector", "origin"],
   ["blobs", "size_bytes", "mime_type"],
   ["outbound_webhook_deliveries", "event_type", "webhook_secret"],
 ];

@@ -1,18 +1,13 @@
 /**
  * Clamping a minted key to the reach its creator itself holds.
  *
- * `POST /keys` used to refuse an OAuth caller outright, and that refusal was
- * the enforcement: a session could not mint, so it could not mint something
- * wider than itself. Replacing it with `keys.mint` removes the refusal
- * and leaves the escalation, so the clamp is what takes its place. Without it
- * an app granted `core.note:read` plus the permission could mint a key whose
- * own maps reach every type — a durable credential wider than the grant it
- * came from, and one that outlives it.
+ * `keys.mint` lets an OAuth session reach `POST /keys`, and holding it says
+ * nothing about how far what it mints may reach. Without the clamp an app
+ * granted `core.note:read` plus the permission could mint a key whose own
+ * maps reach every type — a durable credential wider than the grant it came
+ * from, and one that outlives it.
  *
- * **The same is true of a key minted by a key, and that half is newer.** While
- * a role admitted a credential past its own maps, every caller that could
- * reach this route already reached everything, so "wider than its creator" had
- * nothing to bite on. Under one permission model a narrow credential is an
+ * **The same is true of a key minted by a key.** A narrow credential is an
  * ordinary thing: a key holding `keys.mint` and read on one type is a
  * coherent credential, and nothing about holding the permission to mint says
  * anything about how far what it mints may reach. So the ceiling is asked of
@@ -100,7 +95,7 @@ export function scopeForEntry(
  * A map entry at `none` names no literal, so the projection drops it — and on
  * the requesting side that is correct, because asking for nothing cannot
  * exceed anything. On the *holding* side it is a hole. An exact entry outranks
- * every wildcard, so `{"*":"read","system.credential":"none"}` denies that row
+ * every wildcard, so `{"*":"read","system.device":"none"}` denies that row
  * rather than omitting it, and that map is what an ordinary `content:read`
  * grant projects to. Reduced to `["*:read"]` the denials are gone, and a child
  * asking for `{"*":"read"}` — which reads as a no-op — resolves `read` on rows

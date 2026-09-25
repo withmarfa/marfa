@@ -733,11 +733,12 @@ export function isValidScope(scope: string): boolean {
  *   `SYSTEM_TYPE_IDS` and keeping this string is the change to refuse: every
  *   system type ships under `system.`, so the swap looks equivalent and
  *   stops being so the moment a system-family type is named anything else.
- * - **`marfa.*` reads but does not write.** Those types are family
- *   `connector`, so they are squarely in the category and their reads are
- *   unrestricted. But the middleware refuses every `marfa.*` write from a
- *   credential that is not `is_operator` or a manifest-granted connector
- *   credential, and an OAuth token is neither. **A parent must never claim
+ * - **`marfa.*` reads but does not write.** The build ships no `marfa.*`
+ *   type, but an instance can hold a platform row under the root. It is
+ *   outside the system family, so it is in the category and its reads are
+ *   unrestricted.
+ *   But the middleware refuses every `marfa.*` write from a credential that
+ *   is not `is_operator`, and an OAuth token is not. **A parent must never claim
  *   what a hard gate will refuse**: a grant that reads as covering a write
  *   nothing will ever permit is a consent screen telling a person something
  *   untrue, and a permission model that misdescribes itself where it could
@@ -811,10 +812,10 @@ export function scopesToTypePermissions(
     // grant already holding a wildcard that reached those ids loses them when
     // the category is added beside it:
     //
-    //   ["*:read"]                   → system.credential resolves "read"
-    //   ["*:read", "content:read"]   → system.credential resolves "none"
-    //   ["*:write"]                  → marfa.captured_email resolves "write"
-    //   ["*:write", "content:write"] → marfa.captured_email resolves "read"
+    //   ["*:read"]                   → system.device resolves "read"
+    //   ["*:read", "content:read"]   → system.device resolves "none"
+    //   ["*:write"]                  → marfa.relic resolves "write"
+    //   ["*:write", "content:write"] → marfa.relic resolves "read"
     //
     // A strictly larger scope set therefore covers strictly less, and
     // `grantCoversScope` flips from true to false across the same pair. That
@@ -1321,7 +1322,7 @@ function atLeast(
  * cannot say "everything except this", so measuring a request against a grant
  * only ever has to ask whether each requested literal is reached. A permission
  * map is different in kind: an exact entry outranks every wildcard, so
- * `{"*":"read","system.credential":"none"}` is a denial rather than an
+ * `{"*":"read","system.device":"none"}` is a denial rather than an
  * absence, and that shape is what every `content:*` grant projects to. Reduce
  * such a map to the literals it confers and the denials vanish — the caller
  * then asks for `{"*":"read"}`, which reads as a no-op and is a widening,
@@ -1507,7 +1508,7 @@ function grantCoversPattern(
  * bundle (e.g. `user.*:read`) narrows as a unit rather than per type.
  */
 export interface PermissionBundle {
-  /** Stable identifier, e.g. "read", "write", "profile", "connected". */
+  /** Stable identifier, e.g. "read", "write", "profile", "custom". */
   id: string;
   /** Plain-language label for the consent toggle, e.g. "Read your content". */
   label: string;

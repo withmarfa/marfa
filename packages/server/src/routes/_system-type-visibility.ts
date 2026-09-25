@@ -3,7 +3,7 @@
  *
  * Platform-internal rows are kept out of an ordinary query by default and
  * opted back in two ways: an explicit token, or a `type` filter naming the
- * namespace, since a caller asking for `system.credential` has already said
+ * namespace, since a caller asking for `system.device` has already said
  * what it wants and refusing it would answer a different question.
  *
  * **It is a function because it was a sentence.** `GET /items` and

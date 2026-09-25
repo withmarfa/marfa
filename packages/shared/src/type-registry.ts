@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
   ALWAYS_SEARCHED_FIELDS,
   ALL_SYSTEM_TYPES,
   ALL_TYPE_IDS,
@@ -55,13 +54,7 @@ export type {
 // registry: a consumer that keys a map or a switch by type id declares it
 // `satisfies Partial<Record<PlatformTypeId, …>>` and a deleted identifier
 // becomes a type error in that repository's own typecheck.
-export {
-  ALL_TYPES,
-  ALL_CONNECTOR_TYPES,
-  ALL_SYSTEM_TYPES,
-  ALL_TYPE_IDS,
-  SHIPPED_TYPE_SHAPES,
-};
+export { ALL_TYPES, ALL_SYSTEM_TYPES, ALL_TYPE_IDS, SHIPPED_TYPE_SHAPES };
 // The closed role vocabulary and the constraint-entry grammar, re-exported so
 // a consumer validating or rendering roles reads the same list and the same
 // parser the validator enforces.
@@ -87,28 +80,22 @@ const UNIVERSAL_FIELDS: Record<string, FieldDefinition> = {
 };
 
 // The platform-shipped types are bundled with @withmarfa/types and resolve
-// for every caller. This map is read-only after construction. Three
-// families feed it and each stays identifiable afterwards: `ALL_TYPES` is the
-// core set, `ALL_CONNECTOR_TYPES` is the vendor-shaped set a connector writes
-// into, and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
-// identically — the split describes provenance so a catalog can say what a
-// reader is actually looking at, not a difference in how lookups behave.
+// for every caller. This map is read-only after construction. Two families
+// feed it and each stays identifiable afterwards: `ALL_TYPES` is the core
+// set and `ALL_SYSTEM_TYPES` is the platform-internal set. They resolve
+// identically; the split decides the lifecycle and search restrictions
+// `system.*` carries, not how a lookup behaves.
 const _coreRegistry = new Map<string, TypeSchema>(
-  [...ALL_TYPES, ...ALL_CONNECTOR_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [
-    schema.id,
-    schema,
-  ]),
+  [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
 );
 
 /**
- * Which shipped family a platform type belongs to. The split is provenance
- * rather than behavior, but two consumers key on it — the lifecycle and
- * search restrictions that apply to `system.*`, and the catalog's account of
- * which types exist because a specific upstream service does — so it cannot
- * be derived from the identifier and has to travel with the schema.
+ * Which shipped family a platform type belongs to. The lifecycle and search
+ * restrictions that apply to `system.*` key on it, so it travels with the
+ * schema rather than being derived from the identifier.
  */
 /** Valid families as a readonly tuple. The union below is derived from it. */
-export const PLATFORM_TYPE_FAMILIES = ["core", "connector", "system"] as const;
+export const PLATFORM_TYPE_FAMILIES = ["core", "system"] as const;
 
 export type PlatformTypeFamily = (typeof PLATFORM_TYPE_FAMILIES)[number];
 
@@ -151,42 +138,31 @@ export interface SeededPlatformType {
 /**
  * Where a registered type came from. Held as a row property rather than
  * decided by the build, so it can distinguish the cases that actually
- * differ: the platform vocabulary is locked, a type a connector published
- * is updatable by that connector's own package and nothing else, and a type
- * a person registered is theirs.
+ * differ: the platform vocabulary is locked, and a type a person registered
+ * is theirs.
  *
  * **`unknown` is a real answer, not a missing one.** An archive entry that
  * carries no provenance has none to replay, and the restore has to write
- * something. The three substantive values are all wrong for it: `user`
- * is what the consent screen offers a read-and-write wildcard over, and
- * claiming it for a row that may be a connected service's mirror is the
- * laundering this value exists to stop; `connector` claims a publisher
- * nobody recorded; `platform` is a property of the build and can never be
- * written from a request. Saying "nobody knows" lets the consent screen
- * offer the row read-only rather than guess, which is the one option that
- * is neither a silent upgrade nor a silent disappearance.
+ * something. Neither substantive value fits it: `user` is what the consent
+ * screen offers a read-and-write wildcard over, and claiming it for a row
+ * nobody recorded hands that wildcard to whatever wrote the archive line;
+ * `platform` is a property of the build and can never be written from a
+ * request. Saying "nobody knows" lets the consent screen offer the row
+ * read-only rather than guess, which is the one option that is neither a
+ * silent upgrade nor a silent disappearance.
  *
- * **An older build meeting this value does not understand it**, which is the
- * cost of adding a member at all and is worth stating rather than
- * discovering. On a rollback, `isValidTypeOrigin` returns false for it, so
- * every read of such a row logs at error level, and it matches neither the
- * `user` nor the `connector` test, so its root falls out of every default
- * bundle instead of being offered read-only. That is the same shape a
- * rollback already produces for an unrecognized `family`, and the same
- * answer applies: the value passes through unchanged and the doors stay
- * shut rather than one being picked.
+ * An origin this build does not recognize fails `isValidTypeOrigin`, so
+ * every read of such a row logs at error level, and it matches no test the
+ * bundles make, so its root falls out of every default bundle. The value
+ * passes through unchanged and the doors stay shut rather than one being
+ * picked.
  *
  * **There is no non-destructive way back.** Updating a type carries no
  * provenance, so a row recorded this way keeps the value until it is
  * deleted and registered again.
  */
 /** Valid origins as a readonly tuple. The union below is derived from it. */
-export const TYPE_ORIGINS = [
-  "platform",
-  "connector",
-  "user",
-  "unknown",
-] as const;
+export const TYPE_ORIGINS = ["platform", "user", "unknown"] as const;
 
 export type TypeOrigin = (typeof TYPE_ORIGINS)[number];
 
@@ -218,28 +194,24 @@ export function isValidTypeOrigin(value: unknown): value is TypeOrigin {
  * calls this once at boot so an instance's vocabulary is the
  * data it holds rather than the build it happens to be running.
  *
- * The Map and both Sets are mutated in place rather than replaced, because
- * `TYPE_REGISTRY`, `SYSTEM_TYPE_IDS` and `CONNECTOR_TYPE_IDS` are exported
- * bindings that consumers capture at import time. Handing back new objects
+ * The Map and the Set are mutated in place rather than replaced, because
+ * `TYPE_REGISTRY` and `SYSTEM_TYPE_IDS` are exported bindings that consumers
+ * capture at import time. Handing back new objects
  * would leave every existing reference pointing at the pre-seed contents.
  */
 export function seedPlatformTypes(seeded: readonly SeededPlatformType[]): void {
   _coreRegistry.clear();
   _systemTypeIds.clear();
-  _connectorTypeIds.clear();
   for (const { schema, family } of seeded) {
     _coreRegistry.set(schema.id, schema);
-    // Exhaustive rather than a pair of `if`s, so a family added to the
-    // union fails to compile here instead of landing in neither set. The
-    // sets decide lifecycle and whether a caller may set `tier`, so a
-    // family that reaches neither is not inert — it silently gives a new
-    // shipped type the three-state lifecycle and an open `tier`.
+    // Exhaustive rather than an `if`, so a family added to the union fails
+    // to compile here instead of being treated as core by default. The set
+    // decides lifecycle and whether a caller may set `tier`, so a family
+    // that misses it is not inert: it silently gives a new shipped type the
+    // three-state lifecycle and an open `tier`.
     switch (family) {
       case "system":
         _systemTypeIds.add(schema.id);
-        break;
-      case "connector":
-        _connectorTypeIds.add(schema.id);
         break;
       case "core":
         break;
@@ -263,10 +235,6 @@ export function seedPlatformTypes(seeded: readonly SeededPlatformType[]): void {
 export function shippedPlatformTypes(): SeededPlatformType[] {
   return [
     ...ALL_TYPES.map((schema) => ({ schema, family: "core" as const })),
-    ...ALL_CONNECTOR_TYPES.map((schema) => ({
-      schema,
-      family: "connector" as const,
-    })),
     ...ALL_SYSTEM_TYPES.map((schema) => ({
       schema,
       family: "system" as const,
@@ -294,19 +262,9 @@ function resolveSchema(typeId: string): TypeSchema | undefined {
 // Mutable behind the readonly exports below, so `seedPlatformTypes` can refill
 // them in place without invalidating references consumers captured at import.
 const _systemTypeIds = new Set<string>(ALL_SYSTEM_TYPES.map((s) => s.id));
-const _connectorTypeIds = new Set<string>(ALL_CONNECTOR_TYPES.map((s) => s.id));
 
 /** The set of type IDs in the platform `system.*` registry. These are tracked separately so consumers can apply the lifecycle and search restrictions that apply to system types. */
 export const SYSTEM_TYPE_IDS: ReadonlySet<string> = _systemTypeIds;
-
-/**
- * The set of type IDs shipped as connector types: one vendor's payload shape,
- * present so a connector has somewhere faithful to write. They carry no
- * behavioral restrictions — the split from the core set is a provenance
- * distinction, so a catalog can tell a reader which types are the shared
- * vocabulary and which exist because a specific upstream service does.
- */
-export const CONNECTOR_TYPE_IDS: ReadonlySet<string> = _connectorTypeIds;
 
 /**
  * First-class field names on the `Item` wire shape. Re-exported from

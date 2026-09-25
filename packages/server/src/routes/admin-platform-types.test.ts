@@ -38,7 +38,7 @@ async function seedDriftedType(ctx: TestContext): Promise<string> {
       version: 1,
       fields: { name: { type: "string", required: true } },
     },
-    { origin: "platform", family: "core" },
+    { origin: "platform" },
   );
   setPlatformDrift([id]);
   return id;
@@ -234,7 +234,7 @@ describe("DELETE /admin/platform-types/{id}", () => {
         version: 1,
         fields: { extra: { type: "string" } },
       },
-      { origin: "platform", family: "core" },
+      { origin: "platform" },
     );
 
     const res = await request(
@@ -260,7 +260,7 @@ describe("DELETE /admin/platform-types/{id}", () => {
         version: 1,
         fields: { extra: { type: "string" } },
       },
-      { origin: "platform", family: "core" },
+      { origin: "platform" },
     );
 
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {

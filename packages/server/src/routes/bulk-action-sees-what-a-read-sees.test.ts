@@ -29,20 +29,15 @@ import type { Item, ItemState } from "@withmarfa/shared";
  * type column rather than the state column is what makes one fix cover both,
  * and a fix that closed one and not the other would close nothing.
  *
- * **The reserved row here is a `system.activity` one, because the opt-in has
- * exactly one holder.** Widening this door asks `mayWriteReserved`, and that
- * fence admits the operator key or a connector credential writing its own
- * connection's activity. The operator key holds no type at all, so the type
- * filter empties its match set before the fence is reached; a connector
- * credential is the only credential that both passes the fence and holds a
- * reserved type. Any other reserved type is therefore unopenable on this door
- * by anybody, which is a property of the fence rather than of the row.
+ * **Which reserved type the row is does not matter.** Widening this door
+ * asks `mayWriteReserved`, and that fence admits the operator key alone. The
+ * operator key holds no type at all, so the type filter empties its match set
+ * before the fence is reached: every reserved type is unopenable on this door
+ * by anybody, which is a property of the fence rather than of the row. A
+ * `system.webhook` row stands in for them all.
  */
 
 let ctx: TestContext;
-
-/** The connection the reserved rows below are attributed to. */
-const connectionId = "conn-bulk-action-probe";
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -58,13 +53,12 @@ afterAll(async () => {
  * key, whose own type permissions are empty, so the platform's own machinery
  * writes these rows.
  */
-function seedActivity(marker: string, state?: ItemState): Promise<Item> {
+function seedReserved(marker: string, state?: ItemState): Promise<Item> {
   return ctx.storage.items.create({
-    type: "system.activity",
+    type: "system.webhook",
     properties: {
-      connection_id: connectionId,
-      severity: "info",
-      summary: `ba-${marker}`,
+      url: `https://example.test/ba-${marker}`,
+      events: ["item.created"],
     },
     ...(state === undefined ? {} : { state }),
     tags: [marker],
@@ -74,7 +68,7 @@ function seedActivity(marker: string, state?: ItemState): Promise<Item> {
 
 async function seedPair(
   marker: string,
-): Promise<{ noteId: string; activityId: string }> {
+): Promise<{ noteId: string; reservedId: string }> {
   const note = await request(ctx.app, "POST", "/items", {
     key: ctx.workingKey,
     body: {
@@ -85,8 +79,8 @@ async function seedPair(
   });
   expect(note.status).toBe(201);
   const { item: n } = (await note.json()) as { item: { id: string } };
-  const activity = await seedActivity(marker);
-  return { noteId: n.id, activityId: activity.id };
+  const reserved = await seedReserved(marker);
+  return { noteId: n.id, reservedId: reserved.id };
 }
 
 /** The ids a dry run reports for a filter, which is the enumeration itself. */
@@ -106,7 +100,7 @@ async function matchedIds(
 describe("the bulk-action door and the read doors agree about system rows", () => {
   it("does not match a system row when the filter names no type", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
-    const { noteId, activityId } = await seedPair(marker);
+    const { noteId, reservedId } = await seedPair(marker);
 
     const ids = await matchedIds({ tags: [marker] });
 
@@ -114,12 +108,12 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // nothing at all, which is the shape this whole area keeps producing.
     // The note is what says the filter reached rows.
     expect(ids).toContain(noteId);
-    expect(ids).not.toContain(activityId);
+    expect(ids).not.toContain(reservedId);
   });
 
   it("does not match one through the free-text filter grammar either", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
-    const { activityId } = await seedPair(marker);
+    const { reservedId } = await seedPair(marker);
 
     // The other way in. The free-text grammar compiles a comparison straight
     // through to SQL, so it reaches rows the structured filter fields never
@@ -127,9 +121,9 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // than the state one, and a fix that closed one and not the other would
     // close nothing.
     const ids = await matchedIds({
-      filter: `properties.summary eq "ba-${marker}"`,
+      filter: `properties.url eq "https://example.test/ba-${marker}"`,
     });
-    expect(ids).not.toContain(activityId);
+    expect(ids).not.toContain(reservedId);
   });
 
   it("does not match a revoked reserved row through the state predicate", async () => {
@@ -139,9 +133,9 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // state a platform-internal row actually sits in, and the predicate
     // below is the one the two gates were described in terms of, so a test
     // that drove any other comparison would be about a neighboring claim.
-    const revoked = await seedActivity(`rev-${marker}`, "revoked");
+    const revoked = await seedReserved(`rev-${marker}`, "revoked");
     expect(revoked.state).toBe("revoked");
-    // The tag the filters below select on: `seedActivity` tags with the
+    // The tag the filters below select on: `seedReserved` tags with the
     // marker it was handed.
     const tag = `rev-${marker}`;
 
@@ -203,20 +197,20 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     });
 
     const marker = Math.random().toString(36).slice(2, 8);
-    const { noteId, activityId } = await seedPair(marker);
+    const { noteId, reservedId } = await seedPair(marker);
 
     const { initialStatus, result } = await runBulkActionAsync(
       ctx,
       {
         action: "update_tags",
         add: ["reader-probe"],
-        filter: { type: "system.activity", tags: [marker] },
+        filter: { type: "system.webhook", tags: [marker] },
         dry_run: true,
       },
       raw,
     );
     expect(initialStatus).toBe(200);
-    expect(result?.ids ?? []).not.toContain(activityId);
+    expect(result?.ids ?? []).not.toContain(reservedId);
 
     // Not vacuous, on the same credential: this key reaches the door and
     // matches an ordinary row, so the reserved row is absent because the

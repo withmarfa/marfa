@@ -10,8 +10,9 @@
  *                                non-reserved-root handle
  *
  * Reserved roots (`core`, `system`, `app`, `user`, `marfa`) cannot be
- * claimed as publisher handles. `core.*` / `system.*` / `marfa.*` types ship
- * with the server's type package and cannot be registered over HTTP at all:
+ * claimed as publisher handles. `core.*` and `system.*` types ship with the
+ * server's type package, `marfa.*` is held for the platform, and none of the
+ * three can be registered over HTTP at all:
  * the refusal is unconditional, which keeps registration and archive restore
  * in agreement about what the dataset may contain.
  */
@@ -150,8 +151,8 @@ describe("namespace grammar", () => {
   });
 
   // A reserved namespace is a property of the build, not of the request:
-  // `core.*`, `system.*` and `marfa.*` ship with the type package, and no
-  // credential registers one over HTTP. Asserting it with the broadest
+  // `core.*` and `system.*` ship with the type package, `marfa.*` is held for
+  // the platform, and no credential registers one over HTTP. Asserting it with the broadest
   // credential the suite holds is the assertion with teeth. A narrower caller
   // is refused by the ordinary permission check as well, so a rejection there
   // would not distinguish "reserved namespaces are closed" from "this key

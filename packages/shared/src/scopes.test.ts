@@ -24,7 +24,6 @@ import {
   isValidTypePattern,
 } from "./validation.js";
 import {
-  CONNECTOR_TYPE_IDS,
   SYSTEM_TYPE_IDS,
   TYPE_REGISTRY,
   isReservedRoot,
@@ -197,7 +196,7 @@ describe("scopeCovers", () => {
   });
 
   it("the global wildcard covers any type", () => {
-    expect(scopeCovers(["*:read"], "marfa.podcast.show", "read")).toBe(true);
+    expect(scopeCovers(["*:read"], "acme.widget", "read")).toBe(true);
   });
 
   it("a wildcard read grant still does not cover a write requirement", () => {
@@ -205,9 +204,7 @@ describe("scopeCovers", () => {
   });
 
   it("a wildcard does not reach outside its own subtree", () => {
-    expect(scopeCovers(["core.*:write"], "marfa.podcast.show", "read")).toBe(
-      false,
-    );
+    expect(scopeCovers(["core.*:write"], "acme.widget", "read")).toBe(false);
   });
 
   // Kind confusion. `edge` and `metadata` are not reserved roots, so
@@ -1488,7 +1485,7 @@ describe("the content category projection", () => {
   it("reaches ordinary content, including a type registered later", () => {
     const read = scopesToTypePermissions(["content:read"]);
     expect(resolveTypePermission("core.note", read)).toBe("read");
-    expect(resolveTypePermission("readwise.highlight", read)).toBe("read");
+    expect(resolveTypePermission("acme.widget", read)).toBe("read");
     // The whole point: a type nobody has registered yet is covered, because
     // the category is a complement and names no rows.
     expect(resolveTypePermission("acme.not_registered_yet", read)).toBe("read");
@@ -1500,25 +1497,19 @@ describe("the content category projection", () => {
   });
 
   it("never claims a write the reserved-namespace gate refuses", () => {
-    // `marfa.*` types are family `connector`, so they are squarely inside
-    // the category and their reads are unrestricted. Their writes are refused
-    // by the middleware for every credential that is not `is_operator` or a
-    // manifest-granted connector credential, and an OAuth token is neither. A
-    // parent that claimed the write would put something on a consent screen
-    // that will never work.
-    const marfaTypes = [...TYPE_REGISTRY.keys()].filter((id) =>
-      id.startsWith("marfa."),
-    );
-    expect(marfaTypes.length).toBeGreaterThan(0);
+    // A `marfa.*` type is outside the system family, so it is inside the
+    // category and its reads are unrestricted. Its writes are refused by the
+    // middleware for every credential that is not `is_operator`, and an
+    // OAuth token is not. A parent that claimed the write would put something
+    // on a consent screen that will never work.
+    const id = "marfa.relic";
+    // The fixture has to be honest: the id is in the category, not excluded
+    // from it, so the clamp is a level and not an exclusion.
+    expect(SYSTEM_TYPE_IDS.has(id)).toBe(false);
     const write = scopesToTypePermissions(["content:write"]);
     const read = scopesToTypePermissions(["content:read"]);
-    for (const id of marfaTypes) {
-      // The fixture has to be honest: these are in the category, not
-      // excluded from it, so the clamp is a level and not an exclusion.
-      expect(CONNECTOR_TYPE_IDS.has(id), id).toBe(true);
-      expect(resolveTypePermission(id, write), id).toBe("read");
-      expect(resolveTypePermission(id, read), id).toBe("read");
-    }
+    expect(resolveTypePermission(id, write)).toBe("read");
+    expect(resolveTypePermission(id, read)).toBe("read");
   });
 
   it("lets a literal naming a row win over the category's default for it", () => {
@@ -1536,7 +1527,7 @@ describe("the content category projection", () => {
     expect(resolveTypePermission("system.connection", forward)).toBe("read");
     expect(resolveTypePermission("system.connection", reversed)).toBe("read");
     // And the rest of the system family is untouched by that one literal.
-    expect(resolveTypePermission("system.credential", forward)).toBe("none");
+    expect(resolveTypePermission("system.device", forward)).toBe("none");
   });
 
   it("resolves the ordered levels, with write covering read", () => {
@@ -1572,36 +1563,28 @@ describe("adding the content category to a wildcard grant can narrow it", () => 
     const withCategory = scopesToTypePermissions(["*:read", "content:read"]);
     // The fixture has to be honest about why the second answer is `none`:
     // this id is in the family-backed exclusion set the projection reads.
-    expect(SYSTEM_TYPE_IDS.has("system.credential")).toBe(true);
-    expect(resolveTypePermission("system.credential", wildcardOnly)).toBe(
-      "read",
-    );
-    expect(resolveTypePermission("system.credential", withCategory)).toBe(
-      "none",
-    );
+    expect(SYSTEM_TYPE_IDS.has("system.device")).toBe(true);
+    expect(resolveTypePermission("system.device", wildcardOnly)).toBe("read");
+    expect(resolveTypePermission("system.device", withCategory)).toBe("none");
   });
 
-  it("clamps a connector type from write to read when the category joins `*:write`", () => {
+  it("clamps a `marfa.*` type from write to read when the category joins `*:write`", () => {
     const wildcardOnly = scopesToTypePermissions(["*:write"]);
     const withCategory = scopesToTypePermissions(["*:write", "content:write"]);
-    // Squarely inside the category rather than excluded from it, which is
-    // what makes this a clamp to `read` and not a drop to `none`.
-    expect(CONNECTOR_TYPE_IDS.has("marfa.captured_email")).toBe(true);
-    expect(resolveTypePermission("marfa.captured_email", wildcardOnly)).toBe(
-      "write",
-    );
-    expect(resolveTypePermission("marfa.captured_email", withCategory)).toBe(
-      "read",
-    );
+    // Inside the category rather than excluded from it, which is what makes
+    // this a clamp to `read` and not a drop to `none`.
+    expect(SYSTEM_TYPE_IDS.has("marfa.relic")).toBe(false);
+    expect(resolveTypePermission("marfa.relic", wildcardOnly)).toBe("write");
+    expect(resolveTypePermission("marfa.relic", withCategory)).toBe("read");
   });
 
   it("flips `grantCoversScope` from true to false across the same pair", () => {
     // The consequence a person meets: a standing grant re-consented alongside
     // the category is asked for again rather than waved through. Coverage is
     // the same projection read through a different door, so it moves with it.
-    expect(grantCoversScope(["*:read"], "system.credential:read")).toBe(true);
+    expect(grantCoversScope(["*:read"], "system.device:read")).toBe(true);
     expect(
-      grantCoversScope(["*:read", "content:read"], "system.credential:read"),
+      grantCoversScope(["*:read", "content:read"], "system.device:read"),
     ).toBe(false);
   });
 });
@@ -1659,16 +1642,14 @@ describe("the content category is covered by holding it and by nothing else", ()
       true,
     );
     // And not into the system family.
-    expect(grantCoversScope(["content:write"], "system.credential:read")).toBe(
+    expect(grantCoversScope(["content:write"], "system.device:read")).toBe(
       false,
     );
     // Nor a `marfa.*` write, matching the clamp.
-    expect(
-      grantCoversScope(["content:write"], "marfa.podcast.show:write"),
-    ).toBe(false);
-    expect(grantCoversScope(["content:write"], "marfa.podcast.show:read")).toBe(
-      true,
+    expect(grantCoversScope(["content:write"], "marfa.relic:write")).toBe(
+      false,
     );
+    expect(grantCoversScope(["content:write"], "marfa.relic:read")).toBe(true);
   });
 });
 

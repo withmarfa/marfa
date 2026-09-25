@@ -30,7 +30,6 @@ const instanceConfigShape = (strict: boolean) => ({
   audit_retention_days: z.number().int().min(0).optional(),
   event_log_retention_hours: z.number().int().min(0).optional(),
   trash_retention_days: z.number().int().min(0).optional(),
-  activity_retention_days: z.number().int().min(0).optional(),
 });
 
 /**
@@ -54,7 +53,7 @@ const InstanceConfigSchema = z
  * The write shape, which refuses a key it does not know, at every level.
  *
  * `PUT` is a full replacement, so stripping an unknown key is destructive
- * rather than merely useless: `{"activity_retention_day": 30}` is one missing
+ * rather than merely useless: `{"trash_retention_day": 30}` is one missing
  * letter, and answering 200 to it would erase every override the instance
  * had. A caller cannot tell that from success.
  *

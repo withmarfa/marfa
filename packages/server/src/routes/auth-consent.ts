@@ -1567,61 +1567,11 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.series": "Ongoing series.",
   "core.media.song": "Songs.",
 
-  // Connector types: the sixteen this build ships through a connected
-  // service.
-  //
-  // These reached a person as the type registry's `description` until now,
-  // which is the only population that fallback ever served. Those are
-  // written for a developer reading API docs — 170 to 796 characters,
-  // backticks, field names, and in the worst case an argument about why
-  // `priority` is an integer here and an enum on `core.task`. A screen
-  // deciding whether to trust an application is the wrong place for it.
-  //
-  // **Each says where the data comes from, because the label already says
-  // what it is.** Every one of these has a curated entry in `SCOPE_LABELS`
-  // naming the service and the noun ("Todoist tasks"), so a sentence
-  // restating that spends the row on nothing. What a person cannot get from
-  // the label is which of their things the grant reaches — the calendars
-  // they own, the videos they liked — and that is what these answer.
-  //
-  // Held to the rest of the map's rules: a noun phrase rather than an act,
-  // no futurity clause, and the possessive kept only where it locates.
-  "google.calendar.event": "Events on your Google Calendars.",
-  "google.contacts.contact": "People in your Google Contacts.",
-  "google.drive.file": "Files in your Google Drive.",
-  "google.tasks.task": "Tasks on your Google Tasks lists.",
-  "google.youtube.channel":
-    "YouTube channels you subscribe to, and the ones behind videos you like.",
-  "google.youtube.playlist": "YouTube playlists you make.",
-  "google.youtube.video":
-    "YouTube videos you like, and the ones in your playlists.",
-  "marfa.captured_email":
-    "Emails sent to the address that captures mail onto your server.",
-  "marfa.podcast.episode": "Episodes of the podcasts you follow.",
-  "marfa.podcast.show": "Podcasts you follow.",
-  "raindrop.collection":
-    "The collections your Raindrop bookmarks are filed in.",
-  "raindrop.raindrop": "Bookmarks you save to Raindrop.",
-  "readwise.book":
-    "The books, articles, and podcasts your Readwise highlights come from.",
-  "readwise.document":
-    "Articles and documents in your Readwise Reader library.",
-  // "with any notes you add" was the first draft and the futurity guard
-  // refused it: its vocabulary cannot tell a verb meaning "annotate" from
-  // one meaning "later", which is the same limit that keeps every futurity
-  // clause out of this map and composed by the renderers instead.
-  "readwise.highlight":
-    "Passages you highlight in Readwise, and the notes you write on them.",
-  "todoist.task": "Tasks on your Todoist projects.",
-
   // System
   "system.account_holder": "The entry that represents you on your server.",
-  "system.activity": "Background activity and notifications.",
   "system.app": "Connected apps.",
   "system.connection": "Connections to other apps and services.",
-  "system.credential": "Keys that give access to your server.",
   "system.device": "Devices signed in to your account.",
-  "system.connector": "Available connectors.",
   "system.webhook": "Webhook subscriptions.",
 
   // Edge types: relationships between items.
@@ -1712,9 +1662,9 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // Says what it reaches by saying what it does not, because the only
   // thing separating it from `*` above is the system family: the
   // category projects every system type to `none`, so a person holding
-  // it grants nothing about their connections, devices, webhooks or
-  // activity. Naming those four would date the sentence the next time
-  // one is added; naming the thing they have in common does not.
+  // it grants nothing about their connections, devices, apps or webhooks.
+  // Naming those would date the sentence the next time one is added;
+  // naming the thing they have in common does not.
   content: "Everything you save, and nothing about your account.",
   "core.*": "All standard content types.",
   "user.*": "Your custom types.",
@@ -1809,16 +1759,15 @@ function describeScope(scope: ParsedScope): string | undefined {
       // Deliberately absent. `scopeName` in `consent.ts` and
       // `describeScope` in `device-pages.ts` both resolve an OIDC
       // literal through `oidc-labels.ts` and return before they look at this
-      // map, so anything written here for one was computed and discarded. A
-      // third register existed to fill it and is gone with it.
+      // map, so anything written here for one would be computed and
+      // discarded.
       return undefined;
     case "permission":
       // Deliberately absent, for the reason above. `scopeName` in
       // `consent.ts` and `describeScope` in `device-pages.ts` both
       // resolve a permission literal through `permission-labels.ts` and
-      // return before they look at this map,
-      // so anything written here for one was computed and discarded. The
-      // branch that filled it is gone with it.
+      // return before they look at this map, so anything written here for
+      // one would be computed and discarded.
       //
       // Absent here is not a gap waiting on permissions reaching a
       // consent screen. They are already described when they get there, on

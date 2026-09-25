@@ -170,30 +170,6 @@ describe("a retired registry table is refused on open", () => {
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
-  it("refuses a types table that predates the owner_connector rename", async () => {
-    // The second unindexed column, and it fails later than the api_keys one
-    // rather than louder. `idx_types_origin` is the only index on this
-    // table, so the DDL passes against a file still carrying
-    // `owner_integration`; the boot then reads the registry with a select
-    // that names every column, and the open dies on `no such column`
-    // after the PRAGMAs have already rewritten the header.
-    const path = scratch();
-    const seed = createClient({ url: `file:${path}` });
-    await seed.execute(
-      "CREATE TABLE types (id TEXT PRIMARY KEY, origin TEXT, owner_integration TEXT)",
-    );
-    seed.close();
-    const before = createHash("sha256")
-      .update(readFileSync(path))
-      .digest("hex");
-
-    await expect(createConnection(path)).rejects.toThrow(/no owner_connector/);
-    await expect(createConnection(path)).rejects.toThrow(path);
-    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
-      before,
-    );
-  });
-
   it("refuses a blobs table that predates the size_bytes rename", async () => {
     // An unindexed column, and the quietest read of them. Nothing
     // indexes it, so the DDL passes against a file still carrying `size`, and

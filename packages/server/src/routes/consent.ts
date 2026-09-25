@@ -140,13 +140,9 @@ interface ConsentParams {
 /**
  * One toggle row: a scope, and whether it starts ticked.
  *
- * **`defaultOn` belongs to the row rather than to the group, and moving it
- * here is what unblocks the density work.** It used to sit on `ScopeGroup`,
- * read off the owning bundle's `default_on`, with the re-consent diff
- * overriding the whole group to `true` for the standing grant. That made two
- * stacks of tiles impossible to combine: one group would hold an added
- * off-by-default scope beside a kept one, and a single flag has no answer
- * that is not destructive in one direction. On, and a scope nobody agreed to
+ * **`defaultOn` belongs to the row rather than to the group.** One group can
+ * hold an added off-by-default scope beside a kept one, and a single group
+ * flag has no answer that is not destructive in one direction. On, and a scope nobody agreed to
  * rides in ticked. Off, and an untouched Continue submits a narrowing, which
  * the decision route reads as a promise that the removed access stops
  * working and acts on by revoking the client's live tokens.
@@ -499,14 +495,12 @@ function summarize(group: ScopeGroup): string {
     const last = listed[listed.length - 1] ?? "";
     list = `${listed.slice(0, -1).join(", ")} and ${last}`;
   }
-  // **The count and the clause need separate room, and used to share one
-  // slot.** Past four names the sentence said how many were left INSTEAD of
-  // saying the grant reaches things nobody has created yet — so it stopped
-  // stating the open-endedness exactly as the grant got wide enough to need
-  // truncating, which is the point at which that fact matters most. Each row
-  // still carries its own futurity line, so nothing was lost outright; but
-  // the groups are collapsed by default, so this sentence is what most
-  // people act on.
+  // **The count and the clause need separate room.** Sharing one slot, past
+  // four names the sentence would say how many were left INSTEAD of saying
+  // the grant reaches things nobody has created yet, dropping the
+  // open-endedness exactly as the grant got wide enough to need truncating.
+  // Each row carries its own futurity line, but the groups are collapsed by
+  // default, so this sentence is what most people act on.
   //
   // "plus" rather than a second "and", which is the whole reason the two
   // branches are not one string: "and 3 more, and anything else of that
@@ -617,41 +611,13 @@ export const SCOPE_LABELS: Record<string, string> = {
   "core.media.film": "Films",
   "core.media.series": "Series",
   "core.media.song": "Songs",
-  "google.calendar.event": "Google Calendar events",
-  "google.contacts.contact": "Google Contacts",
-  "google.drive.file": "Google Drive files",
-  "google.tasks.task": "Google Tasks",
-  "google.youtube.channel": "YouTube channels",
-  "google.youtube.playlist": "YouTube playlists",
-  "google.youtube.video": "YouTube videos",
-  "marfa.captured_email": "Captured emails",
-  "marfa.podcast.episode": "Podcast episodes",
-  "marfa.podcast.show": "Podcast shows",
-  "raindrop.collection": "Raindrop collections",
-  "raindrop.raindrop": "Raindrop bookmarks",
-  "readwise.book": "Readwise books",
-  "readwise.document": "Readwise Reader documents",
-  "readwise.highlight": "Readwise highlights",
-  "todoist.task": "Todoist tasks",
   "user.*": "Your custom types",
-  // "Connected accounts" named less than the description beside it: a
-  // connection need not have a login, so the label narrowed the grant to the
-  // case that happens to have one. "Connections" is what the description
-  // already says.
-  //
-  // **`system.activity` has the same defect and cannot be fixed here.** Its
-  // label drops notifications, which is the half a reader cares about, and
-  // every label that carries both halves needs a conjunction — which the
-  // separator guard in `consent-render.test.ts` forbids, correctly, because
-  // `summarize` joins these into a list and an "and" inside one arrives there
-  // as two items. Closing it needs a short inline form distinct from the
-  // toggle label, the shape `PERMISSION_SHORT` already takes for exactly this
-  // reason. That is a map, not a word, so it is not in this pass.
+  // "Connections" rather than "Connected accounts", which would narrow the
+  // grant to the case that happens to have a login; the description beside
+  // it says the same.
   "system.connection": "Connections",
-  "system.connector": "Available connectors",
   "system.device": "Devices",
   "system.webhook": "Webhooks",
-  "system.activity": "Activity and notifications",
   profile: "Profile",
   "profile.name": "Name",
   "profile.email": "Email address",
@@ -694,16 +660,6 @@ export const SCOPE_LABELS: Record<string, string> = {
  * refused UNLESS the pattern has an entry here to be summarized through.
  */
 export const SCOPE_SHORT: Record<string, string> = {
-  // The label reads "Activity and notifications", and the notifications half
-  // is the one a reader cares about — it is the difference between a log
-  // nobody looks at and something that reaches them. It could not be said
-  // before this map existed: the conjunction that says it is exactly what a
-  // joined list breaks on, so "Notes, Activity and notifications and Files"
-  // was the sentence a label carrying both halves produced.
-  //
-  // The short form names the thing rather than both halves, which is what a
-  // list item can be. The row is where the reader gets the rest.
-  "system.activity": "activity",
   // The toggle label is "Profile", which is right above a switch and wrong
   // mid-sentence, where a capital reads as a name. The category's short form
   // follows the OIDC literals it is summarized beside: "your name, your email
@@ -897,20 +853,14 @@ export function renderConsentScreen(params: ConsentParams): string {
     // grammar and nothing else, so no string anywhere can talk it out of
     // saying so.
     //
-    // **It was conditioned on the copy, and that is the bug this shape
-    // exists to make unrepresentable.** A curated label cannot carry the
-    // fact, because `SCOPE_LABELS` entries are joined into the group summary
-    // sentence and futurity needs a conjunction to say, which breaks the
-    // list. But a label is not always curated: `labelFor` falls through to
-    // the scope's description, and the description used to carry a futurity
-    // clause of its own for the device screen's sake. So the same sentence
-    // arrived as this row's label with the line about to repeat it, and the
-    // suppression that followed asked whether the label contained the word
-    // "later". A clause meaning futurity in other words slipped past it and
-    // was stated twice. A "later" meaning something else entirely, as in a
-    // deletion that stays recoverable, suppressed the line on a grant that
-    // then said nothing about reaching types nobody has registered. The copy
-    // no longer states it on either surface: `OPEN_ENDED_SENTENCE` is how
+    // **It is never conditioned on the copy.** A curated label cannot carry
+    // the fact, because `SCOPE_LABELS` entries are joined into the group
+    // summary sentence and futurity needs a conjunction to say, which breaks
+    // the list. A label is not always curated either: `labelFor` falls
+    // through to the scope's description, so a line suppressed by asking
+    // whether the label said "later" would repeat a clause phrased in other
+    // words and go silent on a "later" meaning something else entirely. The
+    // copy states futurity on neither surface: `OPEN_ENDED_SENTENCE` is how
     // the device screen gets it, composed there the same way.
     //
     // The expansion line absorbs the clause where there is one, since that
@@ -964,8 +914,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     // control that drives its members. It still starts in the group's state,
     // or an off-by-default group would open showing a ticked master over
     // unticked rows.
-    // **Every row, not the group's own flag, which no longer exists.** The
-    // master drives its members and submits nothing itself, so the only
+    // **Every row, not a flag on the group.** The master drives its members and submits nothing itself, so the only
     // honest starting state is the one its members already have: ticked when
     // they all are. A group holding one off-by-default row among ticked ones
     // opens with an unticked master over mostly-ticked rows, which reads

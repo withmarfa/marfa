@@ -38,9 +38,8 @@ import type { LoadedType } from "./interface.js";
  * Platform rows this build does not ship, by identifier, sorted.
  *
  * Scoped to `origin === "platform"` rather than to family or namespace: a
- * runtime registration is not the build's to have an opinion about, and a
- * traveling connector type is registered into the runtime overlay under
- * `origin = "connector"` and must never be caught here.
+ * runtime registration, or a restored row nobody recorded, is not the
+ * build's to have an opinion about and must never be caught here.
  */
 export function computePlatformDrift(
   shipped: readonly SeededPlatformType[],

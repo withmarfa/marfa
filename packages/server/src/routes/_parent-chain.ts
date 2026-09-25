@@ -4,10 +4,9 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  * How deep a registered type's parent chain may go.
  *
  * Three routes run this check and have to agree on which chains are legal:
- * `POST /types`, `PUT /types/:id` and the archive restore. They previously
- * agreed by the two files holding a copy of this number each, with a comment
- * in one claiming to mirror the other. Nothing made that true, and the two
- * ways it could have gone wrong fail differently:
+ * `POST /types`, `PUT /types/:id` and the archive restore. One number rather
+ * than a copy each, because the two ways they could disagree fail
+ * differently:
  *
  * - **A stricter archive cap** rejects partway through a restore, because
  *   the restore writes types one at a time and outside a transaction, so
@@ -15,11 +14,6 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  * - **A stricter registration cap** rejects nothing at restore time. The
  *   archive quietly accepts a chain `POST /types` would refuse, and the
  *   disagreement shows up later at a registration, or never.
- *
- * A third path shares it now. Manifest registration checked nothing about a
- * parent chain until it was given this one, and it writes its declared
- * schemas parents-first, so a manifest may list a child before its parent
- * and still be checked against the same cap as the other two.
  *
  * Distinct from `MAX_RESOLUTION_DEPTH` in `@withmarfa/shared`. That one is
  * the backstop every resolution walk stops at, whatever produced the chain,

@@ -161,26 +161,21 @@ describe("GET /types", () => {
       .filter((t) => t.roles?.includes("container"))
       .map((t) => t.id)
       .sort();
-    expect(containers).toEqual([
-      "core.media.album",
-      "core.media.series",
-      "marfa.podcast.show",
-    ]);
+    expect(containers).toEqual(["core.media.album", "core.media.series"]);
 
     const note = types.find((t) => t.id === "core.note");
     expect(note && "roles" in note).toBe(false);
   });
 });
 
-// The shipped set spans three families and all three are equally immutable:
-// they come from codegen, so editing one would change what the identifier
-// means for every deployment and for items already written against it. Naming a representative of each family here is what stops the
-// guard being narrowed back to the core family without a test noticing.
+// The shipped set spans two families and both are equally immutable: they
+// come from codegen, so editing one would change what the identifier means
+// for every deployment and for items already written against it. Naming a
+// representative of each family here is what stops the guard being narrowed
+// back to the core family without a test noticing.
 describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () => {
   const SHIPPED = [
     ["core", "core.note"],
-    ["connector", "todoist.task"],
-    ["connector", "google.calendar.event"],
     ["system", "system.connection"],
   ] as const;
 
@@ -772,10 +767,9 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
         key: ctx.workingKey,
         body: { id: `${tier}.runtime-authored-probe`, ...baseType },
       });
-      // Previously 201: the gate admitted the operator key, which put
-      // registration and archive restore in disagreement. An archive
-      // carrying such a type is refused whatever credential restores it,
-      // so the row could only ever have made the exports un-restorable.
+      // The operator key too: an archive carrying such a type is refused
+      // whatever credential restores it, so a registration here could only
+      // make the exports un-restorable.
       expect(res.status).toBe(403);
       const body = (await res.json()) as { error: { message: string } };
       expect(body.error.message).toContain("platform-shipped");
@@ -792,12 +786,13 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
 });
 
 /**
- * Deleting a type used to ask only whether items of it existed. A type that
- * another type inherited from went quietly: the parent left the registry, the
- * child kept a `parent` pointing at nothing, and every later read of the child
- * returned fewer fields than the day before. Nothing threw, because the
- * upward walk stops at an ancestor that does not resolve rather than
- * erroring, so the only visible event was a successful delete.
+ * Deleting a type asks whether another type inherits from it, not only
+ * whether items of it exist. Otherwise the parent would leave the registry,
+ * the child would keep a `parent` pointing at nothing, and every later read of
+ * the child would return fewer fields than the day before. Nothing would
+ * throw, because the upward walk stops at an ancestor that does not resolve
+ * rather than erroring, so the only visible event would be a successful
+ * delete.
  */
 describe("DELETE /types/:id — a type another type inherits from", () => {
   // Each case builds its own pair under its own ids. Sharing one across the

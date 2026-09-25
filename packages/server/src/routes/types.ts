@@ -680,9 +680,10 @@ export function typeRoutes(storage: Storage) {
         );
       }
       // Reserved namespaces are a property of the build, not of the request.
-      // `core.*`, `system.*` and `marfa.*` are authored as JSON in the type
-      // package and compiled into the registry; nothing legitimate mints one
-      // over HTTP, and the route's own published description already says so.
+      // `core.*` and `system.*` are authored as JSON in the type package and
+      // compiled into the registry, and `marfa.*` is held for the platform;
+      // nothing legitimate mints one over HTTP, and the route's own published
+      // description already says so.
       //
       // No credential is excepted, the operator key included, because a
       // restore refuses a reserved-namespace type whatever credential it

@@ -67,9 +67,6 @@ export interface ArchiveTypeResult {
  * copy, so a restore cannot accept a chain `POST /types` would refuse. Only
  * the phrasing differs: an archive entry has to be named, because the caller
  * handed over a bundle rather than that type individually.
- *
- * Manifest registration is not one of them and checks nothing, which is a
- * gap in that path rather than in this one.
  */
 function assertParentChainResolves(typeId: string, parentId: string): void {
   assertParentChain(typeId, parentId, {
@@ -119,13 +116,12 @@ function normalizeForCompare(schema: TypeSchema): TypeSchema {
  *   over a `loadAll()` that reads the whole table. A restore writes
  *   into the same table the platform seed uses, so a replayed `platform` claim
  *   would seed an attacker-chosen type into the registry at the next boot,
- *   undeletable, and `default_on` in the connected bundle.
+ *   undeletable, and resolving for every caller.
  *   A delayed fuse: `create` writes the overlay now and nothing manifests
  *   until a restart.
- * - **`family: "core"` or `"system"`.** Family decides membership of the content
- *   category, and `core` is the permissive value the boot projection exists to
- *   warn about. A type under an ordinary namespace claiming a shipped family is
- *   claiming to be part of the build.
+ * - **`family: "core"` or `"system"`.** A family is the build's: only the seed
+ *   writes one, and the restore never does. A type under an ordinary namespace
+ *   claiming a shipped family is claiming to be part of the build.
  *
  * Everything else this build does not recognize becomes `unknown`, which is the
  * fail-closed direction: the root is still offerable, read-only.
@@ -138,11 +134,7 @@ function provenanceFor(
   if (raw === undefined || raw === null || typeof raw !== "object") {
     return { origin: "unknown" };
   }
-  const claimed = raw as {
-    origin?: unknown;
-    family?: unknown;
-    owner_connector?: unknown;
-  };
+  const claimed = raw as { origin?: unknown; family?: unknown };
 
   if (claimed.origin === "platform") {
     throw new MarfaError(
@@ -159,19 +151,6 @@ function provenanceFor(
     );
   }
 
-  if (claimed.origin === "connector") {
-    return {
-      origin: "connector",
-      // The family that travels with a manifest-declared type, and the only
-      // one a restore may write. Anything else was refused above or is
-      // absent.
-      family: "connector",
-      ...(typeof claimed.owner_connector === "string" &&
-        claimed.owner_connector.length > 0 && {
-          owner_connector: claimed.owner_connector,
-        }),
-    };
-  }
   if (claimed.origin === "user") {
     // `user` earns a read AND write wildcard over the whole namespace
     // root, which makes it the one claim in this file worth more than the
@@ -352,8 +331,8 @@ export async function registerArchiveTypes(
     } else if (sameSchema(normalizeForCompare(existing), entry.schema)) {
       // A row that is already here keeps the provenance it already has.
       // Re-restoring an archive must stay a no-op, and rewriting the
-      // column would let a second restore of an older copy walk a row
-      // back to `unknown` after a connector had claimed it.
+      // column would let an archive claiming `user` hand a row recorded
+      // as `unknown` the write wildcard it was held back from.
       typesSkipped += 1;
     } else {
       conflicts.push(entry.schema.id);
@@ -411,10 +390,10 @@ export async function registerArchiveTypes(
       // `types.create` registers into the registry as part of the write, so
       // nothing here calls it directly.
       //
-      // Provenance is passed rather than defaulted. Defaulting is what made
-      // an archive round trip launder a connected service's type into the
-      // person's own: the column defaults to `user`, and `user` is the one
-      // the consent screen offers a read-and-write wildcard over.
+      // Provenance is passed rather than defaulted: the column defaults to
+      // `user`, the one the consent screen offers a read-and-write wildcard
+      // over, so defaulting would turn a row recorded as `unknown` into the
+      // person's own on a round trip.
       await storage.types.create(schema, entry.provenance);
       written.push(entry);
       pending.splice(i, 1);

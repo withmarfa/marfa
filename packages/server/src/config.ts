@@ -85,20 +85,6 @@ export interface AppConfig {
   enableHsts: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
-  /** Days a `system.activity` item survives before the purger drops it.
-   *  Default 14; env override `MARFA_ACTIVITY_RETENTION_DAYS`; instance-config
-   *  override `activity_retention_days`. `0` switches the housekeeping
-   *  job off.
-   *
-   *  A connector reports every run as an activity row, including the
-   *  runs that found nothing to do, so this is the fastest-growing item
-   *  type on an instance with connections.
-   *
-   *  Optional on the type because a dozen test contexts build
-   *  `AppConfig` literals, and a required field with
-   *  a sensible default would churn every one of them to say what the
-   *  default already says. */
-  activityRetentionDays?: number;
   /** Days a revoked application-grant tombstone survives before the purger
    *  drops it. Default 90; env override `MARFA_REVOKED_GRANT_RETENTION_DAYS`.
    *  `0` switches the housekeeping job off.
@@ -117,9 +103,6 @@ export interface AppConfig {
    *  cascade runs and an `auth.grant.retired` row is written. Default 365;
    *  env override `MARFA_GRANT_INACTIVITY_DAYS`; `0` disables. */
   grantInactivityDays?: number;
-  /** Cadence (ms) for the activity purger. Default 3_600_000 (1h);
-   *  env override `MARFA_ACTIVITY_PURGE_INTERVAL_MS`. */
-  activityPurgeIntervalMs?: number;
   /** Hours an event_log entry survives before the event-log housekeeping
    *  job purges it.
    *  Default 168 (7 days). Controls how far back a client's SSE replay
@@ -627,11 +610,10 @@ export function loadConfig(): AppConfig {
           "Generate one with: openssl rand -hex 32",
       );
     }
-    // MARFA_AUTH_SECRET has three consumers: better-auth signs its
+    // MARFA_AUTH_SECRET has two consumers: better-auth signs its
     // cookies and the OAuth authorize query with it (`app.ts`,
-    // `auth/instance.ts`), and every key `crypto/secret-encryption.ts`
-    // derives comes from it, for the blob link's signature and the cipher
-    // `system.credential` names. Unset, better-auth would sign with a
+    // `auth/instance.ts`), and the blob link's signature is keyed by
+    // `crypto/derive-key.ts` from it. Unset, better-auth would sign with a
     // secret minted per process, so every session and authorize query
     // would die at the next restart, and the crypto layer, which refuses
     // rather than falls back in production, would throw at the first
@@ -675,14 +657,6 @@ export function loadConfig(): AppConfig {
     ),
     grantInactivityDays: parseGrantInactivityDays(
       process.env.MARFA_GRANT_INACTIVITY_DAYS,
-    ),
-    activityRetentionDays: envNumber(
-      process.env.MARFA_ACTIVITY_RETENTION_DAYS,
-      14,
-    ),
-    activityPurgeIntervalMs: envNumber(
-      process.env.MARFA_ACTIVITY_PURGE_INTERVAL_MS,
-      3_600_000,
     ),
     auditCleanupIntervalMs: envNumber(
       process.env.AUDIT_CLEANUP_INTERVAL_MS,
