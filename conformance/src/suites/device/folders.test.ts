@@ -98,6 +98,8 @@ function scriptFolderWrites(
   options: {
     claims?: (source: string) => boolean;
     reads?: (type: string) => boolean;
+    /** A door whose refusal names a row the key may not read. */
+    names?: boolean;
     /** Handed the door, for a fixture that has another machine write. */
     door?: (door: FolderDoor) => void;
   } = {},
@@ -125,6 +127,7 @@ function scriptFolderWrites(
       }),
     options.claims,
     options.reads,
+    options.names,
   );
   options.door?.(door);
   const created: Array<{ id: string; source_id: string | null }> = [];
@@ -1588,54 +1591,78 @@ describe("identity", () => {
     // the key is taken and nothing of the row (`items.md` 5), and the
     // folder holds the file as bound to a row it lost (`folders.md` 30).
     const hidden = "01a00000-0000-7000-8000-0000000000bd";
-    harness = await folderHarness("folder-unreadable-row", {
-      rows: {
-        "core.bookmark": [
-          {
-            item: {
-              id: hidden,
-              type: "core.bookmark",
-              source_id: "note.md",
-              properties: { url: "https://example.com/b", title: "Hidden" },
-            },
+    const rows = {
+      "core.bookmark": [
+        {
+          item: {
+            id: hidden,
+            type: "core.bookmark",
+            source_id: "note.md",
+            properties: { url: "https://example.com/b", title: "Hidden" },
           },
-        ],
-      },
-    });
-    scriptFolderWrites(harness, { reads: (type) => type === "core.note" });
-    put(harness, "note.md", "---\ntitle: Mine\n---\nmine\n");
-    const pushed = await harness.folder.push();
-    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    if (!pushed.ok) return;
-    expect(
-      pushed.value.drain.verdicts.map((entry) => [entry.verdict, entry.reason]),
-    ).toEqual([["refused", "type_not_permitted"]]);
-    expect(
-      JSON.stringify(pushed.value),
-      "the folder learned of a row its key may not read",
-    ).not.toContain(hidden);
-    // The refusal is kept whole in the queue, so what it did not say is
-    // asserted there: the witness is the code it did carry.
-    const queued = await harness.folder.device().queue();
-    expect(queued.ok).toBe(true);
-    const kept = queued.ok
-      ? (queued.value.find((row) => row.kind === "create_item")?.answer ?? "")
-      : "";
-    expect(kept).toContain("type_not_permitted");
-    expect(kept, "the refusal named the row's id").not.toContain(hidden);
-    expect(kept, "the refusal named the row's type").not.toContain(
+        },
+      ],
+    };
+    /** A push of `note.md`, and what the push and the queue then carry. */
+    const pushAgainst = async (
+      label: string,
+      names: boolean,
+    ): Promise<{ kept: string } | undefined> => {
+      harness = await folderHarness(label, { rows });
+      scriptFolderWrites(harness, {
+        reads: (type) => type === "core.note",
+        names,
+      });
+      put(harness, "note.md", "---\ntitle: Mine\n---\nmine\n");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return undefined;
+      expect(
+        pushed.value.drain.verdicts.map((entry) => [
+          entry.verdict,
+          entry.reason,
+        ]),
+      ).toEqual([["refused", "type_not_permitted"]]);
+      // The refusal is kept whole in the queue, and the push reports only
+      // its code, so what it did not say is asserted on the queue.
+      const queued = await harness.folder.device().queue();
+      expect(queued.ok).toBe(true);
+      const kept = queued.ok
+        ? (queued.value.find((row) => row.kind === "create_item")?.answer ??
+          "")
+        : "";
+      expect(kept).toContain("type_not_permitted");
+      return { kept };
+    };
+
+    // The control: a door whose refusal names the row, which the real
+    // server's does not, and the queue carries the id and the type. So the
+    // silence below is the refusal's, not a folder that drops whatever a
+    // refusal names.
+    const leaked = await pushAgainst("folder-unreadable-row-named", true);
+    expect(leaked?.kept).toContain(hidden);
+    expect(leaked?.kept).toContain("core.bookmark");
+    await harness?.stop();
+
+    const told = await pushAgainst("folder-unreadable-row", false);
+    expect(told).toBeDefined();
+    if (told === undefined) return;
+    expect(told.kept, "the refusal named the row's id").not.toContain(hidden);
+    expect(told.kept, "the refusal named the row's type").not.toContain(
       "core.bookmark",
     );
-    expect(read(harness, "note.md")).toContain("mine");
+    const current = harness;
+    if (current === undefined) return;
+    expect(read(current, "note.md")).toContain("mine");
 
     // Not jammed: the file is reported and not sent again, and another file
     // goes as any file does.
-    put(harness, "other.md", "---\ntitle: Other\n---\nother\n");
-    const again = await harness.folder.push();
+    put(current, "other.md", "---\ntitle: Other\n---\nother\n");
+    const again = await current.folder.push();
     expect(again.ok, JSON.stringify(again)).toBe(true);
     if (!again.ok) return;
     expect([again.value.scan.created, again.value.scan.lost]).toEqual([1, 1]);
-    expect(sentCreates(harness).map((create) => create.source_id)).toEqual([
+    expect(sentCreates(current).map((create) => create.source_id)).toEqual([
       "note.md",
       "other.md",
     ]);
@@ -2638,6 +2665,8 @@ describe("identity", () => {
       keysSentTo(named),
       "another source's row was parked to free a name it never held under this folder's source",
     ).toEqual([]);
+    // Zero here, and one where a swap of this folder's own files parks one
+    // (`follows a swap without giving either item the other's name`).
     expect(pushed.value.scan.parked).toBe(0);
     // A move of another source's file with its bytes unchanged carries
     // nothing that changes the row: no key, and the fields the row holds.
@@ -2940,7 +2969,16 @@ describe("identity", () => {
     renameSync(join(harness.dir, "one.md"), join(harness.dir, ".swap"));
     renameSync(join(harness.dir, "two.md"), join(harness.dir, "one.md"));
     renameSync(join(harness.dir, ".swap"), join(harness.dir, "two.md"));
-    expect((await harness.folder.push()).ok).toBe(true);
+    const swapped = await harness.folder.push();
+    expect(swapped.ok, JSON.stringify(swapped)).toBe(true);
+    if (!swapped.ok) return;
+    // One of the two is parked to free its name for the other, which is
+    // the count `never parks, renames or re-keys another source's row`
+    // asserts is zero there.
+    expect(
+      swapped.value.scan.parked,
+      "the swap parked nothing, so the second move asked for a name the first item still held",
+    ).toBe(1);
 
     // Every natural key the folder sent, in order, against what each item
     // held at the time. A key another item holds is one the server refuses,

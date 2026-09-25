@@ -410,8 +410,9 @@ describe("a write naming a source", () => {
       JSON.stringify(refused),
       "the refusal names the type of a row its key may not read",
     ).not.toContain("core.bookmark");
-    // Its witness is below: the key that may write the row, declaring
-    // another type, is told the row's type in `details.actual_type`.
+    // Its witnesses are below: an errored entry on this door does carry the
+    // id of a row the key may write, and the key that may write the trashed
+    // row is told its type in `details.actual_type`.
 
     const mismatched = await both.bulkItems({ atomic: false, items: [entry] });
     expect(
@@ -431,6 +432,28 @@ describe("a write naming a source", () => {
       declared?.error?.details?.actual_type,
       "the declared type was not held to the trashed row's own",
     ).toBe("core.bookmark");
+
+    // A live bookmark under the same source, and the same note entry from
+    // the key that may write it: refused for the type it declares, and the
+    // refusal names the row. So an errored entry is a shape that can carry
+    // an id, and the one the notes key was given above carries none.
+    const live = await both.createItem({
+      type: "core.bookmark",
+      source: folder,
+      source_id: `${sourceId}-live`,
+      properties: bookmark,
+    });
+    expect(live.status, JSON.stringify(live.error)).toBe(201);
+    trackItem(ctx, live.data.item.id);
+    const named = await both.bulkItems({
+      atomic: false,
+      items: [{ ...entry, source_id: `${sourceId}-live` }],
+    });
+    expect(named.status).toBe(200);
+    expect(
+      [named.data.results[0]?.error?.code, named.data.results[0]?.id],
+      "an errored entry on this door names no row even to a key that may write it, so the silence above is the result's shape rather than the gate's",
+    ).toEqual(["type_mismatch", live.data.item.id]);
   });
 
   it("tells a key its natural key is taken, and nothing of a row it may not read", async () => {

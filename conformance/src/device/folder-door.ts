@@ -82,6 +82,11 @@ export class FolderDoor {
     /** Whether the credential may read a type, which decides what a
      *  natural key resolving a row of it may learn (`items.md` 5). */
     readonly reads: (type: string) => boolean = () => true,
+    /** Whether the refusal for such a row names its id and type, which the
+     *  real server never does. A fixture asserting a folder learns nothing
+     *  of the row sets this for its control, to show that what the refusal
+     *  carries does reach what it asserts on. */
+    readonly names: boolean = false,
   ) {
     for (const [id, row] of seeded) this.rows.set(id, row);
   }
@@ -139,6 +144,9 @@ export class FolderDoor {
             403,
             "type_not_permitted",
             "The natural key resolves a row of a type this credential may not reach",
+            this.names
+              ? { id: incumbent, type: held.type ?? "core.note" }
+              : undefined,
           ),
         };
       }
