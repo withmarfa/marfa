@@ -1669,6 +1669,7 @@ dependencies = [
  "notify",
  "reqwest",
  "rpassword",
+ "security-framework",
  "serde",
  "serde_json",
  "thiserror",

@@ -80,6 +80,7 @@ export default defineConfig({
         test: {
           name: "device",
           include: ["src/suites/device/**/*.test.ts"],
+          globalSetup: ["src/utils/keychain.ts"],
           // Runs in the no-network lane instead; see the generators project.
           exclude: ["src/suites/device/**/*.decision.test.ts"],
           testTimeout: 120_000,
@@ -93,6 +94,7 @@ export default defineConfig({
         test: {
           name: "cli",
           include: ["src/suites/cli/**/*.test.ts"],
+          globalSetup: ["src/utils/keychain.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { keychainEnv } from "../utils/keychain.js";
 import {
   type CatchUpReport,
   type Change,
@@ -328,7 +329,10 @@ export class CliDevice implements DeviceUnderTest {
         ...args,
         ...this.server(),
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        env: { ...process.env, ...keychainEnv() },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
     );
     let stderr = "";
     let stdout = "";
@@ -576,6 +580,7 @@ export class CliDevice implements DeviceUnderTest {
       // deadline for everything else; this bound stops one hung spawn from
       // taking the file's whole budget with nothing naming it.
       ({ stdout } = await run(this.options.binary, full, {
+        env: { ...process.env, ...keychainEnv() },
         timeout: 60_000,
         maxBuffer: 32 * 1024 * 1024,
       }));

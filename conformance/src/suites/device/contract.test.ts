@@ -18,6 +18,7 @@ import {
   type Answer,
 } from "../../device/scripted-server.js";
 import type { HeldCommand } from "../../device/cli-adapter.js";
+import { keychainEnv } from "../../utils/keychain.js";
 import {
   KEY,
   acceptUploads,
@@ -61,6 +62,7 @@ async function marfa(args: string[], stdin = "") {
   for (const [name, value] of Object.entries(process.env)) {
     if (value !== undefined && !name.startsWith("MARFA_")) env[name] = value;
   }
+  Object.assign(env, keychainEnv());
   try {
     const pending = run(requireBinary(), args, {
       env,
@@ -453,9 +455,9 @@ const beyondTheTable: Record<string, () => string[]> = {
 
 /**
  * Commands beyond the table driven only to their refusal, so their silence
- * there has no witness here: `keys keep` would write the operating system's
- * keychain on the built-for contract, and `items attach` cannot succeed
- * against a door whose `{}` is no upload's answer.
+ * there has no witness here: `keys keep` would make its origin current in
+ * the keychain every file of the project shares, and `items attach` cannot
+ * succeed against a door whose `{}` is no upload's answer.
  */
 const refusedOnly: Record<string, () => string[]> = {
   "items attach": () => [ID, fileOf("attached.txt", "bytes")],

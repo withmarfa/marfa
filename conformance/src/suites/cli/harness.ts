@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import type { TestContext } from "../../client/types.js";
+import { keychainEnv } from "../../utils/keychain.js";
 import { createTestContext } from "../../utils/setup.js";
 
 /**
@@ -49,14 +50,7 @@ export interface Refusal {
  * variables and nothing of the developer's (a `MARFA_DB`, a kept
  * `MARFA_API_KEY`), so what a scenario passes is all the binary has.
  */
-const INHERITED = [
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "LANG",
-  "XDG_RUNTIME_DIR",
-  "DBUS_SESSION_BUS_ADDRESS",
-];
+const INHERITED = ["PATH", "HOME", "TMPDIR", "LANG", "XDG_RUNTIME_DIR"];
 
 /** The long-running children a file started, killed when the file ends. */
 const held: ChildProcess[] = [];
@@ -81,7 +75,7 @@ export class Cli {
     }
     env.MARFA_API_URL = this.url;
     if (this.key !== undefined) env.MARFA_API_KEY = this.key;
-    return env;
+    return { ...env, ...keychainEnv() };
   }
 
   /** Runs the binary and answers whatever it did, refusal or not. */
