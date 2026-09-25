@@ -555,7 +555,11 @@ describe("every command holds the server to the contract", () => {
     // body, unless a case says otherwise, so a write that reads the root
     // before it mints is sent, and it is the mint's own answer that has to
     // be refused.
-    started.answer("GET", "/", { ...answers.root(builtFor), contract: root });
+    started.answer(
+      "GET",
+      "/",
+      Object.assign(answers.root(builtFor), { contract: root }),
+    );
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
       started.answer(method, /^\/.+/, { kind: "json", status: 200, body: {} });
     }
