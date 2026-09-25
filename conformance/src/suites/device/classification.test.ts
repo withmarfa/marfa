@@ -649,7 +649,11 @@ describe("the ceiling, and releasing what it stopped", () => {
       update: [
         (request) =>
           request.pathname === `/items/${HELD.id}`
-            ? refusal(422, "idempotency_key_reused", "answered for another body")
+            ? refusal(
+                422,
+                "idempotency_key_reused",
+                "answered for another body",
+              )
             : { kind: "json", status: 200, body: "not an answer" },
       ],
     });
