@@ -208,11 +208,10 @@ export async function publishEdge(
  * local for-await loops, and it does not belong in event_log.
  */
 export function emitWake(event: PubsubEventWithId): void {
-  // `isEdgeEvent` rather than a list of edge type names. This once
-  // enumerated the two that existed, so adding a third meant remembering a
-  // site that mentions neither edges nor events in its name — and an event
-  // routed to the wrong emitter is delivered to nobody rather than failing. The discriminant is the payload shape,
-  // which cannot fall behind the union.
+  // `isEdgeEvent` rather than a list of edge type names: a list has to be
+  // kept in step with the union by hand, and an event routed to the wrong
+  // emitter is delivered to nobody rather than failing. The payload shape
+  // cannot fall behind.
   if (isEdgeEvent(event)) {
     emitter.emit("EDGE_CHANGED", event);
   } else {
@@ -394,8 +393,10 @@ export type LiveFrame =
  * lower one for good. One queue fed by both listeners keeps the order the
  * emitter saw.
  *
- * Same cleanup contract as `subscribe()`: close the iterator, or hand it a
- * signal, and both listeners come off.
+ * Same cleanup contract as `subscribe()`, with the same limit: closing the
+ * iterator takes both listeners off once the generator resumes, which for
+ * one parked on a quiet bus is when the next event arrives; a signal takes
+ * them off the moment it aborts. The route hands one over.
  */
 export async function* subscribeAll(
   options?: SubscribeOptions,

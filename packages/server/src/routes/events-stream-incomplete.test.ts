@@ -1,8 +1,8 @@
 /**
  * What the stream does when it cannot deliver what it opened with.
  *
- * One answer, in two places that used to give different ones: it stops,
- * says so in a frame, and closes. It never carries on in a state the
+ * One answer, whichever path meets it: it stops, says so in a frame, and
+ * closes. It never carries on in a state the
  * client cannot observe, because every such state ends the same way — a
  * cursor sitting past events that were never delivered and will never be
  * asked for again.
@@ -86,9 +86,9 @@ describe("a catch-up that throws partway through", () => {
   /**
    * A declared chain that closes on itself, which `isSubtypeOf` refuses
    * to walk rather than looping on. It is the reachable way into this
-   * failure now that the replay resolves subtypes: on the live path the
-   * same throw already ends the stream where the client can see it, and
-   * the replay swallowed it.
+   * failure, because the replay resolves subtypes: the same throw on the
+   * live path ends the stream where the client can see it, and the
+   * replay has to end it the same way.
    *
    * Registered into the runtime overlay, which is what the
    * credential opening the stream below resolves against.
@@ -181,15 +181,10 @@ describe("a catch-up that throws partway through", () => {
 
 describe("live frames held past the limit while the catch-up runs", () => {
   /**
-   * One more than the buffer holds.
-   *
-   * **Deliberately not an account of where the cap comes from.** It used to
-   * say the cap was derived from the dedupe window, which the constant's own
-   * comment in `routes/events.ts` refutes in as many words: the two bound
-   * different populations from different sides and neither is a function of
-   * the other. Read that comment before moving either number. What this one
-   * is for is the reminder that raising the cap means raising this, and a red
-   * here is the intended way to be told so.
+   * One more than the buffer holds. The cap is the replay's dedupe window,
+   * and the constant's comment in `routes/events.ts` says why it can be no
+   * larger; moving either number moves this, and a red here is the
+   * intended way to be told so.
    */
   const OVER_THE_CAP = 501;
 

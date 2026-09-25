@@ -16,7 +16,7 @@
  * is what decides what happens when one of them changes.
  */
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
-import { createTestContext, readSse, request } from "../test-utils.js";
+import { createTestContext, readSseWriting, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
@@ -70,7 +70,6 @@ describe("a non-abort failure sending an edge frame", () => {
     // one sent before the failure, so it is the cursor the failure names.
     const probe = await note("edge-failure-probe");
     const probeId = await ctx.storage.eventLog.getMaxId();
-    let writes: Promise<void> | undefined;
     const write = async (): Promise<void> => {
       const edge = await request(ctx.app, "POST", "/edges", {
         key: ctx.workingKey,
@@ -82,13 +81,9 @@ describe("a non-abort failure sending an edge frame", () => {
       });
       expect(edge.status).toBe(201);
     };
-    const { text, closed } = await readSse(res, {
+    const { text, closed } = await readSseWriting(res, probe, write, {
       untilClosed: true,
-      onChunk: (seen) => {
-        if (writes === undefined && seen.includes(probe)) writes = write();
-      },
     });
-    await writes;
     expect(closed).toBe(true);
     expect(text).toContain("event: stream_incomplete");
     expect(text).toContain('"reason":"edge_delivery_failed"');

@@ -109,9 +109,9 @@ describe("the stream announces where it starts", () => {
         frame,
         `a fresh connection sent no frame announcing its position, so a client cannot say which point its hydrating read is relative to (saw: ${events.map((e) => e.event).join(", ") || "no typed events"})`,
       ).toBeDefined();
-      return { frame: frame!, probe };
+      return { frame: frame!, probe, events };
     });
-    const { frame: announced, probe } = opened;
+    const { frame: announced, probe, events: firstRead } = opened;
 
     // Whatever the frame is called, the value has to be usable as a resume
     // point. Asserting on the frame's name or shape would pin an announcement
@@ -160,6 +160,30 @@ describe("the stream announces where it starts", () => {
       replayed.has(probe),
       "resuming from the announced cursor missed the first write after it, so the announcement names a position past the head",
     ).toBe(true);
+    // And every id the first stream delivered live above the cursor, not
+    // the probe alone: in a run where another fixture writes between the
+    // head read and the probe, a cursor one too high skips that write
+    // and the probe still arrives.
+    const cursorId = BigInt(String(cursor));
+    const resumedIds = new Set(
+      events
+        .map((e) => e.id)
+        .filter((id): id is string => typeof id === "string" && id !== ""),
+    );
+    const liveAboveCursor = firstRead
+      .map((e) => e.id)
+      .filter((id): id is string => typeof id === "string" && id !== "")
+      .filter((id) => BigInt(id) > cursorId);
+    expect(
+      liveAboveCursor.length,
+      "the first stream delivered no id above the announced cursor",
+    ).toBeGreaterThan(0);
+    for (const id of liveAboveCursor) {
+      expect(
+        resumedIds.has(id),
+        `the resumed read missed event ${id}, which the first stream delivered above the announced cursor ${String(cursorId)}`,
+      ).toBe(true);
+    }
   });
 });
 

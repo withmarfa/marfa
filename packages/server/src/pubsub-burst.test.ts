@@ -36,13 +36,32 @@ function idOf(frame: LiveFrame): bigint {
   return frame.event.eventId ?? -1n;
 }
 
+/**
+ * Take `count` frames, or fail naming how many came: a frame the
+ * subscription lost never arrives, and a take that waited for it would
+ * report a timeout rather than the loss.
+ */
 async function take(
   frames: AsyncGenerator<LiveFrame>,
   count: number,
 ): Promise<LiveFrame[]> {
   const taken: LiveFrame[] = [];
   while (taken.length < count) {
-    const next = await frames.next();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const next = await Promise.race([
+      frames.next(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new Error(
+              `only ${String(taken.length)} of ${String(count)} frames arrived: ${taken.map(idOf).join(", ")}`,
+            ),
+          );
+        }, 2000);
+      }),
+    ]).finally(() => {
+      if (timer !== undefined) clearTimeout(timer);
+    });
     if (next.done) break;
     taken.push(next.value);
   }
@@ -71,9 +90,20 @@ describe("subscribeAll under a burst", () => {
 
     const head = await first;
     expect(head.done).toBe(false);
-    const rest = await take(frames, burst.length - 1);
+    // A second burst, published after the first frame was taken and
+    // before the next is asked for: the generator is suspended at its
+    // yield with nothing waiting on the bus, so these arrive with no
+    // consumer parked. A push that only queued a frame when one was
+    // parked would lose every one of them.
+    const parked: PubsubEventWithId[] = [
+      edgeEvent(8),
+      itemEvent(9),
+      itemEvent(10),
+    ];
+    for (const event of parked) emitWake(event);
+    const rest = await take(frames, burst.length + parked.length - 1);
     const all = [head.value as LiveFrame, ...rest];
-    expect(all.map(idOf)).toEqual([1n, 2n, 3n, 4n, 5n, 6n, 7n]);
+    expect(all.map(idOf)).toEqual([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n]);
     expect(all.map((frame) => frame.kind)).toEqual([
       "item",
       "edge",
@@ -81,6 +111,9 @@ describe("subscribeAll under a burst", () => {
       "item",
       "edge",
       "edge",
+      "item",
+      "edge",
+      "item",
       "item",
     ]);
 

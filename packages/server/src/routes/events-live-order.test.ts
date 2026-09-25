@@ -12,7 +12,7 @@
  * row last.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, readSse, request } from "../test-utils.js";
+import { createTestContext, readSseWriting, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
@@ -63,7 +63,6 @@ describe("a live stream", () => {
     // so everything published after it takes the live path. Observed
     // rather than waited for.
     const probe = await note("live-order-probe");
-    let writes: Promise<void> | undefined;
     const write = async (): Promise<void> => {
       const created = await request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,
@@ -91,16 +90,15 @@ describe("a live stream", () => {
     // would judge the order of what happened to be there.
     const count = (seen: string, needle: string): number =>
       seen.split(needle).length - 1;
-    const { text } = await readSse(res, {
-      onChunk: (seen) => {
-        if (writes === undefined && seen.includes(probe)) writes = write();
-      },
-      until: (seen) =>
+    const { text } = await readSseWriting(
+      res,
+      probe,
+      write,
+      (seen) =>
         seen.includes('"item.purged"') &&
         count(seen, '"edge.created"') === 3 &&
         count(seen, '"edge.deleted"') === 3,
-    });
-    await writes;
+    );
 
     // From the probe's frame on: what was published after the hold was
     // seen to be released.

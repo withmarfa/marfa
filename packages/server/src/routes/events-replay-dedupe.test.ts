@@ -1,12 +1,12 @@
 /**
  * A reconnect's replay withholds only what it actually sent.
  *
- * The replay used to discard every buffered live event whose id was at or
- * below the highest id it had walked past. It now records the ids it sent
- * and withholds against that set, which is the only thing double delivery
- * can mean. The property below: a row the replay *skipped* is not treated
- * as though it had been sent, so its buffered live copy is still
- * delivered.
+ * The replay records the ids it sent and the release withholds against
+ * that set, which is the only thing double delivery can mean; withholding
+ * everything at or below the highest id walked would drop a row the
+ * replay skipped. The property below: a row the replay *skipped* is not
+ * treated as though it had been sent, so its buffered live copy is still
+ * delivered, while a row it did send, item or edge, goes out once.
  *
  * **What is real here and what is arranged.** The write is real and the
  * damaged row is really stored. The one thing arranged is *when* the
@@ -17,10 +17,10 @@
  * it to a no-op.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { Item } from "@withmarfa/shared";
+import type { Edge, Item } from "@withmarfa/shared";
 import { createTestContext, request, readSse, settle } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog, publish } from "../pubsub.js";
+import { initEventLog, publish, publishEdge } from "../pubsub.js";
 import type { PersistedEvent } from "../storage/interface.js";
 
 let ctx: TestContext;
@@ -138,6 +138,18 @@ describe("GET /events replay dedupe", () => {
     const skippedItem = await createNote(SKIPPED);
     const healthyItem = await createNote(HEALTHY);
     const endItem = await createNote(END);
+    // A real edge, so the release's source read finds its source; its
+    // event is published during the gate below, like the rows'.
+    const edgeRes = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: healthyItem.id,
+        target_id: endItem.id,
+        edge_type: "references",
+      },
+    });
+    expect(edgeRes.status).toBe(201);
+    const healthyEdge = ((await edgeRes.json()) as { edge: Edge }).edge;
     const cursor = await latestEventId();
 
     const gate = gateFirstRead();
@@ -172,6 +184,16 @@ describe("GET /events replay dedupe", () => {
       if (healthyId === undefined) {
         throw new Error("publish appended no event id; the log is unwired");
       }
+      // And an edge event beside them: the replay records both kinds and
+      // the release withholds both, or a held edge frame would follow its
+      // replayed copy out.
+      const edgeId = await publishEdge({
+        type: "edge_updated",
+        edge: healthyEdge,
+      });
+      if (edgeId === undefined) {
+        throw new Error("publishEdge appended no event id; the log is unwired");
+      }
 
       // Now damage the stored row. The replay decodes it, fails, warns
       // and skips — while the buffered live copy is an object and is
@@ -189,6 +211,7 @@ describe("GET /events replay dedupe", () => {
       // could pass on a read that never reached them.
       expect(replayed).toContain(skippedId);
       expect(replayed).toContain(healthyId);
+      expect(replayed).toContain(edgeId);
 
       await settle();
       await publish({ type: "updated", item: endItem });
@@ -204,6 +227,8 @@ describe("GET /events replay dedupe", () => {
       // dropped: once, not twice.
       expect(text).toContain(HEALTHY);
       expect(frames(text, healthyId)).toBe(1);
+      expect(text).toContain('"edge.updated"');
+      expect(frames(text, edgeId)).toBe(1);
     } finally {
       gate.open();
       gate.restore();

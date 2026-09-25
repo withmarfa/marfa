@@ -172,50 +172,42 @@ type StreamIncompleteReason =
 /**
  * Most live frames one connection holds while its prologue runs.
  *
- * **Chosen as a memory bound, not derived from anything.** It does not
- * follow from `REPLAY_DEDUPE_WINDOW`, though the two look like bounds on
- * the same population from opposite sides. They are not: that window
- * holds the last few ids the replay actually SENT, after filtering, while
- * this holds live frames on their way in — and
- * whether a held frame's id is still inside that window depends on how
- * many rows the replay sent after it, which is a property of the
- * backlog's length rather than of this buffer's. Neither number is a
- * function of the other, and moving one does not require moving the
- * other.
+ * **A memory bound, held to the dedupe window.** The hold lasts only as
+ * long as the prologue, one head read plus a replay when the client sent
+ * a cursor, and the buffer grows as the product of the instance's write
+ * rate and that duration. The prologue does not get faster because the
+ * buffer got bigger, so past some size holding more only defers the same
+ * answer at a higher cost. The job of the number is to sit above what an
+ * ordinary prologue on a busy instance reaches and below what would
+ * matter if a pathological one did not stop.
  *
- * **What the number is actually for.** The hold lasts only as long as the
- * prologue — one head read, plus a replay when the client sent a cursor.
- * The buffer grows as the product of the instance's write rate and that
- * duration, and the prologue does not get faster because the buffer got
- * bigger, so past some size holding more only defers the same answer at a
- * higher cost. The job of the number is to sit above what an ordinary
- * prologue on a busy instance reaches and below what would matter if a
- * pathological one did not stop.
- *
- * Five hundred because that is what this route already treats as a
- * sensible number of event-shaped things for one connection to hold at
- * once — `REPLAY_BATCH_SIZE` is the same figure for the replay's own
- * read. That is a precedent being reused, not a derivation: if the batch
- * size moves for reasons of its own, this does not have to follow.
+ * It is no larger than `REPLAY_DEDUPE_WINDOW`, and that is a constraint
+ * rather than a coincidence. A held frame was published after the
+ * subscription attached, so every row the replay sends after it was
+ * published after it too and is held beside it; while the hold is under
+ * the cap, fewer rows than the window have been sent past any held frame,
+ * so the frame's id is still inside the window when the release asks
+ * whether the replay already sent it. A cap above the window would let
+ * the window move past a held frame, and the release would send that
+ * frame a second time. `releaseHold` relies on this.
  *
  * **What it costs at the boundary, stated because it is a real cost.**
- * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge — past it a
- * client receives a second copy carrying an id it already absorbed, which
- * is why that number can be a judgment rather than a proof. This one does
- * not degrade: at the cap the stream terminates where nothing worse than
- * a duplicate would otherwise have happened. That is the deliberate
- * trade — a bounded, announced, resumable termination in place of a
- * buffer with no ceiling — and it is worth knowing it is a trade.
+ * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge: past it a
+ * client receives a second copy carrying an id it already absorbed. This
+ * one does not degrade: at the cap the stream terminates where nothing
+ * worse than a duplicate would otherwise have happened. That is the
+ * deliberate trade, a bounded, announced, resumable termination in place
+ * of a buffer with no ceiling, and it is worth knowing it is a trade.
  *
  * **What it costs per holding viewer.** A held frame is a two-field
- * wrapper around the event object the emitter broadcast — the same object
- * every other subscriber received, not a copy — so the marginal cost is
- * the wrappers, and the retained cost is keeping up to this many
+ * wrapper around the event object the emitter broadcast, the same object
+ * every other subscriber received rather than a copy, so the marginal
+ * cost is the wrappers, and the retained cost is keeping up to this many
  * already-published events alive until the prologue ends. The viewer
  * ceiling bounds how many connections can be holding at once; this bounds
- * what each one accumulates, which is the half nothing bounded before.
+ * what each one accumulates.
  */
-const MAX_HELD_FRAMES = 500;
+const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
 
 /** A live frame published while the stream was still holding delivery. */
 type HeldFrame = LiveFrame;
@@ -509,8 +501,12 @@ export function eventRoutes(
            * The last id written is also the highest: the log issues ids
            * in commit order, and this stream sends frames in that order,
            * edge frames beside item frames, so a reader resuming from this
-           * value misses nothing. `events-live-order.test.ts` holds the
-           * stream to it and `sync/resume.test.ts` a resuming reader.
+           * value misses nothing. The one exception is a stored row the
+           * replay could not decode, whose live copy goes out after the
+           * replay under its lower id (`events-replay-dedupe.test.ts`);
+           * a reader resuming from the higher value has already received
+           * it. `events-live-order.test.ts` holds the stream to the order
+           * and `sync/resume.test.ts` a resuming reader.
            */
           let lastSentId: bigint | null = null;
 
@@ -726,9 +722,10 @@ export function eventRoutes(
            *
            * The one exit every "this stream can no longer honor what it
            * opened with" path takes, so the four causes cannot drift into
-           * four different behaviors — which is how one of them came to
-           * end the connection, one to end half of it silently, and one
-           * to carry on as though nothing had happened.
+           * four different behaviors: a failure that ended the
+           * connection, one that ended half of it silently and one that
+           * carried on as though nothing had happened would each leave a
+           * client unable to tell which it had met.
            *
            * The held frames go unsent, and that is the point rather than
            * a side effect: they sit after the gap, so delivering them
@@ -1139,10 +1136,10 @@ export function eventRoutes(
            *
            * An id evicted from the window would be sent a second time
            * carrying the same `id:`, which a client applying a payload by
-           * id absorbs; while the hold's cap is no larger than the window
-           * the window cannot move past a held frame, so it does not
-           * happen. Dropping an event the client had no way to learn it
-           * was missing is the failure this rule exists against.
+           * id absorbs; `MAX_HELD_FRAMES` is no larger than the window so
+           * that the window cannot move past a held frame, and it does
+           * not happen. Dropping an event the client had no way to learn
+           * it was missing is the failure this rule exists against.
            *
            * Stops rather than continuing when the stream closed
            * mid-drain, so nothing is written into a controller that is

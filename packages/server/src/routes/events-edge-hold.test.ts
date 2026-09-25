@@ -9,9 +9,9 @@
  * the hold during the prologue. These are the two places a queue holds
  * more than a frame at a time, so they are the two places the order it
  * hands them on in can be seen. The purge test lets every read finish at
- * once; here the first read is held open by the test until the later
- * writes have been published, or the prologue is held by a gated log
- * while the writes go in, and only then let go.
+ * once; here a read is held open by the test until the later writes have
+ * been published, or the prologue is held by a gated log while the writes
+ * go in, and only then let go.
  */
 import {
   describe,
@@ -27,38 +27,47 @@ import {
   eventsAppWithKey,
   gatedEventLog,
   readSse,
+  readSseWriting,
   request,
-  settle,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { __resetEventLogForTests, initEventLog } from "../pubsub.js";
 
 /**
  * How the next edge frame's source read behaves. `pass` is the real read;
- * `hold` waits on the gate before the real read; `reject` fails it. Only
- * the first read after a mode is set is affected, so a test can shape one
- * send and leave the rest real.
+ * `hold` waits on the gate before the real read, and `held` settles the
+ * moment it is waiting, which is the observation that the send is
+ * outstanding; `reject` fails it. Only the first read after a mode is set
+ * is affected, so a test can shape one send and leave the rest real.
  */
 const nextRead = vi.hoisted(() => {
   let release: () => void = () => undefined;
+  let taken: () => void = () => undefined;
   const state = {
     mode: "pass" as "pass" | "hold" | "reject",
-    taken: false,
+    used: false,
     opened: Promise.resolve(),
+    held: Promise.resolve(),
     release: (): void => undefined,
     arm(mode: "hold" | "reject") {
       state.mode = mode;
-      state.taken = false;
+      state.used = false;
       state.opened = new Promise<void>((resolve) => {
         release = resolve;
+      });
+      state.held = new Promise<void>((resolve) => {
+        taken = resolve;
       });
       state.release = () => {
         release();
       };
     },
+    take() {
+      taken();
+    },
     reset() {
       state.mode = "pass";
-      state.taken = false;
+      state.used = false;
       release();
     },
   };
@@ -75,11 +84,12 @@ vi.mock("./_edge-visibility.js", async (importOriginal) => {
     edgeReadable: async (
       ...args: Parameters<typeof actual.edgeReadable>
     ): Promise<boolean> => {
-      if (nextRead.mode !== "pass" && !nextRead.taken) {
-        nextRead.taken = true;
+      if (nextRead.mode !== "pass" && !nextRead.used) {
+        nextRead.used = true;
         if (nextRead.mode === "reject") {
           throw new Error("the source read failed");
         }
+        nextRead.take();
         await nextRead.opened;
       }
       return actual.edgeReadable(...args);
@@ -157,29 +167,25 @@ describe("the live pump with an edge send outstanding", () => {
     const probe = await note("live-hold-probe");
     nextRead.arm("hold");
     let sentinel = "";
-    let writes: Promise<void> | undefined;
-    const write = async (): Promise<void> => {
-      // The first edge's send is held. Everything after it is published
-      // while the pump waits, so it queues: two items, an edge, an item,
-      // another edge, and a sentinel item to read up to.
-      await edge(a, b);
-      await settle();
-      expect(nextRead.taken, "the first edge's read was not held").toBe(true);
-      await note("live-hold-1");
-      await note("live-hold-2");
-      await edge(b, c);
-      await note("live-hold-3");
-      await edge(c, a);
-      sentinel = await note("live-hold-sentinel");
-      nextRead.release();
-    };
-    const { text } = await readSse(res, {
-      onChunk: (seen) => {
-        if (writes === undefined && seen.includes(probe)) writes = write();
+    const { text } = await readSseWriting(
+      res,
+      probe,
+      async () => {
+        // The first edge's send is held. Everything after it is published
+        // while the pump waits, so it queues: two items, an edge, an
+        // item, another edge, and a sentinel item to read up to.
+        await edge(a, b);
+        await nextRead.held;
+        await note("live-hold-1");
+        await note("live-hold-2");
+        await edge(b, c);
+        await note("live-hold-3");
+        await edge(c, a);
+        sentinel = await note("live-hold-sentinel");
+        nextRead.release();
       },
-      until: (seen) => sentinel !== "" && seen.includes(sentinel),
-    });
-    await writes;
+      (seen) => sentinel !== "" && seen.includes(sentinel),
+    );
 
     // From the probe's frame on: what was published after the hold was
     // seen to be released.
@@ -199,25 +205,21 @@ describe("the prologue's hold", () => {
     const c = await note("prologue-hold-c");
     const cursor = await ctx.storage.eventLog.getMaxId();
 
-    const { storage, open } = gatedEventLog(ctx.storage);
+    const { storage, open, reached } = gatedEventLog(ctx.storage);
     const res = await eventsAppWithKey(storage, {
       edge_permissions: { "*": "read" },
     }).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
-    // Lets the prologue reach the gate, so everything written below is
-    // held rather than delivered live. A write that got in first would
-    // be replayed rather than held, and the order assertions below would
-    // then be about the replay, which is why the announcement's position
-    // is checked against the first edge frame and not the first frame.
-    await settle();
+    // The prologue has asked for its replay and is waiting on the gate,
+    // so the subscription is attached and every write below is held.
+    await reached;
 
     await edge(a, b);
     await note("prologue-hold-item");
     await edge(b, c);
     const sentinel = await note("prologue-hold-sentinel");
-    await settle();
     open();
 
     const { text } = await readSse(res, {
@@ -234,19 +236,58 @@ describe("the prologue's hold", () => {
     expectAscending(ids);
   });
 
-  it("ends the stream naming the last id sent when an edge send fails during the release", async () => {
-    const a = await note("release-fail-a");
-    const b = await note("release-fail-b");
+  it("keeps holding while the release waits on an edge send", async () => {
+    // The release drains the hold with the flag still up, so a frame
+    // published while it waits on an edge's read joins the back of the
+    // buffer rather than being sent past the edge. A release that
+    // dropped the flag first would send that frame at once, and it would
+    // reach the client ahead of an edge published before it.
+    const a = await note("release-wait-a");
+    const b = await note("release-wait-b");
     const cursor = await ctx.storage.eventLog.getMaxId();
 
-    const { storage, open } = gatedEventLog(ctx.storage);
+    const { storage, open, reached } = gatedEventLog(ctx.storage);
     const res = await eventsAppWithKey(storage, {
       edge_permissions: { "*": "read" },
     }).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
-    await settle();
+    await reached;
+
+    nextRead.arm("hold");
+    await edge(a, b);
+    open();
+    // The release is now waiting on the held edge's read.
+    await nextRead.held;
+    const during = await note("release-wait-during");
+    nextRead.release();
+
+    const { text } = await readSse(res, {
+      until: (seen) => seen.includes(during),
+    });
+    expect(count(text, '"edge.created"')).toBe(1);
+    expect(text.indexOf("event: edge.created")).toBeLessThan(
+      text.indexOf(during),
+    );
+    const ids = frameIds(text);
+    expect(ids).toHaveLength(2);
+    expectAscending(ids);
+  });
+
+  it("ends the stream naming the last id sent when an edge send fails during the release", async () => {
+    const a = await note("release-fail-a");
+    const b = await note("release-fail-b");
+    const cursor = await ctx.storage.eventLog.getMaxId();
+
+    const { storage, open, reached } = gatedEventLog(ctx.storage);
+    const res = await eventsAppWithKey(storage, {
+      edge_permissions: { "*": "read" },
+    }).request("/events", {
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    await reached;
 
     // The item is sent from the hold first, so the cursor the failure
     // names has a position to be: the last frame the client received.
@@ -254,7 +295,6 @@ describe("the prologue's hold", () => {
     const itemId = await ctx.storage.eventLog.getMaxId();
     nextRead.arm("reject");
     await edge(a, b);
-    await settle();
     open();
 
     const { text, closed } = await readSse(res, { untilClosed: true });

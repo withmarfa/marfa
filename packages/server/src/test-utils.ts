@@ -999,17 +999,25 @@ export function collectEdgeEvents(signal: AbortSignal): {
  * A storage whose first replay read blocks until the returned `open` is
  * called, so the stream's prologue is held by the test rather than by a
  * clock: everything published while it is held goes into the hold and is
- * released, in order, when the test lets go.
+ * released, in order, when the test lets go. `reached` settles when the
+ * prologue asks for that read, which is the observation that the
+ * subscription is attached and a write made now will be held rather than
+ * missed; the read answers no rows, so nothing is replayed.
  */
 export function gatedEventLog(base: Storage): {
   storage: Storage;
   open: () => void;
+  reached: Promise<void>;
 } {
   let open = (): void => undefined;
   const gate = new Promise<PersistedEvent[]>((resolve) => {
     open = () => {
       resolve([]);
     };
+  });
+  let arrive = (): void => undefined;
+  const reached = new Promise<void>((resolve) => {
+    arrive = resolve;
   });
   let firstRead = true;
   const storage: Storage = {
@@ -1023,13 +1031,14 @@ export function gatedEventLog(base: Storage): {
       getAfter: (afterId, limit) => {
         if (firstRead) {
           firstRead = false;
+          arrive();
           return gate;
         }
         return base.eventLog.getAfter(afterId, limit);
       },
     },
   };
-  return { storage, open };
+  return { storage, open, reached };
 }
 
 /**
@@ -1060,6 +1069,39 @@ export function eventsAppWithKey(
   });
   app.route("/events", eventRoutes(storage));
   return app;
+}
+
+/**
+ * A read whose writes are placed on an observed frame: once `probe`'s
+ * frame has arrived, `write` runs, and the read goes on until `until`
+ * holds, or until the server closes the stream when `untilClosed` is set.
+ * A failure inside `write` ends the read with its own message rather than
+ * as a read that timed out waiting for what was never sent.
+ */
+export async function readSseWriting(
+  res: Response,
+  probe: string,
+  write: () => Promise<void>,
+  until: SseReadOptions["until"] | { untilClosed: true },
+): Promise<{ text: string; closed: boolean }> {
+  let failed: (err: unknown) => void = () => undefined;
+  const failure = new Promise<never>((_, reject) => {
+    failed = reject;
+  });
+  let writes: Promise<void> | undefined;
+  const read = readSse(res, {
+    onChunk: (seen) => {
+      if (writes === undefined && seen.includes(probe)) {
+        writes = write().catch((err: unknown) => {
+          failed(err);
+        });
+      }
+    },
+    ...(typeof until === "function" ? { until } : until),
+  });
+  const result = await Promise.race([read, failure]);
+  await writes;
+  return result;
 }
 
 /**
