@@ -59,7 +59,8 @@ function runnersOf(text: string): { job: string; runner: string }[] {
     .filter((entry) => entry.job !== "");
 }
 
-const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml"));
+// GitHub runs both extensions, so both are read.
+const files = readdirSync(WORKFLOWS).filter((f) => /\.ya?ml$/.test(f));
 
 describe("every job runs on the pool", () => {
   it("finds the workflows, so an empty pass cannot be a missing directory", () => {

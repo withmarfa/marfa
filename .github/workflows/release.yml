@@ -432,7 +432,7 @@ jobs:
           for line in "${present[@]}"; do echo "already there: $line"; done
           if [ "${#missing[@]}" -gt 0 ]; then
             for line in "${missing[@]}"; do
-              echo "::error::Nothing was published: $line. Publish its first version by hand from this run's artifacts, configure trusted publishing for it, then re-run this job."
+              echo "::error::Nothing was published: $line. Publish its first version by hand from this run's artifacts (a .crate is unpacked and published from its directory), configure trusted publishing for it, then re-run this job."
             done
             exit 1
           fi
@@ -450,22 +450,32 @@ jobs:
         env:
           PACKAGES: ${{ steps.plan.outputs.npm }}
         run: |
-          identity=$(curl -sf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value)
-          if [ -z "$identity" ] || [ "$identity" = null ]; then
-            echo "::error::GitHub minted no OIDC identity for npm."
-            exit 1
-          fi
           for name in $PACKAGES; do
-            escaped=${name/\//%2f}
-            status=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
-              -H "Authorization: Bearer $identity" \
-              "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/$escaped")
-            if [ "${status:0:1}" != 2 ]; then
-              echo "::error::npm answered $status to this run's identity for $name: its trusted publisher is not this repository and release.yml. Nothing was published."
+            # A fresh identity for each exchange, as `npm publish` mints one.
+            if ! identity=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=npm:registry.npmjs.org" | jq -r .value) \
+              || [ -z "$identity" ] || [ "$identity" = null ]; then
+              echo "::error::GitHub minted no OIDC identity for npm. Nothing was published."
               exit 1
             fi
-            echo "npm trusts this run for $name"
+            escaped=${name/\//%2f}
+            if ! status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+              -H "Authorization: Bearer $identity" -H "Content-Length: 0" \
+              "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/$escaped"); then
+              echo "::error::npm could not be reached to ask whether it trusts this run for $name. Nothing was published."
+              exit 1
+            fi
+            case "$status" in
+              2??) echo "npm trusts this run for $name" ;;
+              5??)
+                echo "::error::npm answered $status when asked whether it trusts this run for $name. Nothing was published."
+                exit 1
+                ;;
+              *)
+                echo "::error::npm answered $status to this run's identity for $name: its trusted publisher is not this repository and release.yml. Nothing was published."
+                exit 1
+                ;;
+            esac
           done
 
       # A token crates.io mints for this run from the job's OIDC identity,
@@ -540,13 +550,15 @@ jobs:
           esac
           mkdir -p "$RUNNER_TEMP/crate"
           tar -xzf "artifacts/marfa-client-$VERSION.crate" -C "$RUNNER_TEMP/crate"
-          # The package is the one the build job made and checked, published
-          # from where it was unpacked rather than from the checkout, which
-          # would need the version stamped again. Its manifest is the
-          # normalized one cargo wrote; the original beside it is a name
-          # cargo reserves for itself and refuses to package.
-          # `--no-verify` because `cargo package` in the build job already
-          # built this archive.
+          # Published from the build job's archive, unpacked, rather than from
+          # the checkout, which would need the version stamped again. Its
+          # manifest is the normalized one cargo wrote; the original beside it
+          # is a name cargo reserves for itself and refuses to package. cargo
+          # packs these sources again to send them, outside git, so the
+          # archive crates.io holds has the same manifest and sources as the
+          # one the release carries but not its VCS record or the generator's
+          # dotfiles, and its checksum differs. `--no-verify` because
+          # `cargo package` in the build job already built these sources.
           rm "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml.orig"
           cargo publish --no-verify --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
 
