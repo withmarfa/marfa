@@ -44,19 +44,6 @@ export function isDimensionMime(mime: string): boolean {
   );
 }
 
-/**
- * Best-effort width, height and duration from the file's own header.
- *
- * Never throws and never guesses: a format neither reader recognizes comes
- * back `unreadable` with a reason, the sweeper records that, and the fields
- * stay absent. Both readers parse container metadata rather than decoding
- * content, so the cost is bounded by the header and not by the media's
- * length.
- *
- * Pure JavaScript on purpose. ffprobe, ffmpeg and sharp were considered and
- * rejected: they would be the first native binary and the first subprocess
- * in this server, which the handful of extra containers does not pay for.
- */
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 /** The largest width or height any of these formats can state. */
 const MAX_SIDE = 2 ** 31 - 1;
@@ -83,6 +70,19 @@ function plausibleHeader(
   return true;
 }
 
+/**
+ * Best-effort width, height and duration from the file's own header.
+ *
+ * Never throws and never guesses: a format neither reader recognizes comes
+ * back `unreadable` with a reason, the sweeper records that, and the fields
+ * stay absent. Both readers parse container metadata rather than decoding
+ * content, so the cost is bounded by the header and not by the media's
+ * length.
+ *
+ * Pure JavaScript on purpose. ffprobe, ffmpeg and sharp were considered and
+ * rejected: they would be the first native binary and the first subprocess
+ * in this server, which the handful of extra containers does not pay for.
+ */
 export async function deriveDimensions(
   bytes: Buffer,
   mimeType: string,

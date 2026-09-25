@@ -13,9 +13,10 @@
  * nothing.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { MarfaClient } from "../../client/api.js";
 import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
 
@@ -47,53 +48,72 @@ afterAll(() => {
   server?.stop();
 });
 
-/** A PNG's signature, then bytes that are no image. */
+/** A PNG's signature, then bytes that are no image and no PNG header. */
 function malformedPng(): Buffer {
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    randomBytes(4096),
+    Buffer.alloc(4096, 0x5a),
   ]);
+}
+
+/** An image file item for `bytes`, answering its id. */
+async function imageItem(bytes: Buffer, title: string): Promise<string> {
+  const upload = await client.uploadBlob(bytes, "image/png");
+  expect(upload.status).toBe(201);
+  const created = await client.createItem({
+    type: "core.file.image",
+    properties: { blob_ref: upload.data.hash, mime_type: "image/png", title },
+  });
+  expect(created.status, JSON.stringify(created.error)).toBe(201);
+  return created.data.item.id;
 }
 
 describe("a malformed image", () => {
   it("is recorded as a failed enrichment, and the server goes on answering", async () => {
-    const upload = await client.uploadBlob(malformedPng(), "image/png");
-    expect(upload.status).toBe(201);
-    const created = await client.createItem({
-      type: "core.file.image",
-      properties: {
-        blob_ref: upload.data.hash,
-        mime_type: "image/png",
-        title: "not an image",
-      },
-    });
-    expect(created.status, JSON.stringify(created.error)).toBe(201);
-    const id = created.data.item.id;
+    // The control: a real image on the same server, which the first sweep
+    // reads with OCR and whose size it writes, so the failure and the
+    // absent size below are this image's and not a broken engine's.
+    const real = await imageItem(
+      readFileSync(
+        fileURLToPath(new URL("./fixtures/ocr-sample.png", import.meta.url)),
+      ),
+      "a real image",
+    );
+    const broken = await imageItem(malformedPng(), "not an image");
 
-    // Twice: a failure is re-offered until its attempts run out, and a
-    // second meeting with the same bytes is where a process that survived
-    // the first by luck would end.
-    for (const attempt of [1, 2]) {
+    // Offered until its attempts, three, run out, then left: the fourth
+    // sweep finds nothing to do. The later meetings with the same bytes are
+    // where a process that survived the first by luck would end.
+    const expected = [
+      { extracted: 1, skipped: 0, failed: 1 },
+      { extracted: 0, skipped: 0, failed: 1 },
+      { extracted: 0, skipped: 0, failed: 1 },
+      { extracted: 0, skipped: 0, failed: 0 },
+    ];
+    for (const [i, result] of expected.entries()) {
       const run = await operator.runHousekeeping("enrichment-sweep");
-      expect(run.status, `sweep ${String(attempt)}`).toBe(200);
-      expect(run.data.outcome, `sweep ${String(attempt)}`).toBe("ok");
-      // Failed, and the only way to failure this item has is the OCR
-      // refusing the bytes: the blob is there, the sweep's time budget is a
-      // minute, and a size read from them would have counted as extracted.
-      expect(run.data.result, `sweep ${String(attempt)}`).toEqual({
-        extracted: 0,
-        skipped: 0,
-        failed: 1,
-      });
+      const label = `sweep ${String(i + 1)}`;
+      expect(run.status, label).toBe(200);
+      expect(run.data.outcome, label).toBe("ok");
+      expect(run.data.result, label).toEqual(result);
     }
 
     const health = await fetch(`${server.apiUrl}/health`);
     expect(health.status).toBe(200);
-    const read = await client.getItem(id);
+
+    const control = await client.getItem(real);
+    expect(control.status).toBe(200);
+    expect(control.data.item.properties.width).toBe(1700);
+    expect(control.data.item.properties.height).toBe(2200);
+    expect(String(control.data.item.properties.extracted_text)).toContain(
+      "quokkapng",
+    );
+
+    const read = await client.getItem(broken);
     expect(read.status).toBe(200);
-    // Witness that the read is the item: its own blob is there.
-    expect(read.data.item.properties.blob_ref).toBe(upload.data.hash);
+    expect(read.data.item.properties.title).toBe("not an image");
     expect(read.data.item.properties.width).toBeUndefined();
     expect(read.data.item.properties.height).toBeUndefined();
-  }, 180_000);
+    expect(read.data.item.properties.extracted_text).toBeUndefined();
+  }, 240_000);
 });

@@ -41,6 +41,7 @@ export interface TesseractOcrOptions {
  * the job fails and the next recognition starts a fresh thread.
  */
 const THREAD = `
+const { mkdirSync } = require("node:fs");
 const { parentPort, workerData } = require("node:worker_threads");
 const { createWorker } = require(workerData.tesseract);
 let engine = null;
@@ -57,6 +58,11 @@ function fail(error) {
 parentPort.on("message", async ({ id, bytes }) => {
   current = id;
   try {
+    // The library writes its model into the cache only when the directory
+    // is there, and fetches it again on every start otherwise.
+    mkdirSync(workerData.cachePath, { recursive: true });
+    // A refusal would end this thread anyway, thrown from the library's
+    // listener; handling it answers the job with the library's own reason.
     engine ??= createWorker(workerData.langs, undefined, {
       cachePath: workerData.cachePath,
       errorHandler: fail,
@@ -82,6 +88,9 @@ export class TesseractOcr implements OcrEngine {
   private thread: Worker | null = null;
   private pending = new Map<number, Pending>();
   private nextId = 0;
+  /** The thread takes one job at a time, so a recognition waits for the one
+   *  before it to settle. */
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(private opts: TesseractOcrOptions) {}
 
@@ -119,10 +128,10 @@ export class TesseractOcr implements OcrEngine {
         if (!job) return;
         this.pending.delete(answer.id);
         if (answer.error !== undefined) {
-          // A thread that answers a refusal ends itself after it, so the
-          // next job goes to a fresh one rather than to a thread on its way
-          // out.
+          // The next job goes to a fresh thread, and this one is ended
+          // rather than trusted to end itself.
           if (this.thread === thread) this.thread = null;
+          void thread.terminate();
           job.reject(new Error(answer.error));
         } else {
           job.resolve(answer.text ?? "");
@@ -146,6 +155,12 @@ export class TesseractOcr implements OcrEngine {
   }
 
   recognize(bytes: Buffer): Promise<string> {
+    const run = this.queue.then(() => this.send(bytes));
+    this.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private send(bytes: Buffer): Promise<string> {
     const thread = this.getThread();
     const id = this.nextId++;
     return new Promise<string>((resolve, reject) => {
