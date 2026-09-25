@@ -12,6 +12,7 @@
  * once.
  */
 import { describe, expect, it } from "vitest";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -33,6 +34,30 @@ describe.skipIf(!enabled)("real OCR engine", () => {
       );
       const text = await ocr.recognize(bytes);
       expect(text).toContain("quokkapng");
+    } finally {
+      await ocr.terminate();
+    }
+  }, 120_000);
+
+  it("refuses an image its decoder cannot read, and reads the next one", async () => {
+    // A refusal the engine raises escapes as an uncaught exception unless
+    // it is handled, which ends the process the sweeper runs in; vitest
+    // reports one as a failed run.
+    const ocr = new TesseractOcr({
+      cachePath:
+        process.env.MARFA_ENRICHMENT_TESSDATA_DIR ??
+        join(tmpdir(), "marfa-tessdata"),
+    });
+    try {
+      const malformed = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        randomBytes(4096),
+      ]);
+      await expect(ocr.recognize(malformed)).rejects.toThrow();
+      const bytes = await readFile(
+        fileURLToPath(new URL("./fixtures/sample.png", import.meta.url)),
+      );
+      expect(await ocr.recognize(bytes)).toContain("quokkapng");
     } finally {
       await ocr.terminate();
     }

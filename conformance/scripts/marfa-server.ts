@@ -245,9 +245,12 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // The origin the server is reached at, which a link it mints carries.
     MARFA_AUTH_BASE_URL: url,
     // Enrichment rewrites file items in the background, which would make
-    // exact-property assertions on blobs depend on timing.
-    MARFA_ENRICHMENT_ENABLED: "false",
-    MARFA_ENRICHMENT_OCR_ENABLED: "false",
+    // exact-property assertions on blobs depend on timing. Off unless the
+    // caller says otherwise, as the limiter below is, so a fixture about
+    // enrichment can boot a server of its own with it on.
+    MARFA_ENRICHMENT_ENABLED: process.env.MARFA_ENRICHMENT_ENABLED || "false",
+    MARFA_ENRICHMENT_OCR_ENABLED:
+      process.env.MARFA_ENRICHMENT_OCR_ENABLED || "false",
     // The orphan sweep purges what an earlier run reported once this much
     // time has passed: zero, so a fixture can drive the report and the
     // purge as two runs through the housekeeping door. The sweep's own
