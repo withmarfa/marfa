@@ -787,10 +787,12 @@ export class SqliteItemStore implements ItemStore {
         {},
         "item update properties",
       );
+      // Nulls are read by the type the row ends up as: on a move, a null
+      // clears a field the destination declares optional and is refused
+      // on one it requires, whatever the type being left said about it.
       const incomingProps = resolveIncomingProperties(
-        row.type,
+        input.type ?? row.type,
         input.properties,
-        input.null_clears === true,
       );
       const now = new Date().toISOString();
 
@@ -809,6 +811,7 @@ export class SqliteItemStore implements ItemStore {
         tier: row.tier as Tier,
         occurred_at: row.occurred_at,
         source_id: row.source_id,
+        type: row.type,
       };
 
       // The version store's own write, inside this transaction, so the
@@ -824,6 +827,7 @@ export class SqliteItemStore implements ItemStore {
             tier: row.tier,
             occurred_at: row.occurred_at,
             source_id: row.source_id,
+            type: row.type,
           },
           tx,
         );
@@ -831,19 +835,15 @@ export class SqliteItemStore implements ItemStore {
 
       if (input.version === undefined || row.version === input.version) {
         // Every version-incrementing write snapshots the state it is leaving
-        // behind. Three-way merge resolves a stale write against the snapshot
-        // at the version the client sent, so a version that passed without
-        // one can never be merged against: the server declares every
-        // submitted field in conflict instead. A time-based throttle here
-        // made that the common case rather than the rare one, because two
-        // devices editing within the window is ordinary use. Volume is the
-        // version thinner's problem, not this write's.
+        // behind: a stale write merges against the snapshot at the version
+        // the caller named, and a version without one answers
+        // `ancestor_unavailable`. Volume is the version thinner's problem,
+        // not this write's.
         await writeVersion(currentProps);
 
         const merged = mergeUpdateProperties(
           currentProps,
           incomingProps,
-          input.null_clears === true,
           input.properties_mode ?? "merge",
         );
         const newVersion = row.version + 1;
@@ -929,8 +929,8 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // Only the item fields this write names. A field it is silent about
-      // is not a change and cannot collide, which is what keeps a write
-      // that touches properties alone answering exactly as it did.
+      // is not a change and cannot collide, so a write that touches
+      // properties alone names none of the three.
       const clientFields: ItemFieldValues = {
         ...(input.tier !== undefined && { tier: input.tier }),
         ...(input.occurred_at !== undefined && {
@@ -939,13 +939,31 @@ export class SqliteItemStore implements ItemStore {
         ...(input.source_id !== undefined && { source_id: input.source_id }),
       };
 
+      // Under `replace` the body is the whole of the caller's properties:
+      // a null in it is a key left out, as the write at the current version
+      // reads it, and a key the ancestor had and the body lacks is a change
+      // the caller made: the caller cleared it.
+      const replacing =
+        input.properties_mode === "replace" && incomingProps !== undefined;
+      const clientProps: Record<string, unknown> = replacing
+        ? Object.fromEntries(
+            Object.entries(incomingProps).filter(([, value]) => value !== null),
+          )
+        : (incomingProps ?? {});
+      const clearedProperties = replacing
+        ? Object.keys(ancestor.properties).filter(
+            (key) => !Object.hasOwn(clientProps, key),
+          )
+        : [];
+
       const result = detectConflict({
-        clientProperties: incomingProps ?? {},
+        clientProperties: clientProps,
         currentProperties: currentProps,
         ancestorProperties: ancestor.properties,
         clientFields,
         currentFields,
         ancestorFields: ancestor.item_fields,
+        clearedProperties,
       });
 
       const policy = resolveMergePolicy(row.type, (id) => getTypeSchema(id));
@@ -964,8 +982,42 @@ export class SqliteItemStore implements ItemStore {
       // Null on the idempotent retry, where the row already existed.
       let sibling: Item | null = null;
 
+      // A move onto a row another writer has moved since the version the
+      // caller read collides on the type, whatever else the write carries:
+      // landing it would undo a move the caller never saw.
+      const movedSince =
+        input.type !== undefined && row.type !== ancestor.item_fields.type;
+
+      const ancestorFields = {
+        current: snapshotFields,
+        ancestor: {
+          id,
+          tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
+          occurred_at: ancestor.item_fields.occurred_at ?? row.occurred_at,
+          source_id: ancestor.item_fields.source_id,
+          type: ancestor.item_fields.type,
+        },
+      };
+      if (movedSince) {
+        return versionConflict(
+          row.version,
+          currentProps,
+          input.version,
+          ancestor.properties,
+          [
+            ...(result.type === "conflict" ? result.conflicting_fields : []),
+            "type",
+          ].sort(),
+          policy,
+          ancestorFields,
+        );
+      }
+
       if (result.type === "conflict") {
-        if (input.conflict_mode !== "auto") {
+        // A colliding write that also moves the type is not resolved: the
+        // policy is the type being left's, and a copy the resolution wrote
+        // would belong to neither type.
+        if (input.conflict_mode !== "auto" || input.type !== undefined) {
           return versionConflict(
             row.version,
             currentProps,
@@ -973,26 +1025,18 @@ export class SqliteItemStore implements ItemStore {
             ancestor.properties,
             result.conflicting_fields,
             policy,
-            {
-              current: snapshotFields,
-              ancestor: {
-                id,
-                tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
-                occurred_at:
-                  ancestor.item_fields.occurred_at ?? row.occurred_at,
-                source_id: ancestor.item_fields.source_id,
-              },
-            },
+            ancestorFields,
           );
         }
 
         const plan = planAutoMerge({
-          clientProperties: incomingProps ?? {},
+          clientProperties: clientProps,
           currentProperties: currentProps,
           ancestorProperties: ancestor.properties,
           conflictingFields: result.conflicting_fields,
           collidingItemFields: result.collidingItemFields,
           policy,
+          clearedProperties,
         });
 
         // The sibling is written here, inside the transaction that moves the
@@ -1007,9 +1051,10 @@ export class SqliteItemStore implements ItemStore {
             row,
             now,
             properties: conflictedSiblingProperties({
-              clientProperties: incomingProps ?? {},
+              clientProperties: clientProps,
               currentProperties: currentProps,
               keepBothFields: plan.keepBothFields,
+              clearedProperties,
             }),
           });
         }
@@ -1030,6 +1075,32 @@ export class SqliteItemStore implements ItemStore {
         resolvedFields = result.changedFields;
       }
 
+      // What the row ends up holding is judged here against the type it
+      // ends up as. The route's prediction was made against the current
+      // row, and a stale merge is made against the ancestor: a field the
+      // body echoes at the ancestor's value is not applied, so where the
+      // other writer removed it since, a move into a type that requires it
+      // would land a row that type never admits. Judged only where the
+      // write carries properties or a move, as the route judges a current
+      // one: a type may gain a required field while rows that lack it
+      // stand, and a write that changes nothing a schema has an opinion
+      // about is not the write that has to satisfy it.
+      const resultingType = input.type ?? row.type;
+      const judged = input.properties !== undefined || input.type !== undefined;
+      if (judged && getTypeSchema(resultingType)) {
+        const validation = validateProperties(
+          resultingType,
+          resolvedProperties,
+        );
+        if (!validation.success) {
+          throw new MarfaError(
+            ErrorCode.INVALID_PROPERTIES,
+            "Invalid properties",
+            { errors: validation.errors },
+          );
+        }
+      }
+
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.
       await writeVersion(currentProps);
@@ -1048,6 +1119,9 @@ export class SqliteItemStore implements ItemStore {
         ...(resolvedFields.source_id !== undefined && {
           source_id: resolvedFields.source_id,
         }),
+        // A move is applied at a stale version as at the current one, the
+        // merged properties having been held to the destination above.
+        ...(input.type !== undefined && { type: input.type }),
       };
 
       try {
@@ -1064,7 +1138,11 @@ export class SqliteItemStore implements ItemStore {
       }
 
       await this.searchStore.remove(id);
-      await this.searchStore.index(id, resolvedProperties, row.type);
+      await this.searchStore.index(
+        id,
+        resolvedProperties,
+        input.type ?? row.type,
+      );
 
       return attachResolution(
         rowToItem({
@@ -1073,6 +1151,7 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
+          ...(input.type !== undefined && { type: input.type }),
           // An item's own time is never null on the row, so a resolved
           // value of null is a field the write did not settle rather than
           // one it cleared.
@@ -1347,6 +1426,7 @@ export class SqliteItemStore implements ItemStore {
       tier: row.tier ?? null,
       occurred_at: row.occurred_at,
       source_id: row.source_id ?? null,
+      type: row.type,
     });
 
     const now = new Date().toISOString();

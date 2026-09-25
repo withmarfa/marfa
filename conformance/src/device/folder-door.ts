@@ -397,6 +397,7 @@ export class FolderDoor {
       tier: "library",
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: row.source_id,
+      type: row.type ?? "core.note",
     };
   }
 

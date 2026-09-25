@@ -5,50 +5,43 @@ import { coerceNullProperties } from "@withmarfa/shared";
  *
  * The item store performs this merge, and the natural-key upsert route has
  * to predict it: a re-sync is judged on the value the row ends up with, not
- * on the body, because a body naming no required field at all can still be
- * what removes one. Two copies of a merge rule is two chances to disagree,
- * and they had already drifted once, and a null on a runtime-registered
- * custom type's optional field was written as null.
+ * on the body, because a null kept on a required field shows only there.
+ * Two copies of a merge rule is two chances to disagree.
  */
 
 /**
  * What the caller's properties mean before they meet the row.
  *
- * Without faithful-mirror semantics a null on an optional field means
- * "leave unset", matching the create path, so it is dropped here rather than
- * overwriting a stored value. A null on a required field is preserved so
- * validation still rejects it. `undefined` in means the update names no
- * properties at all, which is distinct from naming an empty set.
+ * A null on an optional field means "leave unset", matching the create
+ * path, so it is dropped here rather than overwriting a stored value. A null
+ * on a required field is preserved so validation still rejects it.
+ * `undefined` in means the update names no properties at all, which is
+ * distinct from naming an empty set.
  */
 export function resolveIncomingProperties(
   typeId: string,
   properties: Record<string, unknown> | undefined,
-  nullClears: boolean,
 ): Record<string, unknown> | undefined {
   if (properties === undefined) return undefined;
-  return nullClears ? properties : coerceNullProperties(typeId, properties);
+  return coerceNullProperties(typeId, properties);
 }
 
 /**
  * The properties the row ends up holding, given the resolved incoming set.
  *
  * `replace` is for a caller that means the incoming set to BE the row's
- * properties rather than to be laid over them. The clearing behavior is
- * reachable without it — an owning connector's re-sync already has a null
- * delete a key — but only by naming every field it wants gone, which means
- * every call site keeping its own list of the fields it is not sending. Nine
- * such lists is nine chances to miss one, and the tenth site written after
- * them starts from nothing. Stating the intent once is the same rule that
- * keeps any coherent state on one mechanism rather than on every caller
- * remembering.
+ * properties rather than to be laid over them: a field it leaves out is
+ * cleared. Stating that intent once keeps the type's shape out of every
+ * call site that would otherwise name each field it wants gone.
  *
  * A replace still validates: the resulting set has to satisfy the type, so
- * dropping a required field is refused rather than written.
+ * dropping a required field is refused rather than written. This is the
+ * write at the current version; at a stale one the store merges the caller's
+ * genuine changes, a cleared field included, against the ancestor instead.
  */
 export function mergeUpdateProperties(
   current: Record<string, unknown>,
   incoming: Record<string, unknown> | undefined,
-  nullClears: boolean,
   mode: "merge" | "replace" = "merge",
 ): Record<string, unknown> {
   if (incoming === undefined) return current;
@@ -59,11 +52,5 @@ export function mergeUpdateProperties(
       Object.entries(incoming).filter(([, value]) => value !== null),
     );
   }
-  const shallow = { ...current, ...incoming };
-  if (!nullClears) return shallow;
-  // Faithful-mirror re-sync: a key the upstream cleared is dropped rather
-  // than surviving as a stale value.
-  return Object.fromEntries(
-    Object.entries(shallow).filter(([key]) => incoming[key] !== null),
-  );
+  return { ...current, ...incoming };
 }

@@ -3,18 +3,23 @@
  *
  * The write contract asks clients to send only the fields they changed,
  * but detection must not depend on every client's honesty: a client that
- * echoes an unchanged field back used to manufacture a conflict against
- * an edit nobody made, and under a keep-both merge policy that surfaced
- * as a duplicate item holding text the user never typed. These pin that
- * an echo neither conflicts nor reverts, while a genuine collision still
- * surfaces.
+ * echoes an unchanged field back would otherwise manufacture a conflict
+ * against an edit nobody made, and under a keep-both merge policy that
+ * surfaces as a duplicate item holding text the user never typed. These
+ * pin that an echo neither conflicts nor reverts, while a genuine
+ * collision still surfaces.
  *
  * The same rules hold for the three fields of an item that are not
  * properties — `tier`, `occurred_at` and `source_id` — which go through
- * the same comparison and appear in the same conflicting-field list.
+ * the same comparison and appear in the same conflicting-field list, and
+ * for a key a replace clears, which is a change to absent.
  */
 import { describe, expect, it } from "vitest";
-import { detectConflict } from "./conflict.js";
+import {
+  conflictedSiblingProperties,
+  detectConflict,
+  planAutoMerge,
+} from "./conflict.js";
 import type { ItemFieldValues } from "./conflict.js";
 
 /** A row's three item fields, for a case that is about properties. */
@@ -218,5 +223,181 @@ describe("detectConflict", () => {
       changedFields: {},
       collidingItemFields: [],
     });
+  });
+
+  it("clears a key a replace left out, where the server did not touch it", () => {
+    // The client read v1 { title, body, notes } and replaced it with
+    // { title, body }: the notes are a change to "absent". The server moved
+    // the title since, which does not collide with a clear of the notes.
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: {
+        title: "server title",
+        body: "original body",
+        notes: "to clear",
+      },
+      ancestorProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "to clear",
+      },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "no_conflict",
+      merged: { title: "server title", body: "original body" },
+      changedFields: {},
+    });
+  });
+
+  it("conflicts on a key a replace left out that the server changed since", () => {
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "changed since",
+      },
+      ancestorProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "mine",
+      },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "conflict",
+      conflicting_fields: ["notes"],
+      changedFields: {},
+      collidingItemFields: [],
+    });
+  });
+
+  it("keeps a key the other writer added since, which a replace could not have known", () => {
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "added since",
+      },
+      ancestorProperties: { title: "original title", body: "original body" },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      // Listed as cleared, since the body lacks it; not in the ancestor, so
+      // not a clear.
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "no_conflict",
+      merged: {
+        title: "original title",
+        body: "original body",
+        notes: "added since",
+      },
+      changedFields: {},
+    });
+  });
+
+  it("never clears a key the body carries, whatever the list says", () => {
+    const result = detectConflict({
+      clientProperties: { title: "new title", body: "original body" },
+      currentProperties: { title: "original title", body: "original body" },
+      ancestorProperties: { title: "original title", body: "original body" },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["title", "body"],
+    });
+    expect(result).toEqual({
+      type: "no_conflict",
+      merged: { title: "new title", body: "original body" },
+      changedFields: {},
+    });
+  });
+
+  it("takes a key both sides cleared as an echo, not a change", () => {
+    // The witness for the two above: the same clear against a row the
+    // server has already cleared neither conflicts nor counts.
+    const result = detectConflict({
+      clientProperties: { title: "original title", body: "original body" },
+      currentProperties: { title: "original title", body: "original body" },
+      ancestorProperties: {
+        title: "original title",
+        body: "original body",
+        notes: "gone on both sides",
+      },
+      clientFields: fields(),
+      currentFields: fields({ tier: "library" }),
+      ancestorFields: fields({ tier: "library" }),
+      clearedProperties: ["notes"],
+    });
+    expect(result).toEqual({
+      type: "no_conflict",
+      merged: { title: "original title", body: "original body" },
+      changedFields: {},
+    });
+  });
+});
+
+describe("planAutoMerge with a cleared key", () => {
+  const ancestor = { title: "t", body: "b", notes: "n" };
+  const current = { title: "T2", body: "b", notes: "N2" };
+  const client = { body: "b" };
+  const policy = {
+    fields: { notes: "keep_both_copies" as const },
+    default: "last_writer_wins" as const,
+  };
+
+  it("clears a colliding key under last-writer-wins and keeps it under keep-both", () => {
+    const plan = planAutoMerge({
+      clientProperties: client,
+      currentProperties: current,
+      ancestorProperties: ancestor,
+      conflictingFields: ["notes", "title"],
+      collidingItemFields: [],
+      policy,
+      clearedProperties: ["title", "notes"],
+    });
+    expect(plan).toEqual({
+      merged: { body: "b", notes: "N2" },
+      keepBothFields: ["notes"],
+      strategyByField: { notes: "keep_both_copies", title: "last_writer_wins" },
+    });
+  });
+
+  it("clears a key that did not collide, whatever the policy says", () => {
+    const plan = planAutoMerge({
+      clientProperties: client,
+      currentProperties: { title: "t", body: "b", notes: "n" },
+      ancestorProperties: ancestor,
+      conflictingFields: [],
+      collidingItemFields: [],
+      policy,
+      clearedProperties: ["title", "notes"],
+    });
+    expect(plan).toEqual({
+      merged: { body: "b" },
+      keepBothFields: [],
+      strategyByField: {},
+    });
+  });
+
+  it("leaves a cleared keep-both key off the sibling", () => {
+    expect(
+      conflictedSiblingProperties({
+        clientProperties: client,
+        currentProperties: current,
+        keepBothFields: ["notes"],
+        clearedProperties: ["title", "notes"],
+      }),
+    ).toStrictEqual({ title: "T2", body: "b" });
   });
 });

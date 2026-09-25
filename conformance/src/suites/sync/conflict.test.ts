@@ -169,6 +169,179 @@ describe("the server resolves a conflict", () => {
     expect(sibling.data.metadata.tags).toContain("conflicted-copy");
   });
 
+  it("resolves a field a stale replace cleared by the policy: cleared under last-writer-wins, kept and left off the copy under keep-both", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        title: "shared title",
+        body: "shared body",
+        notes: "shared notes",
+      },
+    });
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const base = seed.data.item.version;
+
+    // `title` is last-writer-wins on core.note and `notes` keeps both, so
+    // one replace that leaves both out meets both arms of the policy.
+    const winner = await client.updateItem(id, {
+      properties: {
+        title: "title from the winner",
+        notes: "notes from the winner",
+      },
+      version: base,
+    });
+    expect(winner.ok).toBe(true);
+
+    // The control: the same clear without the flag is refused, naming both.
+    const refused = await client.rawRequest(`/items/${id}`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "shared body" },
+        properties_mode: "replace",
+        version: base,
+      },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+    expect(
+      (refused.error as unknown as { conflicting_fields?: string[] })
+        .conflicting_fields,
+    ).toEqual(["notes", "title"]);
+
+    const resolved = await client.rawRequest<{
+      item: { id: string; properties: Record<string, unknown> };
+      conflict_resolution?: {
+        strategy?: Record<string, string>;
+        conflicted_copy_id?: string;
+      };
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "shared body" },
+        properties_mode: "replace",
+        version: base,
+      },
+    });
+    expect(
+      resolved.ok,
+      `a colliding replace sent with conflict=auto was not resolved: ${resolved.status} ${JSON.stringify(resolved.error)}`,
+    ).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+
+    const resolution = resolved.data.conflict_resolution;
+    expect(resolution?.strategy?.title).toBe("last_writer_wins");
+    expect(resolution?.strategy?.notes).toBe("keep_both_copies");
+    // The later writer's clear takes the last-writer-wins field; the
+    // keep-both field keeps the server's value on the row.
+    expect(resolved.data.item.properties).not.toHaveProperty("title");
+    expect(resolved.data.item.properties.notes).toBe("notes from the winner");
+    expect(resolved.data.item.properties.body).toBe("shared body");
+
+    const copyId = resolution?.conflicted_copy_id;
+    expect(typeof copyId).toBe("string");
+    const sibling = await client.getItem(copyId!);
+    expect(sibling.ok).toBe(true);
+    // The losing value of a keep-both field was "absent", so the copy
+    // carries the row without it.
+    expect(sibling.data.item.properties).not.toHaveProperty("notes");
+    expect(sibling.data.item.properties.title).toBe("title from the winner");
+    expect(sibling.data.item.properties.body).toBe("shared body");
+    expect(sibling.data.metadata.tags).toContain("conflicted-copy");
+  });
+
+  it("applies a clear nobody collided with under conflict=auto, and resolves nothing", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: {
+        title: "shared title",
+        body: "shared body",
+        notes: "to clear",
+      },
+    });
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const base = seed.data.item.version;
+
+    const other = await client.updateItem(id, {
+      properties: { title: "title from the other writer" },
+      version: base,
+    });
+    expect(other.ok).toBe(true);
+
+    // The replace echoes the title at the value it read and leaves the
+    // notes out: the clear is a genuine change nobody else touched, so it
+    // lands as a merge would land it, and the flag has nothing to resolve.
+    const cleared = await client.rawRequest<{
+      item: { version: number; properties: Record<string, unknown> };
+      conflict_resolution?: unknown;
+    }>(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { title: "shared title", body: "shared body" },
+        properties_mode: "replace",
+        version: base,
+      },
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.item.version).toBe(base + 2);
+    expect(cleared.data.item.properties).toEqual({
+      title: "title from the other writer",
+      body: "shared body",
+    });
+    expect(cleared.data.conflict_resolution).toBeUndefined();
+  });
+
+  it("refuses to resolve a colliding write that also moves the type", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { title: "moving title", body: "moving body" },
+    });
+    expect(seed.ok).toBe(true);
+    const id = seed.data.item.id;
+    trackItem(ctx, id);
+    const base = seed.data.item.version;
+
+    const winner = await client.updateItem(id, {
+      properties: { body: "body from the winner" },
+      version: base,
+    });
+    expect(winner.ok).toBe(true);
+
+    // A stale replace that clears the body the winner changed, and moves
+    // the row to a bookmark: the collision is real, and the copy a
+    // resolution would write would be a note without a body.
+    const refused = await client.rawRequest(`/items/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        type: "core.bookmark",
+        retype: true,
+        properties: { url: "https://example.com/moved", title: "moving title" },
+        properties_mode: "replace",
+        version: base,
+      },
+    });
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+
+    const fetched = await client.getItem(id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.note");
+    expect(fetched.data.item.version).toBe(base + 1);
+    expect(fetched.data.item.properties.body).toBe("body from the winner");
+  });
+
   it("resolves a colliding item field to the later writer, and leaves an echoed one alone", async () => {
     // `tier`, `occurred_at` and `source_id` are the item's own fields
     // rather than properties, so the type declares no strategy for them

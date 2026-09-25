@@ -313,6 +313,9 @@ export interface ConflictSnapshot {
   tier: "library" | "feed";
   occurred_at: string;
   source_id: string | null;
+  /** The type the row had at this version, so a collision naming `type`
+   *  shows both sides of the move. */
+  type: string;
 }
 
 /** The 409 a stale write gets when its base version's snapshot is retained. */

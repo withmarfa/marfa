@@ -351,6 +351,9 @@ export interface ConflictSnapshotBody {
   tier: "library" | "feed";
   occurred_at: string;
   source_id: string | null;
+  /** The type the row had at this version: a stale move onto a row moved
+   *  since collides on it, and the envelope shows both sides. */
+  type: string;
 }
 
 /**

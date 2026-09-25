@@ -892,6 +892,13 @@ export interface VersionedItemFields {
   tier: string | null;
   occurred_at: string | null;
   source_id: string | null;
+  /**
+   * The type the row had at this version. A stale write that moves the
+   * row is judged against it: two writers who read one version and each
+   * moved the row somewhere else would otherwise land one over the other
+   * with nothing refused.
+   */
+  type: string;
 }
 
 /** A version row as the update path reads it. */
@@ -2205,7 +2212,7 @@ export interface EdgeStore {
    *
    * **There is no way to remove a single property from an edge**, and the
    * two things that look like one are not. These doors carry no
-   * `properties_mode` and no `null_clears`, so a `null` is merged in and
+   * `properties_mode`, so a `null` is merged in and
    * *stored* as a null rather than clearing the key — the shallow merge
    * is `{...current, ...incoming}` and nothing filters it. And deleting
    * the edge to recreate it restarts the version at 1 and puts a delete

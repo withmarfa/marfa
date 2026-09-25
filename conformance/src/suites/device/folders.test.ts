@@ -2054,6 +2054,7 @@ describe("identity", () => {
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "stale.md",
+      type: "core.note",
     };
     // The control for the overwrite count: a file whose key another
     // device's row holds, which this copy never read, with other content.
@@ -2188,6 +2189,7 @@ describe("identity", () => {
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "thin.md",
+      type: "core.note",
     };
     scriptWrites(harness.server, {
       create: [answers.ancestorUnavailable(newer, 1)],
@@ -3460,6 +3462,7 @@ describe("writing", () => {
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "stale.md",
+      type: "core.note",
     };
     // Beside it, a file whose key another device's row holds, which this
     // copy never read: the witness that a device does read the row a refusal

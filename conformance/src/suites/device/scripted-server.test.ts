@@ -46,6 +46,7 @@ describe("the answers a device has to classify", () => {
           tier: "library",
           occurred_at: "2026-01-01T00:00:00.000Z",
           source_id: null,
+          type: "core.note",
         },
         {
           id: "a",
@@ -54,6 +55,7 @@ describe("the answers a device has to classify", () => {
           tier: "library",
           occurred_at: "2026-01-01T00:00:00.000Z",
           source_id: null,
+          type: "core.note",
         },
         ["body", "title"],
         { fields: { body: "keep_both_copies" }, default: "last_writer_wins" },
@@ -66,6 +68,7 @@ describe("the answers a device has to classify", () => {
           tier: "library",
           occurred_at: "2026-01-01T00:00:00.000Z",
           source_id: null,
+          type: "core.note",
         },
         1,
       ),

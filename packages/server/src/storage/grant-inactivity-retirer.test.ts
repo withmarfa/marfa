@@ -250,18 +250,16 @@ describe("GrantInactivityRetirer.runOnce", () => {
     await deviceGrant(ctx, clientId, cookie);
 
     // The poll stamps last_used_at; clear it so the fallback to granted_at
-    // is what decides. A merge keeps a key the patch omits and ignores a
-    // null unless told to clear on it, so say so. Then move the approval
-    // past the window.
+    // is what decides. A merge keeps a key the patch omits and drops a null
+    // on an optional field, so the key goes with a replace that leaves it
+    // out. Then move the approval past the window.
     const grant = await onlyGrant(ctx);
-    const props: Record<string, unknown> = {
-      ...grant.properties,
-      last_used_at: null,
-    };
+    const props: Record<string, unknown> = { ...grant.properties };
+    Reflect.deleteProperty(props, "last_used_at");
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
     await ctx.storage.items.update(grant.id, {
       properties: props,
-      null_clears: true,
+      properties_mode: "replace",
     });
 
     const disabled = new GrantInactivityRetirer(ctx.storage, 0);

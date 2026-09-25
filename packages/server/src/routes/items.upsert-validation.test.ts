@@ -1,9 +1,8 @@
 /**
- * The natural-key upsert is the write path where an explicit null clears a
- * value rather than setting it, so it is validated like every other: a
- * re-sync sending a null title would otherwise remove a field the type
- * declares required, leaving an item that could not have been created in the
- * state it sits in, with nothing said.
+ * The natural-key upsert is validated like every other write, on the merged
+ * result: a re-sync sending a null title keeps the null on a field the type
+ * declares required, and without the check it would leave an item that could
+ * not have been created in the state it sits in, with nothing said.
  *
  * These drive the upsert specifically, a create resolved onto an existing row
  * by its natural key, which the validation tests over `POST /items` and
@@ -89,8 +88,8 @@ describe("a re-sync that would clear a required field", () => {
   });
 
   it("is refused when the merge, not the body, is what leaves it missing", async () => {
-    // The body alone looks harmless — it names no required field at all.
-    // Only the merged result shows the clear, which is why this has to be
+    // The body alone looks harmless. Only the merged result shows the
+    // null sitting on the required field, which is why this has to be
     // judged on the value the row ends up with.
     const id = await seed("upstream-merge", {
       title: "Retro",

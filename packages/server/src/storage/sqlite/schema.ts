@@ -150,6 +150,10 @@ export const versions = sqliteTable(
     tier: text("tier"),
     occurred_at: text("occurred_at"),
     source_id: text("source_id"),
+    // And the type, so a stale move can tell whether the row was moved
+    // since the version the caller read. `REQUIRED_COLUMNS` in
+    // `connection.ts` refuses a file whose table lacks it.
+    type: text("type").notNull(),
     created_at: text("created_at").notNull(),
   },
   (table) => [index("idx_versions_item_id").on(table.item_id)],

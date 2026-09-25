@@ -489,6 +489,7 @@ describe("catch-up replays from the cursor", () => {
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: null,
+      type: "core.note",
     };
     scriptWrites(server, {
       update: [
@@ -740,6 +741,7 @@ describe("catch-up replays from the cursor", () => {
     const edge = {
       id: "link",
       source_id: "from",
+      type: "core.note",
       target_id: "to",
       edge_type: "references",
       properties: { weight: 1 },

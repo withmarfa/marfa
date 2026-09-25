@@ -1270,6 +1270,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
             tier: "library",
             occurred_at: "2026-01-01T00:00:00.000Z",
             source_id: "raced.md",
+            type: "core.note",
           },
           0,
         ),
@@ -1399,6 +1400,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "gone.md",
+      type: "core.note",
     };
     for (const [label, refused, reason, read] of [
       [
@@ -1484,6 +1486,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "raced.md",
+      type: "core.note",
     };
     const theirs = answers.updated(
       wireItem({
@@ -1570,6 +1573,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
       tier: "library" as const,
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: "raced.md",
+      type: "core.note",
     };
     const refusedKey = await hydratedHarness("queue-landed-read-401", {
       rows: held(),
@@ -1666,6 +1670,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
             tier: "library",
             occurred_at: "2026-01-01T00:00:00.000Z",
             source_id: "raced.md",
+            type: "core.note",
           },
           0,
         ),
@@ -1766,6 +1771,7 @@ describe("an answer the device applies keeps what it has not had answered", () =
             tier: "library",
             occurred_at: "2026-01-01T00:00:00.000Z",
             source_id: "raced.md",
+            type: "core.note",
           },
           0,
         ),
@@ -3623,6 +3629,7 @@ describe("an edit behind an edit of the same row", () => {
             tier: "library",
             occurred_at: "2026-01-01T00:00:00.000Z",
             source_id: null,
+            type: "core.note",
           },
           HELD.version + 1,
         );
@@ -4113,6 +4120,7 @@ describe("an edit behind an edit of the same row", () => {
             tier: "library",
             occurred_at: "2026-01-01T00:00:00.000Z",
             source_id: KEYED.sourceId,
+            type: "core.note",
           },
           0,
         ),

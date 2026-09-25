@@ -75,7 +75,7 @@ export interface paths {
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and `occurred_at` always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
+         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -1381,6 +1381,7 @@ export interface components {
             tier: components["schemas"]["Tier"];
             occurred_at: string;
             source_id: string | null;
+            type: string;
         };
         MergePolicy: {
             fields?: {
