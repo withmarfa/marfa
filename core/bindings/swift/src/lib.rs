@@ -962,6 +962,15 @@ impl MarfaCore {
             .collect())
     }
 
+    pub fn edges_to(&self, id: String) -> Result<Vec<Edge>, MarfaError> {
+        Ok(self
+            .inner
+            .edges_to(&id)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     pub fn search(
         &self,
         query: String,

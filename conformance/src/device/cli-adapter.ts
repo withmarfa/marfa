@@ -432,6 +432,10 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<Edge[]>(["edges", "list", item]);
   }
 
+  async edgesTo(item: string): Promise<Outcome<Edge[]>> {
+    return this.json<Edge[]>(["edges", "to", item]);
+  }
+
   async addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>> {
     return this.json<QueuedWrite>(["tags", "add", item, tag]);
   }

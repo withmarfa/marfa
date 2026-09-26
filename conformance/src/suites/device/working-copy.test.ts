@@ -1991,3 +1991,87 @@ describe("a local list narrows on the item's own time", () => {
     }
   });
 });
+
+/**
+ * An edge is read from either end.
+ *
+ * A thread's replies point at their root and a file points at the item it is
+ * attached to, so the question an app asks of the item on screen is what
+ * points at it. A copy that answered only the edges an item starts from would
+ * leave the app scanning every edge it holds to answer that.
+ */
+describe("a local read of edges answers both ends", () => {
+  const edge = (id: string, source: string, target: string, type: string) => ({
+    id,
+    source_id: source,
+    target_id: target,
+    edge_type: type,
+    properties: {},
+    version: 1,
+    created_at: "2026-09-18T00:00:00.000Z",
+    updated_at: "2026-09-18T00:00:00.000Z",
+  });
+
+  it("answers the edges the copy holds to an item, the unanswered ones with them", async () => {
+    harness = await startHarness("edges-to");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "root",
+              edges: {
+                references: {
+                  data: [edge("outward", "root", "other", "references")],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          {
+            item: {
+              id: "reply",
+              edges: {
+                "in-thread": {
+                  data: [edge("threaded", "reply", "root", "in-thread")],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          { item: { id: "other" } },
+        ],
+      },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const local = await device.createEdge({
+      source: "other",
+      target: "root",
+      type: "about",
+    });
+    expect(local.ok).toBe(true);
+    if (!local.ok) return;
+
+    // The witness: the copy holds the root's own edge, read from its start.
+    const from = await device.edgesFrom("root");
+    expect(from.ok).toBe(true);
+    expect(from.ok ? from.value.map((row) => row.id) : []).toEqual(["outward"]);
+
+    const to = await device.edgesTo("root");
+    expect(
+      to.ok,
+      "the copy cannot say what points at an item, so a thread's replies and an item's attachments are found only by scanning every edge",
+    ).toBe(true);
+    if (!to.ok) return;
+    expect(
+      to.value.map((row) => row.id).sort(),
+      "the edges to an item are not the ones that point at it, the unanswered one included",
+    ).toEqual([local.value.edge_id, "threaded"].sort());
+    expect(
+      to.value.every((row) => row.target_id === "root"),
+      "an edge that starts at the item was answered as one that points at it",
+    ).toBe(true);
+  });
+});
