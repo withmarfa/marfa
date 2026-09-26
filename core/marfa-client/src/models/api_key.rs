@@ -22,7 +22,7 @@ pub struct ApiKey {
     /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
     #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<String>>,
-    /// The permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honored and clamped to what the creator holds.
+    /// The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused.
     #[serde(rename = "permissions", skip_serializing_if = "Option::is_none")]
     pub permissions: Option<Vec<models::Permission>>,
     /// The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.

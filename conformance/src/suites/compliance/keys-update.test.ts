@@ -19,11 +19,12 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-async function narrowKey(label: string) {
+async function narrowKey(label: string, permissions: string[] = []) {
   const r = await client.createKey({
     label,
     source: `${ctx.source}-${label}`,
     type_permissions: { "core.note": "read" },
+    permissions,
   });
   expect(r.ok).toBe(true);
   trackKey(ctx, r.data.id);
@@ -70,7 +71,9 @@ describe("PATCH /keys/{id}", () => {
   });
 
   it("refuses a key widening itself past what it holds", async () => {
-    const key = await narrowKey("ku-widen");
+    // It holds `keys.mint`, so the door is open to it and the refusal is
+    // the map it asked for.
+    const key = await narrowKey("ku-widen", ["keys.mint"]);
     const self = new MarfaClient({ baseUrl: apiUrl, apiKey: key.key });
     const r = await self.updateKey(key.id, {
       type_permissions: { "*": "write" },

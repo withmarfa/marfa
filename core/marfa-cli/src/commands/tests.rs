@@ -418,7 +418,19 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
         ..Default::default()
     })
     .unwrap();
-    assert_eq!(body(&inert)["permissions"], json!([]));
+    assert_eq!(
+        body(&inert),
+        &json!({
+            "label": "inert",
+            "source": "audit-1",
+            "permissions": [],
+            "type_permissions": {},
+            "extension_permissions": {},
+            "edge_permissions": {},
+            "metadata_permissions": {},
+            "profile_permissions": {},
+        })
+    );
     let operator = keys::create_request(&keys::KeyCreateArgs {
         label: "second".into(),
         source: "operator-2".into(),

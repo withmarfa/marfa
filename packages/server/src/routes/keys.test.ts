@@ -1362,7 +1362,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("names one family and still gets none of the other three for free", async () => {
-    // `namesNoReach` reads all four families. The grant below projects a
+    // `namesNoReach` reads all five families and the claims. The grant below projects a
     // non-empty edge map as well as a type map, so the derive path has
     // something to hand over — without which this assertion would pass
     // whether or not the condition were right, which is what the first
@@ -1401,6 +1401,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(partialKey?.edge_permissions ?? {}).toEqual({});
     expect(partialKey?.metadata_permissions ?? {}).toEqual({});
     expect(partialKey?.extension_permissions ?? {}).toEqual({});
+    // The session holds `keys.mint`, which the key it minted naming a map
+    // does not take.
+    expect(partialKey?.permissions).toEqual([]);
   });
 
   it("takes the derive path off whichever family is named", async () => {
@@ -1585,6 +1588,49 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
     expect(stored?.edge_permissions).toEqual({});
     expect(stored?.permissions).toEqual(["keys.mint"]);
+  });
+
+  it("mints a key naming a map and no permissions with no permissions, from the operator key or a working one", async () => {
+    // Naming a map is naming what the key holds, so the permissions left
+    // unnamed are held no more than the maps left unnamed. The witness is
+    // the case above: the same mint naming nothing takes every permission.
+    for (const minter of [oauthCtx.operatorKey, oauthCtx.workingKey]) {
+      const suffix = Math.random().toString(36).slice(2, 10);
+      const res = await request(oauthCtx.app, "POST", "/keys", {
+        key: minter,
+        body: {
+          label: `mapped-${suffix}`,
+          source: `mapped-${suffix}`,
+          type_permissions: { "core.note": "write" },
+          metadata_permissions: { types: "write" },
+        },
+      });
+      expect(res.status).toBe(201);
+      const minted = (await res.json()) as { id: string };
+      const stored = await oauthCtx.storage.keys.get(minted.id);
+      expect(stored?.type_permissions).toEqual({ "core.note": "write" });
+      expect(stored?.metadata_permissions).toEqual({ types: "write" });
+      expect(
+        stored?.permissions,
+        "a key minted for one type took its minter's permissions, keys.mint and items.purge among them",
+      ).toEqual([]);
+    }
+  });
+
+  it("mints a key naming only claimed sources with no permissions", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
+      body: {
+        label: `claims-${suffix}`,
+        source: `claims-${suffix}`,
+        sources: [`claimed-${suffix}`],
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await oauthCtx.storage.keys.get(minted.id);
+    expect(stored?.permissions).toEqual([]);
   });
 
   it("refuses to give the operator key it mints any reach at all", async () => {

@@ -157,7 +157,8 @@ export interface ApiKeyRequest {
   edge_permissions?: Record<string, string>;
   extension_permissions?: Record<string, string>;
   metadata_permissions?: Record<string, string>;
-  /** The permissions the key holds; omitted takes the creator's. */
+  /** The permissions the key holds; omitted takes the creator's when no
+   *  map and no source is named either, and none when one is. */
   permissions?: readonly string[];
   default_tier?: "library" | "feed";
   /** Only an operator key can mint another, and it holds no permissions. */
