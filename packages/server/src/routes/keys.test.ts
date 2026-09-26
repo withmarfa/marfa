@@ -1095,6 +1095,21 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     }
   });
 
+  it("refuses a session reading itself as a key, whatever it was granted", async () => {
+    const { token } = await seedOauthBearer(
+      oauthCtx.storage,
+      grantScopes("types:*:write"),
+      {},
+    );
+    const res = await request(oauthCtx.app, "GET", "/keys/current", {
+      key: token,
+    });
+    expect(res.status).toBe(403);
+    // The witness: the same token reaches the keys doors it was granted.
+    const list = await request(oauthCtx.app, "GET", "/keys", { key: token });
+    expect(list.status).toBe(200);
+  });
+
   it("lets a granted session mint, and the key matches the session's own reach", async () => {
     const { token } = await seedOauthBearer(
       oauthCtx.storage,
@@ -1631,6 +1646,50 @@ describe("POST /keys — what an operator key mints", () => {
     const minted = (await res.json()) as { id: string };
     const stored = await oauthCtx.storage.keys.get(minted.id);
     expect(stored?.permissions).toEqual([]);
+  });
+
+  it("lets a key holding nothing read itself, and nothing else of the keys", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const minted = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
+      body: {
+        label: `self-${suffix}`,
+        source: `self-${suffix}`,
+        type_permissions: { "core.note": "write" },
+      },
+    });
+    expect(minted.status).toBe(201);
+    const { id, key } = (await minted.json()) as { id: string; key: string };
+
+    const self = await request(oauthCtx.app, "GET", "/keys/current", { key });
+    expect(self.status).toBe(200);
+    const row = (await self.json()) as Record<string, unknown>;
+    expect(row.id).toBe(id);
+    expect(row.source).toBe(`self-${suffix}`);
+    expect(row.permissions).toEqual([]);
+    expect(row.type_permissions).toEqual({ "core.note": "write" });
+    expect(row).not.toHaveProperty("key");
+    expect(row).not.toHaveProperty("key_hash");
+    expect(row).not.toHaveProperty("revoked_at");
+
+    // The listing is the witness that the key reads itself by this door
+    // alone: it holds no `keys.mint`.
+    const list = await request(oauthCtx.app, "GET", "/keys", { key });
+    expect(list.status).toBe(403);
+  });
+
+  it("answers the operator key its own row", async () => {
+    const res = await request(oauthCtx.app, "GET", "/keys/current", {
+      key: oauthCtx.operatorKey,
+    });
+    expect(res.status).toBe(200);
+    const row = (await res.json()) as { is_operator: boolean };
+    expect(row.is_operator).toBe(true);
+  });
+
+  it("refuses a request with no credential", async () => {
+    const res = await request(oauthCtx.app, "GET", "/keys/current", {});
+    expect(res.status).toBe(401);
   });
 
   it("refuses to give the operator key it mints any reach at all", async () => {

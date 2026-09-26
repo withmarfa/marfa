@@ -296,6 +296,39 @@ const listKeysRoute = createRoute({
   },
 });
 
+const currentKeyRoute = createRoute({
+  operationId: "getCurrentKey",
+  method: "get",
+  path: "/current",
+  tags: ["Keys"],
+  summary: "Read the calling key",
+  description:
+    "Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources and its tier. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.",
+  security: [{ bearerAuth: [] }],
+  responses: {
+    200: {
+      content: { "application/json": { schema: ApiKeySchema } },
+      description: "The calling key",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "The credential is a signed-in app's token, not a key",
+    },
+  },
+});
+
 const revokeKeyRoute = createRoute({
   operationId: "revokeKey",
   method: "delete",
@@ -1280,6 +1313,20 @@ export function keyRoutes(storage: Storage, salt: string) {
     requireKeysMintOrOperator(c);
     const keys = await storage.keys.list();
     return c.json({ data: keys, next_cursor: null }, 200);
+  });
+
+  router.openapi(currentKeyRoute, (c) => {
+    const key = requireAuth(c);
+    if (c.get("authType") === "oauth") {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "This credential is a signed-in app's token, not a key; its reach is its grant.",
+      );
+    }
+    // The row the bearer check read, which carries no hash and no
+    // revocation. It is read before this request's use is stamped, so its
+    // `last_used_at` can trail the listing's by that one stamp.
+    return c.json(key, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {

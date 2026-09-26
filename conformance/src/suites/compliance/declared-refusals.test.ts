@@ -506,6 +506,15 @@ describe("a session token", () => {
       const body = (await refused.json()) as { error?: { code?: string } };
       expect(body.error?.code).toBe("forbidden");
       await expectMatchesSchema("POST", "/connectors", 403, body);
+
+      // Nor is it a key, so it does not read itself as one.
+      const self = await fetch(`${server.apiUrl}/keys/current`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(self.status).toBe(403);
+      const selfBody = (await self.json()) as { error?: { code?: string } };
+      expect(selfBody.error?.code).toBe("forbidden");
+      await expectMatchesSchema("GET", "/keys/current", 403, selfBody);
     } finally {
       server.stop();
     }

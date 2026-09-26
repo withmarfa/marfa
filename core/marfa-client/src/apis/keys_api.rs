@@ -42,6 +42,14 @@ pub enum CreateKeySuccess {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed successes of method [`get_current_key`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetCurrentKeySuccess {
+    Status200(models::ApiKey),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed successes of method [`list_keys`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -75,6 +83,17 @@ pub enum CreateKeyError {
     Status403(models::ForbiddenRefusal),
     Status409(models::ConflictRefusal),
     Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_current_key`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetCurrentKeyError {
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -153,6 +172,44 @@ pub fn create_key(
     } else {
         let content = resp.text()?;
         let entity: Option<CreateKeyError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources and its tier. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.
+pub fn get_current_key(
+    configuration: &configuration::Configuration,
+) -> Result<ResponseContent<GetCurrentKeySuccess>, Error<GetCurrentKeyError>> {
+    let uri_str = format!("{}/keys/current", configuration.base_path);
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<GetCurrentKeySuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<GetCurrentKeyError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,

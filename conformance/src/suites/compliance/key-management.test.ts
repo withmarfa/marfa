@@ -246,6 +246,35 @@ describe("key management", () => {
     expect(child!.metadata_permissions).toEqual(creator!.metadata_permissions);
   });
 
+  it("a key holding no permission reads itself, and no other key", async () => {
+    const label = `km-self-${ctx.runId}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "core.note": "write" },
+      permissions: [],
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const self = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+
+    const current = await self.getCurrentKey();
+    expect(current.ok).toBe(true);
+    await expectMatchesSchema("GET", "/keys/current", 200, current.data);
+    expect(current.data.id).toBe(minted.data.id);
+    expect(current.data.source).toBe(`${ctx.source}-${label}`);
+    expect(current.data.permissions ?? []).toEqual([]);
+    expect(current.data.type_permissions).toEqual({ "core.note": "write" });
+    expect(current.data).not.toHaveProperty("key");
+
+    // The witness that it reads itself by this door alone.
+    const listed = await self.listKeys();
+    expect(listed.status).toBe(403);
+
+    const bare = await fetch(`${apiUrl}/keys/current`);
+    expect(bare.status).toBe(401);
+  });
+
   it("a mint naming a map holds no permission it did not name", async () => {
     // The witness is the case above: the same creator's mint naming nothing
     // takes every permission it holds, so an empty list here is the map

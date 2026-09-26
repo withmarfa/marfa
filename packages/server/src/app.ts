@@ -330,10 +330,11 @@ export function createApp(
         windowMs: config.rateLimitWindowMs,
         pathLimits: {
           // The one cap an instance can name for itself
-          // (`RATE_LIMIT_KEYS_REQUESTS`): minting is how a caller widens
-          // its own reach, so the doors that do it are held well under
-          // the default, and a deployment whose callers legitimately
-          // mint more needs a number rather than a fork.
+          // (`RATE_LIMIT_KEYS_REQUESTS`), on every door under `/keys`:
+          // minting is how a caller widens its own reach, so the doors
+          // that do it are held well under the default, and a deployment
+          // whose callers legitimately mint more needs a number rather
+          // than a fork. A key reading itself shares the allowance.
           "/keys": config.rateLimitKeysLimit ?? DEFAULT_KEYS_RATE_LIMIT,
           // Insertion order matters: the middleware iterates and
           // takes the FIRST `path.startsWith(prefix)` match, so

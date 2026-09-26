@@ -23,6 +23,9 @@ pub enum KeysCommand {
     Create(KeyCreateArgs),
     /// Every key, without plaintext. Needs `keys.mint`, or the operator key.
     List,
+    /// The key this call bears, without plaintext: what it holds and what it
+    /// claims. Any key may read itself.
+    Current,
     /// Change a key's label, tier or permission maps. Needs `keys.mint`.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
@@ -264,6 +267,10 @@ pub fn list_request() -> Request {
     Request::get(&["keys"])
 }
 
+pub fn current_request() -> Request {
+    Request::get(&["keys", "current"])
+}
+
 pub fn update_request(args: &KeyUpdateArgs) -> Result<Request, CliError> {
     let mut body = Map::new();
     insert_opt(&mut body, "label", args.label.clone());
@@ -292,6 +299,7 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
         }
         KeysCommand::Create(args) => create_request(args)?,
         KeysCommand::List => list_request(),
+        KeysCommand::Current => current_request(),
         KeysCommand::Update(args) => update_request(args)?,
         KeysCommand::Revoke { id } => revoke_request(id),
         KeysCommand::Keep => return keep(remote, out),

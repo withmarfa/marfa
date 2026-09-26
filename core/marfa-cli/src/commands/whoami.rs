@@ -10,8 +10,9 @@ use crate::remote::{CredentialSource, Remote, Transport};
 /// Which server, which instance, and which credential a bare command would
 /// use, and where that credential came from.
 ///
-/// A key has no door that says whose it is, so for a key this reports the
-/// key's kind and its source; a token reports the person it was issued to.
+/// For a key this reports the key's kind and where it came from, and
+/// `keys current` says what it holds; a token reports the person it was
+/// issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let instance = remote.root()?;
     let held = status::speaks_this_contract(&instance);
