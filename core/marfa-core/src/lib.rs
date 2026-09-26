@@ -285,8 +285,8 @@ impl Core {
         store::edges_from(&conn, id)
     }
 
-    /// The edges the copy holds that point at `id`: a thread's replies, the
-    /// files attached to an item.
+    /// The edges the copy holds that point at `id`: the replies in a thread,
+    /// the files attached to an item.
     pub fn edges_to(&self, id: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;

@@ -810,7 +810,6 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
     }
 }
 
-/// Edges, one line each: id, the two ends, type and version.
 fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {
     output::report(&edges, json, || {
         edges

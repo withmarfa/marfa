@@ -1995,10 +1995,10 @@ describe("a local list narrows on the item's own time", () => {
 /**
  * An edge is read from either end.
  *
- * A thread's replies point at their root and a file points at the item it is
- * attached to, so the question an app asks of the item on screen is what
- * points at it. A copy that answered only the edges an item starts from would
- * leave the app scanning every edge it holds to answer that.
+ * The replies in a thread point at the thread they are in and a file points
+ * at the item it is attached to, so the question an app asks of the item on
+ * screen is what points at it. A copy that answered only the edges an item
+ * starts from would leave the app asking every item it holds for its edges.
  */
 describe("a local read of edges answers both ends", () => {
   const edge = (id: string, source: string, target: string, type: string) => ({
@@ -2054,7 +2054,16 @@ describe("a local read of edges answers both ends", () => {
     expect(local.ok).toBe(true);
     if (!local.ok) return;
 
-    // The witness: the copy holds the root's own edge, read from its start.
+    // The witnesses: the local edge is still unanswered, and the copy holds
+    // the root's own edge, read from its start.
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    expect(
+      queue.ok
+        ? queue.value.find((row) => row.edge_id === local.value.edge_id)
+            ?.verdict
+        : "unread",
+    ).toBeNull();
     const from = await device.edgesFrom("root");
     expect(from.ok).toBe(true);
     expect(from.ok ? from.value.map((row) => row.id) : []).toEqual(["outward"]);
