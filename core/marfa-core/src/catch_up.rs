@@ -1488,30 +1488,55 @@ mod tests {
     }
 
     #[test]
-    fn a_catch_up_keeps_its_cursor_when_the_marker_names_none_or_one_behind_it() {
-        for live in [None, Some("9")] {
-            let server = Scripted::start();
-            server.on("/types", vec![types(&[(NOTE, None)])]);
-            server.on(
-                "/events",
-                vec![stream(
-                    vec![connected(), stream_cursor("11"), stream_live(live)],
-                    Then::Hold {
-                        keepalive: None,
-                        lasting: None,
-                    },
-                )],
-            );
-            let (_dir, core) = hydrated(&server);
-            let http = core.http.clone().unwrap();
-            let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
-            assert!(
-                report.reached_head,
-                "{live:?}: the marker did not end the catch-up"
-            );
-            assert_eq!(report.cursor, "10", "{live:?}");
-            assert_eq!(stored_cursor(&core).as_deref(), Some("10"), "{live:?}");
-        }
+    fn a_catch_up_keeps_its_cursor_when_the_marker_names_no_position() {
+        // What a real server sends when its read of the head outran its
+        // budget and the replay found nothing: no head, and a marker that
+        // knows no position.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_live(None)],
+                Then::Hold {
+                    keepalive: None,
+                    lasting: None,
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let http = core.http.clone().unwrap();
+        let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
+        assert!(report.reached_head, "the marker did not end the catch-up");
+        assert_eq!(report.cursor, "10");
+        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn a_follow_keeps_its_cursor_when_the_marker_is_behind_it() {
+        // A server whose log stops short of the cursor held, as one restored
+        // from a backup does: the marker naming its head does not move the
+        // cursor back. The witness is the follow above, whose marker ahead
+        // of the cursor moves it.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), stream_cursor("9"), stream_live(Some("9"))],
+                Then::Hold {
+                    keepalive: None,
+                    lasting: None,
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        thread::sleep(MS(300));
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!(report.cursor, "10");
+        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
     }
 
     #[test]

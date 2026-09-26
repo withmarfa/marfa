@@ -1722,7 +1722,7 @@ describe("the scripted answers match the server's", () => {
 
   it("matches the marker that ends a replay whose rows the filter withheld", async (context) => {
     // `liveReplay` ends with the marker, and a device adopts its cursor past
-    // rows it was never sent (`device.md` 18), so the scripted marker has to
+    // rows it was never sent (`device.md` 17), so the scripted marker has to
     // be the real one. The run's server holds notes and no bookmark this
     // case wrote, so a replay from zero filtered to bookmarks withholds the
     // note written here, which is what the marker then has to cover.

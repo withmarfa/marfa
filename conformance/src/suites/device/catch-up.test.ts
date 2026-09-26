@@ -18,6 +18,7 @@ import {
   refusal,
   replay,
   streamCursor,
+  streamLive,
   typeCatalog,
   wireItem,
   wireType,
@@ -1402,15 +1403,14 @@ describe("catch-up ends on the replay's marker", () => {
     harness = await startHarness("replay-marker-null");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
-    server.answer(
-      "GET",
-      "/events",
-      liveReplay(
-        "12",
-        [itemEvent("11", "item.created", wireItem({ id: "seen" }))],
-        null,
-      ),
-    );
+    server.answer("GET", "/events", {
+      // What a real server sends when its read of the head outran its
+      // budget and the replay found nothing: no head, and a marker that
+      // knows no position.
+      kind: "sse",
+      hold: true,
+      frames: [connected, streamLive(null)],
+    });
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const caught = await device.catchUp();
@@ -1420,7 +1420,7 @@ describe("catch-up ends on the replay's marker", () => {
         ? [caught.value.applied, caught.value.cursor, caught.value.reached_head]
         : undefined,
       "a marker naming no position moved the cursor or did not end the catch-up",
-    ).toEqual([1, "11", true]);
+    ).toEqual([0, "10", true]);
   });
 });
 
