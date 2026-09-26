@@ -1461,9 +1461,20 @@ describe("the working copy says what it is", () => {
       "a store that has never hydrated answered a read by id, so an absent row and a copy that was never pulled read the same",
     ).toBe(false);
 
+    for (const [end, edges] of [
+      ["from", await device.edgesFrom("whatever")],
+      ["to", await device.edgesTo("whatever")],
+    ] as const) {
+      expect(
+        edges.ok,
+        `a store that has never hydrated answered the edges ${end} an item, so an item with no links and a copy that was never pulled read the same`,
+      ).toBe(false);
+      if (!edges.ok) expect(edges.refusal.code).toBe("hydration_incomplete");
+    }
+
     // The control: the device answers about itself before it has hydrated,
     // which is how a caller learns a hydration is owed (`device.md` 5). A
-    // device that refused everything would satisfy the three above for a
+    // device that refused everything would satisfy the reads above for a
     // reason that has nothing to do with the slice.
     const status = await device.status();
     expect(
@@ -2078,9 +2089,5 @@ describe("a local read of edges answers both ends", () => {
       to.value.map((row) => row.id).sort(),
       "the edges to an item are not the ones that point at it, the unanswered one included",
     ).toEqual([local.value.edge_id, "threaded"].sort());
-    expect(
-      to.value.every((row) => row.target_id === "root"),
-      "an edge that starts at the item was answered as one that points at it",
-    ).toBe(true);
   });
 });

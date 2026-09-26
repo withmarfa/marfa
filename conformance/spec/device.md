@@ -87,7 +87,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 ## Edges, read locally
 
-43. **An edge is read from either end.** A local read answers the edges the copy holds from an item and, asked the other way, the edges it holds to one: those whose target it is, whether the server has answered them or they still wait in the queue, and never one that only starts there. The replies in a thread point at the thread they are in and a file points at what it is attached to (38), so what points at the item on screen is the question an app asks of it, and a copy that answered only one end would leave it asking every item it holds for its edges. `device/working-copy.test.ts › answers the edges the copy holds to an item, the unanswered ones with them`.
+43. **An edge is read from either end.** A local read answers the edges the copy holds from an item and, asked the other way, the edges it holds to one: those whose target it is, whether the server has answered them or they still wait in the queue, and never one that only starts there. The copy holds an edge only from an item in its slice (1), so what points at an item is what points at it from the slice. The replies in a thread point at the thread they are in and a file points at what it is attached to (38), so what points at the item on screen is the question an app asks of it, and a copy that answered only one end would leave it asking every item it holds for its edges. `device/working-copy.test.ts › answers the edges the copy holds to an item, the unanswered ones with them`.
 
 ## What the real server cannot be made to produce
 
