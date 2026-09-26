@@ -14,6 +14,7 @@ import {
   heldLog,
   itemEvent,
   itemsPage,
+  liveReplay,
   refusal,
   replay,
   streamCursor,
@@ -1331,6 +1332,95 @@ describe("catch-up replays from the cursor", () => {
       complete.ok ? complete.value.reached_head : undefined,
       "a catch-up that reached the log's head did not say so, so nothing can tell a current copy from a lagging one",
     ).toBe(true);
+  });
+});
+
+describe("catch-up ends on the replay's marker", () => {
+  it("moves the cursor past the rows the stream withheld, and resumes from there", async () => {
+    harness = await startHarness("replay-marker");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      // The head is 14 and the device is sent only 11: 12 to 14 are rows the
+      // filter withheld, so no frame it is sent reaches the head. The marker
+      // says the replay is done and how far it reached, and the stream stays
+      // open as a real one does.
+      liveReplay("14", [
+        itemEvent("11", "item.created", wireItem({ id: "seen" })),
+      ]),
+      liveReplay("14", []),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok).toBe(true);
+    expect(
+      caught.ok
+        ? [caught.value.applied, caught.value.cursor, caught.value.reached_head]
+        : undefined,
+      "the catch-up did not end on the marker at its cursor, so a device whose head rows are withheld waits out the silence, reports itself behind, and keeps a cursor that ages out",
+    ).toEqual([1, "14", true]);
+
+    await device.catchUp();
+    expect(
+      lastEventIds(harness),
+      "the next catch-up did not resume from the marker's cursor",
+    ).toEqual(["(none)", "10", "14"]);
+  });
+
+  it("moves a held stream's cursor past the rows it withheld", async () => {
+    harness = await startHarness("follow-marker");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      liveReplay("14", [
+        itemEvent("11", "item.created", wireItem({ id: "seen" })),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const followed = await device.follow(2);
+    expect(followed.ok).toBe(true);
+    expect(
+      followed.ok
+        ? [
+            followed.value.changes.map((change) => change.cursor),
+            followed.value.report.cursor,
+          ]
+        : undefined,
+      "the held stream kept its cursor at the last row it was sent, so a stream opened again replays the withheld rows and a quiet one lets its cursor age out",
+    ).toEqual([["11"], "14"]);
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("14");
+  });
+
+  it("keeps the cursor it holds when the marker names no position", async () => {
+    harness = await startHarness("replay-marker-null");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      liveReplay(
+        "12",
+        [itemEvent("11", "item.created", wireItem({ id: "seen" }))],
+        null,
+      ),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok).toBe(true);
+    expect(
+      caught.ok
+        ? [caught.value.applied, caught.value.cursor, caught.value.reached_head]
+        : undefined,
+      "a marker naming no position moved the cursor or did not end the catch-up",
+    ).toEqual([1, "11", true]);
   });
 });
 

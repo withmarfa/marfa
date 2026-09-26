@@ -11,6 +11,7 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
   itemEvent,
+  liveReplay,
   itemsPage,
   replay,
   scriptedType,
@@ -1717,5 +1718,50 @@ describe("the scripted answers match the server's", () => {
         first.event.startsWith("edge.") ||
         first.event === "metadata.changed",
     ).toBe(true);
+  });
+
+  it("matches the marker that ends a replay whose rows the filter withheld", async (context) => {
+    // `liveReplay` ends with the marker, and a device adopts its cursor past
+    // rows it was never sent (`device.md` 18), so the scripted marker has to
+    // be the real one. The run's server holds notes and no bookmark this
+    // case wrote, so a replay from zero filtered to bookmarks withholds the
+    // note written here, which is what the marker then has to cover.
+    const marker = `fidelity-live-${ctx.runId}`;
+    await note({ title: marker, body: marker });
+    const frames = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: "0", query: [["type", "core.bookmark"]] },
+      async (stream) =>
+        (
+          await collectUntil(
+            stream,
+            (events) => events.some((event) => event.event === "stream_live"),
+            "the marker that ends the replay",
+            context.signal,
+          )
+        ).events,
+    );
+    const live = frames.find((event) => event.event === "stream_live")!;
+    const head = frames.find((event) => event.event === "stream_cursor")!;
+    expect(live.id, "the marker carries no id").toBeUndefined();
+    const cursor = (live.data as { cursor?: unknown }).cursor;
+    expect(typeof cursor).toBe("string");
+    expect(
+      BigInt(cursor as string) >=
+        BigInt((head.data as { cursor: string }).cursor),
+      "the marker's cursor fell short of the head it announced, so a device adopting it would read the withheld rows again",
+    ).toBe(true);
+
+    const scripted = liveReplay("1", []);
+    const scriptedLive = (scripted.kind === "sse" ? scripted.frames : []).find(
+      (frame) => frame.event === "stream_live",
+    )!;
+    expectFidelity(
+      "the marker that ends a replay",
+      { status: 200, body: live.data },
+      { kind: "json", status: 200, body: scriptedLive.data },
+      { same: ["type"], shape: ["cursor"] },
+    );
   });
 });

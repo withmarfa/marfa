@@ -257,6 +257,24 @@ fn take(
     }))
 }
 
+/// Moves the cursor to where the stream's replay-done marker says the
+/// replay reached, where that is past the cursor held. Frames the filter or
+/// the credential withheld are never sent, so the marker is the one word
+/// this reader has that it is past them (`events.md` 2). Answers the cursor
+/// adopted.
+fn pass_withheld(core: &Core, held: &str, live: Option<&str>) -> Result<Option<String>> {
+    let Some(live) = live else { return Ok(None) };
+    let (Ok(reached), Ok(have)) = (live.parse::<u64>(), held.parse::<u64>()) else {
+        return Ok(None);
+    };
+    if reached <= have {
+        return Ok(None);
+    }
+    let conn = core.conn()?;
+    store::meta_set(&conn, store::META_EVENT_CURSOR, live)?;
+    Ok(Some(live.to_string()))
+}
+
 fn payload_of(data: &str) -> Result<EventPayload> {
     serde_json::from_str(data)
         .map_err(|error| CoreError::Decoding(format!("event {data:?}: {error}")))
@@ -316,6 +334,15 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                             break;
                         }
                     }
+                    "stream_live" => {
+                        if let Some(cursor) =
+                            pass_withheld(core, &report.cursor, payload.cursor.as_deref())?
+                        {
+                            report.cursor = cursor;
+                        }
+                        report.reached_head = true;
+                        break;
+                    }
                     "catchup_too_old" => return Err(aged_out(core, payload)?),
                     "stream_incomplete" => {
                         return Err(CoreError::StreamIncomplete {
@@ -366,7 +393,8 @@ fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
 /// A stream that ends, drops or cannot be opened is opened again from the
 /// stored cursor, so nothing between the two is lost: the cursor moves past
 /// each event in the transaction that takes it, applied or skipped, and
-/// never past one not yet taken. What does not clear by asking again ends
+/// never past one not yet taken but those the replay's marker says were
+/// withheld from this reader. What does not clear by asking again ends
 /// it: a cursor the log has aged past, a refused credential, a store that
 /// is no longer hydrated, an answer no retry changes.
 ///
@@ -455,6 +483,13 @@ fn follow_paced(
             let payload = payload_of(&data)?;
             match name.as_deref().unwrap_or(&payload.r#type) {
                 "stream_cursor" => {}
+                "stream_live" => {
+                    if let Some(cursor) =
+                        pass_withheld(core, &report.cursor, payload.cursor.as_deref())?
+                    {
+                        report.cursor = cursor;
+                    }
+                }
                 "catchup_too_old" => return Err(aged_out(core, payload)?),
                 "stream_incomplete" => break,
                 kind => {
@@ -652,7 +687,8 @@ mod tests {
     use super::*;
     use crate::Server;
     use crate::scripted::{
-        Answer, Scripted, Then, connected, event, item_payload, refusal, stream, types,
+        Answer, Scripted, Then, connected, event, item_payload, refusal, stream, stream_cursor,
+        stream_live, types,
     };
 
     const NOTE: &str = "core.note";
@@ -1391,5 +1427,108 @@ mod tests {
             !server.seen("/types").is_empty(),
             "the catch-up read no catalog, so its absence above proves nothing"
         );
+    }
+
+    fn stored_cursor(core: &Core) -> Option<String> {
+        store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap()
+    }
+
+    /// A stream whose head rows are withheld from this reader: event 11 is
+    /// sent, 12 to 14 are not, and the server holds the stream open after
+    /// its marker as a real one does.
+    fn withheld_head(live: Option<&str>) -> Answer {
+        let mut frames = vec![
+            connected(),
+            stream_cursor("14"),
+            event(
+                "11",
+                "item.created",
+                &item_payload("item.created", "n1", NOTE, 1),
+            ),
+        ];
+        if let Some(live) = live {
+            frames.push(stream_live(Some(live)));
+        }
+        stream(
+            frames,
+            Then::Hold {
+                keepalive: None,
+                lasting: None,
+            },
+        )
+    }
+
+    #[test]
+    fn a_catch_up_adopts_the_replay_marker_past_rows_withheld_from_it() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![withheld_head(Some("14"))]);
+        let (_dir, core) = hydrated(&server);
+        let http = core.http.clone().unwrap();
+        let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
+        assert!(report.reached_head, "the marker did not end the catch-up");
+        assert_eq!(report.applied, 1);
+        assert_eq!(report.cursor, "14");
+        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
+    }
+
+    #[test]
+    fn a_catch_up_without_the_marker_stops_on_silence_at_the_last_row_applied() {
+        // The witness for the test above: the same stream without its
+        // marker leaves the cursor at 11 and the head unreached.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![withheld_head(None)]);
+        let (_dir, core) = hydrated(&server);
+        let http = core.http.clone().unwrap();
+        let report = catch_up(&core, &http, MS(200)).unwrap();
+        assert!(!report.reached_head);
+        assert_eq!(report.cursor, "11");
+        assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
+    }
+
+    #[test]
+    fn a_catch_up_keeps_its_cursor_when_the_marker_names_none_or_one_behind_it() {
+        for live in [None, Some("9")] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![connected(), stream_cursor("11"), stream_live(live)],
+                    Then::Hold {
+                        keepalive: None,
+                        lasting: None,
+                    },
+                )],
+            );
+            let (_dir, core) = hydrated(&server);
+            let http = core.http.clone().unwrap();
+            let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
+            assert!(
+                report.reached_head,
+                "{live:?}: the marker did not end the catch-up"
+            );
+            assert_eq!(report.cursor, "10", "{live:?}");
+            assert_eq!(stored_cursor(&core).as_deref(), Some("10"), "{live:?}");
+        }
+    }
+
+    #[test]
+    fn a_follow_adopts_the_replay_marker_past_rows_withheld_from_it() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![withheld_head(Some("14"))]);
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, QUICK, None);
+        assert_eq!(run.change().item_id.as_deref(), Some("n1"));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while stored_cursor(&core).as_deref() != Some("14") && Instant::now() < deadline {
+            thread::sleep(MS(10));
+        }
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
+        assert_eq!(report.cursor, "14");
     }
 }
