@@ -4784,11 +4784,12 @@ describe("an edit behind an edit of the same row", () => {
     async function caughtUp(
       label: string,
       change: Record<string, unknown>,
-    ): Promise<{ device: DeviceUnderTest; door: FolderDoor }> {
-      harness = await startHarness(label);
-      const { device, server } = harness;
+    ): Promise<{ run: Harness; device: DeviceUnderTest; door: FolderDoor }> {
+      const run = await startHarness(label);
+      harness = run;
+      const { device, server } = run;
       scriptHydration(server, { head: "10", rows: rows() });
-      const door = scriptDoor(harness);
+      const door = scriptDoor(run);
       elsewhere(door, HELD.id, change);
       const { edges: _edges, ...atFour } = wireItem({
         id: HELD.id,
@@ -4802,7 +4803,7 @@ describe("an edit behind an edit of the same row", () => {
       );
       expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
       expect((await device.catchUp()).ok).toBe(true);
-      return { device, door };
+      return { run, device, door };
     }
 
     async function copied(
@@ -4815,7 +4816,7 @@ describe("an edit behind an edit of the same row", () => {
     }
 
     it("sends an edit on the earlier version it says it read, where the copy has caught up since", async () => {
-      const { device, door } = await caughtUp("edit-as-read", {
+      const { run, device, door } = await caughtUp("edit-as-read", {
         title: AT_FOUR.title,
       });
       // What the editor holds: the row as read at 3, its body changed.
@@ -4856,7 +4857,7 @@ describe("an edit behind an edit of the same row", () => {
       await drained(device);
 
       expect(
-        sentOn(harness, `/items/${HELD.id}`),
+        sentOn(run, `/items/${HELD.id}`),
         "the edit went out on a version other than the one it read",
       ).toEqual([HELD.version]);
       const merged = { title: AT_FOUR.title, body: "mine" };
@@ -4896,7 +4897,7 @@ describe("an edit behind an edit of the same row", () => {
     });
 
     it("sends the edit made after one said to be read on that one's answer", async () => {
-      const { device, door } = await caughtUp("edit-after-as-read", {
+      const { run, device, door } = await caughtUp("edit-after-as-read", {
         title: AT_FOUR.title,
       });
       const first = await device.update(HELD.id, {
@@ -4919,7 +4920,7 @@ describe("an edit behind an edit of the same row", () => {
         verdictsOf(report, "update_item", HELD.id),
         "the second save was set against the first as though another device had written it",
       ).not.toContain("conflicted");
-      expect(sentOn(harness, `/items/${HELD.id}`)).toEqual([
+      expect(sentOn(run, `/items/${HELD.id}`)).toEqual([
         HELD.version,
         HELD.version + 2,
       ]);
@@ -4927,6 +4928,56 @@ describe("an edit behind an edit of the same row", () => {
         title: AT_FOUR.title,
         body: "mine, then more",
       });
+    });
+    it("never moves an edit said to be read onto the answer to an edit ahead of it", async () => {
+      const { run, device, door } = await caughtUp("edit-as-read-behind-edit", {
+        title: AT_FOUR.title,
+      });
+      // An edit on the version the copy holds, then one the editor says it
+      // made against what it read at 3, the title as it read it.
+      await edit(device, HELD.id, { body: "first" }, HELD.version + 1);
+      const queued = await device.update(HELD.id, {
+        properties: { title: "held", body: "mine" },
+        version: HELD.version,
+        asRead: true,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      await drained(device);
+
+      expect(
+        sentOn(run, `/items/${HELD.id}`),
+        "the edit said to be read went out on the answer to the edit ahead of it, over a retitle it never read",
+      ).toEqual([HELD.version + 1, HELD.version]);
+      expect(
+        door.rows.get(HELD.id)?.properties.title,
+        "the title the editor read was taken over the other device's retitle",
+      ).toBe(AT_FOUR.title);
+    });
+
+    it("moves an edit said to be read on the version the copy holds onto the answer ahead of it, as any edit", async () => {
+      harness = await hydratedHarness("edit-as-read-held", { rows: rows() });
+      const run = harness;
+      const { device } = run;
+      const door = scriptDoor(run);
+      for (const body of ["first", "second"]) {
+        const queued = await device.update(HELD.id, {
+          properties: { body },
+          version: HELD.version,
+          asRead: true,
+        });
+        expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      }
+      const report = await drained(device);
+
+      expect(
+        sentOn(run, `/items/${HELD.id}`),
+        "the second save on the held version was sent as it stood, against the first as though another device had written it",
+      ).toEqual([HELD.version, HELD.version + 1]);
+      expect(verdictsOf(report, "update_item", HELD.id)).toEqual([
+        "accepted",
+        "accepted",
+      ]);
+      expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
     });
   });
 });
