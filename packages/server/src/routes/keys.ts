@@ -1324,7 +1324,8 @@ export function keyRoutes(storage: Storage, salt: string) {
       );
     }
     // The row the bearer check read, which carries no hash and no
-    // revocation: what the listing answers for the same key.
+    // revocation. It is read before this request's use is stamped, so its
+    // `last_used_at` can trail the listing's by that one stamp.
     return c.json(key, 200);
   });
 
