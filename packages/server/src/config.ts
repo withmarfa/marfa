@@ -103,11 +103,11 @@ export interface AppConfig {
    *  cascade runs and an `auth.grant.retired` row is written. Default 365;
    *  env override `MARFA_GRANT_INACTIVITY_DAYS`; `0` disables. */
   grantInactivityDays?: number;
-  /** Hours an event_log entry survives before the event-log housekeeping
-   *  job purges it.
+  /** Hours an event_log entry survives at least before the event-log
+   *  housekeeping job may purge it.
    *  Default 168 (7 days). Controls how far back a client's SSE replay
-   *  cursor can reach; requests with `Last-Event-ID` older than the
-   *  oldest retained event get a terminal `catchup_too_old` event.
+   *  cursor can reach; a request whose `Last-Event-ID` is followed by an
+   *  event no longer retained gets a terminal `catchup_too_old` event.
    *  Optional on the type so callers constructing `AppConfig` literals
    *  don't have to supply it; `housekeeping/registrations.ts` applies the
    *  168 fallback. */

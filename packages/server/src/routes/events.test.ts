@@ -72,9 +72,9 @@ function findEvent(
 /**
  * Retires one event the way the retention sweep does, by removing its row.
  *
- * The sweep is the only thing that moves the log's oldest id, and it runs on
- * the server's clock, so a stale cursor is arranged here rather than provoked:
- * a request can ask for nothing that retires an event.
+ * The sweep is the only thing that moves the log's oldest id, and it retires
+ * only an event older than the retention, an hour at the shortest, so a stale
+ * cursor is arranged here rather than provoked.
  */
 async function retireEvent(id: bigint): Promise<void> {
   const db = ctx.storage.betterAuthDb as {
@@ -89,6 +89,39 @@ async function retireEvent(id: bigint): Promise<void> {
 }
 
 describe("GET /events — catchup_too_old", () => {
+  it("refuses a cursor behind a log the sweep has retired to its newest event", async () => {
+    // Every row older than the retention: the sweep keeps the newest, so the
+    // log never empties and a cursor behind the retired stretch meets the
+    // refusal rather than an empty log that cannot say anything is missing.
+    const behind = await createNote("swept-1");
+    await createNote("swept-2");
+    const newest = await createNote("swept-3");
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    await run("UPDATE event_log SET created_at = ?", [
+      new Date(Date.now() - 3 * 3_600_000).toISOString(),
+    ]);
+    await ctx.storage.eventLog.cleanup(1);
+    expect(await ctx.storage.eventLog.getMinRetainedId()).toBe(newest);
+
+    const res = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(behind) },
+    });
+    const { text } = await readSse(res, { untilClosed: true });
+    const frame = findEvent(text, "catchup_too_old");
+    expect(
+      frame,
+      "a cursor behind the swept log was replayed nothing, so the events it missed are lost untold",
+    ).not.toBeNull();
+    expect(frame!.id).toBe(String(newest));
+    // The cases after this one arrange the log's oldest id themselves.
+    await run("DELETE FROM event_log", []);
+  });
+
   it("emits terminal catchup_too_old when the event after the cursor is no longer retained", async () => {
     const retired = await createNote("stale-cursor-1");
     const gone = await createNote("stale-cursor-2");

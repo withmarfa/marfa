@@ -64,8 +64,8 @@ export function registerHousekeepingJobs(
     run: async () => {
       // Idempotency records ride this sweep rather than getting a sweeper
       // of their own, and the window is the same one deliberately: an
-      // `Idempotency-Key` is answerable for exactly as long as the events
-      // around it stay replayable, so a client that can still catch up on
+      // `Idempotency-Key` is answerable for as long as the events around it
+      // are sure to stay replayable, so a client that can still catch up on
       // the stream can still ask what its write did. A second sweep would
       // be a second window to keep in step, and the effective retention is
       // already resolved here.

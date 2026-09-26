@@ -68,9 +68,9 @@ describe("the cursor a catch-up resumes from", () => {
     // The premise is that this run's server still holds event `1`. It does:
     // the server is booted for the run and retains events for hours, and a
     // run lasts minutes. The stale case itself cannot be arranged over the
-    // wire: an event is retired by the retention sweep on the server's
-    // clock, and a request can shorten the retention but cannot run the
-    // sweep; `events.md` 3 says where it is asserted.
+    // wire: a request can run the retention sweep but cannot make an event
+    // older than the shortest retention, an hour; `events.md` 3 says where
+    // it is asserted.
     const seed = await client.createItem(
       createNote({ source: ctx.source, properties: { body: "catchup-seed" } }),
     );
