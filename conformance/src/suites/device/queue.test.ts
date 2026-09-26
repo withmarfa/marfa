@@ -4772,4 +4772,212 @@ describe("an edit behind an edit of the same row", () => {
       body: "edited",
     });
   });
+
+  describe("an edit made against an earlier read", () => {
+    /** The row at 4, retitled by another device, as the copy catches it up. */
+    const AT_FOUR = { title: "theirs", body: "held" };
+
+    /**
+     * A copy that read the row at 3 and has caught up to 4, and a door where
+     * `change` is what the other device wrote to make 4.
+     */
+    async function caughtUp(
+      label: string,
+      change: Record<string, unknown>,
+    ): Promise<{ run: Harness; device: DeviceUnderTest; door: FolderDoor }> {
+      const run = await startHarness(label);
+      harness = run;
+      const { device, server } = run;
+      scriptHydration(server, { head: "10", rows: rows() });
+      const door = scriptDoor(run);
+      elsewhere(door, HELD.id, change);
+      const { edges: _edges, ...atFour } = wireItem({
+        id: HELD.id,
+        version: HELD.version + 1,
+        properties: { title: "held", body: "held", ...change },
+      });
+      server.answer(
+        "GET",
+        "/events",
+        replay("11", [itemEvent("11", "item.updated", atFour)]),
+      );
+      expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+      expect((await device.catchUp()).ok).toBe(true);
+      return { run, device, door };
+    }
+
+    async function copied(
+      device: DeviceUnderTest,
+    ): Promise<{ version: number; properties: Record<string, unknown> }> {
+      const row = await device.get(HELD.id);
+      expect(row.ok, JSON.stringify(row)).toBe(true);
+      if (!row.ok) throw new Error("unreachable: the assertion above threw");
+      return row.value;
+    }
+
+    it("sends an edit on the earlier version it says it read, where the copy has caught up since", async () => {
+      const { run, device, door } = await caughtUp("edit-as-read", {
+        title: AT_FOUR.title,
+      });
+      // What the editor holds: the row as read at 3, its body changed.
+      const read = { title: "held", body: "mine" };
+
+      // The witness: not said to be read, the same edit on 3 is refused,
+      // because the copy holds 4 and nothing tells a read from a guess.
+      const unsaid = await device.update(HELD.id, {
+        properties: read,
+        version: HELD.version,
+      });
+      expect(
+        unsaid.ok ? "queued" : unsaid.refusal.code,
+        "an edit on a version older than the copy's was queued without saying it was read, so the device cannot tell a read from a stale guess",
+      ).toBe("invalid");
+      for (const version of [0, HELD.version + 2]) {
+        const unread = await device.update(HELD.id, {
+          properties: read,
+          version,
+          asRead: true,
+        });
+        expect(
+          unread.ok ? "queued" : unread.refusal.code,
+          `an edit said it read version ${String(version)}, which is 0 or past the copy's, and was queued`,
+        ).toBe("invalid");
+      }
+
+      const queued = await device.update(HELD.id, {
+        properties: read,
+        version: HELD.version,
+        asRead: true,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      expect(
+        await copied(device),
+        "the copy did not lay the edit over the row whole, or moved its version before an answer",
+      ).toMatchObject({ version: HELD.version + 1, properties: read });
+      await drained(device);
+
+      expect(
+        sentOn(run, `/items/${HELD.id}`),
+        "the edit went out on a version other than the one it read",
+      ).toEqual([HELD.version]);
+      const merged = { title: AT_FOUR.title, body: "mine" };
+      expect(
+        door.rows.get(HELD.id)?.properties,
+        "the edit carried the title it read over the other device's retitle, or its body did not land",
+      ).toEqual(merged);
+      expect(await copied(device)).toMatchObject({
+        version: HELD.version + 2,
+        properties: merged,
+      });
+    });
+
+    it("keeps both where another device changed the property an edit said it read", async () => {
+      const { device, door } = await caughtUp("edit-as-read-collides", {
+        body: "theirs",
+      });
+      const queued = await device.update(HELD.id, {
+        properties: { body: "mine" },
+        version: HELD.version,
+        asRead: true,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      const report = await drained(device);
+
+      expect(verdictsOf(report, "update_item", HELD.id)).toEqual([
+        "conflicted",
+      ]);
+      expect(
+        door.rows.get(HELD.id)?.properties.body,
+        "an edit made against an earlier read was taken over the body another device wrote since",
+      ).toBe("theirs");
+      expect(
+        copies(door),
+        "the body the edit carried was not kept in a copy beside the row",
+      ).toEqual(["mine"]);
+    });
+
+    it("sends the edit made after one said to be read on that one's answer", async () => {
+      const { run, device, door } = await caughtUp("edit-after-as-read", {
+        title: AT_FOUR.title,
+      });
+      const first = await device.update(HELD.id, {
+        properties: { body: "mine" },
+        version: HELD.version,
+        asRead: true,
+      });
+      expect(first.ok, JSON.stringify(first)).toBe(true);
+      // The next save is based on the version the copy holds, with the first
+      // laid over it, as any edit is.
+      await edit(
+        device,
+        HELD.id,
+        { body: "mine, then more" },
+        HELD.version + 1,
+      );
+      const report = await drained(device);
+
+      expect(
+        verdictsOf(report, "update_item", HELD.id),
+        "the second save was set against the first as though another device had written it",
+      ).not.toContain("conflicted");
+      expect(sentOn(run, `/items/${HELD.id}`)).toEqual([
+        HELD.version,
+        HELD.version + 2,
+      ]);
+      expect(door.rows.get(HELD.id)?.properties).toEqual({
+        title: AT_FOUR.title,
+        body: "mine, then more",
+      });
+    });
+    it("never moves an edit said to be read onto the answer to an edit ahead of it", async () => {
+      const { run, device, door } = await caughtUp("edit-as-read-behind-edit", {
+        title: AT_FOUR.title,
+      });
+      // An edit on the version the copy holds, then one the editor says it
+      // made against what it read at 3, the title as it read it.
+      await edit(device, HELD.id, { body: "first" }, HELD.version + 1);
+      const queued = await device.update(HELD.id, {
+        properties: { title: "held", body: "mine" },
+        version: HELD.version,
+        asRead: true,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      await drained(device);
+
+      expect(
+        sentOn(run, `/items/${HELD.id}`),
+        "the edit said to be read went out on the answer to the edit ahead of it, over a retitle it never read",
+      ).toEqual([HELD.version + 1, HELD.version]);
+      expect(
+        door.rows.get(HELD.id)?.properties.title,
+        "the title the editor read was taken over the other device's retitle",
+      ).toBe(AT_FOUR.title);
+    });
+
+    it("moves an edit said to be read on the version the copy holds onto the answer ahead of it, as any edit", async () => {
+      harness = await hydratedHarness("edit-as-read-held", { rows: rows() });
+      const run = harness;
+      const { device } = run;
+      const door = scriptDoor(run);
+      for (const body of ["first", "second"]) {
+        const queued = await device.update(HELD.id, {
+          properties: { body },
+          version: HELD.version,
+          asRead: true,
+        });
+        expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      }
+      const report = await drained(device);
+
+      expect(
+        sentOn(run, `/items/${HELD.id}`),
+        "the second save on the held version was sent as it stood, against the first as though another device had written it",
+      ).toEqual([HELD.version, HELD.version + 1]);
+      expect(verdictsOf(report, "update_item", HELD.id)).toEqual([
+        "accepted",
+        "accepted",
+      ]);
+      expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
+    });
+  });
 });

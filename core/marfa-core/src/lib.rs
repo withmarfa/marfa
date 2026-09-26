@@ -416,8 +416,11 @@ impl Core {
     }
 
     /// Queues an update based on a version the copy read before the one it
-    /// holds now, which the server merges against what was read.
-    pub(crate) fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
+    /// holds now, which the server merges against what was read
+    /// (`queue-and-verdicts.md` 43). An editor holding a row while the copy
+    /// catches up bases its save on what its person read, not on what came
+    /// in since, so another device's write is merged rather than overwritten.
+    pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
