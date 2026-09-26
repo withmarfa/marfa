@@ -253,6 +253,7 @@ export class CliDevice implements DeviceUnderTest {
     // with no version is refused drives the same command a caller would.
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
+    if (edit.asRead === true) args.push("--as-read");
     return this.json<QueuedWrite>(args);
   }
 

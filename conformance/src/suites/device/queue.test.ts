@@ -4772,4 +4772,67 @@ describe("an edit behind an edit of the same row", () => {
       body: "edited",
     });
   });
+
+  it("sends an edit on the earlier version it says it read, where the copy has caught up since", async () => {
+    harness = await startHarness("edit-as-read");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: rows() });
+    const door = scriptDoor(harness);
+    // Another device retitles the row while the person is still editing the
+    // body they read at 3, and the copy hears of it.
+    elsewhere(door, HELD.id, { title: "theirs" });
+    const { edges: _edges, ...atFour } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "theirs", body: "held" },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", atFour)]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    // What the editor holds: the row as read at 3, its body changed.
+    const read = { title: "held", body: "mine" };
+
+    // The witness: named as the copy's own version, the same edit is
+    // refused, because the copy holds 4 and nothing says 3 was read.
+    const unsaid = await device.update(HELD.id, {
+      properties: read,
+      version: HELD.version,
+    });
+    expect(
+      unsaid.ok ? "queued" : unsaid.refusal.code,
+      "an edit on a version older than the copy's was queued without saying it was read, so the device cannot tell a read from a stale guess",
+    ).toBe("invalid");
+    for (const version of [0, HELD.version + 2]) {
+      const unread = await device.update(HELD.id, {
+        properties: read,
+        version,
+        asRead: true,
+      });
+      expect(
+        unread.ok ? "queued" : unread.refusal.code,
+        `an edit said it read version ${String(version)}, which the copy never held, and was queued`,
+      ).toBe("invalid");
+    }
+
+    const queued = await device.update(HELD.id, {
+      properties: read,
+      version: HELD.version,
+      asRead: true,
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    await drained(device);
+
+    expect(
+      sentOn(harness, `/items/${HELD.id}`),
+      "the edit went out on a version other than the one it read",
+    ).toEqual([HELD.version]);
+    expect(
+      door.rows.get(HELD.id)?.properties,
+      "the edit carried the title it read over the other device's retitle, or its body did not land",
+    ).toEqual({ title: "theirs", body: "mine" });
+  });
 });

@@ -383,6 +383,11 @@ pub struct UpdateArgs {
     /// item already holds, so a rename does not take a name off a note.
     #[arg(long, value_name = "KEY")]
     pub source_id: Option<String>,
+    /// The version is one read before the version the copy holds now, and
+    /// the server merges the edit against it rather than taking it as newer
+    /// than what came in since.
+    #[arg(long)]
+    pub as_read: bool,
 }
 
 #[derive(Debug, Args)]
@@ -588,7 +593,12 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                         base_version: args.version,
                         source_id: args.source_id,
                     };
-                    output::queued_one(&core.update_item(&args.id, &edit)?, json)
+                    let queued = if args.as_read {
+                        core.update_item_as_read(&args.id, &edit)?
+                    } else {
+                        core.update_item(&args.id, &edit)?
+                    };
+                    output::queued_one(&queued, json)
                 }
                 ItemsCommand::Delete { id } => output::queued_one(&core.delete_item(&id)?, json),
                 ItemsCommand::Restore { id } => output::queued_one(&core.restore_item(&id)?, json),

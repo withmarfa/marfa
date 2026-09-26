@@ -1050,6 +1050,23 @@ impl MarfaCore {
         queued(self.inner.update_item(&id, &edit).map_err(failure)?)
     }
 
+    /// Changes an item in the local copy and queues the change, based on a
+    /// version read before the one the copy holds now, which the server
+    /// merges the change against.
+    #[napi]
+    pub fn update_item_as_read(&self, id: String, edit: Edit) -> Result<QueuedWrite> {
+        let edit = marfa_core::Edit {
+            properties: object(Some(edit.properties))?,
+            base_version: edit.base_version,
+            source_id: edit.source_id,
+        };
+        queued(
+            self.inner
+                .update_item_as_read(&id, &edit)
+                .map_err(failure)?,
+        )
+    }
+
     /// Moves an item to the bin locally and queues the delete.
     #[napi]
     pub fn delete_item(&self, id: String) -> Result<QueuedWrite> {

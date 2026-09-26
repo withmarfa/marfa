@@ -194,6 +194,9 @@ export interface Edit {
   properties: Record<string, unknown>;
   /** Required. An update queued without one is refused before it is sent. */
   version?: number;
+  /** The version is one read before the version the copy holds, and the
+   *  server merges the edit against it (`queue-and-verdicts.md` 43). */
+  asRead?: boolean;
 }
 
 /** An edge, before it is queued. */
