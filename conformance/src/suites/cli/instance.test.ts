@@ -151,8 +151,17 @@ describe("the instance from the terminal", () => {
     ]);
     expect(relabeled.label).toBe("scenario-renamed");
 
-    // The minted key reaches what it was given and nothing else.
+    // The minted key reaches what it was given and nothing else, and says
+    // so of itself.
     const narrow = c.cli.as(minted.key);
+    const itself = await narrow.json<{
+      id: string;
+      permissions: string[];
+      type_permissions: Record<string, string>;
+    }>(["keys", "current"]);
+    expect(itself.id).toBe(minted.id);
+    expect(itself.permissions).toEqual(["audit.read"]);
+    expect(itself.type_permissions).toEqual({ "core.note": "write" });
     const note = await narrow.json<ItemEnvelope>([
       "items",
       "create",

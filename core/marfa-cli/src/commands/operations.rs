@@ -72,6 +72,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getBlobUrl", "blobs url"),
     reached("createKey", "keys create"),
     reached("listKeys", "keys list"),
+    reached("getCurrentKey", "keys current"),
     reached("revokeKey", "keys revoke"),
     reached("updateKey", "keys update"),
     reached("getConfig", "config get"),

@@ -823,6 +823,10 @@ export class MarfaClient {
     return this.request<PaginatedResult<ApiKeyResponse>>("/keys");
   }
 
+  async getCurrentKey(): Promise<ApiResponse<ApiKeyResponse>> {
+    return this.request<ApiKeyResponse>("/keys/current");
+  }
+
   async revokeKey(id: string): Promise<ApiResponse<{ ok: boolean }>> {
     return this.request<{ ok: boolean }>(`/keys/${id}`, {
       method: "DELETE",
