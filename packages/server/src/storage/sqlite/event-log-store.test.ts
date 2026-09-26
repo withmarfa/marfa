@@ -5,7 +5,7 @@
  * middle of the log, above the oldest retained id, where the stream's
  * too-old check cannot see the hole.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +18,7 @@ let tmpDir: string | undefined;
 let storage: Storage | undefined;
 
 afterEach(async () => {
+  vi.useRealTimers();
   await storage?.close();
   storage = undefined;
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
@@ -59,6 +60,16 @@ describe("SqliteEventLogStore.cleanup", () => {
     expect(await s.eventLog.cleanup(1)).toBe(1);
     expect(await retainedIds(s)).toEqual([2n, 3n, 4n]);
     expect(await s.eventLog.getMinRetainedId()).toBe(2n);
+  });
+
+  it("keeps a row stamped exactly at the cutoff", async () => {
+    // Only the clock is frozen, so the stamp and the cutoff are the same
+    // instant; the store's own waits still run.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-26T12:00:00.000Z"));
+    const s = await logAged([3 * HOUR, 1 * HOUR, 3 * HOUR, 0]);
+    expect(await s.eventLog.cleanup(1)).toBe(1);
+    expect(await retainedIds(s)).toEqual([2n, 3n, 4n]);
   });
 
   it("keeps the newest row when every row is older than the retention", async () => {

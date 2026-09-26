@@ -1956,7 +1956,8 @@ export interface EventLogStore {
    * Delete a prefix of the log: every event below the oldest one still
    * within the retention window, and never the newest, so no event
    * survives below one deleted and the log once written is never empty.
-   * Returns count deleted.
+   * A row stamped ahead of the clock holds back every row above it until
+   * its stamp ages. Returns count deleted.
    */
   cleanup(retentionHours: number): Promise<number>;
 
