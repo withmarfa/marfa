@@ -207,7 +207,8 @@ describe("every administrative door consults a permission", () => {
     // **What this still cannot see is a new door that consults nothing at
     // all**, in a file that already has gated siblings. Nothing in the source
     // distinguishes it from the open reads those files legitimately carry —
-    // `GET /types` and `GET /edge-types` are open on purpose — so it is a
+    // `GET /types`, `GET /edge-types` and `GET /keys/current` are open on
+    // purpose — so it is a
     // judgment at review rather than a property a scan can hold. Said plainly
     // here rather than left as an absence, because an absence reads as
     // coverage.

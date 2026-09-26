@@ -246,7 +246,7 @@ describe("key management", () => {
     expect(child!.metadata_permissions).toEqual(creator!.metadata_permissions);
   });
 
-  it("a key holding nothing reads itself, and no other key", async () => {
+  it("a key holding no permission reads itself, and no other key", async () => {
     const label = `km-self-${ctx.runId}`;
     const minted = await client.createKey({
       label,

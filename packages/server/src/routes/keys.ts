@@ -1315,7 +1315,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     return c.json({ data: keys, next_cursor: null }, 200);
   });
 
-  router.openapi(currentKeyRoute, async (c) => {
+  router.openapi(currentKeyRoute, (c) => {
     const key = requireAuth(c);
     if (c.get("authType") === "oauth") {
       throw new MarfaError(
@@ -1323,14 +1323,9 @@ export function keyRoutes(storage: Storage, salt: string) {
         "This credential is a signed-in app's token, not a key; its reach is its grant.",
       );
     }
-    const row = await storage.keys.get(key.id);
-    if (!row) {
-      throw new MarfaError(
-        ErrorCode.API_KEY_NOT_FOUND,
-        `Key ${key.id} not found`,
-      );
-    }
-    return c.json(row, 200);
+    // The row the bearer check read, which carries no hash and no
+    // revocation: what the listing answers for the same key.
+    return c.json(key, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {

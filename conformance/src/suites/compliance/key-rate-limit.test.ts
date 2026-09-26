@@ -101,14 +101,17 @@ describe("the key doors' rate limit", () => {
     const revoked = await client.revokeKey(minted.data.id);
     expect(revoked.status).toBe(200);
 
-    // Four and five: the allowance runs out exactly where it was set.
-    for (const spent of [4, 5]) {
-      const answer = await client.listKeys();
-      expect(
-        answer.status,
-        `request ${String(spent)} of ${String(KEYS_LIMIT)} was refused`,
-      ).toBe(200);
-    }
+    // Four and five: the allowance runs out exactly where it was set, the
+    // key reading itself spending it as the other doors do.
+    const fourth = await client.listKeys();
+    expect(
+      fourth.status,
+      `request 4 of ${String(KEYS_LIMIT)} was refused`,
+    ).toBe(200);
+    const fifth = await client.getCurrentKey();
+    expect(fifth.status, `request 5 of ${String(KEYS_LIMIT)} was refused`).toBe(
+      200,
+    );
 
     const refused = await client.listKeys();
     expect(refused.status).toBe(429);

@@ -388,6 +388,7 @@ const invocations: Record<string, () => string[]> = {
   "blobs url": () => [HASH],
   "keys create": () => ["--label", "l", "--source", "s"],
   "keys list": () => [],
+  "keys current": () => [],
   "keys revoke": () => [ID],
   "keys update": () => ["--label", "l", ID],
   "config get": () => [],

@@ -26,7 +26,7 @@ export function envNumber(raw: string | undefined, fallback: number): number {
 }
 
 /**
- * The `/keys` and `/keys/{id}` cap when the instance names none.
+ * The cap on every door under `/keys` when the instance names none.
  *
  * Written down once and read in both places that need it: `loadConfig`
  * below, and the path table in `app.ts` that a test context's `AppConfig`
@@ -286,7 +286,7 @@ export interface AppConfig {
   /** Rate-limit window size in ms. Read from `RATE_LIMIT_WINDOW_MS`
    *  (default 60_000) — configurable, not hard-coded. */
   rateLimitWindowMs: number;
-  /** The cap on `/keys` and `/keys/{id}`, requests per
+  /** The cap on every door under `/keys`, requests per
    *  `rateLimitWindowMs` window. Read from `RATE_LIMIT_KEYS_REQUESTS`
    *  (default `DEFAULT_KEYS_RATE_LIMIT`); `app.ts` says why these doors
    *  are capped apart from the rest. Bounded from above by the aggregate

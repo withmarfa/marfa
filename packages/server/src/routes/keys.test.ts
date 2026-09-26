@@ -1670,6 +1670,7 @@ describe("POST /keys — what an operator key mints", () => {
     expect(row.type_permissions).toEqual({ "core.note": "write" });
     expect(row).not.toHaveProperty("key");
     expect(row).not.toHaveProperty("key_hash");
+    expect(row).not.toHaveProperty("revoked_at");
 
     // The listing is the witness that the key reads itself by this door
     // alone: it holds no `keys.mint`.
