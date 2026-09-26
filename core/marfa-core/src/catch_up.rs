@@ -1465,8 +1465,13 @@ mod tests {
         server.on("/events", vec![withheld_head(Some("14"))]);
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
+        let began = Instant::now();
         let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
-        assert!(report.reached_head, "the marker did not end the catch-up");
+        assert!(
+            began.elapsed() < Duration::from_secs(10),
+            "the catch-up read on past the marker until its idle ran out"
+        );
+        assert!(report.reached_head);
         assert_eq!(report.applied, 1);
         assert_eq!(report.cursor, "14");
         assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
@@ -1543,7 +1548,27 @@ mod tests {
     fn a_follow_adopts_the_replay_marker_past_rows_withheld_from_it() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on("/events", vec![withheld_head(Some("14"))]);
+        // Kept alive, so a follow that let the stream go at the marker
+        // would show as a reconnect.
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    stream_cursor("14"),
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "n1", NOTE, 1),
+                    ),
+                    stream_live(Some("14")),
+                ],
+                Then::Hold {
+                    keepalive: Some(MS(20)),
+                    lasting: None,
+                },
+            )],
+        );
         let (_dir, core) = hydrated(&server);
         let run = follow_on(&core, QUICK, None);
         assert_eq!(run.change().item_id.as_deref(), Some("n1"));
@@ -1551,9 +1576,14 @@ mod tests {
         while stored_cursor(&core).as_deref() != Some("14") && Instant::now() < deadline {
             thread::sleep(MS(10));
         }
+        thread::sleep(MS(300));
         run.stop();
         let report = run.ended().unwrap();
         assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
         assert_eq!(report.cursor, "14");
+        assert_eq!(
+            report.reconnects, 0,
+            "the follow let the stream go at the marker"
+        );
     }
 }
