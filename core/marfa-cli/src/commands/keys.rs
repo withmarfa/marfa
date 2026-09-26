@@ -204,7 +204,9 @@ pub struct ClaimArgs {
     /// Repeatable.
     #[arg(long = "claim", value_name = "SOURCE")]
     pub claims: Vec<String>,
-    /// Claim no source besides the key's own, asked for out loud.
+    /// Claim no source besides the key's own, asked for out loud. On a mint
+    /// naming no map, naming the claims is naming what the key holds: it
+    /// holds no map and no permission either.
     #[arg(long, conflicts_with = "claims")]
     pub no_claims: bool,
 }
