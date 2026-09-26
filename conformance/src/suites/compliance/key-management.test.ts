@@ -246,6 +246,33 @@ describe("key management", () => {
     expect(child!.metadata_permissions).toEqual(creator!.metadata_permissions);
   });
 
+  it("a mint naming a map holds no permission it did not name", async () => {
+    // The witness is the case above: the same creator's mint naming nothing
+    // takes every permission it holds, so an empty list here is the map
+    // narrowing the key rather than a creator holding none.
+    const label = `km-mapped-${ctx.runId}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "core.note": "write" },
+      metadata_permissions: { types: "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+
+    const list = await client.listKeys();
+    expect(list.ok).toBe(true);
+    const creator = list.data.data.find((k) => k.id === ownKeyId);
+    expect(creator!.permissions?.length).toBeGreaterThan(0);
+    const child = list.data.data.find((k) => k.id === minted.data.id);
+    expect(child!.type_permissions).toEqual({ "core.note": "write" });
+    expect(child!.metadata_permissions).toEqual({ types: "write" });
+    expect(
+      child!.permissions ?? [],
+      "a key minted for one type took its creator's permissions, keys.mint and items.purge among them",
+    ).toEqual([]);
+  });
+
   it("refuses a mint reaching past what the caller holds", async () => {
     const label = `km-narrow-caller-${ctx.runId}`;
     const callerKey = await client.createKey({

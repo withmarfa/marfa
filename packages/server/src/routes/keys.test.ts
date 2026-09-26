@@ -1587,6 +1587,49 @@ describe("POST /keys — what an operator key mints", () => {
     expect(stored?.permissions).toEqual(["keys.mint"]);
   });
 
+  it("mints a key naming a map and no permissions with no permissions, from the operator key or a working one", async () => {
+    // Naming a map is naming what the key holds, so the permissions left
+    // unnamed are held no more than the maps left unnamed. The witness is
+    // the case above: the same mint naming nothing takes every permission.
+    for (const minter of [oauthCtx.operatorKey, oauthCtx.workingKey]) {
+      const suffix = Math.random().toString(36).slice(2, 10);
+      const res = await request(oauthCtx.app, "POST", "/keys", {
+        key: minter,
+        body: {
+          label: `mapped-${suffix}`,
+          source: `mapped-${suffix}`,
+          type_permissions: { "core.note": "write" },
+          metadata_permissions: { types: "write" },
+        },
+      });
+      expect(res.status).toBe(201);
+      const minted = (await res.json()) as { id: string };
+      const stored = await oauthCtx.storage.keys.get(minted.id);
+      expect(stored?.type_permissions).toEqual({ "core.note": "write" });
+      expect(stored?.metadata_permissions).toEqual({ types: "write" });
+      expect(
+        stored?.permissions,
+        "a key minted for one type took its minter's permissions, keys.mint and items.purge among them",
+      ).toEqual([]);
+    }
+  });
+
+  it("mints a key naming only claimed sources with no permissions", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(oauthCtx.app, "POST", "/keys", {
+      key: oauthCtx.operatorKey,
+      body: {
+        label: `claims-${suffix}`,
+        source: `claims-${suffix}`,
+        sources: [`claimed-${suffix}`],
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await oauthCtx.storage.keys.get(minted.id);
+    expect(stored?.permissions).toEqual([]);
+  });
+
   it("refuses to give the operator key it mints any reach at all", async () => {
     // Running the instance is not a permission, so the tier that runs it
     // carries none. The creator ceiling does not catch this, because the
