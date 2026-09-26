@@ -70,9 +70,9 @@ these mean the server offers no way to reach the state.
   deletes a version snapshot, or ages a caller's base version. Covered by the
   server's own tests under `packages/server`.
 - **Retention beyond the event-log window.** The window is configuration
-  (`MARFA_EVENT_LOG_RETENTION_HOURS`), and an event is retired by a sweep on
-  the server's clock, so the re-import path cannot be reached by a black-box
-  run. The in-window path is covered here; the prune is a device rule.
+  (`MARFA_EVENT_LOG_RETENTION_HOURS`), and an event is retired only once it
+  is older than the retention, an hour at the shortest, so the re-import path
+  cannot be reached by a black-box run. The in-window path is covered here; the prune is a device rule.
 - **Blob eviction and the offline read cache.** Local to a device's store.
   The server has no half.
 

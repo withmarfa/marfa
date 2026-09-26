@@ -56,15 +56,16 @@ export class SqliteEventLogStore implements EventLogStore {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
-    // Cut by id, below the oldest row still within retention. `append`
-    // stamps a row before its insert waits for the write lock, so stamps
-    // are not monotonic in id; cutting by stamp could retire a row above
-    // one it keeps, a hole the stream's too-old check cannot see.
+    // Cut by id, below the oldest row still within retention, and never the
+    // newest row. `append` stamps a row before its insert waits for the
+    // write lock, so stamps are not monotonic in id; cutting by stamp could
+    // retire a row above one it keeps, and an emptied log has no oldest id.
+    // Either is a gap the stream's too-old check cannot see.
     const result = await this.db.run(sql`
       DELETE FROM event_log
       WHERE id < COALESCE(
         (SELECT MIN(id) FROM event_log WHERE created_at >= ${cutoff}),
-        (SELECT MAX(id) + 1 FROM event_log)
+        (SELECT MAX(id) FROM event_log)
       )
     `);
     return result.rowsAffected;

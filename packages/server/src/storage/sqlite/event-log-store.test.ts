@@ -61,9 +61,11 @@ describe("SqliteEventLogStore.cleanup", () => {
     expect(await s.eventLog.getMinRetainedId()).toBe(2n);
   });
 
-  it("retires the whole log when every row is older than the retention", async () => {
+  it("keeps the newest row when every row is older than the retention", async () => {
+    // An empty log has no oldest id, so the stream could not tell a cursor
+    // behind the retired rows that it missed them.
     const s = await logAged([3 * HOUR, 2 * HOUR]);
-    expect(await s.eventLog.cleanup(1)).toBe(2);
-    expect(await retainedIds(s)).toEqual([]);
+    expect(await s.eventLog.cleanup(1)).toBe(1);
+    expect(await retainedIds(s)).toEqual([2n]);
   });
 });
