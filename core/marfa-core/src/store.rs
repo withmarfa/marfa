@@ -1286,10 +1286,19 @@ pub fn items_where(
 }
 
 pub fn edges_from(conn: &Connection, source_id: &str) -> Result<Vec<Edge>, CoreError> {
-    let sql =
-        format!("SELECT {EDGE_COLUMNS} FROM edges WHERE source_id = ?1 ORDER BY created_at, id");
+    edges_at(conn, "source_id", source_id)
+}
+
+pub fn edges_to(conn: &Connection, target_id: &str) -> Result<Vec<Edge>, CoreError> {
+    edges_at(conn, "target_id", target_id)
+}
+
+/// The edges whose `end` column names `id`. A column name is spliced into
+/// the query, so it is a literal of this file, never a caller's text.
+fn edges_at(conn: &Connection, end: &'static str, id: &str) -> Result<Vec<Edge>, CoreError> {
+    let sql = format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {end} = ?1 ORDER BY created_at, id");
     let mut statement = conn.prepare(&sql)?;
-    let rows = statement.query_map([source_id], row_to_edge)?;
+    let rows = statement.query_map([id], row_to_edge)?;
     Ok(rows.collect::<Result<Vec<Edge>, _>>()?)
 }
 

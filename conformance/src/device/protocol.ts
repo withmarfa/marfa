@@ -277,6 +277,8 @@ export interface DeviceUnderTest {
   deleteEdge(id: string): Promise<Outcome<QueuedWrite>>;
   /** The edges the copy holds from one item. */
   edgesFrom(item: string): Promise<Outcome<Edge[]>>;
+  /** The edges the copy holds to one item. */
+  edgesTo(item: string): Promise<Outcome<Edge[]>>;
   /** One tag, as its own write. */
   addTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;
   removeTag(item: string, tag: string): Promise<Outcome<QueuedWrite>>;

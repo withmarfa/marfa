@@ -1461,9 +1461,20 @@ describe("the working copy says what it is", () => {
       "a store that has never hydrated answered a read by id, so an absent row and a copy that was never pulled read the same",
     ).toBe(false);
 
+    for (const [end, edges] of [
+      ["from", await device.edgesFrom("whatever")],
+      ["to", await device.edgesTo("whatever")],
+    ] as const) {
+      expect(
+        edges.ok,
+        `a store that has never hydrated answered the edges ${end} an item, so an item with no links and a copy that was never pulled read the same`,
+      ).toBe(false);
+      if (!edges.ok) expect(edges.refusal.code).toBe("hydration_incomplete");
+    }
+
     // The control: the device answers about itself before it has hydrated,
     // which is how a caller learns a hydration is owed (`device.md` 5). A
-    // device that refused everything would satisfy the three above for a
+    // device that refused everything would satisfy the reads above for a
     // reason that has nothing to do with the slice.
     const status = await device.status();
     expect(
@@ -1989,5 +2000,94 @@ describe("a local list narrows on the item's own time", () => {
         "an upper bound on its own keeps the row sitting on it, so that bound alone is inclusive",
       ).not.toContain("on-upper");
     }
+  });
+});
+
+/**
+ * An edge is read from either end.
+ *
+ * The replies in a thread point at the thread they are in and a file points
+ * at the item it is attached to, so the question an app asks of the item on
+ * screen is what points at it. A copy that answered only the edges an item
+ * starts from would leave the app asking every item it holds for its edges.
+ */
+describe("a local read of edges answers both ends", () => {
+  const edge = (id: string, source: string, target: string, type: string) => ({
+    id,
+    source_id: source,
+    target_id: target,
+    edge_type: type,
+    properties: {},
+    version: 1,
+    created_at: "2026-09-18T00:00:00.000Z",
+    updated_at: "2026-09-18T00:00:00.000Z",
+  });
+
+  it("answers the edges the copy holds to an item, the unanswered ones with them", async () => {
+    harness = await startHarness("edges-to");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "root",
+              edges: {
+                references: {
+                  data: [edge("outward", "root", "other", "references")],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          {
+            item: {
+              id: "reply",
+              edges: {
+                "in-thread": {
+                  data: [edge("threaded", "reply", "root", "in-thread")],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          { item: { id: "other" } },
+        ],
+      },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const local = await device.createEdge({
+      source: "other",
+      target: "root",
+      type: "about",
+    });
+    expect(local.ok).toBe(true);
+    if (!local.ok) return;
+
+    // The witnesses: the local edge is still unanswered, and the copy holds
+    // the root's own edge, read from its start.
+    const queue = await device.queue();
+    expect(queue.ok).toBe(true);
+    expect(
+      queue.ok
+        ? queue.value.find((row) => row.edge_id === local.value.edge_id)
+            ?.verdict
+        : "unread",
+    ).toBeNull();
+    const from = await device.edgesFrom("root");
+    expect(from.ok).toBe(true);
+    expect(from.ok ? from.value.map((row) => row.id) : []).toEqual(["outward"]);
+
+    const to = await device.edgesTo("root");
+    expect(
+      to.ok,
+      "the copy cannot say what points at an item, so a thread's replies and an item's attachments are found only by scanning every edge",
+    ).toBe(true);
+    if (!to.ok) return;
+    expect(
+      to.value.map((row) => row.id).sort(),
+      "the edges to an item are not the ones that point at it, the unanswered one included",
+    ).toEqual([local.value.edge_id, "threaded"].sort());
   });
 });

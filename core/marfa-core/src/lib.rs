@@ -285,6 +285,14 @@ impl Core {
         store::edges_from(&conn, id)
     }
 
+    /// The edges the copy holds that point at `id`: the replies in a thread,
+    /// the files attached to an item.
+    pub fn edges_to(&self, id: &str) -> Result<Vec<Edge>> {
+        let conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        store::edges_to(&conn, id)
+    }
+
     /// Full-text search over titles, bodies and tags, best match first,
     /// narrowed as `SearchFilters` says.
     pub fn search(

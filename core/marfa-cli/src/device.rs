@@ -236,6 +236,11 @@ pub enum EdgesCommand {
         /// The item the edges start from.
         item: String,
     },
+    /// The edges the copy holds to one item.
+    To {
+        /// The item the edges point at.
+        item: String,
+    },
     /// Link two items, and queue the edge.
     Create {
         /// The item the edge starts from.
@@ -679,25 +684,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Edges { command } => {
             let core = store.open(None)?;
             match command {
-                EdgesCommand::List { item } => {
-                    let edges = core.edges_from(&item)?;
-                    output::report(&edges, json, || {
-                        edges
-                            .iter()
-                            .map(|edge| {
-                                format!(
-                                    "{}  {} -> {}  {}  v{}",
-                                    edge.id,
-                                    edge.source_id,
-                                    edge.target_id,
-                                    edge.edge_type,
-                                    edge.version
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n")
-                    })
-                }
+                EdgesCommand::List { item } => edge_list(&core.edges_from(&item)?, json),
+                EdgesCommand::To { item } => edge_list(&core.edges_to(&item)?, json),
                 EdgesCommand::Create {
                     source,
                     target,
@@ -820,6 +808,21 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
     }
+}
+
+fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {
+    output::report(&edges, json, || {
+        edges
+            .iter()
+            .map(|edge| {
+                format!(
+                    "{}  {} -> {}  {}  v{}",
+                    edge.id, edge.source_id, edge.target_id, edge.edge_type, edge.version
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
 }
 
 /// The five reasons, read at the flag, so anything else is refused before
