@@ -1362,7 +1362,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("names one family and still gets none of the other three for free", async () => {
-    // `namesNoReach` reads all four families. The grant below projects a
+    // `namesNoReach` reads all five families and the claims. The grant below projects a
     // non-empty edge map as well as a type map, so the derive path has
     // something to hand over — without which this assertion would pass
     // whether or not the condition were right, which is what the first
@@ -1401,6 +1401,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(partialKey?.edge_permissions ?? {}).toEqual({});
     expect(partialKey?.metadata_permissions ?? {}).toEqual({});
     expect(partialKey?.extension_permissions ?? {}).toEqual({});
+    // The session holds `keys.mint`, which the key it minted naming a map
+    // does not take.
+    expect(partialKey?.permissions).toEqual([]);
   });
 
   it("takes the derive path off whichever family is named", async () => {

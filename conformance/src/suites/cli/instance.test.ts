@@ -166,6 +166,34 @@ describe("the instance from the terminal", () => {
     expect(outside.code).toBe(1);
     expect(outside.envelope.error.code).toBe("forbidden");
 
+    // Asked for out loud, a key holding nothing holds nothing on any family.
+    const inert = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "scenario-inert",
+      "--source",
+      unique("cli-inert"),
+      "--no-permissions",
+    ]);
+    trackKey(c.ctx, inert.id);
+    const held = (
+      await c.cli.json<{ data: Array<Record<string, unknown>> }>([
+        "keys",
+        "list",
+      ])
+    ).data.find((key) => key.id === inert.id)!;
+    expect(
+      [
+        held.permissions,
+        held.type_permissions,
+        held.edge_permissions,
+        held.metadata_permissions,
+        held.extension_permissions,
+      ],
+      "a key minted with --no-permissions held something",
+    ).toEqual([[], {}, {}, {}, {}]);
+
     await c.cli.json(["keys", "revoke", minted.id]);
     const revoked = await narrow.refused(["items", "list"]);
     expect(revoked.code).toBe(5);

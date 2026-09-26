@@ -183,9 +183,6 @@ describe("a permission map still resolves names, and only names", () => {
       body: {
         label: "notes only",
         source: "test",
-        // Named rather than omitted: an omitted list takes the creator's
-        // whole set, and this credential is meant to be a narrow one.
-        permissions: [],
         type_permissions: { "core.note.*": "read" },
       },
     });

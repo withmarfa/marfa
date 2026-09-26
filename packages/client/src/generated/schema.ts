@@ -938,7 +938,7 @@ export interface paths {
          * Create an API key
          * @description Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.
          *
-         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. A body naming no map and no claimed source takes the creator's whole set, permissions and maps alike; a body naming any of them holds only what it names, so a key minted with a type map and no `permissions` holds no permission. The content maps behave the same way, and a signed-in app must hold `keys.mint` to reach this route at all.
+         *     A credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A body naming no map and no claimed source takes the creator's whole set, permissions and maps alike; a body naming any of them holds only what it names, so a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.
          *
          *     `source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.
          *
@@ -2356,7 +2356,7 @@ export interface components {
             source: string;
             /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
             sources?: string[];
-            /** @description The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named is honored and clamped to what the creator holds. */
+            /** @description The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused. */
             permissions?: components["schemas"]["Permission"][];
             /** @description The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly. */
             oauth_client_id?: string;

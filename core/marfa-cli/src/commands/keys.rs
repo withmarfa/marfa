@@ -72,8 +72,10 @@ impl Permission {
     }
 }
 
-/// The maps a key's reach is made of. Naming any of them is naming exactly
-/// what the key holds; naming none takes the creator's whole set.
+/// The maps a key's reach is made of, and its permissions. Naming a map is
+/// naming exactly what the key holds, its permissions included; naming
+/// only permissions narrows those and takes the creator's maps; naming
+/// nothing takes the creator's whole set.
 #[derive(Debug, Default, Args)]
 pub struct PermissionMapArgs {
     /// A permission, repeatable.
@@ -232,10 +234,18 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     args.maps.apply(&mut body)?;
     args.claims.apply(&mut body);
     if args.no_permissions {
-        // Naming the permission family with nothing is what asks for a key
-        // that holds nothing: the door gives every family left unnamed
-        // nothing once any family is named.
+        // Every family named empty: the door takes the creator's maps for a
+        // body naming none of them, whatever it names of the permissions.
         body.insert("permissions".into(), json!([]));
+        for map in [
+            "type_permissions",
+            "extension_permissions",
+            "edge_permissions",
+            "metadata_permissions",
+            "profile_permissions",
+        ] {
+            body.insert(map.into(), json!({}));
+        }
     }
     insert_opt(
         &mut body,
