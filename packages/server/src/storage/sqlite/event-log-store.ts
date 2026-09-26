@@ -1,4 +1,4 @@
-import { lt, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import type { EventLogStore, PersistedEvent } from "../interface.js";
 import { eventLog } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -56,10 +56,17 @@ export class SqliteEventLogStore implements EventLogStore {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
-    const result = await this.db
-      .delete(eventLog)
-      .where(lt(eventLog.created_at, cutoff))
-      .run();
+    // Cut by id, below the oldest row still within retention. `append`
+    // stamps a row before its insert waits for the write lock, so stamps
+    // are not monotonic in id; cutting by stamp could retire a row above
+    // one it keeps, a hole the stream's too-old check cannot see.
+    const result = await this.db.run(sql`
+      DELETE FROM event_log
+      WHERE id < COALESCE(
+        (SELECT MIN(id) FROM event_log WHERE created_at >= ${cutoff}),
+        (SELECT MAX(id) + 1 FROM event_log)
+      )
+    `);
     return result.rowsAffected;
   }
 

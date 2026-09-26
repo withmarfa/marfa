@@ -1953,8 +1953,9 @@ export interface EventLogStore {
   getAfter(afterId: bigint, limit: number): Promise<PersistedEvent[]>;
 
   /**
-   * Delete events older than the given retention window. Returns count
-   * deleted.
+   * Delete a prefix of the log: every event below the oldest one still
+   * within the retention window, so no event survives below one deleted.
+   * Returns count deleted.
    */
   cleanup(retentionHours: number): Promise<number>;
 
