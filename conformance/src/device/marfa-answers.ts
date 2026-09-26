@@ -248,6 +248,14 @@ export function streamCursor(cursor: string): SseFrame {
   return { event: "stream_cursor", data: { type: "stream_cursor", cursor } };
 }
 
+/**
+ * The frame that ends a replay, naming how far it reached, frames withheld
+ * from this reader included. `null` where the server knew no position.
+ */
+export function streamLive(cursor: string | null): SseFrame {
+  return { event: "stream_live", data: { type: "stream_live", cursor } };
+}
+
 export function itemEvent(
   id: string,
   kind: string,
@@ -307,6 +315,23 @@ export function headRead(cursor: string): Answer {
 /** A replay: the head, then the events after the cursor. */
 export function replay(head: string, frames: SseFrame[]): Answer {
   return { kind: "sse", frames: [connected, streamCursor(head), ...frames] };
+}
+
+/**
+ * A replay as a real server completes one: the head, the events after the
+ * cursor, the marker naming how far the replay reached, and the stream held
+ * open for what comes next. `replay` is a stream that ends before its marker.
+ */
+export function liveReplay(
+  head: string,
+  frames: SseFrame[],
+  live: string | null = head,
+): Answer {
+  return {
+    kind: "sse",
+    hold: true,
+    frames: [connected, streamCursor(head), ...frames, streamLive(live)],
+  };
 }
 
 /**

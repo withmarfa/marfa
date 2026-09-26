@@ -274,6 +274,21 @@ pub fn event(id: &str, name: &str, payload: &str) -> String {
     format!("id: {id}\nevent: {name}\ndata: {payload}\n\n")
 }
 
+/// The frame a real server opens every stream's prologue with, naming the
+/// log's head.
+pub fn stream_cursor(cursor: &str) -> String {
+    format!(
+        "event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"{cursor}\"}}\n\n"
+    )
+}
+
+/// The frame a real server ends every stream's replay with, naming how far
+/// the replay reached, frames withheld from this reader included.
+pub fn stream_live(cursor: Option<&str>) -> String {
+    let cursor = cursor.map_or("null".to_string(), |cursor| format!("\"{cursor}\""));
+    format!("event: stream_live\ndata: {{\"type\":\"stream_live\",\"cursor\":{cursor}}}\n\n")
+}
+
 pub fn item_payload(event: &str, id: &str, r#type: &str, version: i64) -> String {
     format!(
         r#"{{"type":"{event}","item":{{"id":"{id}","type":"{type}","properties":{{"title":"{id}"}},"state":"active","tier":"library","version":{version},"schema_version":1,"source":"test","occurred_at":"2026-01-01T00:00:00Z","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}},"metadata":{{"tags":[]}}}}"#
