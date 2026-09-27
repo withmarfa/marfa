@@ -10,7 +10,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackKey, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackFolder,
+  trackItem,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -47,6 +53,53 @@ describe("system.* set", () => {
     });
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("type_not_permitted");
+  });
+
+  it("refuses a system.folder write on every item door, from a key the folder door admits", async () => {
+    const np = await narrowClient("np-folder-write");
+    // The witness: this key writes a folder through its own door.
+    const made = await np.createFolder({ title: "item doors" });
+    expect(made.status).toBe(201);
+    const folderId = made.data.item.id;
+    trackFolder(ctx, folderId);
+    const note = await np.createItem({
+      type: "core.note",
+      properties: { body: "not a folder" },
+    });
+    expect(note.status).toBe(201);
+    trackItem(ctx, note.data.item.id);
+
+    const answers = [
+      await np.createItem({
+        type: "system.folder",
+        properties: { title: "x" },
+      }),
+      await np.updateItem(folderId, { version: 1, properties: { title: "x" } }),
+      await np.deleteItem(folderId),
+      await np.transitionItem(folderId, "archived"),
+      await np.updateItem(note.data.item.id, {
+        version: 1,
+        type: "system.folder",
+        retype: true,
+        properties: { title: "x" },
+      }),
+    ];
+    for (const r of answers) {
+      expect(r.status).toBe(403);
+      expect(r.error?.error.code).toBe("type_not_permitted");
+    }
+    const bulk = await np.bulkItems([
+      { type: "system.folder", properties: { title: "x" } },
+    ]);
+    expect(bulk.status).toBe(403);
+    expect(bulk.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(
+      (bulk.error?.error.details as { code?: string } | undefined)?.code,
+    ).toBe("type_not_permitted");
+
+    const unchanged = await np.getItem(folderId);
+    expect(unchanged.data.item.version).toBe(1);
+    expect(unchanged.data.item.state).toBe("active");
   });
 
   it("ships none of the eight system.connection fields no door accepts", async () => {

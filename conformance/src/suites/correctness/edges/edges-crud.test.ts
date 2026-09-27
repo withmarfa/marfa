@@ -5,6 +5,7 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackFolder,
   cleanup,
 } from "../../../utils/setup.js";
 import { createAlbum, createNote } from "../../../generators/items.js";
@@ -39,18 +40,24 @@ async function makeContainer(): Promise<string> {
   return r.data.item.id;
 }
 
+/** A `system.folder`, the only target `in-folder` takes. */
+async function makeFolder(): Promise<string> {
+  const r = await client.createFolder({ title: "edges-crud" });
+  expect(r.ok).toBe(true);
+  trackFolder(ctx, r.data.item.id);
+  return r.data.item.id;
+}
+
 /**
  * Every shipped edge type, with what each one's target has to be.
  *
- * Nine, and the list is written out rather than read off the registry
+ * Ten, and the list is written out rather than read off the registry
  * because nothing under `src/suites/` may import a workspace package. So it
  * is a copy, and `compliance/edge-types.test.ts` is what refuses to let it
- * fall behind: it holds the served set against the same nine.
+ * fall behind: it holds the served set against the same ten.
  *
- * A target per entry rather than one for all of them, because
- * `in-collection` constrains its target by role: it needs one declaring
- * `container` where every other type takes any item, so a loop over bare
- * names could not carry it.
+ * A target per entry, because two constrain theirs: `in-collection` needs
+ * one declaring the `container` role and `in-folder` a `system.folder`.
  */
 const CORE_EDGE_TYPES: readonly {
   id: string;
@@ -65,6 +72,7 @@ const CORE_EDGE_TYPES: readonly {
   { id: "supersedes", target: makeItem },
   { id: "references", target: makeItem },
   { id: "in-collection", target: makeContainer },
+  { id: "in-folder", target: makeFolder },
 ];
 
 describe("edges CRUD", () => {
