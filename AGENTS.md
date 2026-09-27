@@ -4,7 +4,7 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 ## In force
 
-- American English in code, comments and commits. Scoped Conventional Commits (`refactor(server):`, `feat(core):`). Feature branches and pull requests. Never push `main`. A session merges its own pull request once every required check is green and its reviewers have run: squash, branch deleted, in stack order.
+- American English in code, comments and commits. Scoped Conventional Commits (`refactor(server):`, `feat(core):`). Feature branches and pull requests. Never push `main`. A session merges its own pull request once every required check is green and any appropriate review is complete: squash, branch deleted, in stack order.
 - One clone of this repository per machine. Parallel work happens in worktrees made by the agent's own worktree mechanism, never in a second clone or a sibling folder.
 - While this repository is private, Apple builds and Keychain tests run on the local ARM64 macOS pool; portable jobs use Blacksmith Ubuntu. Only release publishing stays on GitHub-hosted Ubuntu for npm trusted publishing. Switch local jobs to standard GitHub-hosted macOS before making the repository public. `ci/workflow-runner.test.ts` enforces the runner selection.
 - SQLite is the only database. Removed means gone: no shims, no aliases, no migration paths, no compatibility flags.
@@ -23,7 +23,7 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced, or the assertion passes against nothing.
 - A comment is probed, not read. A count, a list, or a claim that nothing calls something is checked by running the query, never by agreeing with it.
 - A comment survives only if it explains a why the code cannot. Anything that narrates history, removed code, a former dialect or mode, a ticket or a person, goes, in every file the work touches.
-- Reviewers run as work lands, not at the end. After each step, sub-agent reviewers ask whether anything legacy is left and whether what was done is done; findings are fixed before the step is called done. Run an adversarial reviewer after the read-only one, not beside it, because its mutations trip the other's tree checks.
+- Match review to the change's risk and complexity. Use sub-agent or adversarial review when it adds meaningful confidence; straightforward, low-risk changes do not need it. When both read-only and mutation-based reviews are useful, run them sequentially so they do not interfere.
 
 ## Commands
 
