@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use thiserror::Error;
 
 /// Every way the core can refuse or fail. Server refusals keep the server's
@@ -89,7 +91,23 @@ impl CoreError {
             _ => false,
         }
     }
+
+    /// The wait a rate limit's `Retry-After` names, held to `RETRY_AFTER_MOST`.
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            CoreError::RateLimited {
+                retry_after_seconds: Some(seconds),
+                ..
+            } => Some(Duration::from_secs(*seconds).min(RETRY_AFTER_MOST)),
+            _ => None,
+        }
+    }
 }
+
+/// The longest `Retry-After` a client waits out: one past it would park the
+/// client for as long as a server said. The server's webhook delivery honors
+/// the same bound.
+pub(crate) const RETRY_AFTER_MOST: Duration = Duration::from_secs(300);
 
 fn contract_mismatch(
     origin: &str,
@@ -130,5 +148,38 @@ impl From<serde_json::Error> for CoreError {
 impl From<url::ParseError> for CoreError {
     fn from(error: url::ParseError) -> Self {
         CoreError::Invalid(format!("invalid url: {error}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rate_limit_is_environmental_and_names_its_wait_up_to_the_bound() {
+        let limited = |seconds| CoreError::RateLimited {
+            code: "rate_limited".into(),
+            message: String::new(),
+            retry_after_seconds: seconds,
+        };
+        assert!(limited(None).is_environmental());
+        assert_eq!(limited(None).retry_after(), None);
+        assert_eq!(limited(Some(7)).retry_after(), Some(Duration::from_secs(7)));
+        assert_eq!(RETRY_AFTER_MOST, Duration::from_secs(300));
+        assert_eq!(limited(Some(86_400)).retry_after(), Some(RETRY_AFTER_MOST));
+        let answered = |status| CoreError::Server {
+            status,
+            code: String::new(),
+            message: String::new(),
+        };
+        assert!(answered(503).is_environmental());
+        assert!(answered(408).is_environmental());
+        assert!(!answered(405).is_environmental());
+        let refused = CoreError::Forbidden {
+            code: "type_not_permitted".into(),
+            message: String::new(),
+        };
+        assert!(!refused.is_environmental());
+        assert_eq!(refused.retry_after(), None);
     }
 }

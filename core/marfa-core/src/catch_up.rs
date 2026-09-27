@@ -41,10 +41,6 @@ pub(crate) struct Pace {
     /// `reconnect_most`.
     pub(crate) reconnect_first: Duration,
     pub(crate) reconnect_most: Duration,
-    /// The longest `Retry-After` a follow waits out. A server may name any
-    /// number, and one past this would park the follow for as long as it
-    /// said; the server's own webhook delivery honors the same bound.
-    pub(crate) retry_after_most: Duration,
 }
 
 pub(crate) const PACE: Pace = Pace {
@@ -52,7 +48,6 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
-    retry_after_most: Duration::from_secs(300),
 };
 
 struct Slice {
@@ -444,13 +439,9 @@ fn follow_paced(
             Ok(reached) => reached,
             Err(error) if error.is_environmental() => {
                 report.failed_opens += 1;
-                let wait = match &error {
-                    CoreError::RateLimited {
-                        retry_after_seconds: Some(seconds),
-                        ..
-                    } => backoff.max(Duration::from_secs(*seconds).min(pace.retry_after_most)),
-                    _ => backoff,
-                };
+                let wait = error
+                    .retry_after()
+                    .map_or(backoff, |named| backoff.max(named));
                 report.last_failure = Some(error.to_string());
                 pause(wait);
                 backoff = (backoff * 2).min(pace.reconnect_most);
@@ -583,15 +574,14 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
     }
 }
 
-/// Whether a row belongs to the slice: one of its types, with the subtree,
-/// at its tier.
 fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
-    let tier = Tier::parse_wire(item.tier.as_deref())?;
-    Ok(tier == Some(slice.tier)
-        && slice
-            .types
-            .iter()
-            .any(|declared| catalog.matches(declared, &item.r#type)))
+    Ok(store::slice_takes(
+        catalog,
+        &slice.types,
+        slice.tier,
+        &item.r#type,
+        Tier::parse_wire(item.tier.as_deref())?,
+    ))
 }
 
 /// Edges of a row the copy now takes but did not hold, read outside the
@@ -719,7 +709,6 @@ mod tests {
         silence: Duration::from_millis(150),
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
-        retry_after_most: PACE.retry_after_most,
     };
 
     /// A store bound to `server` and hydrated by hand: `core.note` at
@@ -907,7 +896,11 @@ mod tests {
         let report = run.ended().unwrap();
         assert_eq!(
             run.waits(),
-            [Duration::from_secs(1), MS(20), PACE.retry_after_most],
+            [
+                Duration::from_secs(1),
+                MS(20),
+                crate::error::RETRY_AFTER_MOST
+            ],
             "a 429's Retry-After was not waited out, a 408 was not asked again, or a Retry-After past the bound was waited out whole"
         );
         assert_eq!(report.failed_opens, 3);
@@ -935,7 +928,6 @@ mod tests {
         assert_eq!(PACE.reconnect_most, Duration::from_secs(30));
         assert_eq!(PACE.stop_poll, MS(250));
         assert_eq!(PACE.silence, Duration::from_secs(90));
-        assert_eq!(PACE.retry_after_most, Duration::from_secs(300));
     }
 
     #[test]

@@ -69,11 +69,8 @@ enum Wake {
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MOST: Duration = Duration::from_secs(30);
 
-/// Holds the server's stream open and applies what it carries, waking the
-/// watcher for each change. A copy that cannot answer, its cursor aged out
-/// included, is hydrated first (`device.md` 16), and a hydration the network
-/// or a failing server stopped is tried again; an answer no retry changes
-/// ends the watch.
+/// Follows the server, hydrating first where the copy cannot answer
+/// (`device.md` 16); an answer no retry changes ends the watch.
 fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CliError> {
     let mut retry = RETRY_FIRST;
     while !stop.load(Ordering::SeqCst) {
@@ -90,9 +87,10 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
             Ok(_) => break,
             Err(CoreError::CatchUpTooOld { .. }) => {}
             Err(error) if error.is_environmental() => {
-                eprintln!("could not hydrate ({error}); trying again in {retry:?}");
-                wait_unless_stopped(stop, retry);
-                retry = (retry * 2).min(RETRY_MOST);
+                let (wait, next) = retry_schedule(retry, &error);
+                eprintln!("could not hydrate ({error}); trying again in {wait:?}");
+                wait_unless_stopped(stop, wait);
+                retry = next;
             }
             Err(error) => {
                 let _ = wakes.send(Wake::Ended(error.to_string()));
@@ -101,6 +99,15 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
         }
     }
     Ok(())
+}
+
+/// The wait before the next hydration after one that failed with `error`,
+/// the server's `Retry-After` where it names longer, and the backoff after it.
+fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {
+    let wait = error
+        .retry_after()
+        .map_or(backoff, |named| backoff.max(named));
+    (wait, (backoff * 2).min(RETRY_MOST))
 }
 
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
@@ -321,4 +328,52 @@ fn dot_led(root: &Path, path: &Path) -> bool {
     relative
         .components()
         .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn a_failed_hydration_is_tried_again_after_a_wait_that_doubles_to_thirty_seconds() {
+        let failing = CoreError::Network("refused".into());
+        let mut backoff = RETRY_FIRST;
+        let mut waits = Vec::new();
+        for _ in 0..7 {
+            let (wait, next) = retry_schedule(backoff, &failing);
+            waits.push(wait.as_secs());
+            backoff = next;
+        }
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30]);
+    }
+
+    #[test]
+    fn a_rate_limit_is_waited_out_as_long_as_it_names() {
+        let limited = |seconds| CoreError::RateLimited {
+            code: "rate_limited".into(),
+            message: String::new(),
+            retry_after_seconds: Some(seconds),
+        };
+        assert_eq!(
+            retry_schedule(SECOND, &limited(45)),
+            (45 * SECOND, 2 * SECOND)
+        );
+        assert_eq!(retry_schedule(4 * SECOND, &limited(1)).0, 4 * SECOND);
+    }
+
+    #[test]
+    fn a_wait_ends_when_the_watch_stops() {
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                stop.store(true, Ordering::SeqCst);
+            });
+            wait_unless_stopped(&stop, RETRY_MOST);
+        });
+        assert!(started.elapsed() < 5 * SECOND, "{:?}", started.elapsed());
+    }
 }
