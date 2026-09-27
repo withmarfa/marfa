@@ -30,6 +30,14 @@ const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
 
 /**
+ * The longest a replay goes without writing before it says it is still
+ * reading. A catch-up ends on a few seconds of silence, and a replay over
+ * rows the filter or the credential withholds sends nothing while it reads
+ * them, so without this a long one looks like a stream that has finished.
+ */
+const REPLAY_PROGRESS_MS = 1_000;
+
+/**
  * How long the announcement waits for the log head before giving up on it.
  *
  * Five seconds: how long stream setup tolerates a database that is not
@@ -209,7 +217,8 @@ type StreamIncompleteReason =
  * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge: past it a
  * client receives a second copy carrying an id it already absorbed. This
  * one does not degrade: at the cap the stream terminates where nothing
- * worse than a duplicate would otherwise have happened. That is the
+ * worse than a duplicate would otherwise have happened, unless a replay is
+ * reading, which takes the held frames over (`holdFrame` says how). That is the
  * deliberate trade, a bounded, announced, resumable termination in place
  * of a buffer with no ceiling, and it is worth knowing it is a trade.
  *
@@ -439,8 +448,10 @@ export function eventRoutes(
           // would retain one listener per departed viewer indefinitely.
           const subscriptionAbort = new AbortController();
 
+          let lastWriteAt = Date.now();
           const send = (data: string) => {
             if (state.closed) return;
+            lastWriteAt = Date.now();
             try {
               controller.enqueue(encoder.encode(data));
             } catch {
@@ -769,6 +780,14 @@ export function eventRoutes(
             endStream();
           };
 
+          // While a replay reads, the id it reads on to at least; the ids
+          // of the held frames given up to it that it has not yet passed;
+          // and the rows it has passed but could not read, whose live copy
+          // is their one carrier (`events.md` 3).
+          let replayReach: bigint | null = null;
+          const givenUp = new Set<bigint>();
+          const unreadable = new Set<bigint>();
+
           /**
            * Hold one live frame until the prologue is done with it.
            *
@@ -822,6 +841,15 @@ export function eventRoutes(
            * on live would interleave held frames with replayed ones and
            * reorder the stream. Ending it leaves everything unsent still
            * in the log, behind a cursor the client already holds.
+           *
+           * **But not while a replay reads.** Every held frame is a row of
+           * the log below the frame arriving, so the held frames are given
+           * up to the replay, which reads on past the newest of them and
+           * sends each itself. That is no truncation, and without it a
+           * replay long enough to let writers in fills the hold behind it
+           * on any busy instance. A row the replay cannot read is the one
+           * exception: its live copy is all it has, so where that copy was
+           * given up the stream ends as it would have.
            */
           const holdFrame = (frame: HeldFrame): void => {
             const deliverable =
@@ -830,6 +858,24 @@ export function eventRoutes(
                   edgeKindReadable(apiKey, frame.event.edge)
                 : itemPassesProjection(frame.event);
             if (!deliverable) return;
+            if (heldFrames.length >= MAX_HELD_FRAMES && replayReach !== null) {
+              const ids: bigint[] = [];
+              for (const held of [...heldFrames, frame]) {
+                if (held.event.eventId === undefined) break;
+                ids.push(held.event.eventId);
+              }
+              const newest = frame.event.eventId;
+              if (
+                newest !== undefined &&
+                ids.length === heldFrames.length + 1 &&
+                !ids.some((id) => unreadable.has(id))
+              ) {
+                for (const id of ids) givenUp.add(id);
+                if (newest > replayReach) replayReach = newest;
+                heldFrames.length = 0;
+                return;
+              }
+            }
             if (heldFrames.length >= MAX_HELD_FRAMES) {
               console.warn(
                 `[events] closing the stream: ${String(MAX_HELD_FRAMES)} live frames accumulated while it was still opening, and the prologue has not finished`,
@@ -852,6 +898,16 @@ export function eventRoutes(
             // The last row read, as against where the read started: the
             // position the marker may name.
             let lastRead: bigint | null = null;
+            replayReach = afterIdResolved;
+            const liveCopyGivenUp = (id: bigint): boolean => {
+              unreadable.add(id);
+              if (!givenUp.has(id)) return false;
+              console.warn(
+                `[events] closing the stream: event ${String(id)} cannot be read from the log and its live copy was given up with the hold`,
+              );
+              failStream("backlog_overflow");
+              return true;
+            };
             try {
               // A cursor is too old when the log no longer holds the event
               // after it: the oldest retained id is greater than the cursor
@@ -915,6 +971,9 @@ export function eventRoutes(
                 );
 
                 if (batch.length === 0) break;
+                if (Date.now() - lastWriteAt >= REPLAY_PROGRESS_MS) {
+                  send(": replaying\n\n");
+                }
 
                 // The sweep can run between the check above and any read
                 // here. A batch that does not start at the next id may
@@ -1017,6 +1076,7 @@ export function eventRoutes(
                       console.warn(
                         `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
                       );
+                      if (liveCopyGivenUp(event.id)) return false;
                       lastReplayedId = event.id;
                       lastRead = event.id;
                       continue;
@@ -1099,6 +1159,7 @@ export function eventRoutes(
                   if (isEdge) {
                     const storedEdge = replayEdges.get(event.id);
                     if (storedEdge === undefined) {
+                      if (liveCopyGivenUp(event.id)) return false;
                       lastReplayedId = event.id;
                       lastRead = event.id;
                       continue;
@@ -1141,7 +1202,20 @@ export function eventRoutes(
                   lastRead = event.id;
                 }
 
-                if (batch.length < REPLAY_BATCH_SIZE) break;
+                for (const id of givenUp) {
+                  if (id <= lastReplayedId) givenUp.delete(id);
+                }
+                if (
+                  batch.length < REPLAY_BATCH_SIZE &&
+                  lastReplayedId >= replayReach
+                ) {
+                  break;
+                }
+                // The log's reads are synchronous under their promises, so
+                // a replay that never yields holds the process: nothing it
+                // wrote reaches the wire, and no other request is answered,
+                // until the last batch.
+                await new Promise<void>((resolve) => setImmediate(resolve));
               }
               replayedTo = lastRead;
               return true;
@@ -1165,6 +1239,8 @@ export function eventRoutes(
               );
               failStream("replay_failed");
               return false;
+            } finally {
+              replayReach = null;
             }
           };
 

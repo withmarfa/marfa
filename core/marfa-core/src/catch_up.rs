@@ -1493,6 +1493,71 @@ mod tests {
     }
 
     #[test]
+    fn a_catch_up_waits_through_comments_for_a_marker_later_than_its_idle() {
+        // A replay reading rows withheld from this reader writes comments
+        // while it reads. Any frame restarts the idle, so the catch-up
+        // reaches the marker where silence as long would have ended it.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    stream_cursor("14"),
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "n1", NOTE, 1),
+                    ),
+                ],
+                Then::Later {
+                    keepalive: MS(50),
+                    after: MS(600),
+                    frames: vec![stream_live(Some("14"))],
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let http = core.http.clone().unwrap();
+        let report = catch_up(&core, &http, MS(200)).unwrap();
+        assert!(report.reached_head);
+        assert_eq!(report.cursor, "14");
+    }
+
+    #[test]
+    fn a_catch_up_ends_on_silence_before_a_marker_later_than_its_idle() {
+        // The witness for the test above: the same stream with no comment
+        // while it reads.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    connected(),
+                    stream_cursor("14"),
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "n1", NOTE, 1),
+                    ),
+                ],
+                Then::Later {
+                    keepalive: Duration::from_secs(60),
+                    after: MS(600),
+                    frames: vec![stream_live(Some("14"))],
+                },
+            )],
+        );
+        let (_dir, core) = hydrated(&server);
+        let http = core.http.clone().unwrap();
+        let report = catch_up(&core, &http, MS(200)).unwrap();
+        assert!(!report.reached_head);
+        assert_eq!(report.cursor, "11");
+    }
+
+    #[test]
     fn a_catch_up_keeps_its_cursor_when_the_marker_names_no_position() {
         // What a real server sends when its read of the head outran its
         // budget and the replay found nothing: no head, and a marker that
