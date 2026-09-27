@@ -917,9 +917,9 @@ export function eventRoutes(
                 if (batch.length === 0) break;
 
                 // The sweep can run between the check above and any read
-                // here. A batch that does not start at the next id may be
-                // one that lost the events between to it, and only the
-                // oldest retained id, read after the batch, tells which.
+                // here. A batch that does not start at the next id may
+                // have lost the events before it to the sweep, and only
+                // the oldest retained id, read after the batch, tells.
                 const [first] = batch;
                 if (
                   first !== undefined &&
