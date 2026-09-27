@@ -143,7 +143,8 @@ describe("archives carry type registrations", () => {
       target_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       property_schema: {},
-      written_at: "source",
+      reverse_name: `${edgeTypeId}-by`,
+      written_at: "target",
     });
 
     const recipe = await source.storage.items.create({
@@ -202,6 +203,11 @@ describe("archives carry type registrations", () => {
     expect(destTypes.map((s) => s.id)).toContain(typeId);
     const destEdgeTypes = await destination.storage.edgeTypes.list();
     expect(destEdgeTypes.map((s) => s.id)).toContain(edgeTypeId);
+    // Both names travel through the store and the archive, or the next boot
+    // registers a type that has lost the end whose file writes it.
+    const restoredType = destEdgeTypes.find((s) => s.id === edgeTypeId);
+    expect(restoredType?.reverse_name).toBe(`${edgeTypeId}-by`);
+    expect(restoredType?.written_at).toBe("target");
   });
 
   it("restores a subtype whose parent is in the same archive", async () => {
@@ -550,6 +556,21 @@ describe("archives carry type registrations", () => {
       ),
     );
     expect(batch.status).toBe(409);
+
+    // An id claimed earlier in the batch, named later as a reverse name.
+    const claimed = `user.claimed-${uniqueSuffix()}`;
+    const idThenReverse = await restore(
+      await newContext(),
+      await withEdgeTypes(
+        { id: claimed, cardinality: "many-to-many" },
+        {
+          id: `user.claimer-${uniqueSuffix()}`,
+          cardinality: "many-to-many",
+          reverse_name: claimed,
+        },
+      ),
+    );
+    expect(idThenReverse.status).toBe(409);
   });
 
   it("refuses an archive carrying an edge type with a thumbnail property", async () => {

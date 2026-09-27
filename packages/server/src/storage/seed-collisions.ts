@@ -19,6 +19,25 @@ import { log } from "../middleware/logger.js";
  * case of a root reserved after rows were written under it, and which also
  * reports and never acts.
  */
+/**
+ * Report names more than one edge type holds, as an id or a reverse name.
+ * Reported rather than resolved, for the reason the function below gives:
+ * both registrations stay, and a person decides which to rename.
+ */
+export function reportEdgeNameCollisions(
+  collided: Readonly<Record<string, string[]>>,
+): void {
+  const names = Object.keys(collided);
+  if (names.length === 0) return;
+  log("warn", "edge types share a name a folder reads as one type", {
+    count: names.length,
+    names: collided,
+    effect:
+      "a frontmatter key naming one of these cannot say which edge type it means",
+    action: "rename or remove the registered edge type",
+  });
+}
+
 export function reportSeedCollisions(collided: readonly string[]): void {
   if (collided.length === 0) return;
   log("warn", "shipped types collide with registrations this instance owns", {

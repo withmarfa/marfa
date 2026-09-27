@@ -87,6 +87,25 @@ export function edgeNameHolder(
   return undefined;
 }
 
+/**
+ * Each name, an id or a reverse name, that more than one edge type in the
+ * registry holds, with the types holding it. Empty on an instance whose
+ * registrations were all made under the name rules; a registration made
+ * before a shipped type took a reverse name can collide with it.
+ */
+export function edgeNameCollisions(): Record<string, string[]> {
+  const holders = new Map<string, string[]>();
+  for (const schema of listEdgeTypes()) {
+    for (const name of [schema.id, schema.reverse_name]) {
+      if (name === undefined) continue;
+      holders.set(name, [...(holders.get(name) ?? []), schema.id]);
+    }
+  }
+  return Object.fromEntries(
+    [...holders].filter(([, types]) => types.length > 1),
+  );
+}
+
 /** Lists every edge type: the shipped core set plus the instance's own
  *  custom edge types. */
 export function listEdgeTypes(): EdgeTypeSchema[] {

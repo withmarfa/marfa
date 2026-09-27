@@ -20,12 +20,17 @@ import {
   isValidTypeIdentifier,
   isValidEdgeTypeIdentifier,
   registerEdgeTypeSchema,
+  unregisterEdgeTypeSchema,
   validateTypeSchema,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
 import type { Storage, TypeProvenance } from "../storage/interface.js";
-import { EdgeTypeRequestSchema, edgeTypeFromRequest } from "./edge-types.js";
+import {
+  EdgeTypeRequestSchema,
+  assertEdgeNamesFree,
+  edgeTypeFromRequest,
+} from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
 
 /** Bounds an archive the same way the item and edge counts are bounded. */
@@ -393,11 +398,18 @@ export async function registerArchiveTypes(
     );
   }
 
+  // The names were checked when the archive was read, and much has been
+  // awaited since, so each is checked again where it is claimed, and the
+  // claim made before the row is written, as the route does.
   for (const schema of edgeTypesToWrite) {
-    await storage.edgeTypes.create(schema);
-    // The edge-type store does not touch the registry, so the route
-    // registers separately and this has to as well.
+    assertEdgeNamesFree(schema.id, schema.reverse_name);
     registerEdgeTypeSchema(schema);
+    try {
+      await storage.edgeTypes.create(schema);
+    } catch (err) {
+      unregisterEdgeTypeSchema(schema.id);
+      throw err;
+    }
   }
 
   return {

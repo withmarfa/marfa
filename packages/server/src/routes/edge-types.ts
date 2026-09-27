@@ -144,6 +144,31 @@ const EdgeTypeResponseSchema = z
   .openapi("EdgeType");
 
 /**
+ * Refuses an id or a reverse name another edge type holds as either. A folder
+ * reads a frontmatter key as the edge type it names, so each such name
+ * belongs to one type. Synchronous, so a caller that registers straight after
+ * it leaves no await in which another registration can take the name.
+ */
+export function assertEdgeNamesFree(
+  id: string,
+  reverse: string | undefined,
+  taken: ReadonlyMap<string, string> = new Map(),
+): void {
+  const claims: ["id" | "reverse_name", string][] = [["id", id]];
+  if (reverse !== undefined) claims.push(["reverse_name", reverse]);
+  for (const [field, name] of claims) {
+    const holder = edgeNameHolder(name, id) ?? taken.get(name);
+    if (holder !== undefined && holder !== id) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `"${name}" is already a name of the edge type ${holder}`,
+        { field, held_by: holder },
+      );
+    }
+  }
+}
+
+/**
  * The schema a registration stores, from a body the request schema accepted.
  * The route and an archive restore both build it here, so a type that
  * round-trips through an export compares equal and neither door is the laxer
@@ -175,20 +200,7 @@ export function edgeTypeFromRequest(
       { field: "reverse_name", held_by: body.id },
     );
   }
-  // A folder reads a frontmatter key as the edge type it names, so each such
-  // name, an id or a reverse name, belongs to one type.
-  const claims: ["id" | "reverse_name", string][] = [["id", body.id]];
-  if (reverse !== undefined) claims.push(["reverse_name", reverse]);
-  for (const [field, name] of claims) {
-    const holder = edgeNameHolder(name, body.id) ?? taken.get(name);
-    if (holder !== undefined && holder !== body.id) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `"${name}" is already a name of the edge type ${holder}`,
-        { field, held_by: holder },
-      );
-    }
-  }
+  assertEdgeNamesFree(body.id, reverse, taken);
   return {
     id: body.id,
     ...(body.label !== undefined && { label: body.label }),
