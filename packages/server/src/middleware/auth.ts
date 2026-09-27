@@ -591,10 +591,10 @@ export function checkTypeAccess(
  * `checkTypeAccess` puts in front of it.
  *
  * The purge door is the one caller that wants this half alone. A reserved
- * row is soft-deleted by paths that do not ask the fence of it, the
- * platform's own writes and a delete cascade among them, so asking it at
- * purge would refuse every credential and leave the row unpurgeable. Which
- * rows a credential may destroy is still its map's to say.
+ * row reaches its soft-deleted state by paths that do not ask the fence of
+ * it, a delete cascade and an archive restore. The fence stopped neither, and
+ * it admits no credential, so asking it at purge would only strand the row.
+ * Which rows a credential may destroy is still its map's to say.
  */
 export function checkTypePermission(
   apiKey: ApiKey | undefined,

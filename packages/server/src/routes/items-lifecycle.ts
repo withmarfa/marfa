@@ -60,6 +60,15 @@ const restoreItemRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description:
+        "The credential may not write the item's type. Asked of the trashed row, so a key that may only read the type restores none of its rows.",
+    },
     404: {
       content: {
         "application/json": {

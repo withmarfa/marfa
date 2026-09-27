@@ -2,22 +2,20 @@
  * The purge door says which of two refusals this is.
  *
  * Purging is trash-then-purge, so a caller meets `DELETE /items/{id}` first.
- * For a reserved-namespace row a working credential is refused there,
- * by name: "no credential writes `marfa.*` items". The row
- * therefore never becomes trashed, and `DELETE /items/{id}/purge` then
- * answers "Only trashed items can be purged" — which is true, and which
- * describes an ordering mistake the caller did not make.
+ * For a reserved-namespace row a working credential is refused there `403`,
+ * by name: "no credential writes `marfa.*` items". The row therefore never
+ * becomes trashed through that door, and a purge that asked nothing first
+ * would answer `400` "Only trashed items can be purged", which is true and
+ * describes an ordering mistake the caller did not make. The later message
+ * is the one acted on, and it sends somebody looking for a trash step they
+ * think they skipped while the namespace gate is never suspected.
  *
- * **Two refusals sharing a status is what makes this expensive.** Both are
- * 400-shaped to a reader skimming, so the second message is the one acted
- * on, and it sends somebody looking for a trash step they think they
- * skipped, and the namespace gate above it is never suspected.
- *
- * So the door asks the reserved-namespace fence on the not-trashed path, which
- * is the path the purge was going to be refused on anyway. So the assertions here are about
- * *which message* comes back, and the case that matters most is the one
- * proving the ordinary refusal is unchanged — a fix that renamed every
- * refusal would pass a test that only checked the reserved-namespace one.
+ * So the door asks the reserved-namespace fence on the not-trashed path,
+ * which is the path the purge was going to be refused on anyway. The
+ * assertions here are about *which message* comes back, and the case that
+ * matters most is the one proving the ordinary refusal is unchanged: a fix
+ * that renamed every refusal would pass a test that only checked the
+ * reserved-namespace one.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
@@ -131,11 +129,9 @@ describe("purging a row a working credential may not write", () => {
     // path, so an already-trashed row is purged as any other, by a key whose
     // own map writes the type.
     //
-    // Trashed through the storage layer, which is how a reserved-namespace
-    // row reaches that state at all: the trash door asks the same write rule
-    // and refuses every working credential, and the operator key holds no
-    // permissions to pass it with either. So the platform's own machinery is
-    // what moves these rows.
+    // Trashed through the storage layer, standing in for the doors that do
+    // put a reserved row there, a delete cascade and an archive restore: the
+    // trash door asks the fence and refuses every working credential.
     const id = await seedReservedRow("relic:refusal-2");
     await ctx.storage.items.transition(id, "trashed");
 
@@ -151,12 +147,11 @@ describe("purging a row a working credential may not write", () => {
  *
  * The door opens on `items.purge`, and the map says which rows it destroys,
  * as the restore door beside it asks. The reserved-namespace fence is the one
- * half of the write rule a soft-deleted row is not asked: the platform moved
- * it there, so the fence would refuse every credential and leave it
- * unpurgeable.
+ * half of the write rule a soft-deleted row is not asked: the row got there
+ * by a door that does not ask it, and the fence admits no credential.
  */
 describe("purging a soft-deleted row", () => {
-  /** Holds `items.purge` and writes `core.*` and nothing else. */
+  /** Holds `items.purge`, writes `core.note`, and only reads `core.task`. */
   let coreOnlyKey: string;
 
   beforeAll(async () => {

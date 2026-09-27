@@ -1164,7 +1164,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -2910,8 +2910,8 @@ export function itemRoutes(storage: Storage) {
     // sees.** A plain `get` answers `null` for a `trashed` row, so on the
     // ordinary path (trash, then purge) it would come back empty, the type
     // gate below would have no type to ask about, and the announcement
-    // would never fire. This is the same read `items.purge` runs for its
-    // own gate.
+    // would never fire. This is the same read `storage.items.purge` runs
+    // for its own gate.
     const purgeTarget = await storage.items.getIncludingTrashed(id);
     refuseUnlessUninstalled(purgeTarget);
 
@@ -2927,23 +2927,26 @@ export function itemRoutes(storage: Storage) {
     // soft-delete-then-purge, so a caller meets `DELETE /items/{id}` first.
     // For a reserved-namespace row every credential is refused there, by
     // name: "no credential writes system.* items". The row therefore never
-    // reaches its soft-deleted state, and this door would answer "Only
+    // reaches its soft-deleted state through that door, and this door would
+    // answer "Only
     // revoked items can be purged", which is true and reads as an ordering
     // mistake the caller did not make. Asking the fence here names the real
     // reason instead, and runs only where the purge was going to be refused
     // anyway.
     //
     // A reserved row that is soft-deleted got there by a path that does not
-    // ask the fence, the platform's own writes or a delete cascade, and the
-    // fence admits no credential, so asking it here would leave every such
-    // row unpurgeable. The map alone decides it, as it decides any other.
+    // ask the fence: a delete cascade, which gates only the row it names, or
+    // an archive restore. The fence admits no credential, so asking it here
+    // would leave such a row to housekeeping alone, and no housekeeping job
+    // sweeps a revoked connector connection. The map decides it, as it
+    // decides any other.
     //
     // **The state compared is the type's own, never the literal `trashed`.**
     // `softDeleteState` resolves `revoked` for a type with a bounded
     // lifecycle, which `system.connection` has; a literal comparison would
     // send every revoked connection to the fence, leaving every revoked
-    // grant permanently unpurgeable. `items.purge` gates on the same derived
-    // state, and the two have to agree or one of them refuses what the other
+    // grant permanently unpurgeable. `storage.items.purge` gates on the same
+    // derived state, and the two have to agree or one of them refuses what the other
     // admits.
     if (purgeTarget) {
       if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
