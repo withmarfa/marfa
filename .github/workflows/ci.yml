@@ -31,7 +31,27 @@ env:
   CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      required: ${{ steps.classify.outputs.required }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: classify
+        run: node scripts/ci-required.ts
+
   ci-sqlite:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CI (SQLite)
     timeout-minutes: 60
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -70,6 +90,8 @@ jobs:
   # hand-written crate depends on it. Formatting takes the whole workspace,
   # since the generator formats what it writes.
   core-checks:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Core checks
     timeout-minutes: 30
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
@@ -118,6 +140,8 @@ jobs:
   # released. A published package should not be able to come from a commit
   # the contract failed.
   conformance:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Conformance
     timeout-minutes: 60
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
@@ -221,6 +245,8 @@ jobs:
   # contract, this asks whether a person or an agent at a terminal can do
   # everything the server publishes.
   cli-scenarios:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CLI scenarios
     timeout-minutes: 60
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
@@ -294,6 +320,8 @@ jobs:
   # says what it proves and prints its report, which is kept as an
   # artifact whether or not it passed.
   restore-drill:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Restore drill
     timeout-minutes: 30
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -344,9 +372,10 @@ jobs:
           path: ${{ runner.temp }}/drill/reports/restore-drill.md
           if-no-files-found: ignore
 
-  # Freshness jobs catch generated-artifact drift, on every event rather
-  # than behind a path filter: a skipped gate can miss a regression.
+  # Generated-artifact drift must still be checked for every code change.
   types-freshness:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Types codegen freshness
     timeout-minutes: 15
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -372,6 +401,8 @@ jobs:
           fi
 
   openapi-freshness:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: OpenAPI spec freshness
     timeout-minutes: 15
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -397,6 +428,8 @@ jobs:
           fi
 
   version-fields:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: No file holds a version
     timeout-minutes: 10
     runs-on: blacksmith-2vcpu-ubuntu-2404
@@ -434,6 +467,8 @@ jobs:
   # is not committed shows as untracked. `git status` rather than `git diff`,
   # which does not see an untracked file.
   clients-freshness:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Generated clients are fresh
     timeout-minutes: 15
     runs-on: blacksmith-2vcpu-ubuntu-2404
