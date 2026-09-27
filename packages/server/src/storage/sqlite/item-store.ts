@@ -189,15 +189,21 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  * and a copy claiming the original's natural key is a second row asserting it
  * is the same upstream record.
  *
- * It carries the original's tags beside `conflicted-copy`, and a copy of each
- * edge at either end that a second holder may take without breaking the edge
- * type's cardinality: its place under the same parent, what it is about, but
- * not the original's children, each of which has one parent. A copy with no
- * edges and no tags sits outside every project and view the original was in,
- * which is where nobody looks for it. Only edges the writer could have made
- * itself are copied, and none whose other end is in the bin. Neither cycle-prone
- * type can close a cycle through the copy: it takes an inbound `parent-of`
- * and no outbound one, and no `supersedes` at all.
+ * It carries the original's tags beside `conflicted-copy`, and a copy of the
+ * edges that are the original's own: those its own file would write, an
+ * outbound edge of a type written at its source and an inbound one of a type
+ * written at its target, so its place under its parent and what it is about
+ * come with it, while a track that names its album is not made the copy's
+ * track. A copy with no edges and no tags sits outside every project and view
+ * the original was in, which is where nobody looks for it.
+ *
+ * Of those, only what a second holder may take: the edge type's cardinality
+ * allows it, the writer could have made it, the other end is not in the bin,
+ * and discarding the copy, the ordinary thing done with one, reaches nothing
+ * the original points at and is not held back by what it points at: no
+ * outbound edge that cascades, and no edge that blocks a delete. Neither
+ * cycle-prone type can close a cycle through the copy: it takes an inbound
+ * `parent-of` and no outbound one, and no `supersedes` at all.
  */
 async function insertConflictedSibling(
   tx: SqliteTx,
@@ -269,14 +275,23 @@ async function insertConflictedSibling(
       .all();
     // An end in the bin, or gone, is one the edge door would refuse.
     if (other === undefined || other.state === "trashed") continue;
+    const schema = getEdgeTypeSchema(edge.edge_type);
+    if (schema === undefined) continue;
+    const own = outbound
+      ? schema.written_at === "source"
+      : schema.written_at === "target";
+    if (!own) continue;
+    if (schema.cascade_on_delete === "block") continue;
+    if (outbound && schema.cascade_on_delete === "cascade") continue;
     const sourceType = outbound ? row.type : other.type;
     if (mayCopyEdge?.(edge.edge_type, sourceType) !== true) continue;
-    const cardinality = getEdgeTypeSchema(edge.edge_type)?.cardinality;
     // A second source for the same target is what `*-to-many` on the target's
     // side forbids nothing of; a second target for the same source likewise.
     const allowed = outbound
-      ? cardinality === "many-to-one" || cardinality === "many-to-many"
-      : cardinality === "one-to-many" || cardinality === "many-to-many";
+      ? schema.cardinality === "many-to-one" ||
+        schema.cardinality === "many-to-many"
+      : schema.cardinality === "one-to-many" ||
+        schema.cardinality === "many-to-many";
     if (!allowed) continue;
     const copy = {
       id: generateId(),

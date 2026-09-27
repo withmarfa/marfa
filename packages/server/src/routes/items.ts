@@ -679,9 +679,9 @@ const updateItemRoute = createRoute({
           "`last_writer_wins` field takes this write's value, a " +
           "`keep_both_copies` field leaves the server's value on the item " +
           "and the losing value lands on a sibling tagged `conflicted-copy` " +
-          "beside the original's tags, with a copy of each edge the writer " +
-          "could have made that the edge type's cardinality lets a second " +
-          "item hold. " +
+          "beside the original's tags, with a copy of the edges that are the " +
+          "original's own, those its own file would write, that a second " +
+          "item may hold and the writer could have made. " +
           "`manual` and `callback` return the 409 envelope for the caller to " +
           "resolve. Omitted means `manual`.",
       ),
