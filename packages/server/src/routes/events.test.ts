@@ -467,6 +467,8 @@ describe("GET /events — a replay that sends nothing for a while", () => {
     }
 
     const writing = { on: true };
+    // Read through a call: the flag is cleared from outside the loop.
+    const stillWriting = () => writing.on;
     let written = 0;
     let writer: Promise<void> | undefined;
     const write = async () => {
@@ -492,9 +494,9 @@ describe("GET /events — a replay that sends nothing for a while", () => {
         release();
       }
       writer = (async () => {
-        while (writing.on) {
+        while (stillWriting()) {
           await new Promise((resolve) => setImmediate(resolve));
-          for (let i = 0; i < 20 && writing.on; i += 1) {
+          for (let i = 0; i < 20 && stillWriting(); i += 1) {
             await write();
             written += 1;
           }
