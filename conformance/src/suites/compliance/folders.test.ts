@@ -69,7 +69,7 @@ async function folder(
 }
 
 describe("the folder door", () => {
-  it("creates a folder as a system.folder with no tier, read back through the item doors", async () => {
+  it("creates a folder as a system.folder, read back through the item doors", async () => {
     const settings = {
       title: "Project",
       search: {
@@ -109,7 +109,7 @@ describe("the folder door", () => {
     expect(listed.data.data.map((row) => row.id)).toContain(item.id);
   });
 
-  it("changes a folder at its version, merges a stale change to another setting, and refuses one to the same", async () => {
+  it("changes a folder at its version, merges a stale change to another setting, and refuses one to the same whatever conflict asks", async () => {
     const { id } = await folder({ include: ["a"] });
     const changed = await client.updateFolder(id, {
       version: 1,
@@ -138,6 +138,13 @@ describe("the folder door", () => {
     const refusal = stale.error as unknown as Refusal;
     expect(refusal.error.code).toBe("version_conflict");
     expect(refusal.conflicting_fields).toEqual(["include"]);
+
+    const asked = await client.rawRequest(`/folders/${id}?conflict=auto`, {
+      method: "PATCH",
+      body: { version: 1, include: ["d"] },
+    });
+    expect(asked.status).toBe(409);
+    expect(asked.error?.error.code).toBe("version_conflict");
   });
 
   it("refuses a change naming no version or no setting, and one to an id that is not a folder", async () => {
@@ -286,24 +293,102 @@ describe("the folder door", () => {
       "first_placement.core.note",
     ],
     [
+      { first_placement: { "core.note": "C:/Notes" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { first_placement: { "core.note": "Notes\\..\\..\\out" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { first_placement: { "core.note": "Notes\0" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { search: { types: ["system.folder"] } },
+      "validation_error",
+      "search.types.0",
+    ],
+    [
+      { defaults: { type: "system.folder" } },
+      "validation_error",
+      "defaults.type",
+    ],
+    [
+      { first_placement: { "system.folder": "Folders" } },
+      "validation_error",
+      "first_placement.system.folder",
+    ],
+    [
+      { defaults: { edges: { "in-folder": [] } } },
+      "validation_error",
+      "defaults.edges.in-folder",
+    ],
+    [
       { removal_threshold: { fraction: 1.5 } },
       "validation_error",
       "removal_threshold.fraction",
     ],
   ])(
-    "refuses a malformed setting %j with %s naming %s",
+    "refuses a malformed setting %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {
-      const r = await client.createFolder({ title: "refused", ...settings });
-      expect(r.status).toBe(400);
-      const refusal = r.error as unknown as Refusal;
-      expect(refusal.error.code).toBe(code);
-      expect(refusal.error.details?.errors?.[0]?.path).toBe(path);
+      const { id } = await folder();
+      for (const r of [
+        await client.createFolder({ title: "refused", ...settings }),
+        await client.updateFolder(id, { version: 1, ...settings }),
+      ]) {
+        expect(r.status).toBe(400);
+        const refusal = r.error as unknown as Refusal;
+        expect(refusal.error.code).toBe(code);
+        expect(refusal.error.details?.errors?.[0]?.path).toBe(path);
+      }
     },
   );
 
-  it("takes a placement that climbs and comes back inside the folder", async () => {
-    // The witness for the refusals above: `..` alone is not what refuses.
-    await folder({ first_placement: { "core.note": "Notes/../Tickets" } });
+  it("caps defaults.edges at 100 edge types and 100 targets for each", async () => {
+    const target = "01920000-0000-7000-8000-000000000000";
+    const { id } = await folder();
+    for (const [edges, path] of [
+      [
+        Object.fromEntries(
+          Array.from({ length: 101 }, (_, i) => [`edge-${String(i)}`, []]),
+        ),
+        "defaults.edges",
+      ],
+      [
+        { "parent-of": Array.from({ length: 101 }, () => target) },
+        "defaults.edges.parent-of",
+      ],
+    ] as const) {
+      for (const r of [
+        await client.createFolder({ title: "refused", defaults: { edges } }),
+        await client.updateFolder(id, { version: 1, defaults: { edges } }),
+      ]) {
+        expect(r.status, path).toBe(400);
+        const refusal = r.error as unknown as Refusal;
+        expect(refusal.error.code, path).toBe("validation_error");
+        expect(refusal.error.details?.errors?.[0]?.path, path).toBe(path);
+      }
+    }
+    // The witness: a hundred targets are taken.
+    const full = { "parent-of": Array.from({ length: 100 }, () => target) };
+    await folder({ defaults: { edges: full } });
+  });
+
+  it("takes a placement that climbs and comes back inside the folder, on a create and on a change", async () => {
+    // The witness for the refusals above: `..` alone is not what refuses, and
+    // a registered type outside `system.*` is taken.
+    const settings = {
+      search: { types: ["core.note"] },
+      defaults: { type: "core.note" },
+      first_placement: { "core.note": "Notes/../Tickets" },
+    };
+    const { id } = await folder(settings);
+    const changed = await client.updateFolder(id, { version: 1, ...settings });
+    expect(changed.status).toBe(200);
   });
 
   it("answers a folder create repeated under one Idempotency-Key once", async () => {

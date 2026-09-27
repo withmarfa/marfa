@@ -9,6 +9,7 @@ import {
   MarfaError,
   getEdgeTypeSchema,
   getTypeSchema,
+  isSystemType,
   isValidId,
   isValidTypeIdentifier,
   parseFilter,
@@ -23,6 +24,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { itemProvenanceSource, requireAuth } from "../middleware/auth.js";
 import type { ResolvedItem, Storage } from "../storage/interface.js";
+import { depthInsideFolder } from "../folder-path.js";
 import { publish } from "../pubsub.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -31,6 +33,8 @@ import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
 import { filterMetadataForCaller } from "./util.js";
 
 const FOLDER_TYPE = "system.folder";
+const MAX_DEFAULT_EDGE_TYPES = 100;
+const MAX_DEFAULT_EDGE_TARGETS = 100;
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -73,9 +77,11 @@ const FolderDefaultsSchema = z
     properties: z.record(z.string(), z.unknown()).optional(),
     tags: z.array(z.string()).max(MAX_TAGS_PER_ITEM).optional(),
     edges: z
-      .record(z.string(), z.array(z.string()))
+      .record(z.string(), z.array(z.string()).max(MAX_DEFAULT_EDGE_TARGETS))
       .optional()
-      .describe("A map from edge type to the target ids a new file takes."),
+      .describe(
+        `A map from edge type to the target ids a new file takes: at most ${String(MAX_DEFAULT_EDGE_TYPES)} edge types, each with at most ${String(MAX_DEFAULT_EDGE_TARGETS)} targets.`,
+      ),
   })
   .openapi("FolderDefaults");
 
@@ -128,7 +134,9 @@ const UpdateFolderSchema = z.strictObject({
     .number()
     .int()
     .min(0)
-    .describe("The version the caller read, as on `PATCH /items/{id}`."),
+    .describe(
+      "The version the caller read. There is no `conflict` parameter: a change to a setting changed since is refused whatever the query says.",
+    ),
   title: z.string().min(1).max(500).optional(),
   search: settingsShape.search.optional(),
   defaults: settingsShape.defaults.optional(),
@@ -162,28 +170,16 @@ function assertKnownType(path: string, id: string): void {
       `Invalid type identifier: ${id}`,
     );
   }
+  if (isSystemType(id)) {
+    throw settingRefusal(
+      ErrorCode.VALIDATION_ERROR,
+      path,
+      `${id} is a system type, which no item door writes`,
+    );
+  }
   if (getTypeSchema(id) === undefined) {
     throw settingRefusal(ErrorCode.UNKNOWN_TYPE, path, `Unknown type: ${id}`);
   }
-}
-
-/** Whether a relative directory path names somewhere outside the folder. */
-function leavesFolder(path: string): boolean {
-  if (
-    path.startsWith("/") ||
-    /^[A-Za-z]:/.test(path) ||
-    path.includes("\\") ||
-    path.includes("\0")
-  ) {
-    return true;
-  }
-  let depth = 0;
-  for (const segment of path.split("/")) {
-    if (segment === "" || segment === ".") continue;
-    depth += segment === ".." ? -1 : 1;
-    if (depth < 0) return true;
-  }
-  return false;
 }
 
 function assertSettings(settings: Settings): void {
@@ -213,8 +209,24 @@ function assertSettings(settings: Settings): void {
   if (defaults?.type !== undefined) {
     assertKnownType("defaults.type", defaults.type);
   }
-  for (const [edgeType, targets] of Object.entries(defaults?.edges ?? {})) {
+  const defaultEdges = Object.entries(defaults?.edges ?? {});
+  if (defaultEdges.length > MAX_DEFAULT_EDGE_TYPES) {
+    throw settingRefusal(
+      ErrorCode.VALIDATION_ERROR,
+      "defaults.edges",
+      `At most ${String(MAX_DEFAULT_EDGE_TYPES)} edge types`,
+    );
+  }
+  for (const [edgeType, targets] of defaultEdges) {
     const path = `defaults.edges.${edgeType}`;
+    // A default names targets alone, and an in-folder edge needs a path.
+    if (edgeType === "in-folder") {
+      throw settingRefusal(
+        ErrorCode.VALIDATION_ERROR,
+        path,
+        "in-folder is not a default: it needs the file's own path",
+      );
+    }
     if (getEdgeTypeSchema(edgeType) === undefined) {
       throw settingRefusal(
         ErrorCode.VALIDATION_ERROR,
@@ -234,7 +246,7 @@ function assertSettings(settings: Settings): void {
   for (const [type, dir] of Object.entries(placement ?? {})) {
     const path = `first_placement.${type}`;
     assertKnownType(path, type);
-    if (leavesFolder(dir)) {
+    if (depthInsideFolder(dir) === null) {
       throw settingRefusal(
         ErrorCode.VALIDATION_ERROR,
         path,
@@ -316,7 +328,7 @@ const notFound = {
 };
 
 const SETTING_REFUSAL =
-  "A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else.";
+  "A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it.";
 
 const createRefusal = {
   400: {
@@ -382,7 +394,7 @@ const updateFolderRoute = createRoute({
   tags: ["Folders"],
   summary: "Change a folder's settings",
   description:
-    "Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required and read as `PATCH /items/{id}` reads it: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. A revoked folder does not change.",
+    "Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

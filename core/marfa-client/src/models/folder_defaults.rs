@@ -22,7 +22,7 @@ pub struct FolderDefaults {
     pub properties: Option<std::collections::HashMap<String, serde_json::Value>>,
     #[serde(rename = "tags", skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
-    /// A map from edge type to the target ids a new file takes.
+    /// A map from edge type to the target ids a new file takes: at most 100 edge types, each with at most 100 targets.
     #[serde(rename = "edges", skip_serializing_if = "Option::is_none")]
     pub edges: Option<std::collections::HashMap<String, Vec<String>>>,
 }

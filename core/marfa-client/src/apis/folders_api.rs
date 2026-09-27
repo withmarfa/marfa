@@ -204,7 +204,7 @@ pub fn revoke_folder(
     }
 }
 
-/// Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required and read as `PATCH /items/{id}` reads it: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. A revoked folder does not change.
+/// Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.
 pub fn update_folder(
     configuration: &configuration::Configuration,
     params: UpdateFolderParams,

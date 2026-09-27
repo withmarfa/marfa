@@ -591,7 +591,7 @@ const systemDevice: TypeSchema = {
 const systemFolder: TypeSchema = {
   id: "system.folder",
   label: "Folder",
-  description: "A folder's settings, held here and shared by every machine bound to the folder; each machine chooses only the directory. Written only through `/folders`: created, changed at a version, and revoked. Lifecycle bounded to active | revoked. Has no tier.",
+  description: "A folder's settings, held here and shared by every machine bound to the folder; each machine chooses only the directory. The settings are written only through `/folders`: created, changed at a version, and revoked. Lifecycle bounded to active | revoked. Has no tier.",
   version: 1,
   fields: {
     title: { type: "string", description: "The folder's name", required: true },

@@ -956,7 +956,7 @@ export interface paths {
         head?: never;
         /**
          * Change a folder's settings
-         * @description Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required and read as `PATCH /items/{id}` reads it: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. A revoked folder does not change.
+         * @description Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.
          */
         patch: operations["updateFolder"];
         trace?: never;
@@ -2406,7 +2406,7 @@ export interface components {
                 [key: string]: unknown;
             };
             tags?: string[];
-            /** @description A map from edge type to the target ids a new file takes. */
+            /** @description A map from edge type to the target ids a new file takes: at most 100 edge types, each with at most 100 targets. */
             edges?: {
                 [key: string]: string[];
             };
@@ -10264,7 +10264,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else. */
+            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10405,7 +10405,7 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    /** @description The version the caller read, as on `PATCH /items/{id}`. */
+                    /** @description The version the caller read. There is no `conflict` parameter: a change to a setting changed since is refused whatever the query says. */
                     version: number;
                     title?: string;
                     search?: components["schemas"]["FolderSearch"];
@@ -10438,7 +10438,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
+            /** @description A setting is malformed, `details.errors[0].path` naming it: `unknown_type` for a well-formed type nothing registered, `validation_error` for anything else, a `system.*` type among it. `invalid_id`: the id is malformed. `invalid_transition`: the folder is revoked. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

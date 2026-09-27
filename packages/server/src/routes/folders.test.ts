@@ -43,7 +43,7 @@ async function createFolder(settings: Record<string, unknown>): Promise<Item> {
 }
 
 describe("POST /folders", () => {
-  it("creates a system.folder with no tier and publishes it", async () => {
+  it("creates a system.folder and publishes it", async () => {
     const abort = new AbortController();
     const seen = collectItemEvents(abort.signal);
     await settle();
@@ -132,6 +132,37 @@ describe("POST /folders", () => {
       "first_placement.core.note",
     ],
     [
+      { first_placement: { "core.note": "Notes\\..\\..\\out" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { first_placement: { "core.note": "Notes\0" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
+      { search: { types: ["system.folder"] } },
+      "validation_error",
+      "search.types.0",
+    ],
+    [
+      { defaults: { type: "system.folder" } },
+      "validation_error",
+      "defaults.type",
+    ],
+    [
+      { first_placement: { "system.folder": "Folders" } },
+      "validation_error",
+      "first_placement.system.folder",
+    ],
+    [
+      { defaults: { edges: { "in-folder": [] } } },
+      "validation_error",
+      "defaults.edges.in-folder",
+    ],
+
+    [
       { first_placement: { "core.nope": "Notes" } },
       "unknown_type",
       "first_placement.core.nope",
@@ -141,23 +172,80 @@ describe("POST /folders", () => {
       "validation_error",
       "removal_threshold.fraction",
     ],
-  ])("refuses %j with %s naming %s", async (settings, code, path) => {
-    const res = await create({ title: "Bad", ...settings });
-    expect(res.status).toBe(400);
-    const refusal = await body<ErrorBody>(res);
-    expect(refusal.error.code).toBe(code);
-    expect(refusal.error.details?.errors?.[0]?.path).toBe(path);
+  ])(
+    "refuses %j with %s naming %s, on a create and on a change",
+    async (settings, code, path) => {
+      const folder = await createFolder({ title: "Target" });
+      for (const res of [
+        await create({ title: "Bad", ...settings }),
+        await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+          key: ctx.workingKey,
+          body: { version: 1, ...settings },
+        }),
+      ]) {
+        expect(res.status).toBe(400);
+        const refusal = await body<ErrorBody>(res);
+        expect(refusal.error.code).toBe(code);
+        expect(refusal.error.details?.errors?.[0]?.path).toBe(path);
+      }
+    },
+  );
+
+  it("caps defaults.edges at 100 edge types and 100 targets each, on a create and on a change", async () => {
+    const target = "01920000-0000-7000-8000-000000000000";
+    const folder = await createFolder({ title: "Capped" });
+    const cases: [Record<string, string[]>, string][] = [
+      [
+        Object.fromEntries(
+          Array.from({ length: 101 }, (_, i) => [`edge-${String(i)}`, []]),
+        ),
+        "defaults.edges",
+      ],
+      [
+        { "parent-of": Array.from({ length: 101 }, () => target) },
+        "defaults.edges.parent-of",
+      ],
+    ];
+    for (const [edges, path] of cases) {
+      for (const res of [
+        await create({ title: "Bad", defaults: { edges } }),
+        await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+          key: ctx.workingKey,
+          body: { version: 1, defaults: { edges } },
+        }),
+      ]) {
+        expect(res.status).toBe(400);
+        const refusal = await body<ErrorBody>(res);
+        expect(refusal.error.code).toBe("validation_error");
+        expect(refusal.error.details?.errors?.[0]?.path).toBe(path);
+      }
+    }
   });
 
-  it("takes a placement that climbs and comes back inside", async () => {
-    await createFolder({
-      title: "Placement",
+  it("takes a placement that climbs and comes back inside, on a create and on a change", async () => {
+    const settings = {
       first_placement: { "core.note": "Notes/../Tickets/./Open" },
       search: {
+        types: ["core.note"],
         filter: 'tags contains "project"',
         beneath: "01920000-0000-7000-8000-000000000000",
       },
+      defaults: {
+        type: "core.note",
+        edges: {
+          "parent-of": Array.from(
+            { length: 100 },
+            () => "01920000-0000-7000-8000-000000000000",
+          ),
+        },
+      },
+    };
+    const folder = await createFolder({ title: "Placement", ...settings });
+    const changed = await request(ctx.app, "PATCH", `/folders/${folder.id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, ...settings },
     });
+    expect(changed.status).toBe(200);
   });
 });
 

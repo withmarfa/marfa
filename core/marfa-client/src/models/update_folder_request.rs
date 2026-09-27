@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UpdateFolderRequest {
-    /// The version the caller read, as on `PATCH /items/{id}`.
+    /// The version the caller read. There is no `conflict` parameter: a change to a setting changed since is refused whatever the query says.
     #[serde(rename = "version")]
     pub version: i32,
     #[serde(rename = "title", skip_serializing_if = "Option::is_none")]
