@@ -45,6 +45,21 @@ pub enum DeviceCommand {
         /// The tier to hold the slice at.
         #[arg(long)]
         tier: Tier,
+        /// An edge type to hold whole: every edge of it the key reads,
+        /// whichever ends the copy holds. Repeatable.
+        #[arg(long = "edge-type", value_name = "TYPE")]
+        edge_types: Vec<String>,
+    },
+    /// Hold one row by id whatever the slice says of it, read now and kept
+    /// current, even after it leaves the slice.
+    Pin {
+        /// The item id.
+        id: String,
+    },
+    /// Stop holding a row by id; one the slice does not take goes.
+    Unpin {
+        /// The item id.
+        id: String,
     },
     /// Apply every event since the last hydrate or catch-up.
     #[command(name = "catch-up")]
@@ -458,13 +473,23 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         reader: args.reader,
     };
     match args.command {
-        DeviceCommand::Hydrate { types, tier } => {
-            let report = store
-                .open_with_server(named)?
-                .hydrate(&types, tier.into())?;
+        DeviceCommand::Hydrate {
+            types,
+            tier,
+            edge_types,
+        } => {
+            let report =
+                store
+                    .open_with_server(named)?
+                    .hydrate_with(&types, tier.into(), &edge_types)?;
             output::report(&report, json, || {
+                let whole = if report.edge_types.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} held whole", report.edge_types.join(","))
+                };
                 format!(
-                    "hydrated {} item(s) and {} edge(s) of {} at {} in {} page(s); cursor {}",
+                    "hydrated {} item(s) and {} edge(s) of {} at {}{whole} in {} page(s); cursor {}",
                     report.items,
                     report.edges,
                     report.types.join(","),
@@ -473,6 +498,34 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     report.cursor
                 )
             })
+        }
+        DeviceCommand::Pin { id } => {
+            let was_pinned = store.open_with_server(named)?.pin(&id)?;
+            output::report(
+                &serde_json::json!({ "id": id, "pinned": true, "was_pinned": was_pinned }),
+                json,
+                || {
+                    if was_pinned {
+                        format!("{id} was pinned already, and is read again")
+                    } else {
+                        format!("pinned {id}")
+                    }
+                },
+            )
+        }
+        DeviceCommand::Unpin { id } => {
+            let was_pinned = store.open(None)?.unpin(&id)?;
+            output::report(
+                &serde_json::json!({ "id": id, "pinned": false, "was_pinned": was_pinned }),
+                json,
+                || {
+                    if was_pinned {
+                        format!("unpinned {id}")
+                    } else {
+                        format!("{id} was not pinned")
+                    }
+                },
+            )
         }
         DeviceCommand::Follow { r#for } => {
             let core = store.open_with_server(named)?;
@@ -827,18 +880,23 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Status => {
             let status = store.open(None)?.status()?;
             output::report(&status, json, || {
-                format!(
-                    "server {}\nslice {} at {}\ncursor {}\nhydration {}\n{} item(s), {} edge(s)",
-                    status.server_origin.as_deref().unwrap_or("(none)"),
-                    if status.slice_types.is_empty() {
+                let listed = |names: &[String]| {
+                    if names.is_empty() {
                         "(none)".to_string()
                     } else {
-                        status.slice_types.join(",")
-                    },
+                        names.join(",")
+                    }
+                };
+                format!(
+                    "server {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\n{} item(s), {} edge(s)",
+                    status.server_origin.as_deref().unwrap_or("(none)"),
+                    listed(&status.slice_types),
                     status
                         .slice_tier
                         .map(|tier| tier.to_string())
                         .unwrap_or_else(|| "(none)".into()),
+                    listed(&status.slice_edge_types),
+                    listed(&status.pinned),
                     status.event_cursor.as_deref().unwrap_or("(none)"),
                     status.hydration.as_str(),
                     status.items,

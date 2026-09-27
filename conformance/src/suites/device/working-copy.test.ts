@@ -166,6 +166,72 @@ describe("the working copy holds one slice", () => {
     ).not.toContain("feed-row");
   });
 
+  it("holds a named edge type whole, whichever end it holds", async () => {
+    harness = await startHarness("edge-type-whole");
+    const { server, device } = harness;
+    // Two projects outside the slice, one over the other, over a ticket in
+    // it: neither edge starts at a row the slice holds.
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "ticket" } }] },
+      edges: {
+        "parent-of": [
+          { id: "project-in-project", source_id: "outer", target_id: "inner" },
+          {
+            id: "project-over-ticket",
+            source_id: "inner",
+            target_id: "ticket",
+          },
+        ],
+      },
+    });
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((edge) => edge.id)
+        : [];
+    };
+    const listings = () =>
+      server.requests
+        .filter((request) => request.pathname === "/edges")
+        .map((request) => request.query.get("edge_type"));
+
+    // The witness: a slice that names no edge type holds neither edge.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(await ids(device.edgesFrom("outer"))).toEqual([]);
+    expect(await ids(device.edgesFrom("inner"))).toEqual([]);
+    expect(listings()).toEqual([]);
+
+    const hydrated = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["parent-of"],
+    });
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(hydrated.ok && hydrated.value.edge_types).toEqual(["parent-of"]);
+    expect(
+      listings(),
+      "the hydration did not ask for the edge type it holds whole",
+    ).toEqual(["parent-of"]);
+    expect(
+      await ids(device.edgesFrom("outer")),
+      "an edge of a type held whole between two rows outside the slice was left out",
+    ).toEqual(["project-in-project"]);
+    expect(
+      await ids(device.edgesFrom("inner")),
+      "an edge of a type held whole that ends in the slice and starts outside it was left out",
+    ).toEqual(["project-over-ticket"]);
+    const status = await device.status();
+    expect(
+      status.ok && status.value.slice_edge_types,
+      "the report does not name the edge types the slice holds whole",
+    ).toEqual(["parent-of"]);
+
+    // A hydration declares the slice whole, so one naming no edge type
+    // holds none again.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(await ids(device.edgesFrom("outer"))).toEqual([]);
+  });
+
   it("keeps an item however old it is", async () => {
     harness = await startHarness("no-expiry");
     const { server, device } = harness;
@@ -2384,5 +2450,47 @@ describe("a local read of edges answers both ends", () => {
       to.value.map((row) => row.id).sort(),
       "the edges to an item are not the ones that point at it, the unanswered one included",
     ).toEqual([local.value.edge_id, "threaded"].sort());
+  });
+
+  it("reads a held-whole edge from either end", async () => {
+    harness = await startHarness("edge-type-whole-ends");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "ticket" } }] },
+      edges: {
+        "parent-of": [
+          { id: "beneath", source_id: "project", target_id: "ticket" },
+        ],
+      },
+    });
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((row) => row.id)
+        : [];
+    };
+
+    // The witness: without the type held whole, what points at the ticket
+    // from outside the slice is not held.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(await ids(device.edgesTo("ticket"))).toEqual([]);
+
+    expect(
+      (
+        await device.hydrate(["core.note"], "library", {
+          edgeTypes: ["parent-of"],
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      await ids(device.edgesTo("ticket")),
+      "the project a ticket sits beneath cannot be read from the ticket",
+    ).toEqual(["beneath"]);
+    expect(
+      await ids(device.edgesFrom("project")),
+      "the tickets beneath a project the copy does not hold cannot be read from the project",
+    ).toEqual(["beneath"]);
   });
 });

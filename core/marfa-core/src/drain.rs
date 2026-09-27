@@ -1241,7 +1241,7 @@ fn settle(
                             || row.kind == WriteKind::UpdateItem
                                 && moves(&store::payload_of(&tx, &row.id)?));
                     if moved_out {
-                        store::evict_item(&tx, &parsed.item.id)?;
+                        store::evict_item(&tx, &parsed.item.id, &store::whole_edge_types(&tx)?)?;
                     } else if !newer {
                         store::upsert_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
                     }
@@ -1792,7 +1792,13 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
     let Some(id) = row.item_id.as_deref() else {
         return Ok(());
     };
-    match http.item(id)? {
+    // A refused create's id is the server's only if the read finds it, so
+    // its pin goes even where the read fails.
+    let read = http.item(id);
+    if row.kind == WriteKind::CreateItem && !matches!(read, Ok(Some(_))) {
+        store::unpin(&*core.conn()?, id)?;
+    }
+    match read? {
         Some(held) => {
             let mut conn = core.conn()?;
             let catalog = Catalog::load(&conn)?;
@@ -1808,7 +1814,7 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
                     || row.kind == WriteKind::UpdateItem
                         && moves(&store::payload_of(&tx, &row.id)?));
             if let_go {
-                store::evict_item(&tx, &held.item.id)?;
+                store::evict_item(&tx, &held.item.id, &store::whole_edge_types(&tx)?)?;
                 tx.commit()?;
                 return Ok(());
             }

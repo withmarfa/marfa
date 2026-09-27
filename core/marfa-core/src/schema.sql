@@ -1,7 +1,7 @@
 -- The local store, written to the contract in `conformance/spec/device.md`
--- and `queue-and-verdicts.md`. One file and no migrations: a store this
--- schema does not match is refused by name, for a person to discard and
--- hydrate again. What that buys is this file readable as a description of
+-- and `queue-and-verdicts.md`. One file and no migrations: a store of another
+-- schema version is refused by name, for a person to discard and hydrate
+-- again. What that buys is this file readable as a description of
 -- what a device holds rather than the end of a chain of alterations.
 
 -- `meta` is not declared here. `store::prepare` creates it on its own before
@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS tags (
   PRIMARY KEY (item_id, tag)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
+
+-- Rows held whatever the slice says of them (`device.md` 1). Not a child of
+-- `items`: a hydration clears the copy and keeps the pins.
+CREATE TABLE IF NOT EXISTS pins (
+  item_id TEXT PRIMARY KEY
+) WITHOUT ROWID;
 
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.

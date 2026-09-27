@@ -10,6 +10,7 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
+  edgesPage,
   itemEvent,
   liveReplay,
   itemsPage,
@@ -1178,6 +1179,25 @@ describe("the scripted answers match the server's", () => {
       { same: ["error.code"], shape: ["error.message"] },
     );
 
+    // A hydration reads a pinned row this way, and keeps the pin over it.
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "out of reach" },
+    });
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const unread = await narrowed.rawRequest(
+      `/items/${note.data.item.id}?include=edges,metadata`,
+    );
+    expect(unread.status).toBe(403);
+    expectFidelity(
+      "a row of a type the key does not hold, read by id",
+      { status: unread.status, body: unread.error },
+      answers.forbidden("type_not_permitted"),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+
     const bare = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
     const unauthorized = await bare.getItem(
       ctx.trackedItems[0] ?? "01a00000-0000-7000-8000-000000000000",
@@ -1496,6 +1516,61 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("matches the edge listing a hydration walks for a type held whole", async () => {
+    const parent = await note({ title: "above", body: "above" });
+    const child = await note({ title: "beneath", body: "beneath" });
+    const linked = await client.rawRequest("/edges", {
+      method: "POST",
+      body: {
+        source_id: parent.id,
+        target_id: child.id,
+        edge_type: "parent-of",
+      },
+    });
+    expect(
+      linked.ok,
+      `the fixture could not put one item beneath another: ${JSON.stringify(linked.error)}`,
+    ).toBe(true);
+    const edgeId = String(at(linked.data, "edge.id"));
+
+    // The query a hydration sends, so a key the server refuses is one the
+    // device would meet too.
+    const page = await client.rawRequest(
+      "/edges?edge_type=parent-of&limit=200",
+    );
+    expect(page.ok, JSON.stringify(page.error)).toBe(true);
+    const listed = (page.data as { data: { id: string }[] }).data;
+    expect(
+      listed.map((edge) => edge.id),
+      "the listing left out the edge this case made, so the comparison below is against some other page",
+    ).toContain(edgeId);
+
+    expectFidelity(
+      "the edge listing",
+      { status: page.status, body: page.data },
+      edgesPage([
+        wireEdge({
+          id: edgeId,
+          source_id: parent.id,
+          target_id: child.id,
+          edge_type: "parent-of",
+        }),
+      ]),
+      {
+        same: ["next_cursor", "data.0.edge_type"],
+        shape: [
+          "data.0.id",
+          "data.0.source_id",
+          "data.0.target_id",
+          "data.0.properties",
+          "data.0.version",
+          "data.0.created_at",
+          "data.0.updated_at",
+        ],
+      },
+    );
+  });
+
   it("matches the type registry a device resolves a subtree with", async () => {
     const registry = await client.rawRequest("/types");
     expect(registry.ok).toBe(true);
@@ -1765,12 +1840,9 @@ describe("the scripted answers match the server's", () => {
     ).toBe(true);
   });
 
-  it("matches the marker that ends a replay whose rows the filter withheld", async (context) => {
-    // `liveReplay` ends with the marker, and a device adopts its cursor past
-    // rows it was never sent (`device.md` 17), so the scripted marker has to
-    // be the real one. The run's server holds notes and no bookmark this
-    // case wrote, so a replay from zero filtered to bookmarks withholds the
-    // note written here, which is what the marker then has to cover.
+  it("matches the marker that ends a replay whose rows were withheld", async (context) => {
+    // A type filter withholds here in place of a credential, which the
+    // server's marker treats the same (`events.md` 2).
     const marker = `fidelity-live-${ctx.runId}`;
     await note({ title: marker, body: marker });
     const frames = await withStream(

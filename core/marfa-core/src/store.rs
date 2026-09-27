@@ -19,29 +19,26 @@ pub const META_SCHEMA_VERSION: &str = "schema_version";
 pub const META_SERVER_ORIGIN: &str = "server_origin";
 pub const META_SLICE_TYPES: &str = "slice_types";
 pub const META_SLICE_TIER: &str = "slice_tier";
+pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "10";
 
-/// Each schema version from 6 and the statements it named, hashed as the
-/// folder mapping hashes bytes. A change to `schema.sql` without a new version
-/// would open a store from the earlier build and fail on its first read of a
-/// column that build never wrote, so the test holds the statements to the row
-/// for the version above: a new schema is a new row under a new version, and
-/// moving the version to a row that names other statements fails it.
+/// Each schema version from 6 and the statements it names, hashed as the
+/// folder mapping hashes bytes. While no store is live the version does not
+/// move: a change to `schema.sql` rewrites the hash in the current version's
+/// row, and the test holds the statements to that row.
 ///
-/// Over the statements SQLite executes, not the file: a comment cannot make
-/// one build read a column another build never wrote, and a hash that moved
-/// on one would price every edit to the prose at a version bump that refuses
-/// every working copy on disk.
+/// Over the statements SQLite executes, not the file, so a comment moves no
+/// hash.
 #[cfg(test)]
 const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("6", "f73a05f772245511"),
     ("7", "b0e4c59d5dbd0471"),
     ("8", "662310c80f2c6871"),
     ("9", "23d541400ea60681"),
-    ("10", "bd491aca38ffff47"),
+    ("10", "80a22163146aea8b"),
 ];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
@@ -248,21 +245,41 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
 }
 
-/// Whether the copy's slice takes this row: one of its types, with the
-/// subtree, at its tier. A copy that has never hydrated holds no slice and
-/// takes nothing.
+/// Whether the copy keeps this row: pinned, or taken by the slice. A copy
+/// that has never hydrated keeps nothing.
 pub fn slice_holds(
     conn: &Connection,
     catalog: &crate::catalog::Catalog,
     item: &crate::wire::WireItem,
 ) -> Result<bool, CoreError> {
+    if pinned(conn, &item.id)? {
+        return Ok(true);
+    }
     let Some((types, tier)) = slice(conn)? else {
         return Ok(false);
     };
-    Ok(Tier::parse_wire(item.tier.as_deref())? == Some(tier)
+    Ok(slice_takes(
+        catalog,
+        &types,
+        tier,
+        &item.r#type,
+        Tier::parse_wire(item.tier.as_deref())?,
+    ))
+}
+
+/// Whether a slice of `types` at `tier` takes a row: one of its types, with
+/// the subtree, at its tier.
+pub fn slice_takes(
+    catalog: &crate::catalog::Catalog,
+    types: &[String],
+    tier: Tier,
+    row_type: &str,
+    row_tier: Option<Tier>,
+) -> bool {
+    row_tier == Some(tier)
         && types
             .iter()
-            .any(|declared| catalog.matches(declared, &item.r#type)))
+            .any(|declared| catalog.matches(declared, row_type))
 }
 
 /// The slice a hydration declared: its types and its tier, or nothing where
@@ -629,7 +646,7 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
 /// The writes still waiting on one item, read through the index rather than
 /// by reading the whole queue, because this runs once per answer and once
 /// per event.
-fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+pub fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
         "WHERE item_id = ?1 AND (verdict IS NULL OR verdict = ?2)",
@@ -987,9 +1004,12 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE queue SET target_id = ?2 WHERE target_id = ?1",
         "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
     }
+    // Left where the server's row was pinned already.
+    unpin(conn, local)?;
     // An edge create carries its endpoints in the body it sends, and a
     // file's links and declined links are ids its bytes named.
     let mut edges = conn
@@ -1201,33 +1221,81 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
     Ok(blocked)
 }
 
-/// Drops an item the server purged, with every edge at either end: an edge
-/// to it would point at nothing anywhere.
+/// Drops an item the server purged, with its pin and every edge at either
+/// end: an edge to it would point at nothing anywhere.
 pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    remove_item(
+    let unpinned = unpin(conn, id)?;
+    let removed = remove_item(
         conn,
         id,
         "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-    )
+        &[],
+    )?;
+    Ok(removed || unpinned)
 }
 
-/// Drops an item that left the slice, with the edges it draws and none drawn
-/// to it: the copy holds an edge from an item in its slice whatever its
-/// target (`device.md` 43), as hydration does.
-pub fn evict_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    remove_item(conn, id, "DELETE FROM edges WHERE source_id = ?1")
+/// Drops an item that left the slice with the edges it draws, but those of a
+/// type in `whole`; edges drawn to it stay, as a hydration holds them (`device.md` 43).
+pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
+    let kept = vec!["?"; whole.len()].join(", ");
+    let edges = if whole.is_empty() {
+        "DELETE FROM edges WHERE source_id = ?1".to_string()
+    } else {
+        format!("DELETE FROM edges WHERE source_id = ?1 AND edge_type NOT IN ({kept})")
+    };
+    remove_item(conn, id, &edges, whole)
 }
 
 /// Whether the copy changed: a purge of an item already evicted still takes
 /// the edges held items drew to it.
-fn remove_item(conn: &Connection, id: &str, edges: &str) -> Result<bool, CoreError> {
+fn remove_item(
+    conn: &Connection,
+    id: &str,
+    edges: &str,
+    kept: &[String],
+) -> Result<bool, CoreError> {
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    let edges = conn.execute(edges, [id])?;
+    let edges = conn.execute(
+        edges,
+        params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
+    )?;
     Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? + edges > 0)
+}
+
+/// The edge types a hydration declared to hold whole, or none.
+pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    match meta_get(conn, META_SLICE_EDGE_TYPES)? {
+        Some(json) => Ok(serde_json::from_str(&json)?),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Holds `id` by id from now on. Answers whether it was not pinned already.
+pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0)
+}
+
+/// Stops holding `id` by id. Answers whether it was pinned.
+pub fn unpin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.execute("DELETE FROM pins WHERE item_id = ?1", [id])? > 0)
+}
+
+pub fn pinned(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .query_row("SELECT 1 FROM pins WHERE item_id = ?1", [id], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+/// Every pinned id, in order.
+pub fn pins(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT item_id FROM pins ORDER BY item_id")?;
+    let rows = statement.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<Result<Vec<String>, _>>()?)
 }
 
 pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -1567,8 +1635,8 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The version names this schema and no other: a change to the
-    /// statements moves both, or this says so.
+    /// The current version's row names this schema's statements and no
+    /// other version's.
     #[test]
     fn the_schema_version_names_the_schema_as_it_is() {
         let versions: Vec<&str> = SCHEMA_HASHES.iter().map(|(version, _)| *version).collect();
@@ -1592,7 +1660,7 @@ mod tests {
         assert_eq!(
             crate::folder::state::hash(schema_statements().as_bytes()),
             hashes[hashes.len() - 1],
-            "schema.sql's statements changed: move SCHEMA_VERSION on and add its row to SCHEMA_HASHES"
+            "schema.sql's statements changed: write their hash into SCHEMA_HASHES's row for SCHEMA_VERSION"
         );
     }
 
@@ -1910,8 +1978,10 @@ mod tests {
         .unwrap();
         upsert_edge(&conn, &wire_edge("e1", "n1", "n2", "references")).unwrap();
         upsert_edge(&conn, &wire_edge("e2", "n2", "n1", "references")).unwrap();
+        pin(&conn, "n1").unwrap();
         assert!(purge_item(&conn, "n1").unwrap());
         assert!(!purge_item(&conn, "n1").unwrap());
+        assert!(!pinned(&conn, "n1").unwrap());
         assert_eq!(count(&conn, "tags").unwrap(), 0);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
         assert_eq!(count(&conn, "edges").unwrap(), 0);
@@ -1933,8 +2003,8 @@ mod tests {
         }
         upsert_edge(&conn, &wire_edge("from", "n1", "n2", "references")).unwrap();
         upsert_edge(&conn, &wire_edge("toward", "n2", "n1", "references")).unwrap();
-        assert!(evict_item(&conn, "n1").unwrap());
-        assert!(!evict_item(&conn, "n1").unwrap());
+        assert!(evict_item(&conn, "n1", &[]).unwrap());
+        assert!(!evict_item(&conn, "n1", &[]).unwrap());
         assert_eq!(count(&conn, "tags").unwrap(), 1);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
         let left: Vec<String> = edges_from(&conn, "n2")
@@ -1948,6 +2018,51 @@ mod tests {
         // Purged after it left, the item still takes the edge drawn to it.
         assert!(purge_item(&conn, "n1").unwrap());
         assert!(edges_from(&conn, "n2").unwrap().is_empty());
+    }
+
+    /// An edge of a type held whole outlives the eviction of its source, of
+    /// either type named, and one of another type does not.
+    #[test]
+    fn evicting_an_item_keeps_the_edges_of_a_type_held_whole() {
+        let conn = conn();
+        upsert_item(
+            &conn,
+            &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
+            None,
+            &Indexing::default(),
+        )
+        .unwrap();
+        for (id, edge_type) in [
+            ("drawn", "references"),
+            ("beneath", "parent-of"),
+            ("before", "supersedes"),
+        ] {
+            upsert_edge(&conn, &wire_edge(id, "n1", "n2", edge_type)).unwrap();
+        }
+        let whole = ["parent-of".to_string(), "supersedes".to_string()];
+        assert!(evict_item(&conn, "n1", &whole).unwrap());
+        let left: Vec<String> = edges_from(&conn, "n1")
+            .unwrap()
+            .into_iter()
+            .map(|edge| edge.id)
+            .collect();
+        assert_eq!(left, ["before", "beneath"]);
+    }
+
+    /// A pin on a minted id moves to the row the server answered, and one
+    /// already on that row is not doubled.
+    #[test]
+    fn a_pin_moves_to_the_answered_id() {
+        let conn = conn();
+        assert!(pin(&conn, "minted").unwrap());
+        assert!(!pin(&conn, "minted").unwrap());
+        adopt_answered_id(&conn, "minted", "answered").unwrap();
+        assert_eq!(pins(&conn).unwrap(), ["answered"]);
+        pin(&conn, "second").unwrap();
+        adopt_answered_id(&conn, "second", "answered").unwrap();
+        assert_eq!(pins(&conn).unwrap(), ["answered"]);
+        assert!(unpin(&conn, "answered").unwrap());
+        assert!(!pinned(&conn, "answered").unwrap());
     }
 
     #[test]
@@ -3073,13 +3188,14 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     )?)
 }
 
-/// Drops a row the server holds nothing for.
+/// Drops a row the server holds nothing for, with its pin.
 ///
 /// What reconciling a refused create means (`queue-and-verdicts.md` 12): the
 /// working copy minted the row locally and the server declined it, so there
 /// is nothing to reconcile it to and leaving it would be the copy reporting
 /// an item that exists nowhere.
 pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    unpin(conn, id)?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],

@@ -16,7 +16,12 @@ import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   answers,
+  catchupTooOld,
+  connected,
+  headRead,
   itemEvent,
+  liveReplay,
+  streamCursor,
   refusal,
   replay,
   wireItem,
@@ -40,6 +45,7 @@ import {
   type DoorRow,
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
+import type { Answer, Responder } from "../../device/scripted-server.js";
 /**
  * "A folder is a view on a slice."
  *
@@ -923,6 +929,331 @@ describe("files and items", () => {
     ).toHaveLength(2);
   });
 
+  it("takes another device's change at the next push, without a hydration", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c1";
+    harness = await folderHarness("folder-push-catches-up", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "elsewhere", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: {
+                title: "elsewhere",
+                body: "changed on another device",
+              },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // The witness: the file holds what the hydration brought.
+    expect(read(harness, "elsewhere.md")).toContain("as it was");
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      read(harness, "elsewhere.md"),
+      "a push wrote the folder out from a copy that never heard of the change another device made",
+    ).toContain("changed on another device");
+  });
+
+  it("takes another device's change while watching, without a hydration", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c2";
+    harness = await folderHarness("folder-watch-follows", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "watched", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "watched", body: "changed while watching" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    const watching = harness.folder.watch();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(read(harness!, "watched.md")).toContain(
+            "changed while watching",
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      await watching.stop();
+    }
+  });
+
+  describe("a copy that falls behind the log", () => {
+    const id = "01a00000-0000-7000-8000-0000000000c3";
+    const agedOut: Answer = {
+      kind: "sse",
+      frames: [connected, streamCursor("900"), catchupTooOld("500", "1")],
+    };
+
+    /** A folder with one note written out, whose later hydrations serve
+     *  `later` in its place. */
+    async function behind(
+      label: string,
+      events: Responder[],
+    ): Promise<FolderHarness> {
+      const made = await folderHarness(label, {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id,
+                version: 1,
+                properties: { title: "aged", body: "as it was" },
+              },
+            },
+          ],
+        },
+        events,
+      });
+      scriptFolderWrites(made);
+      expect((await made.folder.pull()).ok).toBe(true);
+      expect(read(made, "aged.md")).toContain("as it was");
+      made.rows["core.note"]![0]!.item = {
+        id,
+        version: 2,
+        properties: { title: "aged", body: "changed elsewhere" },
+      };
+      return made;
+    }
+
+    it("hydrates again at a push whose cursor the log has aged past", async () => {
+      harness = await behind("folder-push-aged-out", [
+        agedOut,
+        headRead("900"),
+      ]);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.catch_up.hydrated?.items).toBe(1);
+      expect(
+        read(harness, "aged.md"),
+        "a push whose cursor aged out wrote the folder from the copy it could no longer keep current",
+      ).toContain("changed elsewhere");
+    });
+
+    it("hydrates again while watching when the log ages past its cursor", async () => {
+      harness = await behind("folder-watch-aged-out", [
+        agedOut,
+        headRead("900"),
+        liveReplay("900", []),
+      ]);
+      const watching = harness.folder.watch();
+      try {
+        await vi.waitFor(
+          () =>
+            expect(read(harness!, "aged.md"), watching.stderr).toContain(
+              "changed elsewhere",
+            ),
+          { timeout: 20_000, interval: 100 },
+        );
+        expect(watching.running(), watching.stderr).toBe(true);
+      } finally {
+        await watching.stop();
+      }
+    });
+
+    it("keeps watching through a hydration that failed, and tries it again", async () => {
+      harness = await behind("folder-watch-hydration-fails", [
+        agedOut,
+        answers.serverFault(),
+        headRead("900"),
+        liveReplay("900", []),
+      ]);
+      const watching = harness.folder.watch();
+      try {
+        await vi.waitFor(
+          () =>
+            expect(read(harness!, "aged.md"), watching.stderr).toContain(
+              "changed elsewhere",
+            ),
+          { timeout: 20_000, interval: 100 },
+        );
+        expect(watching.running(), watching.stderr).toBe(true);
+        // The witness: the first hydration did fail.
+        expect(watching.stderr).toContain("could not hydrate");
+      } finally {
+        await watching.stop();
+      }
+    });
+
+    it("waits out a rate limit's Retry-After before hydrating again while watching", async () => {
+      const asked: number[] = [];
+      const timed =
+        (answer: Answer): Responder =>
+        () => {
+          asked.push(Date.now());
+          return answer;
+        };
+      harness = await behind("folder-watch-hydration-limited", [
+        agedOut,
+        timed(answers.rateLimited()),
+        timed(headRead("900")),
+        liveReplay("900", []),
+      ]);
+      const watching = harness.folder.watch();
+      try {
+        await vi.waitFor(
+          () =>
+            expect(read(harness!, "aged.md"), watching.stderr).toContain(
+              "changed elsewhere",
+            ),
+          { timeout: 20_000, interval: 100 },
+        );
+      } finally {
+        await watching.stop();
+      }
+      // The first wait is a second; the rate limit names two.
+      expect(asked).toHaveLength(2);
+      expect(
+        asked[1]! - asked[0]!,
+        "the watch hydrated again before the wait the rate limit named",
+      ).toBeGreaterThanOrEqual(1900);
+    });
+
+    it("ends the watch and says so when its hydration meets an answer no retry changes", async () => {
+      harness = await behind("folder-watch-hydration-refused", [
+        agedOut,
+        answers.forbidden("forbidden"),
+      ]);
+      const watching = harness.folder.watch();
+      try {
+        // The witness is `› keeps watching through a hydration that failed,
+        // and tries it again`: a 500 in the same place keeps it running.
+        await vi.waitFor(
+          () =>
+            expect(
+              watching.running(),
+              `a watch went on after its hydration was refused, so nothing says the folder no longer keeps up: ${watching.stderr}`,
+            ).toBe(false),
+          { timeout: 20_000, interval: 100 },
+        );
+        expect(watching.stderr).toContain(
+          "the server's changes stopped reaching this folder",
+        );
+        expect(watching.stderr).toContain("forbidden");
+      } finally {
+        await watching.stop();
+      }
+    });
+
+    it("hydrates at the next push after one whose hydration failed", async () => {
+      harness = await behind("folder-push-hydration-fails", [
+        agedOut,
+        answers.serverFault(),
+        headRead("900"),
+        liveReplay("900", []),
+      ]);
+      const failed = await harness.folder.push();
+      expect(failed.ok, JSON.stringify(failed)).toBe(true);
+      if (!failed.ok) return;
+      expect(failed.value.catch_up.failed).toMatch(/500/);
+      expect(
+        failed.value.pull,
+        "a push pulled from a copy it could not hydrate",
+      ).toBeNull();
+      expect(read(harness, "aged.md")).toContain("as it was");
+
+      const next = await harness.folder.push();
+      expect(
+        next.ok,
+        `the push after a failed hydration failed too: ${JSON.stringify(next)}`,
+      ).toBe(true);
+      if (!next.ok) return;
+      expect(next.value.hydrated?.items).toBe(1);
+      expect(read(harness, "aged.md")).toContain("changed elsewhere");
+    });
+  });
+
+  it("pulls at a push that cannot reach the server, and says the catch-up failed", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c4";
+    harness = await folderHarness("folder-push-offline", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "offline", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "offline", body: "changed elsewhere" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect(existsSync(join(harness.dir, "offline.md"))).toBe(false);
+
+    await harness.server.offline();
+    const offline = await harness.folder.push();
+    await harness.server.online();
+    expect(
+      offline.ok,
+      `a push that could not reach the server failed rather than writing out what it holds: ${JSON.stringify(offline)}`,
+    ).toBe(true);
+    if (!offline.ok) return;
+    expect(offline.value.catch_up.failed).toMatch(/network/);
+    expect(offline.value.pull?.written).toBe(1);
+    expect(read(harness, "offline.md")).toContain("as it was");
+
+    // The witness: the same push online catches up.
+    const online = await harness.folder.push();
+    expect(online.ok, JSON.stringify(online)).toBe(true);
+    if (!online.ok) return;
+    expect(online.value.catch_up.caught_up?.applied).toBe(1);
+    expect(read(harness, "offline.md")).toContain("changed elsewhere");
+  });
+
   it("makes an edge between two files that arrive together", async () => {
     harness = await folderHarness("folder-links-same-scan");
     scriptFolderWrites(harness);
@@ -1377,7 +1708,7 @@ describe("identity", () => {
           "the second machine's create, refused because the first machine's row holds the key, was not settled onto that row",
         ).toEqual(["refused", "ancestor_unavailable", landed]);
         // The file holds bytes the server has not taken, so the pull left it.
-        expect(pushed.value.pull.unwritten).toBe(1);
+        expect(pushed.value.pull?.unwritten).toBe(1);
         expect(read(other, "note.md")).toBe(theirs);
 
         const before = first.server.requests.length;
@@ -2130,9 +2461,12 @@ describe("identity", () => {
         .map((entry) => [entry.verdict, entry.reason]),
     ).toEqual([["refused", "version_conflict"]]);
 
-    // The witness that the copy did move on: the catch-up applied version 9.
-    const caught = await harness.folder.device().catchUp();
-    expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(1);
+    // The witness that the copy did move on: the push's own catch-up, after
+    // the drain, applied version 9.
+    expect(
+      pushed.value.catch_up.caught_up?.applied,
+      JSON.stringify(pushed.value.catch_up),
+    ).toBe(1);
     const holding = await harness.folder.device().get(id);
     expect(holding.ok && holding.value.version).toBe(9);
 
@@ -4561,7 +4895,7 @@ describe("what a folder does not watch", () => {
       "an item of a type this folder does not hold became a file in it, so a folder declaring one type writes every type it is sent",
     ).toBe(false);
     expect(
-      pushed.value.pull.skipped,
+      pushed.value.pull?.skipped,
       "the pull reported skipping nothing, so the absence above is a pull that wrote nothing at all",
     ).toBeGreaterThan(0);
     expect(
@@ -4710,10 +5044,10 @@ describe("what a pull does with a file whose item left the slice", () => {
     if (!pushed.ok) return;
     expect(pushed.value.drain.verdicts[0]?.verdict).toBe("refused");
     expect(
-      pushed.value.pull.removed,
+      pushed.value.pull?.removed,
       "the pull took away a file the folder never wrote, and the person's words with it",
     ).toBe(0);
-    expect(pushed.value.pull.kept).toBe(1);
+    expect(pushed.value.pull?.kept).toBe(1);
     expect(read(harness, "mine.md")).toContain("the person's own words");
 
     // Still bound, so the next scan neither makes a second item of it nor

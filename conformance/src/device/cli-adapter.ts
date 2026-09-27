@@ -17,6 +17,7 @@ import {
   type HydrateReport,
   type Item,
   type ListFilters,
+  type PinReport,
   type Outcome,
   type QueuedWrite,
   type Refusal,
@@ -145,7 +146,11 @@ export class CliDevice implements DeviceUnderTest {
     );
   }
 
-  async hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>> {
+  async hydrate(
+    types: string[],
+    tier: Tier,
+    options: { edgeTypes?: string[] } = {},
+  ): Promise<Outcome<HydrateReport>> {
     return this.json<HydrateReport>([
       "hydrate",
       ...this.server(),
@@ -153,7 +158,16 @@ export class CliDevice implements DeviceUnderTest {
       types.join(","),
       "--tier",
       tier,
+      ...(options.edgeTypes ?? []).flatMap((type) => ["--edge-type", type]),
     ]);
+  }
+
+  async pin(id: string): Promise<Outcome<PinReport>> {
+    return this.json<PinReport>(["pin", ...this.server(), id]);
+  }
+
+  async unpin(id: string): Promise<Outcome<PinReport>> {
+    return this.json<PinReport>(["unpin", id]);
   }
 
   async catchUp(): Promise<Outcome<CatchUpReport>> {
@@ -672,9 +686,19 @@ export interface PullReport {
 }
 
 export interface PushReport {
+  /** The hydration a copy that could not answer took first, if it needed one. */
+  hydrated: HydrateReport | null;
   scan: ScanReport;
   drain: DrainReport;
-  pull: PullReport;
+  /** A catch-up from the copy's cursor, a hydration where the log had aged
+   *  past it, or the reason the server could not be reached for either. */
+  catch_up: {
+    caught_up?: CatchUpReport | null;
+    hydrated?: HydrateReport | null;
+    failed?: string;
+  };
+  /** `null` where a failed catch-up left no copy to pull from. */
+  pull: PullReport | null;
 }
 
 /**

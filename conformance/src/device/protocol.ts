@@ -39,6 +39,8 @@ export interface Item {
 export interface HydrateReport {
   types: string[];
   tier: Tier;
+  /** The edge types held whole, every edge of each the key can read. */
+  edge_types: string[];
   items: number;
   edges: number;
   pages: number;
@@ -77,10 +79,23 @@ export interface Status {
   server_origin?: string | null;
   slice_types: string[];
   slice_tier?: Tier | null;
+  /** The edge types the slice holds whole. */
+  slice_edge_types: string[];
+  /** The rows held by id whatever the slice says of them. */
+  pinned: string[];
   event_cursor?: string | null;
   hydration: "never" | "in_progress" | "complete" | "expired";
   items: number;
   edges: number;
+}
+
+/** What a pin or an unpin answers. */
+export interface PinReport {
+  id: string;
+  /** Whether the row is pinned now. */
+  pinned: boolean;
+  /** Whether it was pinned before this call. */
+  was_pinned: boolean;
 }
 
 export interface SearchHit {
@@ -252,7 +267,16 @@ export interface DeviceUnderTest {
   /** The store this device reads and writes. One device, one store. */
   readonly store: string;
 
-  hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>>;
+  hydrate(
+    types: string[],
+    tier: Tier,
+    options?: { edgeTypes?: string[] },
+  ): Promise<Outcome<HydrateReport>>;
+  /** Hold one row by id, whatever the slice says of it, read now. */
+  pin(id: string): Promise<Outcome<PinReport>>;
+  /** Stop holding a row by id; one outside the slice goes once no write to
+   *  it waits. */
+  unpin(id: string): Promise<Outcome<PinReport>>;
   catchUp(): Promise<Outcome<CatchUpReport>>;
   list(filters?: ListFilters): Promise<Outcome<Item[]>>;
   get(id: string): Promise<Outcome<Item>>;

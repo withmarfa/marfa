@@ -254,6 +254,32 @@ impl Http {
         self.get_json(&["items", id, "edges"], &params)
     }
 
+    /// A page of every edge of `edge_type` the key reads.
+    pub fn edges_page(
+        &self,
+        edge_type: &str,
+        cursor: Option<&str>,
+    ) -> Result<WirePage<WireEdge>, CoreError> {
+        let limit = PAGE_LIMIT.to_string();
+        let mut params: Vec<(&str, &str)> = vec![("edge_type", edge_type), ("limit", &limit)];
+        if let Some(cursor) = cursor {
+            params.push(("cursor", cursor));
+        }
+        self.get_json(&["edges"], &params)
+    }
+
+    /// One item by id with its edges, as a hydration reads each row: a row
+    /// that comes into the slice after the hydration needs what it draws.
+    pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
+        match self
+            .get_json::<WireItemWithMetadata>(&["items", id], &[("include", "edges,metadata")])
+        {
+            Ok(item) => Ok(Some(item)),
+            Err(CoreError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     /// One item by id, as the server holds it now.
     ///
     /// The read a refused write is reconciled against
@@ -346,15 +372,9 @@ impl Http {
     pub fn open_events(
         &self,
         last_event_id: Option<&str>,
-        types: &[String],
         body_timeout: Duration,
     ) -> Result<Box<dyn Read + Send>, CoreError> {
-        let joined = types.join(",");
-        let mut params: Vec<(&str, &str)> = vec![("edges", "all")];
-        if !types.is_empty() {
-            params.push(("type", &joined));
-        }
-        let url = self.url(&["events"], &params);
+        let url = self.url(&["events"], &[("edges", "all")]);
         let mut request = self
             .agent
             .get(url.as_str())

@@ -1,8 +1,9 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use marfa_core::{Folder, Server};
+use marfa_core::{CoreError, Folder, Server};
 use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::error::CliError;
@@ -36,15 +37,110 @@ pub fn watch(
     json: bool,
 ) -> Result<(), CliError> {
     let folder = Folder::open(dir, Some(server))?;
+    let stop = AtomicBool::new(false);
+    let (sender, wakes) = mpsc::channel::<Wake>();
+    std::thread::scope(|scope| {
+        // The server's side is held open beside the folder's, so another
+        // device's change reaches the copy as it happens and the next pass
+        // writes it out, where a folder that only ever pushed would hold what
+        // it had at its last hydration for good.
+        let server_wakes = sender.clone();
+        let follower = scope.spawn(|| follow(&folder, &stop, server_wakes));
+        let watched = watch_files(&folder, dir, sender, &wakes, stop_after, json);
+        stop.store(true, Ordering::SeqCst);
+        let followed = follower.join().map_err(|_| {
+            CliError::Watch("the follow of the server's changes ended in a fault".into())
+        })?;
+        watched.and(followed)
+    })
+}
+
+/// What wakes the watcher: the filesystem, or the server's side.
+enum Wake {
+    File(notify::Result<notify::Event>),
+    /// A change from the server reached the copy.
+    Server,
+    /// The follow ended for a reason no retry changes.
+    Ended(String),
+}
+
+/// The first wait before a failed hydration is tried again, and the longest
+/// it doubles to.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_MOST: Duration = Duration::from_secs(30);
+
+/// Follows the server, hydrating first where the copy cannot answer
+/// (`device.md` 16); an answer no retry changes ends the watch.
+fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CliError> {
+    let mut retry = RETRY_FIRST;
+    while !stop.load(Ordering::SeqCst) {
+        let followed = folder.resume().and_then(|hydrated| {
+            retry = RETRY_FIRST;
+            if hydrated.is_some() {
+                let _ = wakes.send(Wake::Server);
+            }
+            folder.core().follow(stop, |_| {
+                let _ = wakes.send(Wake::Server);
+            })
+        });
+        match followed {
+            Ok(_) => break,
+            Err(CoreError::CatchUpTooOld { .. }) => {}
+            Err(error) if error.is_environmental() => {
+                let (wait, next) = retry_schedule(retry, &error);
+                eprintln!("could not hydrate ({error}); trying again in {wait:?}");
+                wait_unless_stopped(stop, wait);
+                retry = next;
+            }
+            Err(error) => {
+                let _ = wakes.send(Wake::Ended(error.to_string()));
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The wait before the next hydration after one that failed with `error`,
+/// the server's `Retry-After` where it names longer, and the backoff after it.
+fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {
+    let wait = error
+        .retry_after()
+        .map_or(backoff, |named| backoff.max(named));
+    (wait, (backoff * 2).min(RETRY_MOST))
+}
+
+fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
+    let until = Instant::now() + wait;
+    while !stop.load(Ordering::SeqCst) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(250)));
+    }
+}
+
+/// The filesystem side of a watch: a pass whenever the folder settles, and
+/// on every tick.
+fn watch_files(
+    folder: &Folder,
+    dir: &Path,
+    sender: mpsc::Sender<Wake>,
+    events: &mpsc::Receiver<Wake>,
+    stop_after: Option<Duration>,
+    json: bool,
+) -> Result<(), CliError> {
     // Resolved, because the filter below strips this prefix off the paths
     // the watcher reports and macOS reports them resolved: a folder under
     // `/var/folders/...` comes back as `/private/var/folders/...`, every
     // strip fails, every path reads as not dot-led, and the folder wakes
     // itself through its own writes under `.marfa` a few times a second.
     let dir = &std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let (sender, events) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(sender)
-        .map_err(|error| CliError::Watch(format!("cannot watch: {error}")))?;
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = sender.send(Wake::File(event));
+    })
+    .map_err(|error| CliError::Watch(format!("cannot watch: {error}")))?;
     // Watching starts before the first pass, so a file that arrives during
     // that pass is seen by the watcher rather than falling between the two.
     watcher
@@ -64,7 +160,7 @@ pub fn watch(
             break;
         }
         match events.recv_timeout(TICK) {
-            Ok(Ok(event)) => {
+            Ok(Wake::File(Ok(event))) => {
                 // `Access` is a read, and a folder does not push a file
                 // because somebody opened it.
                 if matches!(event.kind, EventKind::Access(_)) {
@@ -79,7 +175,14 @@ pub fn watch(
                 }
                 quiet_since = Instant::now();
             }
-            Ok(Err(error)) => eprintln!("watch error: {error}"),
+            Ok(Wake::File(Err(error))) => eprintln!("watch error: {error}"),
+            // A change from elsewhere is written out on the pass below.
+            Ok(Wake::Server) => {}
+            Ok(Wake::Ended(reason)) => {
+                return Err(CliError::Watch(format!(
+                    "the server's changes stopped reaching this folder: {reason}"
+                )));
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -96,7 +199,12 @@ pub fn watch(
         if quiet_since.elapsed() < SETTLE {
             continue;
         }
-        step(&folder, json, &mut standing)?;
+        match step(folder, json, &mut standing) {
+            // The follow is hydrating the copy, or will try again, and a
+            // later pass finds it whole.
+            Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
+            other => other?,
+        }
     }
     Ok(())
 }
@@ -220,4 +328,52 @@ fn dot_led(root: &Path, path: &Path) -> bool {
     relative
         .components()
         .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn a_failed_hydration_is_tried_again_after_a_wait_that_doubles_to_thirty_seconds() {
+        let failing = CoreError::Network("refused".into());
+        let mut backoff = RETRY_FIRST;
+        let mut waits = Vec::new();
+        for _ in 0..7 {
+            let (wait, next) = retry_schedule(backoff, &failing);
+            waits.push(wait.as_secs());
+            backoff = next;
+        }
+        assert_eq!(waits, [1, 2, 4, 8, 16, 30, 30]);
+    }
+
+    #[test]
+    fn a_rate_limit_is_waited_out_as_long_as_it_names() {
+        let limited = |seconds| CoreError::RateLimited {
+            code: "rate_limited".into(),
+            message: String::new(),
+            retry_after_seconds: Some(seconds),
+        };
+        assert_eq!(
+            retry_schedule(SECOND, &limited(45)),
+            (45 * SECOND, 2 * SECOND)
+        );
+        assert_eq!(retry_schedule(4 * SECOND, &limited(1)).0, 4 * SECOND);
+    }
+
+    #[test]
+    fn a_wait_ends_when_the_watch_stops() {
+        let stop = AtomicBool::new(false);
+        let started = Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(50));
+                stop.store(true, Ordering::SeqCst);
+            });
+            wait_unless_stopped(&stop, RETRY_MOST);
+        });
+        assert!(started.elapsed() < 5 * SECOND, "{:?}", started.elapsed());
+    }
 }

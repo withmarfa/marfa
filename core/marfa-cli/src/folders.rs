@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Subcommand;
-use marfa_core::{Folder, Slice};
+use marfa_core::{CoreError, Folder, Slice};
 
 use crate::error::CliError;
 use crate::output;
@@ -54,7 +54,7 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Scan, drain and pull: everything a folder does, once.
+    /// Scan, drain, catch up and pull: everything a folder does, once.
     Push {
         /// The folder.
         dir: PathBuf,
@@ -123,26 +123,51 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         }
         FoldersCommand::Push { dir } => {
             let folder = Folder::open(&dir, Some(named.server()?))?;
+            let hydrated = folder.resume()?;
             let scanned = folder.scan()?;
             let drained = folder.core().drain()?;
-            let pulled = folder.pull()?;
+            // A folder offline still writes out the copy it holds.
+            let (caught, failed) = match folder.catch_up() {
+                Ok(caught) => (serde_json::to_value(caught)?, None),
+                Err(error) if error.is_environmental() => (
+                    serde_json::json!({ "failed": error.to_string() }),
+                    Some(error),
+                ),
+                Err(error) => return Err(error.into()),
+            };
+            // A failed hydration after an aged-out cursor leaves nothing to
+            // pull from; the next push hydrates first.
+            let pulled = match folder.pull() {
+                Ok(pulled) => Some(pulled),
+                Err(CoreError::HydrationIncomplete) if failed.is_some() => None,
+                Err(error) => return Err(error.into()),
+            };
             output::report(
                 &serde_json::json!({
+                    "hydrated": hydrated,
                     "scan": scanned,
                     "drain": drained,
+                    "catch_up": caught,
                     "pull": pulled,
                 }),
                 json,
                 || {
-                    let mut lines = vec![
-                        describe_scan(&scanned),
-                        format!("sent {}, held {}", drained.sent, drained.held),
-                    ];
+                    let mut lines = Vec::new();
+                    if let Some(hydrated) = &hydrated {
+                        lines.push(format!("hydrated {} item(s) first", hydrated.items));
+                    }
+                    lines.push(describe_scan(&scanned));
+                    lines.push(format!("sent {}, held {}", drained.sent, drained.held));
                     lines.extend(output::unclaimed(&drained));
-                    lines.push(format!(
-                        "{} file(s) written",
-                        pulled.written + pulled.rewritten
-                    ));
+                    if let Some(error) = &failed {
+                        lines.push(format!("could not catch up: {error}"));
+                    }
+                    lines.push(match &pulled {
+                        Some(pulled) => {
+                            format!("{} file(s) written", pulled.written + pulled.rewritten)
+                        }
+                        None => "nothing written: the copy could not be hydrated, and the next push tries again".into(),
+                    });
                     lines.join("\n")
                 },
             )

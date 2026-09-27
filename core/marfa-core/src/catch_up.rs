@@ -14,7 +14,7 @@ use crate::http::Http;
 use crate::model::{CatchUpReport, Tier};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{EventPayload, WireType};
+use crate::wire::{EventPayload, WireEdge, WireItem, WireType};
 use crate::{Core, Result};
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
@@ -23,7 +23,6 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 // the cursor, so the wait between the connect comment and the first event
 // has to outlast that budget.
 const HEAD_WAIT: Duration = Duration::from_secs(10);
-const TYPE_FILTER_LIMIT: usize = 10;
 
 /// How a follow paces itself. `PACE` is the one in use; the tests shorten
 /// it so a wait that doubles to thirty seconds can be watched doubling.
@@ -42,10 +41,6 @@ pub(crate) struct Pace {
     /// `reconnect_most`.
     pub(crate) reconnect_first: Duration,
     pub(crate) reconnect_most: Duration,
-    /// The longest `Retry-After` a follow waits out. A server may name any
-    /// number, and one past this would park the follow for as long as it
-    /// said; the server's own webhook delivery honors the same bound.
-    pub(crate) retry_after_most: Duration,
 }
 
 pub(crate) const PACE: Pace = Pace {
@@ -53,12 +48,13 @@ pub(crate) const PACE: Pace = Pace {
     silence: Duration::from_secs(90),
     reconnect_first: Duration::from_secs(1),
     reconnect_most: Duration::from_secs(30),
-    retry_after_most: Duration::from_secs(300),
 };
 
 struct Slice {
     types: Vec<String>,
     tier: Tier,
+    /// The edge types held whole, whichever ends the copy holds.
+    whole: Vec<String>,
 }
 
 /// The events that decide a row by its type: whether the slice holds it, and
@@ -76,49 +72,33 @@ const ITEM_CHANGES: [&str; 6] = [
 /// image under one.
 type Unexplained = (String, Option<String>);
 
-/// What an item event names that the catalog cannot answer for, where the
-/// row could be in the slice, and that it has not been read again for
-/// already: a type the catalog does not hold, or an image's data URI under a
-/// property it does not know as that type's thumbnail.
-///
-/// Either may mean the server's catalog changed after this one was read, and
-/// taking the event by this one would drop a row the slice holds through a
-/// parent it has not seen, or index an image's base64. Neither has to: a
-/// type the server will not describe stays unknown, and a property the type
-/// declares as text, an `icon` say, can hold an image as well as one the
-/// type has since made its thumbnail can. The catalog cannot tell those from
-/// a change until it is read again, so each costs one read a stream:
-/// `refreshed` holds what the stream has read again for, and an event naming
-/// only those is taken by the catalog as it is.
-///
-/// Only an image's data URI is looked for, because only a thumbnail changes
-/// what an entry leaves out, and a property its type does not declare is
-/// otherwise nothing unusual: the server takes one on any type its strict
-/// mode does not name. Every image is looked at rather than the first, so
-/// one already read again for does not hide another after it.
+/// What an event for a row the copy could hold names that the catalog may be
+/// stale about: an unknown type, or an image under a non-thumbnail property.
 fn unexplained(
     catalog: &Catalog,
     slice: &Slice,
     kind: &str,
     payload: &EventPayload,
     refreshed: &HashSet<Unexplained>,
+    pinned: bool,
 ) -> Option<Unexplained> {
     if !ITEM_CHANGES.contains(&kind) {
         return None;
     }
     let item = payload.item.as_ref()?;
     // A row of the other tier leaves the copy whatever its type is.
-    if Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
+    if !pinned && Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
         return None;
     }
     if !catalog.known(&item.r#type) {
         let named = (item.r#type.clone(), None);
         return (!refreshed.contains(&named)).then_some(named);
     }
-    if !slice
-        .types
-        .iter()
-        .any(|declared| catalog.matches(declared, &item.r#type))
+    if !pinned
+        && !slice
+            .types
+            .iter()
+            .any(|declared| catalog.matches(declared, &item.r#type))
     {
         return None;
     }
@@ -155,7 +135,8 @@ pub struct FollowReport {
     /// stream, a stream that dropped or ended early, one that could not be
     /// opened, or an event the catalog could not explain.
     pub reconnects: u64,
-    /// Asks for a stream that failed and were retried, and the last reason.
+    /// Failed asks for a stream and failed reads of a row entering the
+    /// slice, each retried, and the last reason.
     pub failed_opens: u64,
     pub last_failure: Option<String>,
 }
@@ -174,7 +155,15 @@ fn start(core: &Core) -> Result<(Slice, String)> {
         )));
     }
     let (types, tier) = store::slice(&conn)?.ok_or(CoreError::NoCursor)?;
-    Ok((Slice { types, tier }, cursor))
+    let whole = store::whole_edge_types(&conn)?;
+    Ok((Slice { types, tier, whole }, cursor))
+}
+
+fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
+    match &payload.item {
+        Some(item) => store::pinned(&*core.conn()?, &item.id),
+        None => Ok(false),
+    }
 }
 
 /// The type catalog as the server has it now, written only where it differs
@@ -194,18 +183,13 @@ fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
 /// unwanted only when it next has a frame to hand on, so it keeps the
 /// connection, and nothing of the store, until the server's next keepalive
 /// or the stream's `bound`.
-fn open(
-    http: &Http,
-    cursor: &str,
-    slice: &Slice,
-    bound: Duration,
-) -> Result<Receiver<io::Result<Frame>>> {
-    let filter: &[String] = if slice.types.len() <= TYPE_FILTER_LIMIT {
-        &slice.types
-    } else {
-        &[]
-    };
-    let reader = http.open_events(Some(cursor), filter, bound)?;
+fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Result<Frame>>> {
+    // Every type the key reads, not the slice's alone: the server narrows a
+    // stream by the type a row has now, so one narrowed to the slice never
+    // carries the frame of a row retyped out of it, and the copy would hold
+    // that row as it was for good. Applying only what is in the slice is the
+    // copy's own work (`apply`).
+    let reader = http.open_events(Some(cursor), bound)?;
     let (sender, frames) = mpsc::sync_channel::<io::Result<Frame>>(256);
     thread::spawn(move || {
         let mut frames = Frames::new(BufReader::new(reader));
@@ -240,9 +224,15 @@ fn take(
     kind: &str,
     payload: &EventPayload,
 ) -> Result<Option<Change>> {
+    let brought = edges_of_entering_row(core, catalog, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     let applied = apply(&tx, catalog, slice, kind, payload)?;
+    if applied {
+        for edge in &brought {
+            store::upsert_edge(&tx, edge)?;
+        }
+    }
     // The cursor is the last id applied, never the highest seen: the
     // server delivers ids in order, so the two agree while every event is
     // applied, and where one is not, a high-water mark would step over it
@@ -283,7 +273,7 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = start(core)?;
     let mut catalog = adopt(core, &http.types()?)?;
-    let frames = open(http, &cursor, &slice, STREAM_HARD_BOUND)?;
+    let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
     // Read for once each, so a type the server will not describe costs one
     // read of the catalog rather than one for every event naming it. A
     // catch-up is one stream, so this lasts the call.
@@ -351,8 +341,9 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                     }
                     kind => {
                         let Some(id) = id else { continue };
+                        let pinned = pinned_row(core, &payload)?;
                         while let Some(named) =
-                            unexplained(&catalog, &slice, kind, &payload, &refreshed)
+                            unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
                         {
                             refreshed.insert(named);
                             catalog = adopt(core, &http.types()?)?;
@@ -441,20 +432,16 @@ fn follow_paced(
             report.reconnects += 1;
         }
         asked = true;
-        let Some(reached) = reach(&http, &cursor, &slice, stop, pace.stop_poll) else {
+        let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
             break;
         };
         let (types, frames) = match reached {
             Ok(reached) => reached,
-            Err(error) if passes(&error) => {
+            Err(error) if error.is_environmental() => {
                 report.failed_opens += 1;
-                let wait = match &error {
-                    CoreError::RateLimited {
-                        retry_after_seconds: Some(seconds),
-                        ..
-                    } => backoff.max(Duration::from_secs(*seconds).min(pace.retry_after_most)),
-                    _ => backoff,
-                };
+                let wait = error
+                    .retry_after()
+                    .map_or(backoff, |named| backoff.max(named));
                 report.last_failure = Some(error.to_string());
                 pause(wait);
                 backoff = (backoff * 2).min(pace.reconnect_most);
@@ -497,12 +484,25 @@ fn follow_paced(
                     // Left untaken with the cursor before it: the stream
                     // opened again at once reads the catalog first, then
                     // replays this event.
-                    if let Some(named) = unexplained(&catalog, &slice, kind, &payload, &refreshed) {
+                    let pinned = pinned_row(core, &payload)?;
+                    if let Some(named) =
+                        unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
+                    {
                         refreshed.insert(named);
                         behind = true;
                         break;
                     }
-                    match take(core, &catalog, &slice, &id, kind, &payload)? {
+                    // A failed read of a row entering the slice reopens the
+                    // stream from before this event rather than ending.
+                    let taken = match take(core, &catalog, &slice, &id, kind, &payload) {
+                        Err(error) if error.is_environmental() => {
+                            report.failed_opens += 1;
+                            report.last_failure = Some(error.to_string());
+                            break;
+                        }
+                        other => other?,
+                    };
+                    match taken {
                         Some(change) => {
                             report.applied += 1;
                             on_change(&change);
@@ -532,25 +532,13 @@ type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
 /// Asks for the type catalog and the stream on a thread holding only the
 /// transport, and waits for the answer while watching `stop`. `None` when
 /// `stop` was set first.
-fn reach(
-    http: &Arc<Http>,
-    cursor: &str,
-    slice: &Slice,
-    stop: &AtomicBool,
-    poll: Duration,
-) -> Option<Reached> {
+fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
     let (sender, answer) = mpsc::sync_channel::<Reached>(1);
     let http = Arc::clone(http);
     let cursor = cursor.to_string();
-    let filter = slice.types.clone();
-    let tier = slice.tier;
     thread::spawn(move || {
-        let slice = Slice {
-            types: filter,
-            tier,
-        };
         let reached = http.types().and_then(|types| {
-            let frames = open(&http, &cursor, &slice, STREAM_HARD_BOUND)?;
+            let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
             Ok((types, frames))
         });
         let _ = sender.send(reached);
@@ -571,18 +559,6 @@ fn reach(
     }
 }
 
-/// Whether a failure to open a stream clears by asking again: the network,
-/// a server busy or failing. Any other answer, a 404 or a 405 from a server
-/// that is not Marfa's, ends the follow and says so rather than asking
-/// forever without a word.
-fn passes(error: &CoreError) -> bool {
-    match error {
-        CoreError::Network(_) | CoreError::RateLimited { .. } => true,
-        CoreError::Server { status, .. } => *status >= 500 || *status == 408,
-        _ => false,
-    }
-}
-
 /// Sleeps for `wait`, looking at `stop` every `poll`. A wait too long to
 /// add to the clock lasts until `stop` is set.
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
@@ -596,6 +572,44 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
         }
         thread::sleep(poll.min(left));
     }
+}
+
+fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
+    Ok(store::slice_takes(
+        catalog,
+        &slice.types,
+        slice.tier,
+        &item.r#type,
+        Tier::parse_wire(item.tier.as_deref())?,
+    ))
+}
+
+/// Edges of a row the copy now takes but did not hold, read outside the
+/// transaction; a created row's need no read, since they follow as frames.
+fn edges_of_entering_row(
+    core: &Core,
+    catalog: &Catalog,
+    slice: &Slice,
+    kind: &str,
+    payload: &EventPayload,
+) -> Result<Vec<WireEdge>> {
+    let Some(item) = &payload.item else {
+        return Ok(Vec::new());
+    };
+    if kind == "item.created" || !ITEM_CHANGES.contains(&kind) {
+        return Ok(Vec::new());
+    }
+    {
+        let conn = core.conn()?;
+        if store::item_held(&conn, &item.id)?
+            || !(in_slice(catalog, slice, item)? || store::pinned(&conn, &item.id)?)
+        {
+            return Ok(Vec::new());
+        }
+    }
+    Ok(crate::hydrate::read_with_edges(core.http()?, &item.id)?
+        .map(|(_, edges)| edges)
+        .unwrap_or_default())
 }
 
 fn apply(
@@ -639,13 +653,7 @@ fn apply(
             {
                 return Ok(false);
             }
-            let tier = Tier::parse_wire(item.tier.as_deref())?;
-            let in_slice = tier == Some(slice.tier)
-                && slice
-                    .types
-                    .iter()
-                    .any(|declared| catalog.matches(declared, &item.r#type));
-            if in_slice {
+            if in_slice(catalog, slice, item)? || store::pinned(tx, &item.id)? {
                 let tags = payload
                     .metadata
                     .as_ref()
@@ -655,14 +663,14 @@ fn apply(
                 store::lay_waiting_writes_over(tx, &item.id, &|laid| catalog.indexing(laid))?;
                 Ok(true)
             } else {
-                store::evict_item(tx, &item.id)
+                store::evict_item(tx, &item.id, &slice.whole)
             }
         }
         "edge.created" | "edge.updated" => {
             let Some(edge) = &payload.edge else {
                 return Ok(false);
             };
-            if store::item_held(tx, &edge.source_id)? {
+            if store::item_held(tx, &edge.source_id)? || slice.whole.contains(&edge.edge_type) {
                 store::upsert_edge(tx, edge)?;
                 store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
@@ -701,7 +709,6 @@ mod tests {
         silence: Duration::from_millis(150),
         reconnect_first: Duration::from_millis(10),
         reconnect_most: Duration::from_millis(40),
-        retry_after_most: PACE.retry_after_most,
     };
 
     /// A store bound to `server` and hydrated by hand: `core.note` at
@@ -889,7 +896,11 @@ mod tests {
         let report = run.ended().unwrap();
         assert_eq!(
             run.waits(),
-            [Duration::from_secs(1), MS(20), PACE.retry_after_most],
+            [
+                Duration::from_secs(1),
+                MS(20),
+                crate::error::RETRY_AFTER_MOST
+            ],
             "a 429's Retry-After was not waited out, a 408 was not asked again, or a Retry-After past the bound was waited out whole"
         );
         assert_eq!(report.failed_opens, 3);
@@ -917,7 +928,6 @@ mod tests {
         assert_eq!(PACE.reconnect_most, Duration::from_secs(30));
         assert_eq!(PACE.stop_poll, MS(250));
         assert_eq!(PACE.silence, Duration::from_secs(90));
-        assert_eq!(PACE.retry_after_most, Duration::from_secs(300));
     }
 
     #[test]
@@ -1291,6 +1301,7 @@ mod tests {
         let slice = Slice {
             types: vec!["user.photo".into()],
             tier: Tier::Library,
+            whole: Vec::new(),
         };
         let event = |r#type: &str| {
             let image = "data:image/png;base64,iVBORw0KGgo=";
@@ -1315,7 +1326,9 @@ mod tests {
         let mut refreshed = HashSet::new();
         let photo = event("user.photo");
         let mut met = Vec::new();
-        while let Some(next) = unexplained(&catalog, &slice, "item.created", &photo, &refreshed) {
+        while let Some(next) =
+            unexplained(&catalog, &slice, "item.created", &photo, &refreshed, false)
+        {
             met.push(next.clone());
             refreshed.insert(next);
         }
@@ -1328,12 +1341,12 @@ mod tests {
         let gone = event("user.gone");
         let unknown = ("user.gone".to_string(), None);
         assert_eq!(
-            unexplained(&catalog, &slice, "item.created", &gone, &refreshed),
+            unexplained(&catalog, &slice, "item.created", &gone, &refreshed, false),
             Some(unknown.clone())
         );
         refreshed.insert(unknown);
         assert_eq!(
-            unexplained(&catalog, &slice, "item.created", &gone, &refreshed),
+            unexplained(&catalog, &slice, "item.created", &gone, &refreshed, false),
             None
         );
     }

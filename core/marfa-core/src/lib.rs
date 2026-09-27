@@ -172,18 +172,89 @@ impl Core {
 
     /// Replaces the local copy with every item of the declared `types` at
     /// `tier`, with their tags and outbound edges, and stores the event
-    /// cursor to catch up from.
+    /// cursor to catch up from. The pinned rows are read again; no edge type
+    /// is held whole.
     ///
     /// Refused while a catch-up or a follow runs on this handle, as they are
     /// while it runs: a follow left running across a hydration would apply
     /// events read against the old slice to the new copy and move the cursor
     /// the hydration stored. A caller stops its follow first.
     pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
+        self.hydrate_with(types, tier, &[])
+    }
+
+    /// A hydration that also holds every edge of `edge_types` the key reads,
+    /// whichever ends the copy holds (`device.md` 1, 14).
+    pub fn hydrate_with(
+        &self,
+        types: &[String],
+        tier: Tier,
+        edge_types: &[String],
+    ) -> Result<HydrateReport> {
         // A hydration replaces the copy, which is a write to the store like
         // any other (`device.md` 26).
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier)
+        hydrate::hydrate(self, self.http()?, types, tier, edge_types)
+    }
+
+    /// Holds `id` whatever the slice says of it (`device.md` 1), read now; one
+    /// neither the server nor the copy holds is refused. Answers whether it
+    /// was pinned already.
+    pub fn pin(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let http = self.http()?;
+        // Pinned before the read, so an event a follow applies meanwhile is kept.
+        let added = {
+            let conn = self.conn()?;
+            store::refuse_unless_hydrated(&conn)?;
+            store::pin(&conn, id)?
+        };
+        let held = hydrate::read_with_edges(http, id).and_then(|read| {
+            let mut conn = self.conn()?;
+            let tx = conn.transaction()?;
+            let held = match &read {
+                Some((row, edges)) => {
+                    let catalog = catalog::Catalog::load(&tx)?;
+                    hydrate::hold_row(&tx, &catalog, row, edges)?;
+                    true
+                }
+                None => store::item_held(&tx, id)?,
+            };
+            tx.commit()?;
+            Ok(held)
+        });
+        if !matches!(held, Ok(true)) && added {
+            store::unpin(&*self.conn()?, id)?;
+        }
+        match held? {
+            true => Ok(!added),
+            false => Err(CoreError::NotFound {
+                code: "not_found".into(),
+                message: format!("the server holds no item {id} to pin"),
+            }),
+        }
+    }
+
+    /// Stops holding `id` by id; a row the slice does not take goes, unless
+    /// writes to it still wait. Answers whether it was pinned.
+    pub fn unpin(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let pinned = store::unpin(&tx, id)?;
+        if pinned
+            && store::waiting_writes_for_item(&tx, id)?.is_empty()
+            && let Some((types, tier)) = store::slice(&tx)?
+            && let Some(held) = store::items_by_ids(&tx, &[id.to_string()])?.pop()
+        {
+            let catalog = catalog::Catalog::load(&tx)?;
+            if !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier) {
+                store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
+            }
+        }
+        tx.commit()?;
+        Ok(pinned)
     }
 
     /// Applies every event since the stored cursor and advances it.
@@ -961,6 +1032,8 @@ impl Core {
             server_origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
             slice_types,
             slice_tier,
+            slice_edge_types: store::whole_edge_types(&conn)?,
+            pinned: store::pins(&conn)?,
             event_cursor,
             hydration,
             items: store::count(&conn, "items")?,
@@ -1903,7 +1976,16 @@ mod tests {
                     .hydrate(&["core.note".into()], Tier::Library)
                     .unwrap_err(),
             ),
+            (
+                "hydrate_with",
+                reader
+                    .hydrate_with(&["core.note".into()], Tier::Library, &["parent-of".into()])
+                    .unwrap_err(),
+            ),
             ("catch_up", reader.catch_up().unwrap_err()),
+            // A pin reads a row into the copy and an unpin can take one out.
+            ("pin", reader.pin("x").unwrap_err()),
+            ("unpin", reader.unpin("x").unwrap_err()),
             (
                 "follow",
                 reader
@@ -1926,7 +2008,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            26,
+            29,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
