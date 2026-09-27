@@ -71,6 +71,22 @@ export function unregisterEdgeTypeSchema(id: string): void {
   _customRegistry.delete(id);
 }
 
+/**
+ * The edge type holding `name` as its id or its reverse name, other than
+ * `exceptId`. A folder reads a frontmatter key as the edge type it names, so
+ * every such name belongs to one type.
+ */
+export function edgeNameHolder(
+  name: string,
+  exceptId?: string,
+): string | undefined {
+  for (const schema of listEdgeTypes()) {
+    if (schema.id === exceptId) continue;
+    if (schema.id === name || schema.reverse_name === name) return schema.id;
+  }
+  return undefined;
+}
+
 /** Lists every edge type: the shipped core set plus the instance's own
  *  custom edge types. */
 export function listEdgeTypes(): EdgeTypeSchema[] {

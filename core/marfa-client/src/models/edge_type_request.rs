@@ -36,6 +36,9 @@ pub struct EdgeTypeRequest {
     #[serde(rename = "property_schema", skip_serializing_if = "Option::is_none")]
     pub property_schema:
         Option<std::collections::HashMap<String, models::EdgeTypeRequestPropertySchemaValue>>,
+    /// The name the edge goes by read from its target, such as `child-of` for `parent-of`. A folder writes an edge of a type that declares one in the target's file. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.
+    #[serde(rename = "reverse_name", skip_serializing_if = "Option::is_none")]
+    pub reverse_name: Option<String>,
 }
 
 impl EdgeTypeRequest {
@@ -49,6 +52,7 @@ impl EdgeTypeRequest {
             target_type_constraints: None,
             cascade_on_delete: None,
             property_schema: None,
+            reverse_name: None,
         }
     }
 }

@@ -499,13 +499,13 @@ export interface paths {
         };
         /**
          * List edge types
-         * @description Returns every edge type this instance resolves — the eight core types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, and source/target type constraints.
+         * @description Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.
          */
         get: operations["listEdgeTypes"];
         put?: never;
         /**
          * Register an edge type
-         * @description Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and a registered edge type is flat with no inheritance.
+         * @description Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.
          */
         post: operations["createEdgeType"];
         delete?: never;
@@ -1821,6 +1821,7 @@ export interface components {
             property_schema: {
                 [key: string]: unknown;
             };
+            reverse_name?: string;
         };
         ConflictRefusal: {
             error: {
@@ -1855,6 +1856,8 @@ export interface components {
                     format?: string;
                 };
             };
+            /** @description The name the edge goes by read from its target, such as `child-of` for `parent-of`. A folder writes an edge of a type that declares one in the target's file. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name. */
+            reverse_name?: string;
         };
         EdgeTypePage: {
             data: components["schemas"]["EdgeType"][];
@@ -7165,7 +7168,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description Edge type already exists */
+            /** @description Edge type already exists, or a name it claims is held */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

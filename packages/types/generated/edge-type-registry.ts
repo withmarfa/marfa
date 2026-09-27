@@ -17,11 +17,12 @@ const about: EdgeTypeSchema = {
 const attachedTo: EdgeTypeSchema = {
   id: "attached-to",
   label: "Attached to",
-  description: "Source is an attachment (a file or media item) belonging to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items).",
+  description: "Source is an attachment (a file or media item) belonging to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items). The host's file names its attachments under the reverse name, `has-attachment`, since an attachment is often a file that cannot carry frontmatter.",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  reverse_name: "has-attachment",
   property_schema: {},
 };
 
@@ -76,11 +77,12 @@ const inThread: EdgeTypeSchema = {
 const parentOf: EdgeTypeSchema = {
   id: "parent-of",
   label: "Parent of",
-  description: "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children.",
+  description: "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children. A child's file names its parent under the reverse name, `child-of`.",
   cardinality: "one-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "cascade",
+  reverse_name: "child-of",
   property_schema: {},
 };
 
@@ -134,6 +136,7 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
     "property_schema": {},
+    "reverse_name": "has-attachment",
     "source_type_constraints": [
       "*"
     ],
@@ -197,6 +200,7 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     "cardinality": "one-to-many",
     "cascade_on_delete": "cascade",
     "property_schema": {},
+    "reverse_name": "child-of",
     "source_type_constraints": [
       "*"
     ],

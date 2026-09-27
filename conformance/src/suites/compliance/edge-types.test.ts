@@ -270,6 +270,88 @@ describe("custom edge-type registration", () => {
     expect(r.error?.error.code).toBe("conflict");
   });
 
+  it("lists the reverse names the shipped edge types declare", async () => {
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    const reverse = Object.fromEntries(
+      r.data.data
+        .filter((t) => !t.id.includes("."))
+        .map((t) => [t.id, t.reverse_name ?? null]),
+    );
+    expect(reverse["parent-of"]).toBe("child-of");
+    expect(reverse["attached-to"]).toBe("has-attachment");
+    // The witness: a shipped type that declares none answers none, so the
+    // two above are declarations rather than a name every type is given.
+    expect(reverse["references"]).toBeNull();
+  });
+
+  it("registers an edge type with a reverse name and lists it", async () => {
+    const etId = `mock.reversed.${ctx.runId}`;
+    const reverse = `mock.reversed-by.${ctx.runId}`;
+    const r = await client.registerEdgeType({
+      id: etId,
+      cardinality: "one-to-many",
+      reverse_name: reverse,
+    });
+    expect(r.status).toBe(201);
+    trackEdgeType(ctx, etId);
+    await expectMatchesSchema("POST", "/edge-types", 201, r.data);
+    expect(r.data.edge_type.reverse_name).toBe(reverse);
+
+    const listed = await client.listEdgeTypes();
+    await expectMatchesSchema("GET", "/edge-types", 200, listed.data);
+    const mine = listed.data.data.find((t) => t.id === etId);
+    expect(mine?.reverse_name).toBe(reverse);
+  });
+
+  it("refuses a reverse name another edge type already uses as a name", async () => {
+    // A folder reads a frontmatter key as the edge type it names, so a name
+    // held twice would say two things at once.
+    const first = `mock.reverse-held.${ctx.runId}`;
+    const held = `mock.held-by.${ctx.runId}`;
+    const r = await client.registerEdgeType({
+      id: first,
+      cardinality: "many-to-many",
+      reverse_name: held,
+    });
+    expect(r.status).toBe(201);
+    trackEdgeType(ctx, first);
+
+    const cases: Array<{ id: string; reverse_name?: string }> = [
+      // A reverse name that is a shipped edge type's id.
+      { id: `mock.rev-id.${ctx.runId}`, reverse_name: "about" },
+      // A reverse name a shipped edge type already declares.
+      { id: `mock.rev-shipped.${ctx.runId}`, reverse_name: "child-of" },
+      // A reverse name a registered edge type already declares.
+      { id: `mock.rev-registered.${ctx.runId}`, reverse_name: held },
+      // An id that a registered edge type declares as its reverse name.
+      { id: held },
+      // A reverse name that is the type's own id.
+      {
+        id: `mock.rev-self.${ctx.runId}`,
+        reverse_name: `mock.rev-self.${ctx.runId}`,
+      },
+    ];
+    for (const body of cases) {
+      const refused = await client.registerEdgeType({
+        cardinality: "many-to-many",
+        ...body,
+      });
+      expect(refused.status, JSON.stringify(body)).toBe(409);
+      expect(refused.error?.error.code).toBe("conflict");
+    }
+  });
+
+  it("refuses a reverse name that is not an edge type identifier", async () => {
+    const r = await client.registerEdgeType({
+      id: `mock.rev-shape.${ctx.runId}`,
+      cardinality: "many-to-many",
+      reverse_name: "Not A Name",
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("validation_error");
+  });
+
   it("rejects registration that attempts `extends` on a core edge type (custom edges do not inherit)", async () => {
     const r = await client.registerEdgeType({
       id: `mock.extend.${ctx.runId}`,

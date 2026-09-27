@@ -91,7 +91,7 @@ pub enum ListEdgeTypesError {
     UnknownValue(serde_json::Value),
 }
 
-/// Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and a registered edge type is flat with no inheritance.
+/// Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.
 pub fn create_edge_type(
     configuration: &configuration::Configuration,
     params: CreateEdgeTypeParams,
@@ -181,7 +181,7 @@ pub fn delete_edge_type(
     }
 }
 
-/// Returns every edge type this instance resolves — the eight core types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, and source/target type constraints.
+/// Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.
 pub fn list_edge_types(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<ListEdgeTypesSuccess>, Error<ListEdgeTypesError>> {

@@ -1559,6 +1559,31 @@ export function validateEdgeTypeSchema(
     }
   }
 
+  if (obj.reverse_name !== undefined) {
+    if (
+      typeof obj.reverse_name !== "string" ||
+      !EDGE_ID_PATTERN.test(obj.reverse_name)
+    ) {
+      errors.push(
+        issue({
+          field: "reverse_name",
+          expected: "lowercase kebab-case (letters, digits, single hyphens)",
+          actual: describe(obj.reverse_name),
+          hint: 'Name the edge as read from its target, such as "child-of".',
+        }),
+      );
+    } else if (obj.reverse_name === obj.id) {
+      errors.push(
+        issue({
+          field: "reverse_name",
+          expected: "a name other than the edge type's own id",
+          actual: describe(obj.reverse_name),
+          hint: "A reverse name is the other end's name for the same edge.",
+        }),
+      );
+    }
+  }
+
   if (
     typeof obj.cardinality !== "string" ||
     !EDGE_CARDINALITY_SET.has(obj.cardinality)
@@ -1683,6 +1708,9 @@ export function validateEdgeTypeSchema(
   };
   if (typeof obj.label === "string") data.label = obj.label;
   if (typeof obj.description === "string") data.description = obj.description;
+  if (typeof obj.reverse_name === "string") {
+    data.reverse_name = obj.reverse_name;
+  }
 
   return { success: true, data };
 }
@@ -1728,6 +1756,7 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
     target_type_constraints: true,
     cascade_on_delete: true,
     property_schema: true,
+    reverse_name: true,
   } satisfies Record<keyof EdgeTypeSchema, true>),
 );
 

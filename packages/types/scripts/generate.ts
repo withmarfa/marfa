@@ -460,6 +460,9 @@ for (const edge of edgeSchemas) {
   edgeLines.push(`  source_type_constraints: [${src.map(quote).join(", ")}],`);
   edgeLines.push(`  target_type_constraints: [${tgt.map(quote).join(", ")}],`);
   edgeLines.push(`  cascade_on_delete: ${quote(edge.cascade_on_delete)},`);
+  if (edge.reverse_name) {
+    edgeLines.push(`  reverse_name: ${quote(edge.reverse_name)},`);
+  }
   const propSchema = edge.property_schema;
   if (Object.keys(propSchema).length === 0) {
     edgeLines.push(`  property_schema: {},`);

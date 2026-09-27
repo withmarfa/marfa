@@ -64,6 +64,7 @@ export interface EdgeTypeRegistration {
   target_type_constraints?: string[];
   cascade_on_delete?: EdgeCascadeBehavior;
   property_schema?: Record<string, unknown>;
+  reverse_name?: string;
 }
 
 /** Full edge-type definition as returned by the server (core or custom). */

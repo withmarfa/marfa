@@ -485,6 +485,72 @@ describe("archives carry type registrations", () => {
     expect(res.status).toBe(409);
   });
 
+  it("carries an edge type's reverse name, and refuses one another type holds", async () => {
+    const source = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-rn",
+      source_id: "rn1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const withEdgeTypes = (...edgeTypes: Record<string, unknown>[]) =>
+      repack(entries, {
+        "types.ndjson": edgeTypes
+          .map((edge_type) => JSON.stringify({ edge_type }) + "\n")
+          .join(""),
+      });
+
+    // The witness: a reverse name nobody holds restores and is listed.
+    const id = `user.cites-${uniqueSuffix()}`;
+    const reverse = `user.cited-by-${uniqueSuffix()}`;
+    const kept = await newContext();
+    const res = await restore(
+      kept,
+      await withEdgeTypes({
+        id,
+        cardinality: "many-to-many",
+        reverse_name: reverse,
+      }),
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    const listed = await request(kept.app, "GET", "/edge-types", {
+      key: kept.workingKey,
+    });
+    const body = (await listed.json()) as {
+      data: { id: string; reverse_name?: string }[];
+    };
+    expect(body.data.find((t) => t.id === id)?.reverse_name).toBe(reverse);
+
+    // A shipped type's reverse name, and one name claimed twice in a batch.
+    const shipped = await restore(
+      await newContext(),
+      await withEdgeTypes({
+        id: `user.parents-${uniqueSuffix()}`,
+        cardinality: "one-to-many",
+        reverse_name: "child-of",
+      }),
+    );
+    expect(shipped.status).toBe(409);
+    const twice = `user.twice-${uniqueSuffix()}`;
+    const batch = await restore(
+      await newContext(),
+      await withEdgeTypes(
+        {
+          id: `user.first-${uniqueSuffix()}`,
+          cardinality: "many-to-many",
+          reverse_name: twice,
+        },
+        {
+          id: `user.second-${uniqueSuffix()}`,
+          cardinality: "many-to-many",
+          reverse_name: twice,
+        },
+      ),
+    );
+    expect(batch.status).toBe(409);
+  });
+
   it("refuses an archive carrying an edge type with a thumbnail property", async () => {
     const source = await newContext();
     await source.storage.items.create({

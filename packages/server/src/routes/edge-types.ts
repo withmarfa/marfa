@@ -7,6 +7,7 @@ import {
   registerEdgeTypeSchema,
   unregisterEdgeTypeSchema,
   isValidEdgeTypeIdentifier,
+  edgeNameHolder,
   isRoleConstraint,
   roleFromConstraint,
   TYPE_ROLES,
@@ -106,6 +107,12 @@ export const EdgeTypeRequestSchema = z
         }),
       )
       .optional(),
+    reverse_name: z
+      .string()
+      .optional()
+      .describe(
+        "The name the edge goes by read from its target, such as `child-of` for `parent-of`. A folder writes an edge of a type that declares one in the target's file. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.",
+      ),
   })
   .openapi("EdgeTypeRequest");
 
@@ -124,8 +131,64 @@ const EdgeTypeResponseSchema = z
     target_type_constraints: z.array(z.string()),
     cascade_on_delete: z.enum(["cascade", "orphan", "block"]),
     property_schema: z.record(z.string(), z.unknown()),
+    reverse_name: z.string().optional(),
   })
   .openapi("EdgeType");
+
+/**
+ * The schema a registration stores, from a body the request schema accepted.
+ * The route and an archive restore both build it here, so a type that
+ * round-trips through an export compares equal and neither door is the laxer
+ * one. `taken` maps names claimed earlier in the same batch to their type.
+ */
+export function edgeTypeFromRequest(
+  body: z.infer<typeof EdgeTypeRequestSchema>,
+  taken: ReadonlyMap<string, string> = new Map(),
+): EdgeTypeSchema {
+  const reverse = body.reverse_name;
+  if (reverse !== undefined && !isValidEdgeTypeIdentifier(reverse)) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid reverse_name: it takes the edge-type identifier grammar",
+      { field: "reverse_name" },
+    );
+  }
+  if (reverse === body.id) {
+    throw new MarfaError(
+      ErrorCode.CONFLICT,
+      "A reverse name cannot be the edge type's own id",
+      { field: "reverse_name", held_by: body.id },
+    );
+  }
+  // A folder reads a frontmatter key as the edge type it names, so each such
+  // name, an id or a reverse name, belongs to one type.
+  const claims: ["id" | "reverse_name", string][] = [["id", body.id]];
+  if (reverse !== undefined) claims.push(["reverse_name", reverse]);
+  for (const [field, name] of claims) {
+    const holder = edgeNameHolder(name, body.id) ?? taken.get(name);
+    if (holder !== undefined && holder !== body.id) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `"${name}" is already a name of the edge type ${holder}`,
+        { field, held_by: holder },
+      );
+    }
+  }
+  return {
+    id: body.id,
+    ...(body.label !== undefined && { label: body.label }),
+    ...(body.description !== undefined && { description: body.description }),
+    cardinality: body.cardinality,
+    source_type_constraints: body.source_type_constraints ?? ["*"],
+    target_type_constraints: body.target_type_constraints ?? ["*"],
+    cascade_on_delete: body.cascade_on_delete ?? "orphan",
+    property_schema: (body.property_schema ?? {}) as Record<
+      string,
+      FieldDefinition
+    >,
+    ...(reverse !== undefined && { reverse_name: reverse }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Routes
@@ -138,7 +201,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and a registered edge type is flat with no inheritance.",
+    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -181,7 +244,7 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["conflict"]),
         },
       },
-      description: "Edge type already exists",
+      description: "Edge type already exists, or a name it claims is held",
     },
   },
 });
@@ -193,7 +256,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type this instance resolves — the eight core types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, and source/target type constraints.",
+    "Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -313,19 +376,7 @@ export function edgeTypeRoutes(storage: Storage) {
       );
     }
 
-    const schema: EdgeTypeSchema = {
-      id: body.id,
-      ...(body.label !== undefined && { label: body.label }),
-      ...(body.description !== undefined && { description: body.description }),
-      cardinality: body.cardinality,
-      source_type_constraints: body.source_type_constraints ?? ["*"],
-      target_type_constraints: body.target_type_constraints ?? ["*"],
-      cascade_on_delete: body.cascade_on_delete ?? "orphan",
-      property_schema: (body.property_schema ?? {}) as Record<
-        string,
-        FieldDefinition
-      >,
-    };
+    const schema = edgeTypeFromRequest(body);
 
     await storage.edgeTypes.create(schema);
     registerEdgeTypeSchema(schema);

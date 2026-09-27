@@ -23,13 +23,9 @@ import {
   validateTypeSchema,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type {
-  EdgeTypeSchema,
-  FieldDefinition,
-  TypeSchema,
-} from "@withmarfa/shared";
+import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
 import type { Storage, TypeProvenance } from "../storage/interface.js";
-import { EdgeTypeRequestSchema } from "./edge-types.js";
+import { EdgeTypeRequestSchema, edgeTypeFromRequest } from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
 
 /** Bounds an archive the same way the item and edge counts are bounded. */
@@ -173,6 +169,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 } {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
+  const edgeNamesTaken = new Map<string, string>();
 
   for (const entry of entries) {
     if (entry.type !== undefined) {
@@ -237,23 +234,12 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           `Archive carries an edge type with an invalid identifier: ${body.id}`,
         );
       }
-      // Same defaulting the route applies, so a schema that round-trips
-      // through an export and back compares equal to the one on disk.
-      edgeTypes.push({
-        id: body.id,
-        ...(body.label !== undefined && { label: body.label }),
-        ...(body.description !== undefined && {
-          description: body.description,
-        }),
-        cardinality: body.cardinality,
-        source_type_constraints: body.source_type_constraints ?? ["*"],
-        target_type_constraints: body.target_type_constraints ?? ["*"],
-        cascade_on_delete: body.cascade_on_delete ?? "orphan",
-        property_schema: (body.property_schema ?? {}) as Record<
-          string,
-          FieldDefinition
-        >,
-      });
+      const schema = edgeTypeFromRequest(body, edgeNamesTaken);
+      edgeNamesTaken.set(schema.id, schema.id);
+      if (schema.reverse_name !== undefined) {
+        edgeNamesTaken.set(schema.reverse_name, schema.id);
+      }
+      edgeTypes.push(schema);
       continue;
     }
 

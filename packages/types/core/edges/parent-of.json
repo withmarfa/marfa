@@ -1,10 +1,11 @@
 {
   "id": "parent-of",
   "label": "Parent of",
-  "description": "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children.",
+  "description": "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children. A child's file names its parent under the reverse name, `child-of`.",
   "cardinality": "one-to-many",
   "source_type_constraints": ["*"],
   "target_type_constraints": ["*"],
   "cascade_on_delete": "cascade",
-  "property_schema": {}
+  "property_schema": {},
+  "reverse_name": "child-of"
 }
