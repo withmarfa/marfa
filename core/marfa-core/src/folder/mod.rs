@@ -215,6 +215,15 @@ impl Folder {
         self.core.hydrate(&self.slice.types, self.slice.tier)
     }
 
+    /// Hydrates where the copy cannot answer: never hydrated, cut short, or
+    /// its cursor aged out (`device.md` 4). `None` where it can.
+    pub fn resume(&self) -> Result<Option<crate::model::HydrateReport>> {
+        if crate::store::hydrated(&*self.core.conn()?)? {
+            return Ok(None);
+        }
+        self.hydrate().map(Some)
+    }
+
     /// Takes in what the server has recorded since the copy's cursor, so a
     /// pull after it writes another device's changes out. Where the log has
     /// aged past the cursor the copy is hydrated again instead (`device.md`

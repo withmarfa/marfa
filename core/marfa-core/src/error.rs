@@ -79,6 +79,18 @@ pub enum CoreError {
     Invalid(String),
 }
 
+impl CoreError {
+    /// Whether asking again can clear it: the network, a server busy or
+    /// failing. A 404 or a 405 from a server that is not Marfa's does not.
+    pub fn is_environmental(&self) -> bool {
+        match self {
+            CoreError::Network(_) | CoreError::RateLimited { .. } => true,
+            CoreError::Server { status, .. } => *status >= 500 || *status == 408,
+            _ => false,
+        }
+    }
+}
+
 fn contract_mismatch(
     origin: &str,
     served: Option<&str>,

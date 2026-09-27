@@ -64,19 +64,35 @@ enum Wake {
     Ended(String),
 }
 
+/// The first wait before a failed hydration is tried again, and the longest
+/// it doubles to.
+const RETRY_FIRST: Duration = Duration::from_secs(1);
+const RETRY_MOST: Duration = Duration::from_secs(30);
+
 /// Holds the server's stream open and applies what it carries, waking the
-/// watcher for each change. A cursor the log has aged past is met with a
-/// fresh hydration and the stream opened again (`device.md` 16); an answer
-/// no retry changes ends the watch.
+/// watcher for each change. A copy that cannot answer, its cursor aged out
+/// included, is hydrated first (`device.md` 16), and a hydration the network
+/// or a failing server stopped is tried again; an answer no retry changes
+/// ends the watch.
 fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CliError> {
+    let mut retry = RETRY_FIRST;
     while !stop.load(Ordering::SeqCst) {
-        match folder.core().follow(stop, |_| {
-            let _ = wakes.send(Wake::Server);
-        }) {
-            Ok(_) => break,
-            Err(CoreError::CatchUpTooOld { .. }) => {
-                folder.hydrate()?;
+        let followed = folder.resume().and_then(|hydrated| {
+            retry = RETRY_FIRST;
+            if hydrated.is_some() {
                 let _ = wakes.send(Wake::Server);
+            }
+            folder.core().follow(stop, |_| {
+                let _ = wakes.send(Wake::Server);
+            })
+        });
+        match followed {
+            Ok(_) => break,
+            Err(CoreError::CatchUpTooOld { .. }) => {}
+            Err(error) if error.is_environmental() => {
+                eprintln!("could not hydrate ({error}); trying again in {retry:?}");
+                wait_unless_stopped(stop, retry);
+                retry = (retry * 2).min(RETRY_MOST);
             }
             Err(error) => {
                 let _ = wakes.send(Wake::Ended(error.to_string()));
@@ -85,6 +101,17 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
         }
     }
     Ok(())
+}
+
+fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
+    let until = Instant::now() + wait;
+    while !stop.load(Ordering::SeqCst) {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(250)));
+    }
 }
 
 /// The filesystem side of a watch: a pass whenever the folder settles, and
@@ -166,9 +193,8 @@ fn watch_files(
             continue;
         }
         match step(folder, json, &mut standing) {
-            // A hydration the follow started after the log aged past its
-            // cursor is still refilling the copy; the next pass finds it
-            // whole, and ending the watch here would end it for good.
+            // The follow is hydrating the copy, or will try again, and a
+            // later pass finds it whole.
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }

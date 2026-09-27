@@ -683,12 +683,19 @@ export interface PullReport {
 }
 
 export interface PushReport {
+  /** The hydration a copy that could not answer took first, if it needed one. */
+  hydrated: HydrateReport | null;
   scan: ScanReport;
   drain: DrainReport;
-  /** One of the two: a catch-up from the copy's cursor, or a hydration where
-   *  the log had aged past it. */
-  catch_up: { caught_up: CatchUpReport | null; hydrated: HydrateReport | null };
-  pull: PullReport;
+  /** A catch-up from the copy's cursor, a hydration where the log had aged
+   *  past it, or the reason the server could not be reached for either. */
+  catch_up: {
+    caught_up?: CatchUpReport | null;
+    hydrated?: HydrateReport | null;
+    failed?: string;
+  };
+  /** `null` where a failed catch-up left no copy to pull from. */
+  pull: PullReport | null;
 }
 
 /**

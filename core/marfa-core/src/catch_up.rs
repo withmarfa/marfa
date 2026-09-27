@@ -158,7 +158,8 @@ pub struct FollowReport {
     /// stream, a stream that dropped or ended early, one that could not be
     /// opened, or an event the catalog could not explain.
     pub reconnects: u64,
-    /// Asks for a stream that failed and were retried, and the last reason.
+    /// Failed asks for a stream and failed reads of a row entering the
+    /// slice, each retried, and the last reason.
     pub failed_opens: u64,
     pub last_failure: Option<String>,
 }
@@ -461,7 +462,7 @@ fn follow_paced(
         };
         let (types, frames) = match reached {
             Ok(reached) => reached,
-            Err(error) if passes(&error) => {
+            Err(error) if error.is_environmental() => {
                 report.failed_opens += 1;
                 let wait = match &error {
                     CoreError::RateLimited {
@@ -520,13 +521,10 @@ fn follow_paced(
                         behind = true;
                         break;
                     }
-                    // A row entering the slice is read before its event is
-                    // taken, and that read can meet a dropped connection
-                    // or a busy server like any other: the stream is opened
-                    // again after the wait, from the cursor before this
-                    // event, rather than the follow ending over it.
+                    // A failed read of a row entering the slice reopens the
+                    // stream from before this event rather than ending.
                     let taken = match take(core, &catalog, &slice, &id, kind, &payload) {
-                        Err(error) if passes(&error) => {
+                        Err(error) if error.is_environmental() => {
                             report.failed_opens += 1;
                             report.last_failure = Some(error.to_string());
                             break;
@@ -587,18 +585,6 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
                 )));
             }
         }
-    }
-}
-
-/// Whether a failure to open a stream clears by asking again: the network,
-/// a server busy or failing. Any other answer, a 404 or a 405 from a server
-/// that is not Marfa's, ends the follow and says so rather than asking
-/// forever without a word.
-fn passes(error: &CoreError) -> bool {
-    match error {
-        CoreError::Network(_) | CoreError::RateLimited { .. } => true,
-        CoreError::Server { status, .. } => *status >= 500 || *status == 408,
-        _ => false,
     }
 }
 
