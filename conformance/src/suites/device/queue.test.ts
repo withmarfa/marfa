@@ -450,6 +450,60 @@ describe("what a drain sends and reports", () => {
     expect(body.version).toBe(HELD.version);
   });
 
+  it("lets a row go once its retype out of the slice is answered", async () => {
+    harness = await hydratedHarness("queue-retype-out", { rows: held() });
+    expect(
+      (
+        await harness.device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const listed = await harness.device.list();
+    expect(
+      listed.ok ? listed.value.map((item) => item.id) : [],
+      "the copy kept a row its own answered retype moved out of its slice",
+    ).not.toContain(HELD.id);
+  });
+
+  it("sends no retype naming the type the row already has", async () => {
+    harness = await hydratedHarness("queue-retype-same", { rows: held() });
+    expect(
+      (
+        await harness.device.update(HELD.id, {
+          properties: { title: "same type" },
+          version: HELD.version,
+          type: "core.note",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const patch = harness.server.requests.find(
+      (request) => request.method === "PATCH",
+    );
+    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    expect("retype" in body).toBe(false);
+  });
+
   it("sends neither a retype nor a tier where the edit names neither", async () => {
     // The witness for the case above: the fields are the edit's, not ones
     // every update carries.

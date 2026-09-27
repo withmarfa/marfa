@@ -249,6 +249,23 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
 
 /// The slice a hydration declared: its types and its tier, or nothing where
 /// no hydration has declared one.
+/// Whether the copy's slice takes this row: one of its types, with the
+/// subtree, at its tier. A copy that has never hydrated holds no slice and
+/// takes nothing.
+pub fn slice_holds(
+    conn: &Connection,
+    catalog: &crate::catalog::Catalog,
+    item: &crate::wire::WireItem,
+) -> Result<bool, CoreError> {
+    let Some((types, tier)) = slice(conn)? else {
+        return Ok(false);
+    };
+    Ok(Tier::parse_wire(item.tier.as_deref())? == Some(tier)
+        && types
+            .iter()
+            .any(|declared| catalog.matches(declared, &item.r#type)))
+}
+
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, Tier)>, CoreError> {
     let Some(tier) = meta_get(conn, META_SLICE_TIER)? else {
         return Ok(None);

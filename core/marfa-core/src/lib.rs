@@ -1129,6 +1129,18 @@ fn queue_update(
             "an update to {id} carries no version; a write that names no version overwrites whatever it finds"
         )));
     };
+    // A retype naming the type the row has already moves nothing, and is not
+    // sent as one.
+    let unmoved;
+    let edit = if edit.r#type.as_deref() == Some(held.r#type.as_str()) {
+        unmoved = Edit {
+            r#type: None,
+            ..edit.clone()
+        };
+        &unmoved
+    } else {
+        edit
+    };
     if let Some(r#type) = edit.r#type.as_ref().filter(|r#type| !catalog.known(r#type)) {
         return Err(CoreError::UnknownType {
             message: format!("{type} is not a type this copy holds, so {id} cannot move to it"),

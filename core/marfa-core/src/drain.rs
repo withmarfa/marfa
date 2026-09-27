@@ -1219,7 +1219,16 @@ fn settle(
                     // server's record can arrive after a catch-up brought a
                     // later version, and adopting it would take the copy
                     // back to what it held before, under edits made since.
-                    if !store::holds_newer(
+                    // An update that moved the row out of the slice, by a
+                    // retype or a move of tier, lets it go as a catch-up
+                    // would on the same row (`device.md` 14): held, it would
+                    // sit in the copy as the only row of its kind until a
+                    // catch-up happened to replay the change.
+                    let moved_out = row.kind == WriteKind::UpdateItem
+                        && !store::slice_holds(&tx, &catalog, &parsed.item)?;
+                    if moved_out {
+                        store::evict_item(&tx, &parsed.item.id)?;
+                    } else if !store::holds_newer(
                         &tx,
                         Subject::Item,
                         &parsed.item.id,
