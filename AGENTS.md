@@ -6,7 +6,7 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 - American English in code, comments and commits. Scoped Conventional Commits (`refactor(server):`, `feat(core):`). Feature branches and pull requests. Never push `main`. A session merges its own pull request once every required check is green and its reviewers have run: squash, branch deleted, in stack order.
 - One clone of this repository per machine. Parallel work happens in worktrees made by the agent's own worktree mechanism, never in a second clone or a sibling folder.
-- Every Actions job runs on a standard GitHub-hosted runner: Ubuntu for portable checks, ARM64 macOS for Apple builds and Keychain tests. No self-hosted or larger runners. `ci/workflow-runner.test.ts` enforces the runner selection.
+- While this repository is private, Apple builds and Keychain tests run on the local ARM64 macOS pool; portable jobs use Blacksmith Ubuntu. Only release publishing stays on GitHub-hosted Ubuntu for npm trusted publishing. Switch local jobs to standard GitHub-hosted macOS before making the repository public. `ci/workflow-runner.test.ts` enforces the runner selection.
 - SQLite is the only database. Removed means gone: no shims, no aliases, no migration paths, no compatibility flags.
 - The server's behavior is the specification. The docs site is not a source of truth, and no docs connector is used in a session even if one is offered.
 - No personal details of any machine or person in this repository: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value.
