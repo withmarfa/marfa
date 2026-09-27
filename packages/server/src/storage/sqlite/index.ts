@@ -24,7 +24,10 @@ import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
 import { SqliteHousekeepingStore } from "./housekeeping-store.js";
 import { SqliteConnectorStore } from "./connector-store.js";
-import { reportSeedCollisions } from "../seed-collisions.js";
+import {
+  reportEdgeNameCollisions,
+  reportSeedCollisions,
+} from "../seed-collisions.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { reportReservedRootRows } from "../reserved-root-rows.js";
 import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
@@ -33,6 +36,7 @@ import { sqliteStoredValueCounts } from "./stored-value-counts.js";
 import {
   registerEdgeTypeSchema,
   isCoreEdgeType,
+  edgeNameCollisions,
   registerTypeSchema,
   seedPlatformTypes as seedPlatformRegistry,
   shippedPlatformTypes,
@@ -75,6 +79,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   for (const schema of loadedEdgeTypes) {
     if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema);
   }
+  reportEdgeNameCollisions(edgeNameCollisions());
 
   // Awaited rather than fire-and-forget: the platform vocabulary is seeded
   // data, so returning storage before the registry is filled opens a window

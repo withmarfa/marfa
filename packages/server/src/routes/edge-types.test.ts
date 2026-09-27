@@ -216,3 +216,53 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
     expect(body.error.code).toBe("edge_type_not_found");
   });
 });
+
+describe("Edge-type endpoints — one name, one type", () => {
+  it("gives a name to one of two registrations sent together", async () => {
+    // Both are in flight before either writes its row, which is the window a
+    // check read before an awaited write would leave open.
+    const reverse = `${NS}.claimed-by`;
+    const register = (suffix: string) =>
+      request(ctx.app, "POST", "/edge-types", {
+        key: ctx.workingKey,
+        body: {
+          id: `${NS}.claims-${suffix}`,
+          cardinality: "many-to-many",
+          reverse_name: reverse,
+        },
+      });
+    const answers = await Promise.all([register("a"), register("b")]);
+    const statuses = answers.map((r) => r.status).sort();
+    expect(statuses).toEqual([201, 409]);
+
+    const listed = await request(ctx.app, "GET", "/edge-types", {
+      key: ctx.workingKey,
+    });
+    const body = (await listed.json()) as {
+      data: { id: string; reverse_name?: string }[];
+    };
+    expect(body.data.filter((t) => t.reverse_name === reverse)).toHaveLength(1);
+  });
+
+  it("gives an id back to the registry when its row is not written", async () => {
+    const id = `${NS}.unwritten`;
+    const create = ctx.storage.edgeTypes.create.bind(ctx.storage.edgeTypes);
+    ctx.storage.edgeTypes.create = () =>
+      Promise.reject(new Error("the row could not be written"));
+    try {
+      const failed = await request(ctx.app, "POST", "/edge-types", {
+        key: ctx.workingKey,
+        body: { id, cardinality: "many-to-many", reverse_name: `${id}-by` },
+      });
+      expect(failed.status).toBe(500);
+    } finally {
+      ctx.storage.edgeTypes.create = create;
+    }
+    // The witness that the claim was given back: the same names register.
+    const again = await request(ctx.app, "POST", "/edge-types", {
+      key: ctx.workingKey,
+      body: { id, cardinality: "many-to-many", reverse_name: `${id}-by` },
+    });
+    expect(again.status).toBe(201);
+  });
+});

@@ -1,18 +1,18 @@
 {
   "@withmarfa/client": {
-    "hash": "0d23e2c60b2860a32af7c0b972805cd0c848300e2ee0328e59c71cece34bf972",
+    "hash": "06f9f2c6503c929ce12978ae78bff6f6eec15143e5666607885ca4b008e48f73",
     "exports": {
       "CONTRACT_HEADER": "bcbc470e3ef78514fb92c85e8b40890da6bcc46f6c0191503c859443c4450af9",
       "CONTRACT_VERSION": "f24061f7dd4fbb0eb96488aadfc9dd960b00991d0d98883a4bb17350e7f2f1a8",
       "ClientOptions": "31096499aab5b6b41928834227b06a5e369ccd73f33ce1472befb36b5c09c95c",
       "ContractMismatchError": "2a223d33c3f6e0131e40d9a7d5c324a76bace37d5b8c3cd2ac056a15b820541c",
-      "MarfaClient": "3ed8f8608feee79926ce6215caf096b500392ed2b55c72c14b1f9517ffe150cb",
+      "MarfaClient": "5bf02c6a85319e5800f96058f6f6162a1e44b74b4ada9f9a12f87f774c03cfa3",
       "Page": "1685574795cf08795ca6ef0b52d5394242c1d221155154e5486ed5e494ec48ac",
-      "components": "6957c663c8d34bd21d7a8de97b9732e3bd3f68bb8ba295cfe0d38806aa3378f1",
-      "createClient": "0ee3027a603e69064f518fe89abb9b16af3bf55f45bfe77a9c371e4463487ace",
-      "operations": "670bdf8bb84fb90952a6e71c57131666e68d3f49fd00105dc4e8946c48a5cfae",
+      "components": "2468271bb0245e9f7b1c6d3da8a4a20fad386bfee5d2302976a5259dcecb5c4d",
+      "createClient": "6dfb7a1a6a72aaccff41ae0574e624fb9081affba08746a9506ca7d8b9247e22",
+      "operations": "ea7663506019939c6fc037caac173a54c883443d4a64177abf068930b095b718",
       "pages": "f3b9b20bf891a81b7a2e5345e028a16dfd92e2a4b918820fdf1f072ff910203e",
-      "paths": "a727221a99863ddfbd4efdedf46a1c1fd9d4d407c02a404956b107e81316ffb0"
+      "paths": "01df906eee44a90a18f312fc1957d306f95568897cef125086ea569a1c2d938c"
     }
   }
 }

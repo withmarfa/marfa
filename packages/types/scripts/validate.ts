@@ -113,6 +113,9 @@ for (const family of FAMILIES) {
 // (inheritance, compatible_with), so they don't join the registry above.
 const edgeRaws = loadFamily("edge", join(typesRoot, "core", "edges"));
 const edgeIds = new Set<string>();
+// Every name a folder may read as an edge type, ids and reverse names alike,
+// with the file that took it first.
+const edgeNames = new Map<string, string>();
 counts.edge = edgeRaws.length;
 for (const raw of edgeRaws) {
   checked++;
@@ -129,6 +132,17 @@ for (const raw of edgeRaws) {
     continue;
   }
   edgeIds.add(result.data.id);
+  for (const name of [result.data.id, result.data.reverse_name]) {
+    if (name === undefined) continue;
+    const holder = edgeNames.get(name);
+    if (holder !== undefined) {
+      errors.push(
+        `edge/${raw.file} → ${name === result.data.id ? "id" : "reverse_name"}\n      "${name}" is already a name in edge/${holder}.`,
+      );
+      continue;
+    }
+    edgeNames.set(name, raw.file);
+  }
 }
 
 const summary = [...FAMILIES.map((f) => f.name), "edge"]

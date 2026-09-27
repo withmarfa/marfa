@@ -217,4 +217,23 @@ export interface EdgeTypeSchema {
    * no validated properties (but arbitrary properties are still rejected).
    */
   property_schema: Record<string, FieldDefinition>;
+  /**
+   * The name the edge goes by read from its target, such as `child-of` for
+   * `parent-of`. A folder writes an edge of a type that declares one in the
+   * target's file rather than the source's, so the parent's file does not
+   * carry every child and an attachment that cannot carry frontmatter is
+   * still written somewhere. Nothing about how the edge is stored changes.
+   */
+  reverse_name?: string;
+  /**
+   * The end whose file writes an edge of this type: `source` unless the type
+   * says otherwise. Where the file at that end cannot carry frontmatter, the
+   * other end writes it under the name read from there, and an edge with no
+   * such name is written in no file. `target` needs a `reverse_name`, since
+   * that is the only name the target's file can write it under.
+   */
+  written_at: EdgeWrittenAt;
 }
+
+/** The end of an edge whose file writes it. */
+export type EdgeWrittenAt = "source" | "target";

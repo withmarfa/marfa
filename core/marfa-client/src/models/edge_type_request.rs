@@ -36,6 +36,12 @@ pub struct EdgeTypeRequest {
     #[serde(rename = "property_schema", skip_serializing_if = "Option::is_none")]
     pub property_schema:
         Option<std::collections::HashMap<String, models::EdgeTypeRequestPropertySchemaValue>>,
+    /// The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.
+    #[serde(rename = "reverse_name", skip_serializing_if = "Option::is_none")]
+    pub reverse_name: Option<String>,
+    /// The end whose file writes an edge of this type, `source` unless named. Where the file at that end cannot carry frontmatter, the other end writes it under the name read from there. `target` needs a `reverse_name`.
+    #[serde(rename = "written_at", skip_serializing_if = "Option::is_none")]
+    pub written_at: Option<WrittenAt>,
 }
 
 impl EdgeTypeRequest {
@@ -49,6 +55,8 @@ impl EdgeTypeRequest {
             target_type_constraints: None,
             cascade_on_delete: None,
             property_schema: None,
+            reverse_name: None,
+            written_at: None,
         }
     }
 }
@@ -84,5 +92,19 @@ pub enum CascadeOnDelete {
 impl Default for CascadeOnDelete {
     fn default() -> CascadeOnDelete {
         Self::Cascade
+    }
+}
+/// The end whose file writes an edge of this type, `source` unless named. Where the file at that end cannot carry frontmatter, the other end writes it under the name read from there. `target` needs a `reverse_name`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum WrittenAt {
+    #[serde(rename = "source")]
+    Source,
+    #[serde(rename = "target")]
+    Target,
+}
+
+impl Default for WrittenAt {
+    fn default() -> WrittenAt {
+        Self::Source
     }
 }

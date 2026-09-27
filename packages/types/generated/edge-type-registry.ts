@@ -11,17 +11,20 @@ const about: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {},
 };
 
 const attachedTo: EdgeTypeSchema = {
   id: "attached-to",
   label: "Attached to",
-  description: "Source is an attachment (a file or media item) belonging to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items).",
+  description: "Source is an attachment (a file or media item) belonging to the target. Many-to-many: a file may be attached to multiple hosts; a host may have multiple attachments. Deleting the host orphans the attachment (it may still be attached to other items). The attachment's own file writes the edge, saying what it was made for; where the attachment cannot carry frontmatter, such as an image, the host's file writes it under the reverse name, `has-attachment`.",
   cardinality: "many-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  reverse_name: "has-attachment",
+  written_at: "source",
   property_schema: {},
 };
 
@@ -33,6 +36,7 @@ const authoredBy: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {},
 };
 
@@ -44,6 +48,7 @@ const derivedFrom: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {},
 };
 
@@ -55,6 +60,7 @@ const inCollection: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["role:container"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {
     position: { type: "number", description: "Ordering within the collection (1-based)." },
   },
@@ -68,6 +74,7 @@ const inThread: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {
     position: { type: "number", description: "Ordering within the thread (1-based)." },
   },
@@ -76,11 +83,13 @@ const inThread: EdgeTypeSchema = {
 const parentOf: EdgeTypeSchema = {
   id: "parent-of",
   label: "Parent of",
-  description: "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children.",
+  description: "Source is the parent of the target. Target has at most one parent. Deleting the parent cascades to children. A child's file writes the edge, naming its parent under the reverse name, `child-of`, so a parent's file does not list every child.",
   cardinality: "one-to-many",
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "cascade",
+  reverse_name: "child-of",
+  written_at: "target",
   property_schema: {},
 };
 
@@ -92,6 +101,7 @@ const references: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {},
 };
 
@@ -103,6 +113,7 @@ const supersedes: EdgeTypeSchema = {
   source_type_constraints: ["*"],
   target_type_constraints: ["*"],
   cascade_on_delete: "orphan",
+  written_at: "source",
   property_schema: {},
 };
 
@@ -128,18 +139,21 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   },
   "attached-to": {
     "cardinality": "many-to-many",
     "cascade_on_delete": "orphan",
     "property_schema": {},
+    "reverse_name": "has-attachment",
     "source_type_constraints": [
       "*"
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   },
   "authored-by": {
     "cardinality": "many-to-many",
@@ -150,7 +164,8 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   },
   "derived-from": {
     "cardinality": "many-to-many",
@@ -161,7 +176,8 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   },
   "in-collection": {
     "cardinality": "many-to-many",
@@ -176,7 +192,8 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "role:container"
-    ]
+    ],
+    "written_at": "source"
   },
   "in-thread": {
     "cardinality": "many-to-one",
@@ -191,18 +208,21 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   },
   "parent-of": {
     "cardinality": "one-to-many",
     "cascade_on_delete": "cascade",
     "property_schema": {},
+    "reverse_name": "child-of",
     "source_type_constraints": [
       "*"
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "target"
   },
   "references": {
     "cardinality": "many-to-many",
@@ -213,7 +233,8 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   },
   "supersedes": {
     "cardinality": "one-to-one",
@@ -224,7 +245,8 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "*"
-    ]
+    ],
+    "written_at": "source"
   }
 } as const;
 

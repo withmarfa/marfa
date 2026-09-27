@@ -143,6 +143,8 @@ describe("archives carry type registrations", () => {
       target_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       property_schema: {},
+      reverse_name: `${edgeTypeId}-by`,
+      written_at: "target",
     });
 
     const recipe = await source.storage.items.create({
@@ -201,6 +203,11 @@ describe("archives carry type registrations", () => {
     expect(destTypes.map((s) => s.id)).toContain(typeId);
     const destEdgeTypes = await destination.storage.edgeTypes.list();
     expect(destEdgeTypes.map((s) => s.id)).toContain(edgeTypeId);
+    // Both names travel through the store and the archive, or the next boot
+    // registers a type that has lost the end whose file writes it.
+    const restoredType = destEdgeTypes.find((s) => s.id === edgeTypeId);
+    expect(restoredType?.reverse_name).toBe(`${edgeTypeId}-by`);
+    expect(restoredType?.written_at).toBe("target");
   });
 
   it("restores a subtype whose parent is in the same archive", async () => {
@@ -483,6 +490,157 @@ describe("archives carry type registrations", () => {
 
     const res = await restore(destination, tampered);
     expect(res.status).toBe(409);
+  });
+
+  it("carries an edge type's reverse name, and refuses one another type holds", async () => {
+    const source = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-rn",
+      source_id: "rn1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const withEdgeTypes = (...edgeTypes: Record<string, unknown>[]) =>
+      repack(entries, {
+        "types.ndjson": edgeTypes
+          .map((edge_type) => JSON.stringify({ edge_type }) + "\n")
+          .join(""),
+      });
+
+    // The witness: a reverse name nobody holds restores and is listed.
+    const id = `user.cites-${uniqueSuffix()}`;
+    const reverse = `user.cited-by-${uniqueSuffix()}`;
+    const kept = await newContext();
+    const res = await restore(
+      kept,
+      await withEdgeTypes({
+        id,
+        cardinality: "many-to-many",
+        reverse_name: reverse,
+      }),
+    );
+    expect(res.status, await res.clone().text()).toBe(200);
+    const listed = await request(kept.app, "GET", "/edge-types", {
+      key: kept.workingKey,
+    });
+    const body = (await listed.json()) as {
+      data: { id: string; reverse_name?: string }[];
+    };
+    expect(body.data.find((t) => t.id === id)?.reverse_name).toBe(reverse);
+
+    // A shipped type's reverse name, and one name claimed twice in a batch.
+    const shipped = await restore(
+      await newContext(),
+      await withEdgeTypes({
+        id: `user.parents-${uniqueSuffix()}`,
+        cardinality: "one-to-many",
+        reverse_name: "child-of",
+      }),
+    );
+    expect(shipped.status).toBe(409);
+    const twice = `user.twice-${uniqueSuffix()}`;
+    const batch = await restore(
+      await newContext(),
+      await withEdgeTypes(
+        {
+          id: `user.first-${uniqueSuffix()}`,
+          cardinality: "many-to-many",
+          reverse_name: twice,
+        },
+        {
+          id: `user.second-${uniqueSuffix()}`,
+          cardinality: "many-to-many",
+          reverse_name: twice,
+        },
+      ),
+    );
+    expect(batch.status).toBe(409);
+
+    // An id claimed earlier in the batch, named later as a reverse name.
+    const claimed = `user.claimed-${uniqueSuffix()}`;
+    const batchDestination = await newContext();
+    const idThenReverse = await restore(
+      batchDestination,
+      await withEdgeTypes(
+        { id: claimed, cardinality: "many-to-many" },
+        {
+          id: `user.claimer-${uniqueSuffix()}`,
+          cardinality: "many-to-many",
+          reverse_name: claimed,
+        },
+      ),
+    );
+    expect(idThenReverse.status).toBe(409);
+    // Refused while the archive is read, before anything is written: the
+    // first entry is not left behind by a refusal the second one earned.
+    const left = await batchDestination.storage.edgeTypes.list();
+    expect(left.map((schema) => schema.id)).not.toContain(claimed);
+  });
+
+  it("claims an edge type's names where it registers it, and gives them back if its row is not written", async () => {
+    const source = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-claim",
+      source_id: "c1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const id = `user.claims-${uniqueSuffix()}`;
+    const reverse = `user.claimed-by-${uniqueSuffix()}`;
+    const archive = await repack(entries, {
+      "types.ndjson":
+        JSON.stringify({
+          edge_type: { id, cardinality: "many-to-many", reverse_name: reverse },
+        }) + "\n",
+    });
+
+    // A registration arriving while the restore awaits takes the name first:
+    // the restore reads what is registered and then writes, and the name
+    // must be checked again where it is claimed, not only where it was read.
+    const racing = await newContext();
+    const listRegistered = racing.storage.types.listRegistered.bind(
+      racing.storage.types,
+    );
+    const rival = `user.rival-${uniqueSuffix()}`;
+    racing.storage.types.listRegistered = async () => {
+      const rows = await listRegistered();
+      const res = await request(racing.app, "POST", "/edge-types", {
+        key: racing.workingKey,
+        body: { id: rival, cardinality: "many-to-many", reverse_name: reverse },
+      });
+      expect(res.status).toBe(201);
+      return rows;
+    };
+    const raced = await restore(racing, archive);
+    racing.storage.types.listRegistered = listRegistered;
+    expect(raced.status).toBe(409);
+
+    // A row that is not written gives its names back: the same archive
+    // restores once the store writes again.
+    const failing = await newContext();
+    const create = failing.storage.edgeTypes.create.bind(
+      failing.storage.edgeTypes,
+    );
+    const freeId = `user.gives-back-${uniqueSuffix()}`;
+    const freeArchive = await repack(entries, {
+      "types.ndjson":
+        JSON.stringify({
+          edge_type: {
+            id: freeId,
+            cardinality: "many-to-many",
+            reverse_name: `${freeId}-by`,
+          },
+        }) + "\n",
+    });
+    failing.storage.edgeTypes.create = () =>
+      Promise.reject(new Error("the row could not be written"));
+    const failed = await restore(failing, freeArchive);
+    failing.storage.edgeTypes.create = create;
+    expect(failed.status).toBe(500);
+    const again = await restore(failing, freeArchive);
+    expect(again.status, await again.clone().text()).toBe(200);
   });
 
   it("refuses an archive carrying an edge type with a thumbnail property", async () => {

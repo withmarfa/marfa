@@ -20,16 +20,18 @@ import {
   isValidTypeIdentifier,
   isValidEdgeTypeIdentifier,
   registerEdgeTypeSchema,
+  getEdgeTypeSchema,
+  unregisterEdgeTypeSchema,
   validateTypeSchema,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type {
-  EdgeTypeSchema,
-  FieldDefinition,
-  TypeSchema,
-} from "@withmarfa/shared";
+import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
 import type { Storage, TypeProvenance } from "../storage/interface.js";
-import { EdgeTypeRequestSchema } from "./edge-types.js";
+import {
+  EdgeTypeRequestSchema,
+  assertEdgeNamesFree,
+  edgeTypeFromRequest,
+} from "./edge-types.js";
 import { assertParentChain } from "./_parent-chain.js";
 
 /** Bounds an archive the same way the item and edge counts are bounded. */
@@ -173,6 +175,7 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 } {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
+  const edgeNamesTaken = new Map<string, string>();
 
   for (const entry of entries) {
     if (entry.type !== undefined) {
@@ -237,23 +240,12 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
           `Archive carries an edge type with an invalid identifier: ${body.id}`,
         );
       }
-      // Same defaulting the route applies, so a schema that round-trips
-      // through an export and back compares equal to the one on disk.
-      edgeTypes.push({
-        id: body.id,
-        ...(body.label !== undefined && { label: body.label }),
-        ...(body.description !== undefined && {
-          description: body.description,
-        }),
-        cardinality: body.cardinality,
-        source_type_constraints: body.source_type_constraints ?? ["*"],
-        target_type_constraints: body.target_type_constraints ?? ["*"],
-        cascade_on_delete: body.cascade_on_delete ?? "orphan",
-        property_schema: (body.property_schema ?? {}) as Record<
-          string,
-          FieldDefinition
-        >,
-      });
+      const schema = edgeTypeFromRequest(body, edgeNamesTaken);
+      edgeNamesTaken.set(schema.id, schema.id);
+      if (schema.reverse_name !== undefined) {
+        edgeNamesTaken.set(schema.reverse_name, schema.id);
+      }
+      edgeTypes.push(schema);
       continue;
     }
 
@@ -407,11 +399,27 @@ export async function registerArchiveTypes(
     );
   }
 
+  // The names were checked when the archive was read, and much has been
+  // awaited since, so each is checked again where it is claimed, and the
+  // claim made before the row is written, as the route does.
   for (const schema of edgeTypesToWrite) {
-    await storage.edgeTypes.create(schema);
-    // The edge-type store does not touch the registry, so the route
-    // registers separately and this has to as well.
+    // An id registered since the rows were read was registered by a request
+    // that is writing its own row now, and registering over it would put
+    // this archive's schema in its place.
+    if (getEdgeTypeSchema(schema.id)) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Archive carries "${schema.id}", which was registered while the restore ran`,
+      );
+    }
+    assertEdgeNamesFree(schema.id, schema.reverse_name);
     registerEdgeTypeSchema(schema);
+    try {
+      await storage.edgeTypes.create(schema);
+    } catch (err) {
+      unregisterEdgeTypeSchema(schema.id);
+      throw err;
+    }
   }
 
   return {
