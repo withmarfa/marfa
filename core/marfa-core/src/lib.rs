@@ -14,6 +14,7 @@ pub mod folder;
 /// the binary's own transport.
 pub mod http;
 mod hydrate;
+mod js;
 mod lock;
 mod model;
 mod query;

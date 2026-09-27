@@ -90,6 +90,7 @@ pub struct SearchFilters {
     pub tags: Option<Vec<String>>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
+    /// A `backref` condition is refused `invalid`.
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
     /// edges, as far as the copy holds them.
@@ -111,6 +112,7 @@ pub struct ListFilters {
     pub occurred_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
+    /// A `backref` condition is refused `invalid`.
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
     /// edges, as far as the copy holds them.
@@ -1353,6 +1355,39 @@ mod tests {
             assert_eq!(marfa_core::BlockedReason::from(crossed), reason);
         }
         assert!(matches!(Verdict::from(O::Dead), Verdict::Dead));
+    }
+
+    #[test]
+    fn list_filters_cross_whole() {
+        let crossed = filters(Some(ListFilters {
+            type_: Some("core.note".into()),
+            state: Some(ItemState::Archived),
+            all_states: Some(true),
+            tier: Some(Tier::Feed),
+            tags: Some(vec!["a".into()]),
+            occurred_after: Some("after".into()),
+            occurred_before: Some("before".into()),
+            filter: Some("tags exists".into()),
+            beneath: Some("root".into()),
+            limit: Some(3),
+            offset: Some(4),
+        }));
+        assert_eq!(
+            crossed,
+            marfa_core::ListFilters {
+                r#type: Some("core.note".into()),
+                state: Some(marfa_core::ItemState::Archived),
+                all_states: true,
+                tier: Some(marfa_core::Tier::Feed),
+                tags: vec!["a".into()],
+                occurred_after: Some("after".into()),
+                occurred_before: Some("before".into()),
+                filter: Some("tags exists".into()),
+                beneath: Some("root".into()),
+                limit: Some(3),
+                offset: Some(4),
+            }
+        );
     }
 
     #[test]

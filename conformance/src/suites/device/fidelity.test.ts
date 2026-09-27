@@ -1838,11 +1838,24 @@ describe("a local read answers the listing grammar as the server does", () => {
       ["garden"],
       { "parent-of": [child] },
     );
+    // Text a numeric bound casts, a source_id a boolean's REAL matches or
+    // not, and floats inside a container that JavaScript spells in full.
+    const five = await seed({ title: "five", s: "5" }, [], undefined, "1.0");
+    const ten = await seed({ title: "ten", s: "10" }, [], undefined, "1");
+    const letters = await seed(
+      { title: "letters", s: "abc", list: [1e20] },
+      [],
+    );
+    const blank = await seed({ title: "blank", s: "", list: [0.0000015] }, []);
     const names = new Map([
       [root, "root"],
       [child, "child"],
       [grandchild, "grandchild"],
       [stranger, "stranger"],
+      [five, "five"],
+      [ten, "ten"],
+      [letters, "letters"],
+      [blank, "blank"],
     ]);
     const named = (ids: string[]): string[] =>
       ids.map((id) => names.get(id) ?? id).sort();
@@ -1873,9 +1886,12 @@ describe("a local read answers the listing grammar as the server does", () => {
       "tags not_exists",
       `edge[parent-of] eq "${child}"`,
       `edge[parent-of] neq "${child}"`,
-      `backref[parent-of] eq "${root}"`,
       "edge[references] exists",
-      "backref[parent-of] not_exists",
+      "edge[parent-of] not_exists",
+      "properties.s gt 4",
+      "source_id eq true",
+      'properties.list contains "100000000000000000000"',
+      'properties.list contains "0.0000015"',
       `id eq "${stranger}"`,
       // The server binds every number as a REAL, which a text column reads
       // as `5.0`: this selects the row spelled that way, not the one
@@ -1914,10 +1930,23 @@ describe("a local read answers the listing grammar as the server does", () => {
       selective.length,
       "too few expressions select some rows and not others for the agreement above to mean anything",
     ).toBeGreaterThanOrEqual(expressions.length - 3);
+    // And the rows that tell a cast, a REAL and a number's text apart.
+    for (const [filter, rows] of [
+      ["properties.s gt 4", ["five", "ten"]],
+      ["source_id eq true", ["five"]],
+      ['properties.list contains "100000000000000000000"', ["letters"]],
+      ['properties.list contains "0.0000015"', ["blank"]],
+    ] as const) {
+      const served = await client.listItems({ type, filter, limit: 100 });
+      expect(
+        named(served.ok ? served.data.data.map((item) => item.id) : []),
+        `the server answers ${filter} otherwise than this case assumes`,
+      ).toEqual(rows);
+    }
 
     for (const filter of [
       'properties.status eq "open"',
-      `backref[parent-of] eq "${root}"`,
+      `edge[parent-of] eq "${child}"`,
       'properties.status eq "closed" OR tags not_exists',
     ]) {
       const served = await client.search("marsh", { type, filter });
@@ -1939,6 +1968,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       "",
       Array.from({ length: 11 }, () => "tags exists").join(" AND "),
       `properties.title eq "${"x".repeat(2049 - 'properties.title eq ""'.length)}"`,
+      `properties.rating gt 1${"0".repeat(400)}`,
     ]) {
       const served = await client.listItems({ type, filter });
       expect(served.status, `the server answered ${filter} with no 400`).toBe(

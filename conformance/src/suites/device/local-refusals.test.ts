@@ -70,6 +70,7 @@ const OUTSIDE_THE_GRAMMAR: Array<[string, string]> = [
     `properties.title eq "${"x".repeat(2049 - 'properties.title eq ""'.length)}"`,
     "2049 characters",
   ],
+  [`properties.rank gt 1${"0".repeat(400)}`, "a number no double holds"],
 ];
 
 /**
@@ -128,6 +129,11 @@ describe("a device refuses a filter outside the listing grammar", () => {
       longest.ok,
       `2048 characters are within the grammar and were refused: ${JSON.stringify(longest)}`,
     ).toBe(true);
+    const bounded = await device.list({ filter: "properties.rank gt 1" });
+    expect(
+      bounded.ok,
+      `a number a double holds was refused: ${JSON.stringify(bounded)}`,
+    ).toBe(true);
 
     for (const [expression, why] of OUTSIDE_THE_GRAMMAR) {
       expectRefusedAsTheServerDoes(
@@ -157,6 +163,68 @@ describe("a device refuses a filter outside the listing grammar", () => {
         await device.search("n1", { filter: expression }),
         `on a search, ${why}`,
       );
+    }
+  });
+
+  it("refuses a search filter the grammar refuses on a search with no words", async () => {
+    harness = await hydrated("wordless-search-filter");
+    const { device } = harness;
+
+    // The witness: a search with no words answers nothing, and answers it
+    // under a well-formed filter, so the refusals below are the filter's.
+    const nothing = await device.search(" ", {
+      filter: 'properties.title eq "n1"',
+    });
+    expect(
+      nothing.ok,
+      `a search with no words was refused: ${JSON.stringify(nothing)}`,
+    ).toBe(true);
+    expect(nothing.ok ? nothing.value : null).toEqual([]);
+
+    for (const [expression, why] of OUTSIDE_THE_GRAMMAR) {
+      expectRefusedAsTheServerDoes(
+        await device.search(" ", { filter: expression }),
+        `on a search with no words, ${why}`,
+      );
+    }
+  });
+});
+
+describe("a device refuses a condition its copy cannot answer as the server does", () => {
+  it("refuses a backref condition on a list and a search", async () => {
+    harness = await hydrated("backref-filter");
+    const { device } = harness;
+
+    for (const [outbound, inbound] of [
+      ["edge[parent-of] exists", "backref[parent-of] exists"],
+      [
+        'tags exists OR edge[parent-of] neq "n1"',
+        'tags exists OR backref[parent-of] neq "n1"',
+      ],
+    ] as const) {
+      // The witness: the same expression over the edges the copy holds.
+      const listed = await device.list({ filter: outbound });
+      expect(
+        listed.ok,
+        `${outbound} was refused, so the refusal below is not about the backref: ${JSON.stringify(listed)}`,
+      ).toBe(true);
+      const searched = await device.search("n1", { filter: outbound });
+      expect(searched.ok).toBe(true);
+
+      for (const outcome of [
+        await device.list({ filter: inbound }),
+        await device.search("n1", { filter: inbound }),
+      ]) {
+        expect(
+          outcome.ok,
+          `${inbound} was answered from a copy that holds no edge drawn to its rows from outside the slice`,
+        ).toBe(false);
+        if (outcome.ok) continue;
+        expect(
+          outcome.refusal.code,
+          `${inbound} was refused as though the server refuses it: ${outcome.refusal.raw}`,
+        ).toBe("invalid");
+      }
     }
   });
 });

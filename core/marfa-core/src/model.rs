@@ -183,7 +183,7 @@ pub struct ListFilters {
     pub occurred_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the
     /// server answers it and refused `validation_error` where the server
-    /// refuses it.
+    /// refuses it. A `backref` condition is refused `Invalid`.
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
     /// edges, at any depth, as far as the copy holds those edges.

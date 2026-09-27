@@ -216,7 +216,7 @@ export interface SearchFilters {
   allStates?: boolean;
   type?: string;
   tags?: string[];
-  /** An expression in the server's listing grammar, the `filter` of `GET /items`. */
+  /** An expression in the server's listing grammar, the `filter` of `GET /items`; a `backref` condition is refused. */
   filter?: string;
   /** An item and everything it reaches along `parent-of` edges. */
   beneath?: string;
@@ -233,7 +233,7 @@ export interface ListFilters {
   tier?: Tier;
   tags?: string[];
   limit?: number;
-  /** An expression in the server's listing grammar, the `filter` of `GET /items`. */
+  /** An expression in the server's listing grammar, the `filter` of `GET /items`; a `backref` condition is refused. */
   filter?: string;
   /** An item and everything it reaches along `parent-of` edges. */
   beneath?: string;

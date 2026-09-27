@@ -11,6 +11,7 @@ use serde_json::{Number, Value};
 
 use crate::Result;
 use crate::error::CoreError;
+use crate::js;
 use crate::query::escape_like;
 
 /// Measured in UTF-16 code units, which is what the server's `length` counts.
@@ -37,7 +38,7 @@ const PARENT_OF: &str = "parent-of";
 /// Narrows a local read by a listing-grammar expression and by `beneath`,
 /// each one clause ANDed with the rest, as the server ANDs its `filter` with
 /// its other parameters. An expression the grammar refuses is refused here,
-/// never dropped.
+/// never dropped, and so is one the copy cannot answer as the server would.
 pub(crate) fn narrow(
     filter: Option<&str>,
     beneath: Option<&str>,
@@ -45,7 +46,7 @@ pub(crate) fn narrow(
     values: &mut Vec<Value>,
 ) -> Result<()> {
     if let Some(filter) = filter {
-        clauses.push(parse(filter)?.clause(values));
+        clauses.push(parse(filter)?.clause(values)?);
     }
     if let Some(root) = beneath {
         // `UNION`, not `UNION ALL`: a copy can hold a cycle the server would
@@ -89,7 +90,7 @@ impl Literal {
     fn text(&self) -> String {
         match self {
             Literal::Text(text) => text.clone(),
-            Literal::Number(number) => js_number(*number),
+            Literal::Number(number) => js::number(*number),
             Literal::Bool(flag) => flag.to_string(),
             Literal::Null => "null".into(),
         }
@@ -98,25 +99,6 @@ impl Literal {
 
 fn real(number: f64) -> Value {
     Number::from_f64(number).map_or(Value::Null, Value::Number)
-}
-
-/// JavaScript's rendering of a number: fixed notation from 1e-6 up to 1e21,
-/// exponent notation with an explicit sign outside it.
-fn js_number(number: f64) -> String {
-    let magnitude = number.abs();
-    if number == 0.0 {
-        "0".into()
-    } else if (1e-6..1e21).contains(&magnitude) {
-        number.to_string()
-    } else {
-        let rendered = format!("{number:e}");
-        match rendered.split_once('e') {
-            Some((mantissa, exponent)) if !exponent.starts_with('-') => {
-                format!("{mantissa}e+{exponent}")
-            }
-            _ => rendered,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -207,20 +189,20 @@ struct Expression {
 }
 
 impl Expression {
-    fn clause(&self, values: &mut Vec<Value>) -> String {
+    fn clause(&self, values: &mut Vec<Value>) -> Result<String> {
         let joiner = if self.any { " OR " } else { " AND " };
-        let parts: Vec<String> = self
+        let parts = self
             .conditions
             .iter()
             .map(|condition| condition.clause(values))
-            .collect();
-        format!("({})", parts.join(joiner))
+            .collect::<Result<Vec<String>>>()?;
+        Ok(format!("({})", parts.join(joiner)))
     }
 }
 
 impl Condition {
-    fn clause(&self, values: &mut Vec<Value>) -> String {
-        match &self.term {
+    fn clause(&self, values: &mut Vec<Value>) -> Result<String> {
+        Ok(match &self.term {
             Term::System { column, compare } => {
                 compared(&format!("items.{column}"), *compare, &self.value, values)
             }
@@ -252,30 +234,32 @@ impl Condition {
                 "{}EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id)",
                 if *present { "" } else { "NOT " }
             ),
+            // The copy holds only the edges its items draw, not those drawn
+            // to them from outside the slice.
+            Term::Edge { backref: true, .. } => {
+                return Err(CoreError::Invalid(
+                    "a backref condition is not answered from a working copy, which holds the edges its items draw but not every edge drawn to them: ask the server".into(),
+                ));
+            }
             Term::Edge {
                 edge_type,
-                backref,
+                backref: false,
                 negated,
                 to_item,
             } => {
-                let (near, far) = if *backref {
-                    ("target_id", "source_id")
-                } else {
-                    ("source_id", "target_id")
-                };
                 values.push(Value::String(edge_type.clone()));
                 let other = if *to_item {
                     values.push(self.value.bound());
-                    format!(" AND e.{far} = ?")
+                    " AND e.target_id = ?"
                 } else {
-                    String::new()
+                    ""
                 };
                 format!(
-                    "{}EXISTS (SELECT 1 FROM edges e WHERE e.{near} = items.id AND e.edge_type = ?{other})",
+                    "{}EXISTS (SELECT 1 FROM edges e WHERE e.source_id = items.id AND e.edge_type = ?{other})",
                     if *negated { "NOT " } else { "" }
                 )
             }
-        }
+        })
     }
 }
 
@@ -355,6 +339,15 @@ fn edge_ref(word: &str) -> Option<(bool, &str)> {
 
 fn tokenize(input: &str) -> Result<Vec<Token>> {
     let chars: Vec<char> = input.chars().collect();
+    // Positions in UTF-16 code units, as the server's string index counts.
+    let at: Vec<usize> = chars
+        .iter()
+        .scan(0, |units, ch| {
+            let here = *units;
+            *units += ch.len_utf16();
+            Some(here)
+        })
+        .collect();
     let raw = |from: usize, to: usize| chars[from..to].iter().collect::<String>();
     let mut tokens = Vec::new();
     let mut i = 0;
@@ -379,14 +372,15 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
             }
             if i >= chars.len() {
                 return Err(refused(format!(
-                    "Unterminated string starting at position {start}"
+                    "Unterminated string starting at position {}",
+                    at[start]
                 )));
             }
             i += 1;
             tokens.push(Token {
                 kind: TokenKind::Text(value),
                 raw: raw(start, i),
-                pos: start,
+                pos: at[start],
             });
             continue;
         }
@@ -406,13 +400,21 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 }
             }
             let text = raw(start, i);
+            // Enough digits read as infinity, which the server refuses.
             let number = text
                 .parse::<f64>()
-                .map_err(|_| refused(format!("Invalid number \"{text}\" at position {start}")))?;
+                .ok()
+                .filter(|number| number.is_finite())
+                .ok_or_else(|| {
+                    refused(format!(
+                        "Number out of range \"{text}\" at position {}",
+                        at[start]
+                    ))
+                })?;
             tokens.push(Token {
                 kind: TokenKind::Number(number),
                 raw: text,
-                pos: start,
+                pos: at[start],
             });
             continue;
         }
@@ -426,7 +428,7 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
                 tokens.push(Token {
                     kind: TokenKind::Identifier(word.clone()),
                     raw: word,
-                    pos: i,
+                    pos: at[i],
                 });
                 i = end;
                 continue;
@@ -450,12 +452,13 @@ fn tokenize(input: &str) -> Result<Vec<Token>> {
             tokens.push(Token {
                 kind,
                 raw: word,
-                pos: start,
+                pos: at[start],
             });
             continue;
         }
         return Err(refused(format!(
-            "Unexpected character '{ch}' at position {i}"
+            "Unexpected character '{ch}' at position {}",
+            at[i]
         )));
     }
     Ok(tokens)
@@ -769,18 +772,59 @@ mod tests {
     }
 
     #[test]
-    fn renders_a_number_as_javascript_does() {
-        for (number, rendered) in [
-            (5.0, "5"),
-            (-0.0, "0"),
-            (1.5, "1.5"),
-            (0.000001, "0.000001"),
-            (1.5e-7, "1.5e-7"),
-            (1e20, "100000000000000000000"),
-            (1e21, "1e+21"),
-            (-1.25e22, "-1.25e+22"),
+    fn counts_the_length_in_utf16_units() {
+        let emoji = |count: usize| format!("id eq \"{}\"", "\u{1F426}".repeat(count));
+        assert_eq!(emoji(1020).encode_utf16().count(), 2048);
+        assert!(parse(&emoji(1020)).is_ok());
+        // 1029 characters and 2066 units: refused by the units alone.
+        assert_eq!(emoji(1021).chars().count(), 1029);
+        assert!(code(&emoji(1021)).is_some());
+    }
+
+    #[test]
+    fn ends_an_edge_reference_where_javascript_space_ends_it() {
+        let parsed = parse("edge[a\u{85}b] exists").unwrap();
+        assert!(matches!(
+            &parsed.conditions[0].term,
+            Term::Edge { edge_type, .. } if edge_type == "a\u{85}b"
+        ));
+        assert!(code("edge[a\u{feff}b] exists").is_some());
+    }
+
+    fn message(input: &str) -> String {
+        match parse(input) {
+            Err(CoreError::Validation { message, .. }) => message,
+            other => panic!("{input:?} was not refused: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn names_a_position_in_utf16_units() {
+        assert_eq!(
+            message("id eq \"\u{1F426}\" OR x eq 1"),
+            "Unknown field \"x\" at position 14. Valid system fields: state, type, source, occurred_at, created_at, updated_at, tier, version, id, source_id. Use \"properties.<field>\" for custom fields, or \"tags\" for tag filtering."
+        );
+        assert_eq!(
+            message("id eq \"\u{1F426}\" \u{e9}"),
+            "Unexpected character '\u{e9}' at position 11"
+        );
+    }
+
+    #[test]
+    fn refuses_a_number_no_double_holds() {
+        let huge = format!("1{}", "0".repeat(400));
+        assert_eq!(
+            parse(&format!("properties.n gt {}", "9".repeat(308)))
+                .unwrap()
+                .conditions[0]
+                .value,
+            Literal::Number("9".repeat(308).parse().unwrap())
+        );
+        for input in [
+            format!("properties.n gt {huge}"),
+            format!("properties.n gt -{huge}"),
         ] {
-            assert_eq!(js_number(number), rendered);
+            assert_eq!(code(&input).as_deref(), Some("validation_error"));
         }
     }
 
@@ -848,11 +892,32 @@ mod tests {
         assert_eq!(filtered("tags contains \"5.0\""), ["root"]);
         assert_eq!(filtered("tags contains 5"), Vec::<String>::new());
         assert_eq!(filtered("edge[references] eq \"stranger\""), ["child"]);
-        assert_eq!(filtered("backref[references] exists"), ["stranger"]);
-        assert_eq!(
-            filtered("backref[parent-of] eq \"root\" OR tags exists"),
-            ["child", "root"]
-        );
+        assert_eq!(filtered("edge[parent-of] not_exists"), ["stranger"]);
+    }
+
+    #[test]
+    fn refuses_a_backref_the_copy_cannot_answer_whole() {
+        for filter in [
+            "backref[parent-of] exists",
+            "tags exists OR backref[x] neq \"a\"",
+        ] {
+            let mut clauses = Vec::new();
+            let mut values = Vec::new();
+            assert!(matches!(
+                narrow(Some(filter), None, &mut clauses, &mut values),
+                Err(CoreError::Invalid(_))
+            ));
+        }
+        // The grammar's own refusal comes first, as the server's does.
+        assert!(matches!(
+            narrow(
+                Some("backref[x] exists AND title eq 1"),
+                None,
+                &mut Vec::new(),
+                &mut Vec::new()
+            ),
+            Err(CoreError::Validation { .. })
+        ));
     }
 
     #[test]

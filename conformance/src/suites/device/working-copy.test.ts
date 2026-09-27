@@ -2079,7 +2079,7 @@ describe("a local read narrows by the listing grammar", () => {
     ).toEqual([]);
   });
 
-  it("narrows a local list by an edge from an item and a backref to one", async () => {
+  it("narrows a local list by an edge from an item", async () => {
     await hydrateFamily("filter-edges");
     expect(await listed({})).toEqual(ALL);
     expect(
@@ -2091,17 +2091,13 @@ describe("a local read narrows by the listing grammar", () => {
       "an edge condition answered a row that draws no such edge to the item",
     ).toEqual(["child"]);
     expect(
-      await listed({ filter: 'backref[parent-of] eq "root"' }),
-      "a backref condition answered a row the item draws no such edge to",
-    ).toEqual(["child"]);
-    expect(
       await listed({ filter: "edge[parent-of] exists" }),
       "`exists` on an edge type answered a row that draws none of that type",
     ).toEqual(["child", "root"]);
     expect(
-      await listed({ filter: "backref[parent-of] not_exists" }),
-      "`not_exists` on a backref answered a row something points at",
-    ).toEqual(["root", "stranger"]);
+      await listed({ filter: "edge[parent-of] not_exists" }),
+      "`not_exists` on an edge type answered a row that draws one of that type",
+    ).toEqual(["grandchild", "stranger"]);
     expect(
       await listed({ filter: 'edge[parent-of] neq "child"' }),
       "`neq` on an edge answered the row that draws exactly that edge",
@@ -2129,6 +2125,50 @@ describe("a local read narrows by the listing grammar", () => {
     ).toEqual(["child", "grandchild"]);
   });
 
+  // The short timeout: a walk that does not end on the cycle hangs rather than refuses.
+  it("ends beneath on a parent-of cycle, answering each row once", async () => {
+    harness = await startHarness("filter-beneath-cycle");
+    const note = (id: string, child: string | null) => ({
+      item: {
+        id,
+        properties: { title: id, body: `marsh ${id}` },
+        ...(child === null
+          ? {}
+          : {
+              edges: {
+                "parent-of": block(
+                  edge(`${id}-${child}`, id, child, "parent-of"),
+                ),
+              },
+            }),
+      },
+    });
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          note("first", "second"),
+          note("second", "third"),
+          note("third", "first"),
+          note("outside", null),
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["core.note"], "library")).ok,
+      "the hydration failed, so nothing below is a statement about beneath",
+    ).toBe(true);
+    const cycle = ["first", "second", "third"];
+    for (const root of cycle) {
+      const answer = await harness.device.list({ beneath: root });
+      expect(
+        answer.ok ? answer.value.map((item) => item.id).sort() : answer,
+        `beneath ${root} on a cycle did not answer the cycle, each row once`,
+      ).toEqual(cycle);
+    }
+    expect(await searched({ beneath: "second" })).toEqual(cycle);
+  }, 20_000);
+
   it("narrows a local search by the listing grammar and beneath, as a list does", async () => {
     await hydrateFamily("filter-search");
     // The control: every note carries the word, so every absence below is
@@ -2139,9 +2179,9 @@ describe("a local read narrows by the listing grammar", () => {
       "a search narrowed by a property answered another set from the list's",
     ).toEqual(["grandchild", "root", "stranger"]);
     expect(
-      await searched({ filter: 'backref[parent-of] eq "root"' }),
-      "a search narrowed by a backref answered another set from the list's",
-    ).toEqual(["child"]);
+      await searched({ filter: 'edge[parent-of] eq "child"' }),
+      "a search narrowed by an edge answered another set from the list's",
+    ).toEqual(["root"]);
     expect(
       await searched({
         filter: 'properties.status eq "closed" OR tags not_exists',

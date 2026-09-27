@@ -81,6 +81,7 @@ pub struct SearchFilters {
     pub tags: Vec<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
+    /// A `backref` condition is refused `invalid`.
     #[uniffi(default = None)]
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
@@ -109,6 +110,7 @@ pub struct ListFilters {
     pub occurred_before: Option<String>,
     /// An expression in the server's listing grammar, answered as the server
     /// answers `filter` and refused `validation_error` where it refuses it.
+    /// A `backref` condition is refused `invalid`.
     #[uniffi(default = None)]
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
@@ -1456,6 +1458,40 @@ mod tests {
                 "{crossed:?}"
             );
         }
+    }
+
+    #[test]
+    fn list_filters_cross_whole() {
+        let crossed: marfa_core::ListFilters = ListFilters {
+            r#type: Some("core.note".into()),
+            state: Some(ItemState::Archived),
+            all_states: true,
+            tier: Some(Tier::Feed),
+            tags: vec!["a".into()],
+            occurred_after: Some("after".into()),
+            occurred_before: Some("before".into()),
+            filter: Some("tags exists".into()),
+            beneath: Some("root".into()),
+            limit: Some(3),
+            offset: Some(4),
+        }
+        .into();
+        assert_eq!(
+            crossed,
+            marfa_core::ListFilters {
+                r#type: Some("core.note".into()),
+                state: Some(marfa_core::ItemState::Archived),
+                all_states: true,
+                tier: Some(marfa_core::Tier::Feed),
+                tags: vec!["a".into()],
+                occurred_after: Some("after".into()),
+                occurred_before: Some("before".into()),
+                filter: Some("tags exists".into()),
+                beneath: Some("root".into()),
+                limit: Some(3),
+                offset: Some(4),
+            }
+        );
     }
 
     #[test]
