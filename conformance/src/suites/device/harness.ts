@@ -19,11 +19,14 @@ import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   SERVED_SOURCE,
+  edgesPage,
   headRead,
   itemsPage,
   typeCatalog,
+  wireEdge,
   wireItem,
   writeAnswers,
+  type WireEdgeOptions,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 
@@ -160,11 +163,28 @@ export function scriptHydration(
   options: {
     head: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    /**
+     * What `GET /edges` lists, keyed by edge type, for a hydration that holds
+     * a type whole. Scripted only where named, and a type with no entry
+     * answers an empty page, as `rows` does.
+     */
+    edges?: Record<string, WireEdgeOptions[]>;
     /** The catalog every read of `/types` answers, the scripted one unless named. */
     catalog?: Answer;
   },
 ): void {
   const rows = options.rows ?? {};
+  const edges = options.edges;
+  if (edges !== undefined) {
+    server.answer("GET", "/edges", (request) => {
+      const type = request.query.get("edge_type") ?? "";
+      return edgesPage(
+        (edges[type] ?? []).map((edge) =>
+          wireEdge({ ...edge, edge_type: type }),
+        ),
+      );
+    });
+  }
   server.answer("GET", "/events", headRead(options.head));
   server.answer("GET", "/types", options.catalog ?? typeCatalog());
   server.answer("GET", "/items", (request) => {

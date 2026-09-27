@@ -122,6 +122,7 @@ pub struct SearchHit {
 pub struct HydrateReport {
     pub types: Vec<String>,
     pub tier: Tier,
+    pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
     pub pages: u64,
@@ -149,6 +150,8 @@ pub struct Status {
     pub server_origin: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
+    pub slice_edge_types: Vec<String>,
+    pub pinned: Vec<String>,
     pub event_cursor: Option<String>,
     pub hydration: Hydration,
     pub items: u64,
@@ -923,15 +926,39 @@ impl MarfaCore {
     }
 
     pub fn hydrate(&self, types: Vec<String>, tier: Tier) -> Result<HydrateReport, MarfaError> {
-        let report = self.inner.hydrate(&types, tier.into())?;
+        self.hydrate_with(types, tier, Vec::new())
+    }
+
+    /// A hydration that also holds every edge of `edge_types` the key reads,
+    /// whichever ends the copy holds.
+    pub fn hydrate_with(
+        &self,
+        types: Vec<String>,
+        tier: Tier,
+        edge_types: Vec<String>,
+    ) -> Result<HydrateReport, MarfaError> {
+        let report = self.inner.hydrate_with(&types, tier.into(), &edge_types)?;
         Ok(HydrateReport {
             types: report.types,
             tier: report.tier.into(),
+            edge_types: report.edge_types,
             items: report.items,
             edges: report.edges,
             pages: report.pages,
             cursor: report.cursor,
         })
+    }
+
+    /// Holds one row by id whatever the slice says of it, read now. Answers
+    /// whether it was not pinned already.
+    pub fn pin(&self, id: String) -> Result<bool, MarfaError> {
+        Ok(self.inner.pin(&id)?)
+    }
+
+    /// Stops holding a row by id; one the slice does not take goes. Answers
+    /// whether it was pinned.
+    pub fn unpin(&self, id: String) -> Result<bool, MarfaError> {
+        Ok(self.inner.unpin(&id)?)
     }
 
     pub fn catch_up(&self) -> Result<CatchUpReport, MarfaError> {
@@ -994,6 +1021,8 @@ impl MarfaCore {
             server_origin: status.server_origin,
             slice_types: status.slice_types,
             slice_tier: status.slice_tier.map(Into::into),
+            slice_edge_types: status.slice_edge_types,
+            pinned: status.pinned,
             event_cursor: status.event_cursor,
             hydration: match status.hydration {
                 marfa_core::Hydration::Never => Hydration::Never,

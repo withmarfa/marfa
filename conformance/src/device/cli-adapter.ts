@@ -145,7 +145,11 @@ export class CliDevice implements DeviceUnderTest {
     );
   }
 
-  async hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>> {
+  async hydrate(
+    types: string[],
+    tier: Tier,
+    options: { edgeTypes?: string[] } = {},
+  ): Promise<Outcome<HydrateReport>> {
     return this.json<HydrateReport>([
       "hydrate",
       ...this.server(),
@@ -153,7 +157,16 @@ export class CliDevice implements DeviceUnderTest {
       types.join(","),
       "--tier",
       tier,
+      ...(options.edgeTypes ?? []).flatMap((type) => ["--edge-type", type]),
     ]);
+  }
+
+  async pin(id: string): Promise<Outcome<unknown>> {
+    return this.json<unknown>(["pin", ...this.server(), id]);
+  }
+
+  async unpin(id: string): Promise<Outcome<unknown>> {
+    return this.json<unknown>(["unpin", id]);
   }
 
   async catchUp(): Promise<Outcome<CatchUpReport>> {

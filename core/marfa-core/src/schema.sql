@@ -61,6 +61,14 @@ CREATE TABLE IF NOT EXISTS tags (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
 
+-- The rows held by id whatever the slice says of them (`device.md` 1): a
+-- folder keeps the rows its files are bound to after they leave the slice.
+-- Not a child of `items`, because a hydration clears the copy and keeps the
+-- pins, and reads each pinned row again.
+CREATE TABLE IF NOT EXISTS pins (
+  item_id TEXT PRIMARY KEY
+) WITHOUT ROWID;
+
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
 -- What goes in and what does not is `store::index_row`'s, and stated there.

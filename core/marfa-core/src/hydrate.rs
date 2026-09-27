@@ -4,17 +4,19 @@ use std::time::Duration;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery};
-use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
+use crate::model::{Draft, EdgeDraft, HydrateReport, Subject, Tier, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{EventPayload, WireEdge, WireEdgeBlock};
+use crate::wire::{EventPayload, WireEdge, WireEdgeBlock, WireItemWithMetadata};
 use crate::{Core, Result};
 
 const HEAD_ATTEMPTS: usize = 3;
 const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Fills the copy with the declared slice, read after a head read so the
-/// snapshot has a resume point from before its first page.
+/// snapshot has a resume point from before its first page: its types at its
+/// tier, every edge of `edge_types` the key reads, and the pinned rows, each
+/// read again (`device.md` 1).
 ///
 /// The copy is cleared once the head read and the catalog are in, before
 /// the first page. A head read or a catalog on another contract is refused
@@ -28,8 +30,10 @@ pub(crate) fn hydrate(
     http: &Http,
     types: &[String],
     tier: Tier,
+    edge_types: &[String],
 ) -> Result<HydrateReport> {
     let types = declared_types(types)?;
+    let edge_types = declared_edge_types(edge_types)?;
     {
         let conn = core.conn()?;
         if let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
@@ -59,7 +63,6 @@ pub(crate) fn hydrate(
         Catalog::load(&conn)?
     };
 
-    let mut edges = 0u64;
     let mut pages = 0u64;
     for declared in &types {
         let mut page_cursor: Option<String> = None;
@@ -86,13 +89,11 @@ pub(crate) fn hydrate(
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                     for edge in &block.data {
                         store::upsert_edge(&tx, edge)?;
-                        edges += 1;
                     }
                 }
             }
             for edge in &overflow {
                 store::upsert_edge(&tx, edge)?;
-                edges += 1;
             }
             tx.commit()?;
             let Some(next) = page.next_cursor.clone() else {
@@ -114,7 +115,59 @@ pub(crate) fn hydrate(
         }
     }
 
-    let items = {
+    for edge_type in &edge_types {
+        let mut page_cursor: Option<String> = None;
+        loop {
+            let page = http.edges_page(edge_type, page_cursor.as_deref())?;
+            pages += 1;
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            for edge in &page.data {
+                store::upsert_edge(&tx, edge)?;
+            }
+            tx.commit()?;
+            // Paged to `next_cursor: null` rather than to an empty page: the
+            // listing leaves out rows the key cannot read, so an empty page
+            // can still have more after it.
+            let Some(next) = page.next_cursor else {
+                break;
+            };
+            if page_cursor.as_deref() == Some(next.as_str()) {
+                return Err(CoreError::Decoding(
+                    "the server kept answering with the same cursor while reporting more edges"
+                        .into(),
+                ));
+            }
+            page_cursor = Some(next);
+        }
+    }
+
+    // Read after the pages, so a pin made while they were read is kept too.
+    let pinned = store::pins(&*core.conn()?)?;
+    for id in pinned {
+        if store::item_held(&*core.conn()?, &id)? {
+            continue;
+        }
+        // A pinned row the server does not hold stays pinned and holds
+        // nothing until an event brings it.
+        let Some((row, edges)) = read_with_edges(http, &id)? else {
+            continue;
+        };
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        store::upsert_item(
+            &tx,
+            &row.item,
+            Some(&row.metadata.tags),
+            &catalog.indexing(&row.item.r#type),
+        )?;
+        for edge in &edges {
+            store::upsert_edge(&tx, edge)?;
+        }
+        tx.commit()?;
+    }
+
+    let (items, edges) = {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         lay_queue_over(&tx, &catalog)?;
@@ -125,16 +178,22 @@ pub(crate) fn hydrate(
             &serde_json::to_string(&types)?,
         )?;
         store::meta_set(&tx, store::META_SLICE_TIER, tier.as_str())?;
+        store::meta_set(
+            &tx,
+            store::META_SLICE_EDGE_TYPES,
+            &serde_json::to_string(&edge_types)?,
+        )?;
         store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
         store::meta_delete(&tx, store::META_HYDRATE_STATE)?;
-        let items = store::count(&tx, "items")?;
+        let counts = (store::count(&tx, "items")?, store::count(&tx, "edges")?);
         tx.commit()?;
-        items
+        counts
     };
 
     Ok(HydrateReport {
         types,
         tier,
+        edge_types,
         items,
         edges,
         pages,
@@ -222,6 +281,71 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
         return Err(CoreError::Invalid("declare at least one type".into()));
     }
     Ok(declared)
+}
+
+/// Edge types to hold whole, each named once. None is a slice like any other.
+/// A comma is refused rather than sent, because the listing reads one as a
+/// list of types.
+fn declared_edge_types(edge_types: &[String]) -> Result<Vec<String>> {
+    let mut declared: Vec<String> = Vec::new();
+    for raw in edge_types {
+        let name = raw.trim();
+        if name.is_empty()
+            || name == "*"
+            || name.contains(char::is_whitespace)
+            || name.contains(',')
+        {
+            return Err(CoreError::Invalid(format!(
+                "not an edge type to hold whole: {raw:?}"
+            )));
+        }
+        if !declared.iter().any(|seen| seen == name) {
+            declared.push(name.to_string());
+        }
+    }
+    Ok(declared)
+}
+
+/// One row by id with every edge it draws, overflow included, read before
+/// any write so no transaction waits on the network. `None` where the server
+/// holds no such row.
+pub(crate) fn read_with_edges(
+    http: &Http,
+    id: &str,
+) -> Result<Option<(WireItemWithMetadata, Vec<WireEdge>)>> {
+    let Some(read) = http.item_with_edges(id)? else {
+        return Ok(None);
+    };
+    let mut edges = Vec::new();
+    for (edge_type, block) in read.item.edges.iter().flatten() {
+        edges.extend(block.data.iter().cloned());
+        edges.extend(fetch_overflow(http, id, edge_type, block)?);
+    }
+    Ok(Some((read, edges)))
+}
+
+/// Writes a row read by id, and the edges it draws, into the copy, and lays
+/// the writes still waiting on them back over them. A row the copy holds at
+/// a later version is left as it is: an event applied since the read is
+/// newer than the read.
+pub(crate) fn hold_row(
+    conn: &rusqlite::Connection,
+    catalog: &Catalog,
+    row: &WireItemWithMetadata,
+    edges: &[WireEdge],
+) -> Result<()> {
+    if !store::holds_newer(conn, Subject::Item, &row.item.id, row.item.version)? {
+        let indexing = catalog.indexing(&row.item.r#type);
+        store::upsert_item(conn, &row.item, Some(&row.metadata.tags), &indexing)?;
+        store::lay_waiting_writes_over(conn, &row.item.id, &indexing)?;
+    }
+    for edge in edges {
+        if !store::holds_newer(conn, Subject::Edge, &edge.id, edge.version)? {
+            store::upsert_edge(conn, edge)?;
+            store::lay_waiting_edge_writes_over(conn, &edge.id)?;
+        }
+    }
+    Ok(())
 }
 
 /// The edges an inline block could not carry, fetched before any write so no

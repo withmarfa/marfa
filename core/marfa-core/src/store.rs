@@ -18,6 +18,7 @@ pub const META_SCHEMA_VERSION: &str = "schema_version";
 pub const META_SERVER_ORIGIN: &str = "server_origin";
 pub const META_SLICE_TYPES: &str = "slice_types";
 pub const META_SLICE_TIER: &str = "slice_tier";
+pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
@@ -40,7 +41,7 @@ const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("7", "b0e4c59d5dbd0471"),
     ("8", "662310c80f2c6871"),
     ("9", "23d541400ea60681"),
-    ("10", "bd491aca38ffff47"),
+    ("10", "80a22163146aea8b"),
 ];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
@@ -969,9 +970,12 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE queue SET target_id = ?2 WHERE target_id = ?1",
         "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE OR IGNORE pins SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
     }
+    // Left where the server's row was pinned already.
+    unpin(conn, local)?;
     // An edge create carries its endpoints in the body it sends, and a
     // file's links and declined links are ids its bytes named.
     let mut edges = conn
@@ -1190,26 +1194,74 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         conn,
         id,
         "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
+        &[],
     )
 }
 
 /// Drops an item that left the slice, with the edges it draws and none drawn
-/// to it: the copy holds an edge from an item in its slice whatever its
-/// target (`device.md` 43), as hydration does.
-pub fn evict_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    remove_item(conn, id, "DELETE FROM edges WHERE source_id = ?1")
+/// to it: the copy holds an edge from an item it holds whatever its target
+/// (`device.md` 43), as hydration does. An edge of a type in `whole`
+/// stays, because the slice holds that type whichever end it holds.
+pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
+    let kept = vec!["?"; whole.len()].join(", ");
+    let edges = if whole.is_empty() {
+        "DELETE FROM edges WHERE source_id = ?1".to_string()
+    } else {
+        format!("DELETE FROM edges WHERE source_id = ?1 AND edge_type NOT IN ({kept})")
+    };
+    remove_item(conn, id, &edges, whole)
 }
 
 /// Whether the copy changed: a purge of an item already evicted still takes
 /// the edges held items drew to it.
-fn remove_item(conn: &Connection, id: &str, edges: &str) -> Result<bool, CoreError> {
+fn remove_item(
+    conn: &Connection,
+    id: &str,
+    edges: &str,
+    kept: &[String],
+) -> Result<bool, CoreError> {
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    let edges = conn.execute(edges, [id])?;
+    let edges = conn.execute(
+        edges,
+        params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
+    )?;
     Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? + edges > 0)
+}
+
+/// The edge types a hydration declared to hold whole, or none.
+pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    match meta_get(conn, META_SLICE_EDGE_TYPES)? {
+        Some(json) => Ok(serde_json::from_str(&json)?),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// Holds `id` by id from now on. Answers whether it was not pinned already.
+pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0)
+}
+
+/// Stops holding `id` by id. Answers whether it was pinned.
+pub fn unpin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.execute("DELETE FROM pins WHERE item_id = ?1", [id])? > 0)
+}
+
+pub fn pinned(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .query_row("SELECT 1 FROM pins WHERE item_id = ?1", [id], |_| Ok(()))
+        .optional()?
+        .is_some())
+}
+
+/// Every pinned id, in order.
+pub fn pins(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT item_id FROM pins ORDER BY item_id")?;
+    let rows = statement.query_map([], |row| row.get(0))?;
+    Ok(rows.collect::<Result<Vec<String>, _>>()?)
 }
 
 pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -1915,8 +1967,8 @@ mod tests {
         }
         upsert_edge(&conn, &wire_edge("from", "n1", "n2", "references")).unwrap();
         upsert_edge(&conn, &wire_edge("toward", "n2", "n1", "references")).unwrap();
-        assert!(evict_item(&conn, "n1").unwrap());
-        assert!(!evict_item(&conn, "n1").unwrap());
+        assert!(evict_item(&conn, "n1", &[]).unwrap());
+        assert!(!evict_item(&conn, "n1", &[]).unwrap());
         assert_eq!(count(&conn, "tags").unwrap(), 1);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
         let left: Vec<String> = edges_from(&conn, "n2")
@@ -1930,6 +1982,51 @@ mod tests {
         // Purged after it left, the item still takes the edge drawn to it.
         assert!(purge_item(&conn, "n1").unwrap());
         assert!(edges_from(&conn, "n2").unwrap().is_empty());
+    }
+
+    /// An edge of a type held whole outlives the eviction of its source, of
+    /// either type named, and one of another type does not.
+    #[test]
+    fn evicting_an_item_keeps_the_edges_of_a_type_held_whole() {
+        let conn = conn();
+        upsert_item(
+            &conn,
+            &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
+            None,
+            &Indexing::default(),
+        )
+        .unwrap();
+        for (id, edge_type) in [
+            ("drawn", "references"),
+            ("beneath", "parent-of"),
+            ("before", "supersedes"),
+        ] {
+            upsert_edge(&conn, &wire_edge(id, "n1", "n2", edge_type)).unwrap();
+        }
+        let whole = ["parent-of".to_string(), "supersedes".to_string()];
+        assert!(evict_item(&conn, "n1", &whole).unwrap());
+        let left: Vec<String> = edges_from(&conn, "n1")
+            .unwrap()
+            .into_iter()
+            .map(|edge| edge.id)
+            .collect();
+        assert_eq!(left, ["before", "beneath"]);
+    }
+
+    /// A pin on a minted id moves to the row the server answered, and one
+    /// already on that row is not doubled.
+    #[test]
+    fn a_pin_moves_to_the_answered_id() {
+        let conn = conn();
+        assert!(pin(&conn, "minted").unwrap());
+        assert!(!pin(&conn, "minted").unwrap());
+        adopt_answered_id(&conn, "minted", "answered").unwrap();
+        assert_eq!(pins(&conn).unwrap(), ["answered"]);
+        pin(&conn, "second").unwrap();
+        adopt_answered_id(&conn, "second", "answered").unwrap();
+        assert_eq!(pins(&conn).unwrap(), ["answered"]);
+        assert!(unpin(&conn, "answered").unwrap());
+        assert!(!pinned(&conn, "answered").unwrap());
     }
 
     #[test]

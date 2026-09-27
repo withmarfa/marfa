@@ -111,6 +111,21 @@ export function itemsPage(
   };
 }
 
+/**
+ * A page of `GET /edges`, the listing a hydration walks for an edge type it
+ * holds whole.
+ */
+export function edgesPage(
+  edges: Array<Record<string, unknown>>,
+  options: { nextCursor?: string } = {},
+): Answer {
+  return {
+    kind: "json",
+    status: 200,
+    body: { data: edges, next_cursor: options.nextCursor ?? null },
+  };
+}
+
 export function wireType(
   id: string,
   options: {

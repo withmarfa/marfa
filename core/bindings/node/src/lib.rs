@@ -124,6 +124,7 @@ pub struct SearchHit {
 pub struct HydrateReport {
     pub types: Vec<String>,
     pub tier: Tier,
+    pub edge_types: Vec<String>,
     pub items: i64,
     pub edges: i64,
     pub pages: i64,
@@ -143,6 +144,8 @@ pub struct Status {
     pub server_origin: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
+    pub slice_edge_types: Vec<String>,
+    pub pinned: Vec<String>,
     pub event_cursor: Option<String>,
     pub hydration: Hydration,
     pub items: i64,
@@ -679,6 +682,7 @@ pub struct Hydrate {
     core: Arc<marfa_core::Core>,
     types: Vec<String>,
     tier: marfa_core::Tier,
+    edge_types: Vec<String>,
 }
 
 #[napi]
@@ -687,18 +691,40 @@ impl Task for Hydrate {
     type JsValue = HydrateReport;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        self.core.hydrate(&self.types, self.tier).map_err(failure)
+        self.core
+            .hydrate_with(&self.types, self.tier, &self.edge_types)
+            .map_err(failure)
     }
 
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
         Ok(HydrateReport {
             types: report.types,
             tier: report.tier.into(),
+            edge_types: report.edge_types,
             items: count(report.items),
             edges: count(report.edges),
             pages: count(report.pages),
             cursor: report.cursor,
         })
+    }
+}
+
+pub struct Pin {
+    core: Arc<marfa_core::Core>,
+    id: String,
+}
+
+#[napi]
+impl Task for Pin {
+    type Output = bool;
+    type JsValue = bool;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        self.core.pin(&self.id).map_err(failure)
+    }
+
+    fn resolve(&mut self, _: Env, pinned: Self::Output) -> Result<Self::JsValue> {
+        Ok(pinned)
     }
 }
 
@@ -925,11 +951,41 @@ impl MarfaCore {
     /// Replaces the local copy with the declared types at `tier`.
     #[napi]
     pub fn hydrate(&self, types: Vec<String>, tier: Tier) -> AsyncTask<Hydrate> {
+        self.hydrate_with(types, tier, Vec::new())
+    }
+
+    /// A hydration that also holds every edge of `edgeTypes` the key reads,
+    /// whichever ends the copy holds.
+    #[napi]
+    pub fn hydrate_with(
+        &self,
+        types: Vec<String>,
+        tier: Tier,
+        edge_types: Vec<String>,
+    ) -> AsyncTask<Hydrate> {
         AsyncTask::new(Hydrate {
             core: Arc::clone(&self.inner),
             types,
             tier: tier.into(),
+            edge_types,
         })
+    }
+
+    /// Holds one row by id whatever the slice says of it, read now. Resolves
+    /// whether it was not pinned already.
+    #[napi]
+    pub fn pin(&self, id: String) -> AsyncTask<Pin> {
+        AsyncTask::new(Pin {
+            core: Arc::clone(&self.inner),
+            id,
+        })
+    }
+
+    /// Stops holding a row by id; one the slice does not take goes. Answers
+    /// whether it was pinned.
+    #[napi]
+    pub fn unpin(&self, id: String) -> Result<bool> {
+        self.inner.unpin(&id).map_err(failure)
     }
 
     /// Applies every event since the stored cursor.
@@ -1005,6 +1061,8 @@ impl MarfaCore {
             server_origin: status.server_origin,
             slice_types: status.slice_types,
             slice_tier: status.slice_tier.map(Into::into),
+            slice_edge_types: status.slice_edge_types,
+            pinned: status.pinned,
             event_cursor: status.event_cursor,
             hydration: status.hydration.into(),
             items: count(status.items),
