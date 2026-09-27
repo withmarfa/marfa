@@ -282,8 +282,8 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- without this the next pull writes the link back and the person removes
   -- it again, forever (`folders.md` 27). Naming the link again lifts it.
   declined_links TEXT NOT NULL,
-  -- The version line the file's last edit since the folder wrote it was read
-  -- at, 0 where it carried none; null where none went (`folders.md` 17, 18).
+  -- The newest version line an edit of this device's has spent, 0 where its
+  -- file carried none; null where no edit went (`folders.md` 17, 18).
   edit_line INTEGER,
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;

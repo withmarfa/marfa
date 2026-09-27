@@ -712,11 +712,14 @@ impl Folder {
             .unwrap_or_default();
         let document = file.document();
         let properties = sendable(document.properties);
-        // A save that only dropped the id line changes nothing.
+        // A save that changed only lines never sent, the id or the version,
+        // changes nothing.
         let in_step = match bound {
             Some(bound) => {
                 bound.content_hash == file.hash
                     || file.id.is_none() && properties == held.properties
+                    || carries_frontmatter(&file.path)
+                        && self.render(&held, &declined, true, file.line)?.0 == file.text
             }
             None => properties
                 .iter()
@@ -727,11 +730,11 @@ impl Folder {
             // Bytes set aside in a conflicted copy against this device's own
             // earlier save go on the version they were read at (`folders.md` 31).
             let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
-            // A line an earlier edit already went on is spent: this edit was
-            // made against that one (`folders.md` 17).
+            // A line no newer than one an earlier edit went on is spent: this
+            // edit was made against that one (`folders.md` 17).
             let line = file
                 .line
-                .filter(|line| *line < held.version && edit_line != Some(*line));
+                .filter(|line| *line < held.version && edit_line.is_none_or(|spent| *line > spent));
             let read_at = untaken.or(line);
             let edit = Edit {
                 properties,
@@ -743,7 +746,7 @@ impl Folder {
             } else {
                 self.core.update_item(item_id, &edit)?;
             }
-            edit_line = Some(file.line.unwrap_or(0));
+            edit_line = Some(edit_line.unwrap_or(0).max(file.line.unwrap_or(0)));
         }
         let (named, declined, resolved) =
             self.queue_links(item_id, &document.links, &had, &declined)?;
@@ -1200,14 +1203,15 @@ impl Folder {
                 report.moved += 1;
             }
 
-            // Written over an edit still waiting, the file's line is spent
-            // once that edit lands (`folders.md` 17, 18).
+            // Written over an edit still waiting, the line it writes is spent
+            // too, since the file holds that edit (`folders.md` 17, 18).
+            let spent = bound.as_ref().and_then(|bound| bound.edit_line);
             let edit_line = if carries_frontmatter(Path::new(&want))
                 && crate::store::item_waits(&*self.core.conn()?, &item.id)?
             {
-                Some(item.version)
+                Some(spent.unwrap_or(0).max(item.version))
             } else {
-                bound.as_ref().and_then(|bound| bound.edit_line)
+                spent
             };
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| {

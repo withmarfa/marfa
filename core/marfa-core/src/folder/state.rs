@@ -24,8 +24,8 @@ pub struct Bound {
     /// The targets whose rendered link the person took out, for an edge the
     /// folder keeps (`folders.md` 27). A pull renders no link for them.
     pub declined: Vec<String>,
-    /// The version line the file's last edit since the folder wrote it was
-    /// read at, 0 where it carried none; `None` where no edit went since.
+    /// The newest version line an edit of this device's has spent, 0 where
+    /// its file carried none; `None` where no edit went.
     pub edit_line: Option<i64>,
 }
 

@@ -2809,6 +2809,9 @@ describe("writing", () => {
       "folder-version-thinned-words",
       id,
     );
+    // The witness: a push that rebases nothing says nothing of it.
+    const quiet = await harness!.folder.pushText();
+    expect(quiet.ok && quiet.value).not.toContain("no longer holds");
     door.thin(id, 1);
     put(harness!, "Note.md", held.replace("as read", "my edit"));
     const said = await harness!.folder.pushText();
@@ -2816,6 +2819,184 @@ describe("writing", () => {
     expect(said.ok && said.value).toContain(
       "1 edit(s) written from a version the server no longer holds, sent again on the version this copy holds",
     );
+  });
+
+  it("stops at one resend where the server no longer holds the version the copy holds either", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b8";
+    const { door, rows, held } = await heldWhileRetitled(
+      "folder-version-thinned-twice",
+      id,
+    );
+    // The server moves on without the copy hearing, and thins both versions.
+    door.update(id, { properties: { title: "Again" }, version: 2 });
+    door.thin(id, 1);
+    door.thin(id, 2);
+    put(harness!, "Note.md", held.replace("as read", "my edit"));
+    const pushed = await harness!.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentUpdates(harness!).map((update) => update.body.version),
+      "the edit was sent again past the one resend a pass allows",
+    ).toEqual([1, 2]);
+    expect(
+      pushed.value.drain.verdicts.map((entry) => [entry.verdict, entry.reason]),
+    ).toEqual([
+      ["blocked", "ancestor_unavailable"],
+      ["blocked", "ancestor_unavailable"],
+    ]);
+    expect([pushed.value.drain.sent, pushed.value.drain.rebased]).toEqual([
+      2, 1,
+    ]);
+    expect(rows.get(id)?.properties.title).toBe("Again");
+  });
+
+  it("keeps a line spent where a pull writes the file over the edit that spent it", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b9";
+    harness = await folderHarness("folder-version-spent-under-pull", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "Note", body: "as read\n", extra: "theirs" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Note.md");
+    door!.update(id, { properties: { extra: "theirs" }, version: 1 });
+    const update = door!.update.bind(door!);
+    let failed = false;
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) => {
+      if (failed) return update(...args);
+      failed = true;
+      return refusal(503, "service_unavailable", "later");
+    }) as FolderDoor["update"];
+
+    const first = held.replace("as read", "mine");
+    put(harness, "Note.md", first);
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the pull wrote the file over the waiting edit.
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2");
+
+    // An editor that did not reload saves on from its first buffer.
+    put(harness, "Note.md", first.replace("mine", "mine, more"));
+    const more = await harness.folder.push();
+    expect(more.ok, JSON.stringify(more)).toBe(true);
+    expect(
+      door!.conflictedCopies(),
+      "a save made on from the first was merged against it as another machine's",
+    ).toEqual([]);
+    expect(rows.get(id)?.properties.body).toBe("mine, more\n");
+  });
+
+  it("sends nothing for a save that changes only the version line", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000ba";
+    harness = await folderHarness("folder-version-line-only", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [liveReplay("1", [])],
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Note.md");
+    const mine = held.replace("as read", "mine");
+    put(harness, "Note.md", mine);
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the line was rewritten under the editor.
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2");
+
+    // The editor saves its buffer back, and a person types a line of their own.
+    for (const saved of [
+      mine,
+      mine.replace("marfa_version: 1", "marfa_version: 99"),
+    ]) {
+      put(harness, "Note.md", saved);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    }
+    expect(
+      sentUpdates(harness).map((update) => update.body.version),
+      "a save that changed only the version line sent an edit, and each such save moves the version again",
+    ).toEqual([1]);
+    expect(rows.get(id)?.version).toBe(2);
+
+    // A line naming a version the copy has not reached is no base.
+    put(
+      harness,
+      "Note.md",
+      mine
+        .replace("marfa_version: 1", "marfa_version: 99")
+        .replace("mine", "mine, more"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness).at(-1)?.body.version).toBe(2);
+    expect(rows.get(id)?.properties.body).toBe("mine, more\n");
+  });
+
+  it("writes the line into a file saved without one, once its edit lands", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000bb";
+    harness = await folderHarness("folder-version-line-restored", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [liveReplay("1", [])],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Note.md");
+    // The witness: the pull wrote a line to take out.
+    expect(held).toContain("marfa_version: 1\n");
+    put(
+      harness,
+      "Note.md",
+      held.replace("marfa_version: 1\n", "").replace("as read", "mine"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      read(harness, "Note.md"),
+      "a file saved without its line never got it back once its edit landed",
+    ).toContain("marfa_version: 2");
   });
 
   it("says while watching that an edit went over a thinned version", async () => {
