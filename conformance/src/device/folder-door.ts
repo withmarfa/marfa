@@ -329,7 +329,7 @@ export class FolderDoor {
           source_id: null,
           type: before.type,
           version: 1,
-          tags: [CONFLICTED_COPY_TAG],
+          tags: [...new Set([...(before.tags ?? []), CONFLICTED_COPY_TAG])],
         });
       }
     }

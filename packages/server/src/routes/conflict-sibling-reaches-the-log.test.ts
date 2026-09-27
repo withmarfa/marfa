@@ -113,6 +113,56 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     expect(payload.item.properties.body).toBe("the losing edit");
   });
 
+  it("appends a created row for each edge the sibling was given, after the sibling's", async () => {
+    const { id, base } = await collidingNote();
+    const parent = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "the parent" } },
+    });
+    const parentId = ((await parent.json()) as { item: { id: string } }).item
+      .id;
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parentId, target_id: id, edge_type: "parent-of" },
+    });
+    expect(edge.status).toBe(201);
+    const cursor = await logCursor();
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
+      key: ctx.workingKey,
+      body: {
+        properties: { body: "a losing edit with a parent" },
+        version: base,
+      },
+    });
+    expect(res.status).toBe(200);
+    const siblingId = (
+      (await res.json()) as {
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }
+    ).conflict_resolution?.conflicted_copy_id;
+
+    const rows = await logSince(cursor);
+    const siblingAt = rows.findIndex(
+      (r) => r.item_id === siblingId && r.event_type === "created",
+    );
+    const edgeRows = rows.filter((r) => {
+      if (!r.event_type.startsWith("edge")) return false;
+      const payload = JSON.parse(r.payload) as {
+        edge?: { source_id: string; target_id: string };
+      };
+      return (
+        payload.edge?.source_id === parentId &&
+        payload.edge.target_id === siblingId
+      );
+    });
+    expect(
+      edgeRows.map((r) => r.event_type),
+      "the edge the sibling was given never reached the log",
+    ).toEqual(["edge_created"]);
+    expect(rows.indexOf(edgeRows[0]!)).toBeGreaterThan(siblingAt);
+  });
+
   it("does not put the resolution report on the published item", async () => {
     const { id, base } = await collidingNote();
     const cursor = await logCursor();
@@ -167,6 +217,60 @@ describe("a conflicted copy is observable to a client that was not the writer", 
       "conflict_sibling" in (again as unknown as Record<string, unknown>),
       "a retry that wrote no row still offered one to announce",
     ).toBe(false);
+    expect(await logSince(cursor)).toHaveLength(0);
+  });
+
+  it("gives a retry no second copy of an edge the sibling was given", async () => {
+    const { id, base } = await collidingNote();
+    const parent = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "the retried parent" } },
+    });
+    const parentId = ((await parent.json()) as { item: { id: string } }).item
+      .id;
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parentId, target_id: id, edge_type: "parent-of" },
+    });
+    expect(edge.status).toBe(201);
+    const key = `retry-edge-${Math.random().toString(36).slice(2, 10)}`;
+
+    const first = await request(
+      ctx.app,
+      "PATCH",
+      `/items/${id}?conflict=auto`,
+      {
+        key: ctx.workingKey,
+        headers: { "Idempotency-Key": key },
+        body: { properties: { body: "retried edit, parented" }, version: base },
+      },
+    );
+    expect(first.status).toBe(200);
+    const siblingId = (
+      (await first.json()) as {
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }
+    ).conflict_resolution?.conflicted_copy_id;
+    const parentsOf = async () =>
+      (await ctx.storage.edges.listToTarget(siblingId!)).data.filter(
+        (held) => held.edge_type === "parent-of",
+      );
+    // The witness: the first execution gave the sibling its parent.
+    expect(await parentsOf()).toHaveLength(1);
+
+    const cursor = await logCursor();
+    const again = await ctx.storage.items.update(id, {
+      properties: { body: "retried edit, parented" },
+      version: base,
+      conflict_mode: "auto",
+      idempotency_key: key,
+      may_copy_edge: () => true,
+    });
+    expect("error" in again).toBe(false);
+    expect(
+      await parentsOf(),
+      "a retry gave the sibling a second copy of its parent edge",
+    ).toHaveLength(1);
     expect(await logSince(cursor)).toHaveLength(0);
   });
 });
