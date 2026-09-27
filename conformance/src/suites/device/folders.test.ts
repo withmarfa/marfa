@@ -1115,6 +1115,32 @@ describe("files and items", () => {
       }
     });
 
+    it("ends the watch and says so when its hydration meets an answer no retry changes", async () => {
+      harness = await behind("folder-watch-hydration-refused", [
+        agedOut,
+        answers.forbidden("forbidden"),
+      ]);
+      const watching = harness.folder.watch();
+      try {
+        // The witness is `› keeps watching through a hydration that failed,
+        // and tries it again`: a 500 in the same place keeps it running.
+        await vi.waitFor(
+          () =>
+            expect(
+              watching.running(),
+              `a watch went on after its hydration was refused, so nothing says the folder no longer keeps up: ${watching.stderr}`,
+            ).toBe(false),
+          { timeout: 20_000, interval: 100 },
+        );
+        expect(watching.stderr).toContain(
+          "the server's changes stopped reaching this folder",
+        );
+        expect(watching.stderr).toContain("forbidden");
+      } finally {
+        await watching.stop();
+      }
+    });
+
     it("hydrates at the next push after one whose hydration failed", async () => {
       harness = await behind("folder-push-hydration-fails", [
         agedOut,

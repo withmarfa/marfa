@@ -2225,6 +2225,367 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toBe("read again");
   });
 
+  it("keeps a pin the key can no longer read, and completes the hydration", async () => {
+    harness = await startHarness("pinned-unreadable");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    server.answer(
+      "GET",
+      "/items/settings",
+      answers.updated(wireItem({ id: "settings", type: "core.bookmark" })),
+      answers.forbidden("type_not_permitted"),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    // The witness: the pin held the row while the key could read it.
+    expect((await device.get("settings")).ok).toBe(true);
+
+    const again = await device.hydrate(["core.note"], "library");
+    expect(
+      again.ok,
+      `a pinned row the key can no longer read failed the hydration, so the copy refuses every read until the pin is taken off: ${JSON.stringify(again)}`,
+    ).toBe(true);
+    const status = await device.status();
+    expect(status.ok && [status.value.hydration, status.value.pinned]).toEqual([
+      "complete",
+      ["settings"],
+    ]);
+    expect(
+      (await device.get("settings")).ok,
+      "the copy kept a row the key can no longer read",
+    ).toBe(false);
+    expect((await device.get("note")).ok).toBe(true);
+  });
+
+  it("pins a row of its own create the server does not hold yet, and moves the pin to the id the create is answered with", async () => {
+    harness = await startHarness("pinned-own-create");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "mine.md",
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    server.answer(
+      "GET",
+      `/items/${local}`,
+      refusal(404, "not_found", "no such item"),
+    );
+
+    const pinned = await device.pin(local);
+    expect(
+      pinned.ok,
+      `a pin of a row the copy holds and the server does not hold yet was refused, so a folder cannot pin its own new file: ${JSON.stringify(pinned)}`,
+    ).toBe(true);
+    const before = await device.status();
+    expect(before.ok && before.value.pinned).toEqual([local]);
+
+    const answered = "01a00000-0000-7000-8000-0000000000e1";
+    scriptWrites(server, {
+      create: [
+        answers.created(
+          wireItem({
+            id: answered,
+            properties: { title: "mine", body: "mine" },
+            source: "notes",
+            source_id: "mine.md",
+          }),
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const after = await device.status();
+    expect(
+      after.ok && after.value.pinned,
+      "the pin stayed on the id minted here, which names nothing once the create is answered",
+    ).toEqual([answered]);
+    expect((await device.get(answered)).ok).toBe(true);
+  });
+
+  it("takes the pin off a row whose create was refused", async () => {
+    harness = await startHarness("pinned-create-refused");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "refused", body: "refused" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    server.answer(
+      "GET",
+      `/items/${local}`,
+      refusal(404, "not_found", "no such item"),
+    );
+    expect((await device.pin(local)).ok).toBe(true);
+    // The witness: the pin is listed before the refusal.
+    const before = await device.status();
+    expect(before.ok && before.value.pinned).toEqual([local]);
+
+    scriptWrites(server, {
+      create: [refusal(400, "invalid_properties", "not a note")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect((await device.get(local)).ok).toBe(false);
+    const after = await device.status();
+    expect(
+      after.ok && after.value.pinned,
+      "a refused create left its pin, so the report lists a row that exists nowhere and every hydration asks the server for it",
+    ).toEqual([]);
+  });
+
+  it("lays a waiting write over a row it pins", async () => {
+    harness = await startHarness("pinned-waiting");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          { item: { id: "n1", version: 1, properties: { title: "server" } } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/items/n1",
+      answers.updated(
+        wireItem({ id: "n1", version: 2, properties: { title: "elsewhere" } }),
+      ),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      (await device.update("n1", { properties: { title: "mine" }, version: 1 }))
+        .ok,
+    ).toBe(true);
+
+    expect((await device.pin("n1")).ok).toBe(true);
+    const held = await device.get("n1");
+    // The witness: the pin read the server's row, at its later version.
+    expect(held.ok && held.value.version).toBe(2);
+    expect(
+      held.ok && held.value.properties.title,
+      "a pin put the server's row over a write still waiting, so the copy reads as if the write were undone",
+    ).toBe("mine");
+  });
+
+  it("says whether a row it unpins was pinned", async () => {
+    harness = await startHarness("unpin-says");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    server.answer(
+      "GET",
+      "/items/note",
+      answers.updated(wireItem({ id: "note" })),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    const never = await device.unpin("note");
+    expect(never.ok, JSON.stringify(never)).toBe(true);
+    expect(
+      never.ok && [never.value.pinned, never.value.was_pinned],
+      "an unpin of a row that was never pinned said it was",
+    ).toEqual([false, false]);
+
+    expect((await device.pin("note")).ok).toBe(true);
+    const once = await device.unpin("note");
+    // The witness: the same call on a pinned row says so.
+    expect(once.ok && [once.value.pinned, once.value.was_pinned]).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("keeps the edges of a type held whole when it unpins a row", async () => {
+    harness = await startHarness("unpin-whole-edges");
+    const { server, device } = harness;
+    const beneath = {
+      id: "kept-beneath",
+      source_id: "settings",
+      target_id: "below",
+      edge_type: "parent-of",
+    };
+    const drawn = { id: "drawn", source_id: "settings", target_id: "below" };
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+      edges: { "parent-of": [beneath] },
+    });
+    server.answer(
+      "GET",
+      "/items/settings",
+      answers.updated(
+        wireItem({
+          id: "settings",
+          type: "core.bookmark",
+          edges: {
+            "parent-of": { data: [wireEdge(beneath)], next_cursor: null },
+            references: { data: [wireEdge(drawn)], next_cursor: null },
+          },
+        }),
+      ),
+    );
+    const ids = async () => {
+      const edges = await device.edgesFrom("settings");
+      expect(edges.ok).toBe(true);
+      return edges.ok ? edges.value.map((edge) => edge.id).sort() : [];
+    };
+
+    const hydrated = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["parent-of"],
+    });
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    // The witness: the pin held both edges the row draws.
+    expect(await ids()).toEqual(["drawn", "kept-beneath"]);
+
+    expect((await device.unpin("settings")).ok).toBe(true);
+    expect((await device.get("settings")).ok).toBe(false);
+    expect(
+      await ids(),
+      "an unpin took an edge of a type held whole with the row, or kept one of a type that is not",
+    ).toEqual(["kept-beneath"]);
+  });
+
+  it("keeps a row it unpins while a write to it still waits, and lets it go once answered", async () => {
+    harness = await startHarness("unpin-waiting");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "bound", version: 1 } }] },
+    });
+    server.answer(
+      "GET",
+      "/items/bound",
+      answers.updated(wireItem({ id: "bound", version: 1 })),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("bound")).ok).toBe(true);
+    expect(
+      (
+        await device.update("bound", {
+          properties: {},
+          version: 1,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+
+    const unpinned = await device.unpin("bound");
+    expect(unpinned.ok && unpinned.value.was_pinned).toBe(true);
+    const held = await device.get("bound");
+    expect(
+      held.ok && held.value.type,
+      "an unpin evicted a row by the move still waiting on it, before the server answered it",
+    ).toBe("core.bookmark");
+
+    scriptWrites(server, {
+      update: [
+        answers.updated(
+          wireItem({ id: "bound", version: 2, type: "core.bookmark" }),
+        ),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      (await device.get("bound")).ok,
+      "the row stayed after the move out of the slice was answered, with nothing holding it",
+    ).toBe(false);
+  });
+
+  it("hydrates again with other edge types held whole, and applies no event of one it no longer holds", async () => {
+    harness = await startHarness("rehydrate-edge-types");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+      edges: {
+        "parent-of": [{ id: "old", source_id: "outer", target_id: "inner" }],
+        supersedes: [],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      headRead("10"),
+      replay("12", [
+        edgeEvent(
+          "11",
+          "edge.created",
+          wireEdge({
+            id: "no-longer-whole",
+            source_id: "outer",
+            target_id: "inner",
+            edge_type: "parent-of",
+          }),
+        ),
+        edgeEvent(
+          "12",
+          "edge.created",
+          wireEdge({
+            id: "now-whole",
+            source_id: "outer",
+            target_id: "inner",
+            edge_type: "supersedes",
+          }),
+        ),
+      ]),
+    );
+    const ids = async () => {
+      const edges = await device.edgesFrom("outer");
+      expect(edges.ok).toBe(true);
+      return edges.ok ? edges.value.map((edge) => edge.id).sort() : [];
+    };
+
+    expect(
+      (
+        await device.hydrate(["core.note"], "library", {
+          edgeTypes: ["parent-of"],
+        })
+      ).ok,
+    ).toBe(true);
+    // The witness: the first hydration held the edge type it named.
+    expect(await ids()).toEqual(["old"]);
+
+    const again = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["supersedes"],
+    });
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    const status = await device.status();
+    expect(
+      status.ok && status.value.slice_edge_types,
+      "the report names the edge types an earlier hydration held, not this one's",
+    ).toEqual(["supersedes"]);
+    expect(await ids()).toEqual([]);
+
+    expect((await device.catchUp()).ok).toBe(true);
+    expect(
+      await ids(),
+      "an edge event of a type only an earlier hydration held whole was applied, or one of a type this one holds was not",
+    ).toEqual(["now-whole"]);
+  });
+
   it("drops the edges at both ends of a purged row", async () => {
     harness = await startHarness("purge-edges");
     const { server, device } = harness;

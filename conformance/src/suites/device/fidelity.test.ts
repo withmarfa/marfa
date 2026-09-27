@@ -1177,6 +1177,25 @@ describe("the scripted answers match the server's", () => {
       { same: ["error.code"], shape: ["error.message"] },
     );
 
+    // A hydration reads a pinned row this way, and keeps the pin over it.
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: "out of reach" },
+    });
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const unread = await narrowed.rawRequest(
+      `/items/${note.data.item.id}?include=edges,metadata`,
+    );
+    expect(unread.status).toBe(403);
+    expectFidelity(
+      "a row of a type the key does not hold, read by id",
+      { status: unread.status, body: unread.error },
+      answers.forbidden("type_not_permitted"),
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+
     const bare = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
     const unauthorized = await bare.getItem(
       ctx.trackedItems[0] ?? "01a00000-0000-7000-8000-000000000000",

@@ -267,7 +267,8 @@ export interface DeviceUnderTest {
   ): Promise<Outcome<HydrateReport>>;
   /** Hold one row by id, whatever the slice says of it, read now. */
   pin(id: string): Promise<Outcome<PinReport>>;
-  /** Stop holding a row by id; one outside the slice goes. */
+  /** Stop holding a row by id; one outside the slice goes once no write to
+   *  it waits. */
   unpin(id: string): Promise<Outcome<PinReport>>;
   catchUp(): Promise<Outcome<CatchUpReport>>;
   list(filters?: ListFilters): Promise<Outcome<Item[]>>;

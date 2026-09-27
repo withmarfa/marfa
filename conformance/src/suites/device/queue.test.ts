@@ -931,6 +931,133 @@ describe("what a drain sends and reports", () => {
     ).toEqual(["core.bookmark", HELD.version + 1]);
   });
 
+  it("keeps a pinned row outside the slice when its refused move is read back", async () => {
+    harness = await hydratedHarness("queue-move-refused-pinned", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const settings = wireItem({
+      id: "settings",
+      type: "core.bookmark",
+      version: 1,
+    });
+    server.answer("GET", "/items/settings", answers.updated(settings));
+    expect((await device.pin("settings")).ok).toBe(true);
+    expect(
+      (
+        await device.update("settings", {
+          properties: {},
+          version: 1,
+          tier: "feed",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [refusal(400, "invalid_properties", "not a feed row")],
+    });
+    // The witness is `› lets a row go once its retype out of the slice is
+    // answered`: a move settled outside the slice lets an unpinned row go.
+    expect((await device.drain()).ok).toBe(true);
+    const got = await device.get("settings");
+    expect(
+      got.ok && got.value.tier,
+      "a pinned row left the copy when its refused move was read back outside the slice",
+    ).toBe("library");
+  });
+
+  /** A copy holding `parent-of` whole and the held row with a retype out
+   *  of the slice waiting, its edges read before the drain. */
+  async function moving(label: string): Promise<Harness> {
+    const beneath = {
+      id: "kept-beneath",
+      source_id: HELD.id,
+      target_id: "below",
+      edge_type: "parent-of",
+    };
+    const drawn = { id: "drawn", source_id: HELD.id, target_id: "below" };
+    const made = await startHarness(label);
+    scriptHydration(made.server, {
+      head: "1",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: HELD.id,
+              version: HELD.version,
+              edges: {
+                "parent-of": { data: [wireEdge(beneath)], next_cursor: null },
+                references: { data: [wireEdge(drawn)], next_cursor: null },
+              },
+            },
+          },
+        ],
+      },
+      edges: { "parent-of": [beneath] },
+    });
+    const hydrated = await made.device.hydrate(["core.note"], "library", {
+      edgeTypes: ["parent-of"],
+    });
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(
+      (
+        await made.device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    // The witness: the row drew both edges before the drain.
+    expect(await edgeIds(made.device)).toEqual(["drawn", "kept-beneath"]);
+    return made;
+  }
+
+  async function edgeIds(device: DeviceUnderTest): Promise<string[]> {
+    const edges = await device.edgesFrom(HELD.id);
+    expect(edges.ok).toBe(true);
+    return edges.ok ? edges.value.map((edge) => edge.id).sort() : [];
+  }
+
+  it("keeps the edges of a type held whole on a row its answered move lets go", async () => {
+    harness = await moving("queue-move-answered-whole");
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    expect((await harness.device.get(HELD.id)).ok).toBe(false);
+    expect(
+      await edgeIds(harness.device),
+      "an answered move out of the slice took an edge of a type held whole with the row, or kept one of a type that is not",
+    ).toEqual(["kept-beneath"]);
+  });
+
+  it("keeps the edges of a type held whole on a row its refused move, read back, lets go", async () => {
+    harness = await moving("queue-move-refused-whole");
+    scriptWrites(harness.server, {
+      update: [refusal(400, "invalid_properties", "a bookmark needs a url")],
+      // Another device moved the row out of the slice meanwhile.
+      read: [
+        answers.updated(
+          wireItem({ id: HELD.id, version: HELD.version, tier: "feed" }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    expect((await harness.device.get(HELD.id)).ok).toBe(false);
+    expect(
+      await edgeIds(harness.device),
+      "a refused move read back outside the slice took an edge of a type held whole with the row, or kept one of a type that is not",
+    ).toEqual(["kept-beneath"]);
+  });
+
   it("sends no retype naming the type the row already has", async () => {
     harness = await hydratedHarness("queue-retype-same", { rows: held() });
     expect(
