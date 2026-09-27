@@ -4,6 +4,7 @@ import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
+  trackEdge,
   trackKey,
   trackEdgeType,
   cleanup,
@@ -79,6 +80,7 @@ describe("the server resolves a conflict", () => {
     ) => {
       const r = await client.createEdge({ source_id, target_id, edge_type });
       expect(r.ok, edge_type).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
     };
     await link(parent.id, original.id, "parent-of");
     await link(original.id, child.id, "parent-of");
@@ -183,6 +185,7 @@ describe("the server resolves a conflict", () => {
     ) => {
       const r = await client.createEdge({ source_id, target_id, edge_type });
       expect(r.ok, edge_type).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
     };
     await link(noteParent.id, original.id, "parent-of");
     await link(bookmarkRow.id, original.id, "about");
@@ -278,6 +281,7 @@ describe("the server resolves a conflict", () => {
     ) => {
       const r = await client.createEdge({ source_id, target_id, edge_type });
       expect(r.ok, edge_type).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
     };
     await link(track.id, album.id, "in-collection");
     await link(album.id, topic.id, "about");
