@@ -1,0 +1,6 @@
+# Every test here finishes in seconds, so one still running after two
+# minutes is stuck, and a stuck test is killed rather than left to run. A
+# query that never finishes spills into an unlinked SQLite temporary file,
+# which no listing of the disk shows and which grows until the disk is full.
+[profile.default]
+slow-timeout = { period = "30s", terminate-after = 4 }

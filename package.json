@@ -24,7 +24,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:rust": "cd core && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && cd bindings/swift && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test"
+    "test:rust": "cd core && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo nextest run && cd bindings/swift && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo nextest run"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
@@ -38,6 +38,7 @@
     "@types/node": "^26.2.0",
     "eslint": "^10.8.1",
     "prettier": "^3.9.6",
+    "smol-toml": "^1.9.0",
     "tslib": "^2.8.1",
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",

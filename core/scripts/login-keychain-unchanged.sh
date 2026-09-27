@@ -5,7 +5,7 @@
 # person's. An entry written and taken out again within the run is not
 # seen; the tests' own assertions are what hold that.
 #
-#   core/scripts/login-keychain-unchanged.sh cargo test --workspace
+#   core/scripts/login-keychain-unchanged.sh cargo nextest run --workspace
 #
 # The comparison is made whether the command passed or not, since a failing
 # run is as able to leave an entry behind, and the command's own status is

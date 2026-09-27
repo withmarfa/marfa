@@ -1,0 +1,5 @@
+# Test binaries run under the ceilings `scripts/test-limits.sh` sets, whether
+# `cargo test` or nextest runs them. Cargo reads this file from any directory
+# under `core/`, so it covers `bindings/swift`, its own workspace, as well.
+[target.'cfg(any(target_os = "macos", target_os = "linux"))']
+runner = "scripts/test-limits.sh"
