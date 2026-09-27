@@ -409,7 +409,7 @@ describe("what a drain sends and reports", () => {
     ).toBe("auto");
   });
 
-  it("sends a retype and a tier change as an edit, and holds the row to its answer", async () => {
+  it("sends a retype and a tier change as an edit", async () => {
     harness = await hydratedHarness("queue-retype", {
       rows: held(),
       types: ["core.note", "core.bookmark"],
@@ -478,6 +478,298 @@ describe("what a drain sends and reports", () => {
       listed.ok ? listed.value.map((item) => item.id) : [],
       "the copy kept a row its own answered retype moved out of its slice",
     ).not.toContain(HELD.id);
+  });
+
+  it("holds a row moved within the slice to its answer", async () => {
+    harness = await hydratedHarness("queue-retype-kept", {
+      rows: held(),
+      types: ["core.note", "core.bookmark"],
+    });
+    expect(
+      (
+        await harness.device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+            properties: { title: "as the server holds it", body: "held" },
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const got = await harness.device.get(HELD.id);
+    expect(
+      got.ok && [got.value.type, got.value.version, got.value.properties.title],
+    ).toEqual(["core.bookmark", HELD.version + 1, "as the server holds it"]);
+  });
+
+  it("holds a refused move to the row the server reads back", async () => {
+    harness = await hydratedHarness("queue-retype-refused", {
+      rows: held(),
+      types: ["core.note", "core.bookmark"],
+    });
+    expect(
+      (
+        await harness.device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(harness.server, {
+      update: [refusal(400, "invalid_properties", "a bookmark needs a url")],
+      read: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version,
+            properties: { title: "held", body: "held" },
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const got = await harness.device.get(HELD.id);
+    expect(got.ok && got.value.type).toBe("core.note");
+  });
+
+  it("keeps showing a waiting move over the row a catch-up brings", async () => {
+    harness = await startHarness("queue-retype-waits-over-catch-up");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: held() });
+    const { edges: _edges, ...theirs } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "held", body: "theirs" },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", theirs)]),
+    );
+    expect(
+      (await device.hydrate(["core.note", "core.bookmark"], "library")).ok,
+    ).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+          tier: "feed",
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const got = await device.get(HELD.id);
+    expect(
+      got.ok && [got.value.type, got.value.tier, got.value.properties.body],
+      "the catch-up put the server's row back over a move still waiting",
+    ).toEqual(["core.bookmark", "feed", "theirs"]);
+  });
+
+  it("keeps showing a move queued behind an edit once that edit is answered", async () => {
+    harness = await hydratedHarness("queue-retype-waits-behind", {
+      rows: held(),
+      types: ["core.note", "core.bookmark"],
+    });
+    const { device, server } = harness;
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { body: "first" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "held", body: "first" },
+          }),
+        ),
+        refusal(503, "service_unavailable", "later"),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    const got = await device.get(HELD.id);
+    expect(got.ok && got.value.type).toBe("core.bookmark");
+  });
+
+  it("keeps a row held outside the slice when an edit to it is answered", async () => {
+    harness = await hydratedHarness("queue-edit-attachment", { rows: held() });
+    const { device, server } = harness;
+    const attached = await device.attach(
+      HELD.id,
+      fileOf("scan.pdf", "%PDF a\n"),
+    );
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    if (!attached.ok) return;
+    const fileId = attached.value[1]?.item_id ?? "";
+    acceptUploads(server);
+    let fileRow: {
+      id: string;
+      type: string;
+      properties: Record<string, unknown>;
+    } = {
+      id: "",
+      type: "",
+      properties: {},
+    };
+    scriptWrites(server, {
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as typeof fileRow;
+          fileRow = {
+            id: sent.id,
+            type: sent.type,
+            properties: sent.properties,
+          };
+          return answers.created(wireItem({ ...fileRow, version: 1 }));
+        },
+      ],
+      edges: [
+        (request) => writeAnswers.edge(JSON.parse(request.body) as never),
+      ],
+      update: [
+        () =>
+          answers.updated(
+            wireItem({
+              ...fileRow,
+              version: 2,
+              properties: { ...fileRow.properties, title: "renamed" },
+            }),
+          ),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    // The witness: the attachment is held, outside the note slice, before
+    // the edit.
+    expect((await device.get(fileId)).ok).toBe(true);
+    expect(
+      (
+        await device.update(fileId, {
+          properties: { title: "renamed" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
+    const got = await device.get(fileId);
+    expect(got.ok && got.value.properties.title).toBe("renamed");
+    const to = await device.edgesTo(HELD.id);
+    expect(to.ok && to.value.length).toBe(1);
+  });
+
+  it("blocks a move that collides with a write it did not read, keeping it", async () => {
+    harness = await startHarness("queue-retype-collides");
+    const { device, server } = harness;
+    scriptHydration(server, { head: "10", rows: held() });
+    const { edges: _edges, ...theirs } = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      properties: { title: "held", body: "theirs" },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", theirs)]),
+    );
+    expect(
+      (await device.hydrate(["core.note", "core.bookmark"], "library")).ok,
+    ).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { body: "mine" },
+          version: HELD.version,
+          asRead: true,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [refusal(409, "version_conflict", "a move is not resolved")],
+    });
+    const report = await device.drain();
+    expect(
+      report.ok && report.value.verdicts.map((v) => [v.verdict, v.reason]),
+    ).toEqual([["blocked", "conflict_unresolved"]]);
+    const got = await device.get(HELD.id);
+    expect(
+      got.ok && [got.value.type, got.value.properties.body],
+      "the blocked move no longer shows on the row it still waits to move",
+    ).toEqual(["core.bookmark", "mine"]);
+  });
+
+  it("does not put back a row a move answered ahead let go, when an edit behind it is refused", async () => {
+    harness = await hydratedHarness("queue-retype-then-refused", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { title: "after" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    const moved = wireItem({
+      id: HELD.id,
+      version: HELD.version + 1,
+      type: "core.bookmark",
+    });
+    scriptWrites(server, {
+      update: [
+        answers.updated(moved),
+        refusal(400, "invalid_properties", "no"),
+      ],
+      read: [answers.updated(moved)],
+    });
+    const report = await device.drain();
+    // The witness: the edit behind was refused and read back.
+    expect(report.ok && report.value.verdicts.map((v) => v.verdict)).toEqual([
+      "accepted",
+      "refused",
+    ]);
+    const listed = await device.list();
+    expect(listed.ok ? listed.value.map((item) => item.id) : []).not.toContain(
+      HELD.id,
+    );
   });
 
   it("sends no retype naming the type the row already has", async () => {

@@ -1223,17 +1223,22 @@ fn settle(
                     // retype or a move of tier, lets it go as a catch-up
                     // would on the same row (`device.md` 14): held, it would
                     // sit in the copy as the only row of its kind until a
-                    // catch-up happened to replay the change.
-                    let moved_out = row.kind == WriteKind::UpdateItem
-                        && !store::slice_holds(&tx, &catalog, &parsed.item)?;
-                    if moved_out {
-                        store::evict_item(&tx, &parsed.item.id)?;
-                    } else if !store::holds_newer(
+                    // catch-up happened to replay the change. Only a move
+                    // does: an edit to a row held outside the slice, an
+                    // attachment of a row in it, keeps it.
+                    let newer = store::holds_newer(
                         &tx,
                         Subject::Item,
                         &parsed.item.id,
                         parsed.item.version,
-                    )? {
+                    )?;
+                    let moved_out = !newer
+                        && row.kind == WriteKind::UpdateItem
+                        && moves(&store::payload_of(&tx, &row.id)?)
+                        && !store::slice_holds(&tx, &catalog, &parsed.item)?;
+                    if moved_out {
+                        store::evict_item(&tx, &parsed.item.id)?;
+                    } else if !newer {
                         store::upsert_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
                     }
                     // A create carrying a natural key went without the id
@@ -1277,7 +1282,9 @@ fn settle(
                     {
                         store::untake_latest_save(&tx, row, &parsed.item.id, parsed.item.version)?;
                     }
-                    store::lay_waiting_writes_over(&tx, &parsed.item.id, &indexing)?;
+                    store::lay_waiting_writes_over(&tx, &parsed.item.id, &|laid| {
+                        catalog.indexing(laid)
+                    })?;
                     tx.commit()?;
                     Ok(Settled {
                         verdict: Some(verdict),
@@ -1622,9 +1629,7 @@ fn land(
             conflicted_copy_id: None,
         },
     )?;
-    if let Some(landed) = store::item_by_id(&tx, id)? {
-        store::lay_waiting_writes_over(&tx, id, &catalog.indexing(&landed.r#type))?;
-    }
+    store::lay_waiting_writes_over(&tx, id, &|laid| catalog.indexing(laid))?;
     tx.commit()?;
     Ok(Settled {
         also: refused
@@ -1682,6 +1687,13 @@ fn reconcile(core: &Core, row: &QueuedWrite) -> Result<()> {
         Err(error @ CoreError::ContractMismatch { .. }) => Err(error),
         _ => Ok(()),
     }
+}
+
+/// Whether an update's body moves the row, to another type or tier.
+fn moves(payload: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(payload).is_ok_and(|body| {
+        body.get("retype") == Some(&serde_json::Value::Bool(true)) || body.get("tier").is_some()
+    })
 }
 
 fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
@@ -1782,8 +1794,22 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
             let catalog = Catalog::load(&conn)?;
             let indexing = catalog.indexing(&held.item.r#type);
             let tx = conn.transaction()?;
+            // The server's row outside the slice is not put back where a
+            // move answered ahead of this write let it go, and goes where
+            // this refused write was itself a move another device's made
+            // moot. A row held outside the slice for another reason, an
+            // attachment of a row in it, stays.
+            let let_go = !store::slice_holds(&tx, &catalog, &held.item)?
+                && (!store::item_held(&tx, &held.item.id)?
+                    || row.kind == WriteKind::UpdateItem
+                        && moves(&store::payload_of(&tx, &row.id)?));
+            if let_go {
+                store::evict_item(&tx, &held.item.id)?;
+                tx.commit()?;
+                return Ok(());
+            }
             store::upsert_item(&tx, &held.item, Some(&held.metadata.tags), &indexing)?;
-            store::lay_waiting_writes_over(&tx, &held.item.id, &indexing)?;
+            store::lay_waiting_writes_over(&tx, &held.item.id, &|laid| catalog.indexing(laid))?;
             tx.commit()?;
         }
         None => {

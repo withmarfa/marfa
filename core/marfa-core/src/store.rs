@@ -247,8 +247,6 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
 }
 
-/// The slice a hydration declared: its types and its tier, or nothing where
-/// no hydration has declared one.
 /// Whether the copy's slice takes this row: one of its types, with the
 /// subtree, at its tier. A copy that has never hydrated holds no slice and
 /// takes nothing.
@@ -266,6 +264,8 @@ pub fn slice_holds(
             .any(|declared| catalog.matches(declared, &item.r#type)))
 }
 
+/// The slice a hydration declared: its types and its tier, or nothing where
+/// no hydration has declared one.
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, Tier)>, CoreError> {
     let Some(tier) = meta_get(conn, META_SLICE_TIER)? else {
         return Ok(None);
@@ -2336,7 +2336,7 @@ mod tests {
         )
         .unwrap();
 
-        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.title(Some("title")), Some("edited"));
         assert_eq!(
@@ -2350,13 +2350,13 @@ mod tests {
 
         // A delete waiting after all of them leaves the row in the bin.
         queue(WriteKind::DeleteItem, "{}", None);
-        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Trashed);
 
         // And a move to another state after that takes it there.
         queue(WriteKind::TransitionItem, r#"{"state":"archived"}"#, None);
-        lay_waiting_writes_over(&conn, "n1", &Indexing::titled("title")).unwrap();
+        lay_waiting_writes_over(&conn, "n1", &|_| Indexing::titled("title")).unwrap();
         let item = items_by_ids(&conn, &["n1".into()]).unwrap().pop().unwrap();
         assert_eq!(item.state, ItemState::Archived);
     }
@@ -3096,10 +3096,12 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 /// the server last sent it (`queue-and-verdicts.md` 35), whole fields in the
 /// order they were queued. Called after anything puts the server's row into
 /// the copy: an answer the drain adopts, a reconcile, an event, a hydration.
+/// The row is indexed as the type it is laid over as, since a waiting retype
+/// moves it to another.
 pub fn lay_waiting_writes_over(
     conn: &Connection,
     item_id: &str,
-    indexing: &Indexing,
+    indexing: &dyn Fn(&str) -> Indexing,
 ) -> Result<(), CoreError> {
     let waiting = waiting_writes_for_item(conn, item_id)?;
     if waiting.is_empty() {
@@ -3133,6 +3135,14 @@ pub fn lay_waiting_writes_over(
                 if let Some(Value::String(key)) = payload.get("source_id") {
                     item.source_id = Some(key.clone());
                 }
+                if payload.get("retype") == Some(&Value::Bool(true))
+                    && let Some(Value::String(r#type)) = payload.get("type")
+                {
+                    item.r#type = r#type.clone();
+                }
+                if let Some(tier) = payload.get("tier").and_then(Value::as_str) {
+                    item.tier = Tier::parse_wire(Some(tier))?;
+                }
             }
             WriteKind::TransitionItem => {
                 if let Some(state) = payload.get("state").and_then(Value::as_str) {
@@ -3160,7 +3170,7 @@ pub fn lay_waiting_writes_over(
         }
     }
     tags.sort();
-    upsert_item(conn, &item.as_wire(), Some(&tags), indexing)
+    upsert_item(conn, &item.as_wire(), Some(&tags), &indexing(&item.r#type))
 }
 
 /// The same for an edge: an edit still waiting is laid back over the
