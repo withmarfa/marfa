@@ -86,9 +86,8 @@ pub struct ScanReport {
     pub deleted: usize,
     /// Files outside the folder's slice, left alone.
     pub skipped: usize,
-    /// Files bound to a row the copy no longer holds, queued again as new
-    /// items because they changed or moved since (`folders.md` 28). Counted
-    /// in `created` too.
+    /// Files bound to a row the copy lost, queued again as new items because
+    /// they changed or moved (`folders.md` 28); counted in `created` too.
     pub requeued: usize,
     /// Files bound to a row the copy no longer holds and unchanged since, so
     /// nothing is sent for them (`folders.md` 28).
@@ -248,8 +247,7 @@ struct Claim {
 
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
-    /// too, so one rule decides identity whenever a file appeared
-    /// (`folders.md` 13).
+    /// too, so one rule decides identity (`folders.md` 13).
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let catalog = {
@@ -436,14 +434,9 @@ impl Folder {
     }
 
     /// Which item each file is, or `None` for a new one (`folders.md` 8 to
-    /// 12).
-    ///
-    /// A Markdown file is the item its `marfa_id` names where the copy holds
-    /// it. Of several files carrying one id, the one the binding names keeps
-    /// it, then the older birth time, then path order; a file whose id line
-    /// was dropped contests the id its binding names. Every other file is
-    /// decided by the binding, by identity across every file before any by
-    /// path, so a path never takes an item another file is by identity.
+    /// 12). Held ids decide first; then the binding by identity across every
+    /// file before any by path, so a path never takes an item another file is
+    /// by identity.
     fn claim(
         &self,
         files: &[Scanned],
@@ -677,10 +670,8 @@ impl Folder {
         self.bind_scanned(file, &item_id, Vec::new(), Vec::new())
     }
 
-    /// Queues what a file holds as an edit of the item it is, and answers
-    /// whether anything was queued. `bound` is `None` for a file whose id
-    /// names an item this folder has no file for, which is bound without a
-    /// write where the row holds what it does already.
+    /// Queues what a file holds as an edit of its item, and answers whether
+    /// anything went. `bound` is `None` for an id this folder has no file for.
     fn queue_update(
         &self,
         item_id: &str,
@@ -745,9 +736,8 @@ impl Folder {
         Ok(!in_step)
     }
 
-    /// A file item's file changed or moved: new bytes are a new upload and an
-    /// update naming them, and a move carries the new name as the title
-    /// where the folder gave the title (`folders.md` 26).
+    /// New bytes are an upload and an update naming them; a move carries the
+    /// new name as the title where the old name was it (`folders.md` 26).
     fn queue_update_file(&self, bound: &state::Bound, file: &Scanned, held: &Item) -> Result<bool> {
         let read_at = state::untaken_read_version(&bound.content_hash);
         let based = if read_at.is_some() {
@@ -811,13 +801,9 @@ impl Folder {
         )
     }
 
-    /// Links in the body become edges (`folders.md` 7), and a link the body
-    /// has lost takes its edge with it (`folders.md` 21).
-    ///
-    /// Answers the targets the body named, the targets whose link the person
-    /// took out for an edge the folder keeps (`folders.md` 25), and whether
-    /// every link resolved. Where one did not, the removal stands down and
-    /// the targets recorded before are kept, so a later removal still lands.
+    /// Links in the body become edges, and a lost link takes its edge
+    /// (`folders.md` 7, 21). Answers the targets named, the targets declined
+    /// (`folders.md` 25), and whether every link resolved.
     fn queue_links(
         &self,
         item_id: &str,
@@ -879,9 +865,8 @@ impl Folder {
                 still_declined.push(target.clone());
             }
         }
-        // Only an edge of the folder's own kind whose link the file used to
-        // carry: one it never carried arrived from elsewhere and is not yet
-        // rendered.
+        // An edge whose link the file never carried arrived from elsewhere
+        // and is not yet rendered.
         for edge in edges {
             if edge.edge_type != LINK_EDGE
                 || named.contains(&edge.target_id)
@@ -931,8 +916,7 @@ fn title_of(key: &str) -> String {
 }
 
 /// Whether `grace` has passed between two instants in the wire's shape. A
-/// pair this cannot read has not: a delete is the one write here that cannot
-/// be taken back.
+/// pair this cannot read has not, since a delete cannot be taken back.
 fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
     let (Some(since), Some(now)) = (millis_of(since), millis_of(now)) else {
         return false;
@@ -961,9 +945,8 @@ fn millis_of(stamp: &str) -> Option<i64> {
 }
 
 impl Folder {
-    /// Writes the slice out as files (`folders.md` 4). Every write is bound
-    /// before its bytes land, so the scan never reads it back as a change
-    /// (`folders.md` 14).
+    /// Writes the slice out as files (`folders.md` 4), each bound before its
+    /// bytes land so the scan never reads it back (`folders.md` 14).
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
         let items = self.core.list(
@@ -995,9 +978,8 @@ impl Folder {
                 report.skipped += 1;
                 continue;
             }
-            // This device's own create, not yet landed: its file is the one
-            // the scan read, and its id is written back once it lands
-            // (`folders.md` 8).
+            // This device's own create, not yet landed: the id goes back
+            // only once it has (`folders.md` 8).
             if item.version == 0 {
                 continue;
             }
@@ -1107,9 +1089,8 @@ impl Folder {
             if let Some(bound) = &bound
                 && bound.path != want
             {
-                // The old path goes first, so the next scan does not find the
-                // file under both names. The unbinding happens either way: a
-                // bound path the walk cannot reach is journaled and deleted.
+                // Unbound even where not removed: a bound path the walk cannot
+                // reach is journaled and deleted.
                 if plainly_inside(&self.root, &bound.path) {
                     let _ = std::fs::remove_file(self.root.join(&bound.path));
                 }
@@ -1186,11 +1167,8 @@ impl Folder {
         Ok(report)
     }
 
-    /// Takes away the file of an item the pull no longer writes
-    /// (`folders.md` 24), where its bytes are what the folder last wrote. A
-    /// file the person changed, or one the folder never wrote, stays bound
-    /// and is reported. Nothing is journaled: the item left the slice rather
-    /// than being deleted.
+    /// Takes away the file of an item the pull no longer writes, where its
+    /// bytes are the folder's own; nothing is journaled (`folders.md` 24).
     fn remove_departed(&self, visited: &HashSet<String>, report: &mut PullReport) -> Result<()> {
         let bound = {
             let conn = self.core.conn()?;
@@ -1242,10 +1220,8 @@ impl Folder {
         }
     }
 
-    /// An item as the bytes of a file, and the targets of the links it put in
-    /// the body. Its id goes into the frontmatter where the file carries one
-    /// (`folders.md` 8); a link the person took out for an edge the folder
-    /// keeps is not put back (`folders.md` 25).
+    /// An item as a file's bytes, and the targets of the links in its body.
+    /// The id goes in where the file carries frontmatter (`folders.md` 8).
     fn render(
         &self,
         item: &Item,
@@ -1389,11 +1365,9 @@ fn sendable(mut properties: Map<String, Value>) -> Map<String, Value> {
     properties
 }
 
-/// Whether every component of a path the folder is about to write is a plain
-/// name inside the folder, with no symlink on the way (`folders.md` 20).
-///
-/// A guard and not a boundary: the write resolves the path again, so a
-/// component replaced between the two is not caught.
+/// Whether every component of a path is a plain name inside the folder, with
+/// no symlink on the way (`folders.md` 20). A guard, not a boundary: the write
+/// resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();
     for part in relative.split('/') {

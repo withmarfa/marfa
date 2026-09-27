@@ -1,8 +1,5 @@
-//! A file's bytes as an item's fields, and back.
-//!
-//! The two directions are one module because they have to agree: a file read
-//! in and written straight back out must be the same file, and the only way
-//! to be sure of that is for one place to own both halves.
+//! A file's bytes as an item's fields, and back: one module, because a file
+//! read in and written straight back out must be the same file.
 
 use serde_json::{Map, Value};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
@@ -27,22 +24,9 @@ pub struct Document {
 /// What a file opens with, when it opens with frontmatter.
 const FENCE: &str = "---";
 
-/// The frontmatter a file opens with, and the body after it.
-///
-/// **Frontmatter is only what a file opens with and delimits as frontmatter**
-/// (`folders.md` 6), and this is total: every condition that fails makes the
-/// whole text a body rather than a refusal or a half-reading. The file opens
-/// with the fence on a line of its own, a later line is the fence again, what
-/// lies between parses, it is a set of fields, and every one of those fields
-/// converts. Anything less is a body that happens to start with a horizontal
-/// rule.
-///
-/// **Never a refusal, and that is the point.** A body read as frontmatter
-/// loses its first paragraph and then writes the loss back to the server; a
-/// file refused for frontmatter it meant is a file the folder stops carrying.
-/// Falling back to a body loses nothing in either direction — the text is
-/// still there, and a file read in and written straight back out is the same
-/// file.
+/// The frontmatter a file opens with, and the body after it (`folders.md`
+/// 6). Any condition that fails makes the whole text a body, never a refusal
+/// or a half-reading, so nothing is lost in either direction.
 fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
     // The opening fence is its own line: `----` is a horizontal rule and
     // `--- x` is text, and neither opens frontmatter.
@@ -50,14 +34,8 @@ fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
         rest.strip_prefix('\n')
             .or_else(|| rest.strip_prefix("\r\n"))
     })?;
-    // **Frontmatter begins immediately.** A blank line after the fence means
-    // a thematic break, and this is the condition that tells the two apart
-    // when every other one agrees: `---\n\nNote: remember the milk\n\n---`
-    // is two horizontal rules around a sentence, and it parses, and it is a
-    // mapping, and its one field converts. Without this the first paragraph
-    // becomes a property called `Note`, leaves the body, and is written back
-    // to the server that way — which is the loss statement 6 forbids, in the
-    // one form that is ordinary prose and valid YAML at once.
+    // A blank line after the fence is a thematic break: `---\n\nNote: x\n\n---`
+    // is two rules around a sentence that also parses as YAML.
     if rest.starts_with('\n') || rest.starts_with("\r\n") {
         return None;
     }
@@ -82,9 +60,7 @@ fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
         None | Some(Yaml::Null) => {}
         Some(Yaml::Hash(hash)) => {
             for (key, value) in hash {
-                // A key an item's properties cannot be keyed by, or a value
-                // they cannot hold. The file meant something this build
-                // cannot carry, so it is carried as what it plainly is.
+                // A key or value an item cannot hold: carried as a body.
                 properties.insert(key.as_str()?.to_string(), from_yaml(value)?);
             }
         }
@@ -137,19 +113,13 @@ pub fn write(properties: &Map<String, Value>) -> Result<String, CoreError> {
         .map_err(|error| {
             CoreError::Invalid(format!("this item's fields will not render: {error}"))
         })?;
-    // The emitter opens with its own `---`, which is the document start and
-    // is exactly the fence this file needs; anything else would be a second
-    // one.
+    // The emitter's own document start is the opening fence.
     let rendered = rendered.trim_start_matches("---\n");
     Ok(format!("{FENCE}\n{rendered}\n{FENCE}\n{body}"))
 }
 
-/// A YAML value as an item's property.
-///
-/// `None` where this build cannot carry the value, which makes the whole
-/// file a body: `folders.md` 5 says nothing a file carries is dropped on the
-/// way in, and a property quietly converted to something else is dropped in
-/// the way that is hardest to see.
+/// A YAML value as an item's property. `None` where it cannot be carried as
+/// it is, which makes the whole file a body (`folders.md` 5).
 fn from_yaml(value: &Yaml) -> Option<Value> {
     Some(match value {
         Yaml::Real(text) => match text.parse::<f64>() {
@@ -174,9 +144,7 @@ fn from_yaml(value: &Yaml) -> Option<Value> {
             Value::Object(map)
         }
         Yaml::Null => Value::Null,
-        // An anchor this load did not resolve, or something that would not
-        // read. Either way the field would arrive holding other than what
-        // the file says.
+        // Would arrive holding other than what the file says.
         Yaml::Alias(_) | Yaml::BadValue => return None,
     })
 }
@@ -202,12 +170,7 @@ fn to_yaml(value: &Value) -> Yaml {
     }
 }
 
-/// The wiki links a body carries, in order and without repeats.
-///
-/// `[[target]]`, which is what a folder writes and what the notes it holds
-/// are written with. A link the folder cannot express stays on the item
-/// rather than being dropped (`folders.md` 7), which is why this reads links
-/// and never removes one.
+/// The `[[target]]` links a body carries, in order and without repeats.
 pub fn links(body: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = body.as_bytes();
@@ -264,12 +227,7 @@ mod tests {
         assert_eq!(body_of(&document), "The body.\n");
     }
 
-    /// The statement this module exists for (`folders.md` 6).
-    ///
-    /// Each of these opens with the three characters frontmatter opens with
-    /// and is not frontmatter. Reading one as frontmatter loses the first
-    /// paragraph and then writes the loss back to the server, in both
-    /// directions, with nothing anywhere reporting it.
+    /// Each opens as frontmatter does and is not frontmatter (`folders.md` 6).
     #[test]
     fn a_body_that_opens_with_a_horizontal_rule_is_a_body() {
         let cases = [
@@ -355,11 +313,8 @@ mod tests {
         }
     }
 
-    /// Nothing is refused and nothing is half-read.
-    ///
-    /// A file the fence rule turns down keeps every byte it had, in the body,
-    /// and comes back out as itself. That is what makes falling back to a
-    /// body safe where refusing or half-reading would not be.
+    /// A file the fence rule turns down keeps every byte, and comes back out
+    /// as itself.
     #[test]
     fn a_file_this_build_cannot_read_as_frontmatter_keeps_every_byte() {
         for text in [

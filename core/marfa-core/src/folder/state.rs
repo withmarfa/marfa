@@ -38,11 +38,9 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("{sum:016x}")
 }
 
-/// A binding's content hash where its bytes reached no row: a save set aside
-/// in a conflicted copy against this device's own earlier one
-/// (`folders.md` 29). No bytes hash to it, so a scan reads the file as
-/// changed and a pull as the person's, and the next edit is based on
-/// `version`, where the bytes were read.
+/// A content hash no bytes have, for a save set aside in a conflicted copy
+/// against this device's own (`folders.md` 29): the file reads as changed,
+/// and its next edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
 }
@@ -146,9 +144,8 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     Ok(())
 }
 
-/// Takes a path out of the journal: the file is there after all, or the
-/// delete it asked about was sent or stopped applying. A row that outlives
-/// either becomes a delete nobody asked for.
+/// Takes a path out of the journal. A row that outlives its question becomes
+/// a delete nobody asked for.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM folder_journal WHERE path = ?1", [path])?;
     Ok(())
