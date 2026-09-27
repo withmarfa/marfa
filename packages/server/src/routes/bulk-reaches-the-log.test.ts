@@ -240,6 +240,35 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     expect(payload.item.state).toBe("archived");
   });
 
+  it("logs a restore for every row a transition out of the bin brought back", async () => {
+    const tag = `back-${uniq()}`;
+    const parent = await note("a parent", [tag]);
+    const child = await note("its child");
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parent, target_id: child, edge_type: "parent-of" },
+    });
+    await request(ctx.app, "DELETE", `/items/${parent}`, {
+      key: ctx.workingKey,
+    });
+    const cursor = await logCursor();
+
+    const run = await runBulkActionAsync(
+      ctx,
+      {
+        action: "transition",
+        state: "active",
+        filter: { tags: [tag], state: "trashed" },
+      },
+      ctx.workingKey,
+    );
+    expect(run.result?.succeeded).toBe(1);
+    const rows = await logSince(cursor);
+    expect(
+      rows.filter((r) => r.item_id === child).map((r) => r.event_type),
+    ).toEqual(["restored"]);
+  });
+
   it("logs the edges a purge cascaded", async () => {
     const tag = `purge-${uniq()}`;
     const doomed = await note("doomed", [tag]);

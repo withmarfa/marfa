@@ -26,6 +26,7 @@ import {
   getTypeSchema,
   validateProperties,
   validateTransition,
+  getEdgeTypeSchema,
   softDeleteState,
   parseFilter,
   MarfaError,
@@ -1420,17 +1421,62 @@ export class SqliteItemStore implements ItemStore {
     return { ...row, state: "active" as ItemState, updated_at: now };
   }
 
-  async restoreTrashedWith(rootId: string): Promise<Item[]> {
+  async restoreBeneath(id: string): Promise<Item[]> {
+    const [own] = await this.db
+      .select({ trashed_with: trash_cascades.trashed_with })
+      .from(trash_cascades)
+      .where(eq(trash_cascades.item_id, id))
+      .all();
+    const trashes = own === undefined ? [id] : [id, own.trashed_with];
     const taken = await this.db
       .select({ item_id: trash_cascades.item_id })
       .from(trash_cascades)
-      .where(eq(trash_cascades.trashed_with, rootId))
+      .where(inArray(trash_cascades.trashed_with, trashes))
       .all();
+    // A row a trash above took is brought back only from beneath this one:
+    // restoring a child brings back its own children, not its siblings.
+    const beneath = own === undefined ? null : await this.beneath(id);
     const restored: Item[] = [];
     for (const { item_id } of taken) {
+      if (item_id === id || (beneath !== null && !beneath.has(item_id))) {
+        continue;
+      }
+      const row = await this.getRaw(item_id);
+      if (row?.state !== "trashed") {
+        // Out of the bin by a door that kept no record of it, which leaves
+        // nothing to bring back and a record that says otherwise.
+        await this.db
+          .delete(trash_cascades)
+          .where(eq(trash_cascades.item_id, item_id))
+          .run();
+        continue;
+      }
       restored.push(await this.restore(item_id));
     }
     return restored;
+  }
+
+  /** Every row reachable from `id` along edges whose type cascades on
+   *  delete, whatever their state: the rows a trash of `id` would take. */
+  private async beneath(id: string): Promise<Set<string>> {
+    const reached = new Set<string>();
+    let frontier = [id];
+    while (frontier.length > 0) {
+      const out = await this.db
+        .select({ target_id: edges.target_id, edge_type: edges.edge_type })
+        .from(edges)
+        .where(inArray(edges.source_id, frontier))
+        .all();
+      frontier = [];
+      for (const edge of out) {
+        if (getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete !== "cascade")
+          continue;
+        if (reached.has(edge.target_id) || edge.target_id === id) continue;
+        reached.add(edge.target_id);
+        frontier.push(edge.target_id);
+      }
+    }
+    return reached;
   }
 
   async transition(id: string, state: ItemState): Promise<Item> {

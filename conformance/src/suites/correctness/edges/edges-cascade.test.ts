@@ -117,6 +117,54 @@ describe("edge cascade semantics", () => {
     expect((await client.getItem(child)).status).toBe(200);
   });
 
+  it("restoring a row the trash above took brings back what that trash took beneath it, and not its siblings", async () => {
+    const parent = await makeItem("m-parent");
+    const middle = await makeItem("m-middle");
+    const beneath = await makeItem("m-beneath");
+    const sibling = await makeItem("m-sibling");
+    for (const [source_id, target_id] of [
+      [parent, middle],
+      [middle, beneath],
+      [parent, sibling],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+
+    expect((await client.restoreItem(middle)).ok).toBe(true);
+    expect((await client.getItem(beneath)).status).toBe(200);
+    // The witness: what the same trash took from beside it stays.
+    expect((await client.getItem(sibling)).status).toBe(404);
+    expect((await client.getItem(parent)).status).toBe(404);
+  });
+
+  it("restores a parent whose trash took a child purged since", async () => {
+    const parent = await makeItem("p-parent");
+    const purged = await makeItem("p-purged");
+    const kept = await makeItem("p-kept");
+    for (const target_id of [purged, kept]) {
+      const edge = await client.createEdge({
+        source_id: parent,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.purgeItem(purged)).ok).toBe(true);
+
+    const restored = await client.restoreItem(parent);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect((await client.getItem(kept)).status).toBe(200);
+  });
+
   it("restoring a child alone brings back only that child", async () => {
     const parent = await makeItem("c-parent");
     const child = await makeItem("c-child");

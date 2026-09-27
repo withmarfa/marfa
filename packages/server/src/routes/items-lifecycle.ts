@@ -175,10 +175,10 @@ export function itemsLifecycleRoutes(storage: Storage) {
     }
     requireTypeAccess(c, pending.type, "write");
     const { restored, broughtBack } = await storage.runInTransaction(
-      async () => ({
-        restored: await storage.items.restore(id),
-        broughtBack: await storage.items.restoreTrashedWith(id),
-      }),
+      async () => {
+        const back = await storage.items.restoreBeneath(id);
+        return { restored: await storage.items.restore(id), broughtBack: back };
+      },
     );
     const metadata = await storage.metadata.get(id);
     await publish({
@@ -240,13 +240,13 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // `auth-grant-visibility.test.ts` pins what a caller actually meets.
     const { updated, broughtBack } = await storage.runInTransaction(
       async () => {
-        const moved = await storage.items.transition(id, state);
+        const back =
+          item.state === "trashed" && state === "active"
+            ? await storage.items.restoreBeneath(id)
+            : [];
         return {
-          updated: moved,
-          broughtBack:
-            item.state === "trashed" && state === "active"
-              ? await storage.items.restoreTrashedWith(id)
-              : [],
+          updated: await storage.items.transition(id, state),
+          broughtBack: back,
         };
       },
     );

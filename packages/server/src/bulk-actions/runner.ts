@@ -46,6 +46,13 @@ export interface RunChunkContext {
   input: BulkActionInput;
   /** Ids the worker has assigned to this chunk. */
   ids: string[];
+  /**
+   * Rows a restore out of the bin brought back earlier in the same job,
+   * because the trash that took them was undone. Such a row is in the match
+   * set too, and moving it again would refuse a row that is already where
+   * the job put it.
+   */
+  broughtBack?: Set<string>;
 }
 
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
@@ -77,6 +84,7 @@ async function runTransitionChunk({
   storage,
   input,
   ids,
+  broughtBack: brought,
 }: RunChunkContext): Promise<ChunkOutcome> {
   if (input.action !== "transition")
     throw new Error("runTransitionChunk: wrong action");
@@ -88,6 +96,7 @@ async function runTransitionChunk({
   // Rows a restore out of the bin brought back because the trash that took
   // them was undone, announced as the single restore door announces them.
   const broughtBack: Item[] = [];
+  const alreadyBack = brought ?? new Set<string>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -100,13 +109,22 @@ async function runTransitionChunk({
         // reaching this loop can name a connection, and a refusal here
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
+        if (input.state === "active" && alreadyBack.has(id)) {
+          succeeded.push(id);
+          continue;
+        }
+        const row =
+          input.state === "active"
+            ? await storage.items.getIncludingTrashed(id)
+            : null;
+        const back =
+          row?.state === "trashed"
+            ? await storage.items.restoreBeneath(id)
+            : [];
         moved.push(await storage.items.transition(id, input.state));
-        // The transition has landed once `transition` returns, so it is
-        // announced even where bringing back what its trash took then fails
-        // and the row is reported errored: the chunk shares one transaction,
-        // and a caught failure does not take the transition back.
-        if (input.state === "active") {
-          broughtBack.push(...(await storage.items.restoreTrashedWith(id)));
+        for (const item of back) {
+          broughtBack.push(item);
+          alreadyBack.add(item.id);
         }
         succeeded.push(id);
       } catch (err) {
