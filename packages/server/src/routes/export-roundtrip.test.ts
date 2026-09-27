@@ -200,6 +200,73 @@ describe("export → restore round trip", () => {
     expect(r2?.target_id).toBe(note1.id);
   });
 
+  it("restores a placement in a revoked folder, and skips one whose path leaves the folder", async () => {
+    const source = await newContext();
+    const destination = await newContext();
+
+    const made = await request(source.app, "POST", "/folders", {
+      key: source.workingKey,
+      body: { title: "Retired" },
+    });
+    expect(made.status).toBe(201);
+    const folderId = ((await made.json()) as { item: { id: string } }).item.id;
+    const placed = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "placed" },
+    });
+    const planted = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "planted" },
+    });
+    const kept = await source.storage.edges.createRaw({
+      source_id: placed.id,
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "Notes/placed.md" },
+    });
+    await source.storage.edges.createRaw({
+      source_id: planted.id,
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "../planted.md" },
+    });
+    const revoke = await request(
+      source.app,
+      "POST",
+      `/folders/${folderId}/revoke`,
+      { key: source.workingKey },
+    );
+    expect(revoke.status).toBe(200);
+
+    const exportRes = await request(
+      source.app,
+      "GET",
+      `/export?format=archive`,
+      { key: source.workingKey },
+    );
+    expect(exportRes.status).toBe(200);
+    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${destination.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: Buffer.from(await exportRes.arrayBuffer()),
+    });
+    expect(restoreRes.status).toBe(200);
+    const result = (await restoreRes.json()) as RestoreResult & {
+      edges_skipped_reasons: Record<string, number>;
+    };
+    expect(result.edges_imported).toBe(1);
+    expect(result.edges_skipped_reasons).toEqual({ validation_error: 1 });
+    expect((await destination.storage.items.get(folderId))?.state).toBe(
+      "revoked",
+    );
+    expect((await destination.storage.edges.get(kept.id))?.properties).toEqual({
+      path: "Notes/placed.md",
+    });
+  });
+
   it("re-restoring the same archive changes nothing and counts duplicates", async () => {
     const source = await newContext();
 

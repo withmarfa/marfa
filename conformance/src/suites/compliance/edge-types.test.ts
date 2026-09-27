@@ -350,9 +350,165 @@ describe("custom edge-type registration", () => {
       source_id: note.data.item.id,
       target_id: other.data.item.id,
       edge_type: "in-folder",
+      properties: { path: "Notes/placed.md" },
     });
     expect(misplaced.status).toBe(400);
     expect(misplaced.error?.error.code).toBe("edge_constraint_violation");
+  });
+
+  it("refuses an in-folder path that is missing or leaves the folder, and any other property, on every door that writes one", async () => {
+    const made = await client.createFolder({ title: "paths" });
+    expect(made.status).toBe(201);
+    const folderId = made.data.item.id;
+    trackFolder(ctx, folderId);
+    const note = async (): Promise<string> => {
+      const r = await client.createItem(createNote({ source: ctx.source }));
+      expect(r.status).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const source = await note();
+
+    for (const [properties, path] of [
+      [undefined, "properties.path"],
+      [{ path: "" }, "properties.path"],
+      [{ path: "a".repeat(1025) }, "properties.path"],
+      [{ path: "Notes/a\0.md" }, "properties.path"],
+      [{ path: "/Notes/a.md" }, "properties.path"],
+      [{ path: "C:/Notes/a.md" }, "properties.path"],
+      [{ path: "Notes\\a.md" }, "properties.path"],
+      [{ path: "Notes/../../a.md" }, "properties.path"],
+      [{ path: "Notes/.." }, "properties.path"],
+      [{ path: "a.md", weight: 1 }, "properties.weight"],
+    ] as const) {
+      const r = await client.createEdge({
+        source_id: source,
+        target_id: folderId,
+        edge_type: "in-folder",
+        ...(properties !== undefined && { properties }),
+      });
+      const label = JSON.stringify(properties)?.slice(0, 40);
+      expect(r.status, label).toBe(400);
+      expect(r.error?.error.code, label).toBe("validation_error");
+      const details = r.error?.error.details as
+        { errors?: { path: string }[] } | undefined;
+      expect(details?.errors?.[0]?.path, label).toBe(path);
+    }
+
+    // The witness: a path that climbs and comes back inside is taken.
+    const placed = await client.createEdge({
+      source_id: source,
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "Notes/../Tickets/a.md" },
+    });
+    expect(placed.status).toBe(201);
+    trackEdge(ctx, placed.data.edge.id);
+
+    const moved = await client.updateEdge(placed.data.edge.id, {
+      version: placed.data.edge.version,
+      properties: { path: "../a.md" },
+    });
+    expect(moved.status).toBe(400);
+    expect(moved.error?.error.code).toBe("validation_error");
+    const upserted = await client.bulkEdges({
+      atomic: false,
+      edges: [
+        {
+          source_id: source,
+          target_id: folderId,
+          edge_type: "in-folder",
+          properties: { path: "../a.md" },
+        },
+      ],
+    });
+    expect(upserted.status).toBe(200);
+    expect(upserted.data.results[0]?.error?.code).toBe("validation_error");
+
+    // An inline edge carries no properties, so no inline door writes one.
+    const inline = [
+      await client.rawRequest("/items", {
+        method: "POST",
+        body: {
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "inline" },
+          edges: { "in-folder": [folderId] },
+        },
+      }),
+      await client.rawRequest(`/items/${await note()}`, {
+        method: "PATCH",
+        body: { version: 1, edges: { "in-folder": [folderId] } },
+      }),
+    ];
+    for (const r of inline) {
+      expect(r.status).toBe(400);
+      expect(r.error?.error.code).toBe("validation_error");
+    }
+    const bulk = await client.bulkItems({
+      atomic: false,
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: `in-folder-inline-${ctx.runId}`,
+          properties: { body: "inline" },
+          edges: { "in-folder": [folderId] },
+        },
+      ],
+    });
+    expect(bulk.status).toBe(200);
+    expect(bulk.data.results[0]?.error?.code).toBe("validation_error");
+  });
+
+  it("refuses a new placement in a revoked folder with edge_constraint_violation, and keeps the ones it held", async () => {
+    const made = await client.createFolder({ title: "retired" });
+    expect(made.status).toBe(201);
+    const folderId = made.data.item.id;
+    trackFolder(ctx, folderId);
+    const note = async (): Promise<string> => {
+      const r = await client.createItem(createNote({ source: ctx.source }));
+      expect(r.status).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const held = await client.createEdge({
+      source_id: await note(),
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "held.md" },
+    });
+    expect(held.status).toBe(201);
+    trackEdge(ctx, held.data.edge.id);
+    expect((await client.revokeFolder(folderId)).status).toBe(200);
+
+    const refused = await client.createEdge({
+      source_id: await note(),
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "new.md" },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("edge_constraint_violation");
+    expect(
+      (refused.error?.error.details as { constraint?: string } | undefined)
+        ?.constraint,
+    ).toBe("revoked");
+    const bulk = await client.bulkEdges({
+      atomic: false,
+      edges: [
+        {
+          source_id: await note(),
+          target_id: folderId,
+          edge_type: "in-folder",
+          properties: { path: "new.md" },
+        },
+      ],
+    });
+    expect(bulk.status).toBe(200);
+    expect(bulk.data.results[0]?.error?.code).toBe("edge_constraint_violation");
+
+    expect((await client.getEdge(held.data.edge.id)).status).toBe(200);
   });
 
   it("lists the reverse names the shipped edge types declare", async () => {

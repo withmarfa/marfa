@@ -27,7 +27,7 @@ import {
   normalizeTimeBound,
 } from "../interface.js";
 import type { CursorSortKey } from "../interface.js";
-import { rowToEdge } from "../edge-constraints.js";
+import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
 import { edges } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -287,6 +287,7 @@ export class SqliteEdgeStore implements EdgeStore {
       const now = new Date().toISOString();
       const held = rowToEdge(row).properties;
       const merged = mergeUpdateProperties(held, properties);
+      assertEdgeProperties(row.edge_type, merged);
       const [written] = await tx
         .update(edges)
         .set({
