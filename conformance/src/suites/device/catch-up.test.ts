@@ -20,6 +20,7 @@ import {
   streamCursor,
   streamLive,
   typeCatalog,
+  wireEdge,
   wireItem,
   wireType,
 } from "../../device/marfa-answers.js";
@@ -1462,6 +1463,133 @@ describe("catch-up keeps the copy to its slice", () => {
       ids,
       "a row that left the slice stayed in the copy, so a device keeps answering for rows it no longer hears about and cannot say how stale they are",
     ).not.toContain("leaves");
+  });
+
+  it("keeps the edges a held row draws to a row that leaves the slice", async () => {
+    harness = await startHarness("eviction-edges");
+    const { server, device } = harness;
+    const inline = (edge: Record<string, unknown>) => ({
+      references: { data: [edge], next_cursor: null },
+    });
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "stays",
+              edges: inline(
+                wireEdge({
+                  id: "toward",
+                  source_id: "stays",
+                  target_id: "leaves",
+                }),
+              ),
+            },
+          },
+          {
+            item: {
+              id: "leaves",
+              edges: inline(
+                wireEdge({
+                  id: "away",
+                  source_id: "leaves",
+                  target_id: "stays",
+                }),
+              ),
+            },
+          },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({ id: "leaves", tier: "feed", version: 2 }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((edge) => edge.id)
+        : [];
+    };
+    // The witnesses: hydration held both edges, so what the catch-up leaves
+    // is read against a copy that had them.
+    expect(await ids(device.edgesFrom("stays"))).toEqual(["toward"]);
+    expect(await ids(device.edgesTo("stays"))).toEqual(["away"]);
+
+    expect((await device.catchUp()).ok).toBe(true);
+
+    expect(
+      await ids(device.edgesFrom("stays")),
+      "the edge a held row draws to the row that left went with it, so a copy's edges differ by whether it arrived by catch-up or by hydration, which keeps an edge whose source it holds",
+    ).toEqual(["toward"]);
+    expect(
+      await ids(device.edgesTo("stays")),
+      "the edge drawn from the row that left stayed, so the copy holds an edge from an item outside its slice",
+    ).toEqual([]);
+  });
+
+  it("drops the edges at both ends of a purged row", async () => {
+    harness = await startHarness("purge-edges");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "stays",
+              edges: {
+                references: {
+                  data: [
+                    wireEdge({
+                      id: "toward",
+                      source_id: "stays",
+                      target_id: "purged",
+                    }),
+                  ],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
+          { item: { id: "purged" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent("11", "item.purged", wireItem({ id: "purged" })),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const before = await device.edgesFrom("stays");
+    expect(
+      before.ok ? before.value.map((edge) => edge.id) : [],
+      "hydration did not hold the edge, so its absence below proves nothing",
+    ).toEqual(["toward"]);
+
+    expect((await device.catchUp()).ok).toBe(true);
+
+    const after = await device.edgesFrom("stays");
+    expect(after.ok).toBe(true);
+    expect(
+      after.ok ? after.value.map((edge) => edge.id) : undefined,
+      "an edge to a purged row stayed, so the copy points at an item that exists nowhere",
+    ).toEqual([]);
   });
 
   it("does not add a row that was never in the slice", async () => {

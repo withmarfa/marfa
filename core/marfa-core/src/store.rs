@@ -1183,16 +1183,30 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
     Ok(blocked)
 }
 
-pub fn delete_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+/// Drops an item the server purged, with every edge at either end: an edge
+/// to it would point at nothing anywhere.
+pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    remove_item(
+        conn,
+        id,
+        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
+    )
+}
+
+/// Drops an item that left the slice, with the edges it draws and none drawn
+/// to it: the copy holds an edge from an item in its slice whatever its
+/// target (`device.md` 43), as hydration does.
+pub fn evict_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    remove_item(conn, id, "DELETE FROM edges WHERE source_id = ?1")
+}
+
+fn remove_item(conn: &Connection, id: &str, edges: &str) -> Result<bool, CoreError> {
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    conn.execute(
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        [id],
-    )?;
+    conn.execute(edges, [id])?;
     Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0)
 }
 
@@ -1858,7 +1872,7 @@ mod tests {
     }
 
     #[test]
-    fn deleting_an_item_takes_its_tags_index_row_and_edges() {
+    fn purging_an_item_takes_its_tags_index_row_and_edges() {
         let conn = conn();
         upsert_item(
             &conn,
@@ -1876,13 +1890,41 @@ mod tests {
         .unwrap();
         upsert_edge(&conn, &wire_edge("e1", "n1", "n2", "references")).unwrap();
         upsert_edge(&conn, &wire_edge("e2", "n2", "n1", "references")).unwrap();
-        assert!(delete_item(&conn, "n1").unwrap());
-        assert!(!delete_item(&conn, "n1").unwrap());
+        assert!(purge_item(&conn, "n1").unwrap());
+        assert!(!purge_item(&conn, "n1").unwrap());
         assert_eq!(count(&conn, "tags").unwrap(), 0);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
         assert_eq!(count(&conn, "edges").unwrap(), 0);
         assert!(!item_held(&conn, "n1").unwrap());
         assert!(item_held(&conn, "n2").unwrap());
+    }
+
+    #[test]
+    fn evicting_an_item_keeps_the_edges_drawn_to_it() {
+        let conn = conn();
+        for id in ["n1", "n2"] {
+            upsert_item(
+                &conn,
+                &note(id, "a", "b", "2026-01-01T00:00:00Z"),
+                Some(&["t".into()]),
+                &Indexing::default(),
+            )
+            .unwrap();
+        }
+        upsert_edge(&conn, &wire_edge("from", "n1", "n2", "references")).unwrap();
+        upsert_edge(&conn, &wire_edge("toward", "n2", "n1", "references")).unwrap();
+        assert!(evict_item(&conn, "n1").unwrap());
+        assert!(!evict_item(&conn, "n1").unwrap());
+        assert_eq!(count(&conn, "tags").unwrap(), 1);
+        assert_eq!(count(&conn, "items_fts").unwrap(), 1);
+        let left: Vec<String> = edges_from(&conn, "n2")
+            .unwrap()
+            .into_iter()
+            .map(|edge| edge.id)
+            .collect();
+        assert_eq!(left, ["toward"]);
+        assert!(edges_from(&conn, "n1").unwrap().is_empty());
+        assert!(!item_held(&conn, "n1").unwrap());
     }
 
     #[test]
