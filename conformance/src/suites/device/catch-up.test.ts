@@ -1513,6 +1513,92 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["its-own"]);
   });
 
+  it("leaves the cursor before a row entering the slice whose edges it could not read", async () => {
+    harness = await startHarness("entering-read-fails");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10", rows: { "core.note": [] } });
+    const entered = wireItem({ id: "entered", version: 3 });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", entered)]),
+    );
+    server.answer(
+      "GET",
+      "/items/entered",
+      refusal(503, "service_unavailable", "busy"),
+      answers.updated({
+        ...entered,
+        edges: {
+          references: {
+            data: [
+              wireEdge({
+                id: "its-own",
+                source_id: "entered",
+                target_id: "elsewhere",
+              }),
+            ],
+            next_cursor: null,
+          },
+        },
+      }),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const failed = await device.catchUp();
+    expect(failed.ok, JSON.stringify(failed)).toBe(false);
+    const status = await device.status();
+    expect(
+      status.ok && status.value.event_cursor,
+      "the cursor moved past an event whose row went in without its edges",
+    ).toBe("10");
+    // The witness: the next catch-up takes the event, edges and all.
+    const caught = await device.catchUp();
+    expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(1);
+    const edges = await device.edgesFrom("entered");
+    expect(edges.ok ? edges.value.map((edge) => edge.id) : []).toEqual([
+      "its-own",
+    ]);
+  });
+
+  it("keeps a held stream going over a row entering the slice whose edges it could not read at first", async () => {
+    harness = await startHarness("entering-read-fails-held");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10", rows: { "core.note": [] } });
+    const entered = wireItem({ id: "entered", version: 3 });
+    server.answer("GET", "/events", {
+      kind: "sse",
+      hold: true,
+      frames: [connected, itemEvent("11", "item.updated", entered)],
+    });
+    server.answer(
+      "GET",
+      "/items/entered",
+      refusal(503, "service_unavailable", "busy"),
+      answers.updated({ ...entered, edges: {} }),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const follow = device.holdFollow(20);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(
+            follow.stdout,
+            `the entering row was never taken: ${follow.stderr}`,
+          ).toContain('"cursor":"11"');
+        },
+        { timeout: 18_000, interval: 50 },
+      );
+      expect(
+        follow.running(),
+        "the follow ended over a read a retry would have answered",
+      ).toBe(true);
+    } finally {
+      await follow.stop();
+    }
+  });
+
   it("learns a row retyped out of its slice, asking the stream for every type", async () => {
     harness = await startHarness("retyped-out");
     const { server, device } = harness;

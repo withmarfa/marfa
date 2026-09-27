@@ -165,7 +165,13 @@ fn watch_files(
         if quiet_since.elapsed() < SETTLE {
             continue;
         }
-        step(folder, json, &mut standing)?;
+        match step(folder, json, &mut standing) {
+            // A hydration the follow started after the log aged past its
+            // cursor is still refilling the copy; the next pass finds it
+            // whole, and ending the watch here would end it for good.
+            Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
+            other => other?,
+        }
     }
     Ok(())
 }

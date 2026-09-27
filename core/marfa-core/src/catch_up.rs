@@ -502,7 +502,20 @@ fn follow_paced(
                         behind = true;
                         break;
                     }
-                    match take(core, &catalog, &slice, &id, kind, &payload)? {
+                    // A row entering the slice is read before its event is
+                    // taken, and that read can meet a dropped connection
+                    // or a busy server like any other: the stream is opened
+                    // again after the wait, from the cursor before this
+                    // event, rather than the follow ending over it.
+                    let taken = match take(core, &catalog, &slice, &id, kind, &payload) {
+                        Err(error) if passes(&error) => {
+                            report.failed_opens += 1;
+                            report.last_failure = Some(error.to_string());
+                            break;
+                        }
+                        other => other?,
+                    };
+                    match taken {
                         Some(change) => {
                             report.applied += 1;
                             on_change(&change);

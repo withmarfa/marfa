@@ -254,14 +254,6 @@ impl Http {
         self.get_json(&["items", id, "edges"], &params)
     }
 
-    /// One item by id, as the server holds it now.
-    ///
-    /// The read a refused write is reconciled against
-    /// (`queue-and-verdicts.md` 12): the working copy holds an edit the
-    /// server declined, and nothing else brings it back, because a write the
-    /// server refused changed nothing and so produced no event for catch-up
-    /// to replay. `Ok(None)` is a 404, which is the server saying it holds
-    /// no such row — for a refused create, the honest answer.
     /// One item by id with its edges, as a hydration reads each row: a row
     /// that comes into the slice after the hydration needs what it draws.
     pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
@@ -274,6 +266,14 @@ impl Http {
         }
     }
 
+    /// One item by id, as the server holds it now.
+    ///
+    /// The read a refused write is reconciled against
+    /// (`queue-and-verdicts.md` 12): the working copy holds an edit the
+    /// server declined, and nothing else brings it back, because a write the
+    /// server refused changed nothing and so produced no event for catch-up
+    /// to replay. `Ok(None)` is a 404, which is the server saying it holds
+    /// no such row — for a refused create, the honest answer.
     pub fn item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         match self.get_json::<WireItemWithMetadata>(&["items", id], &[("include", "metadata")]) {
             Ok(item) => Ok(Some(item)),
