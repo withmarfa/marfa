@@ -103,6 +103,16 @@ pub fn read(text: &str) -> Document {
     }
 }
 
+/// Reads a file that carries no frontmatter: all of it is the body.
+pub fn read_body(text: &str) -> Document {
+    let mut properties = Map::new();
+    properties.insert(BODY_FIELD.into(), Value::String(text.to_string()));
+    Document {
+        links: links(text),
+        properties,
+    }
+}
+
 /// Writes an item's fields back out as a file.
 pub fn write(properties: &Map<String, Value>) -> Result<String, CoreError> {
     let body = properties

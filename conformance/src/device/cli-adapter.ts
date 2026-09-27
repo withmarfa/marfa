@@ -637,8 +637,6 @@ export class CliDevice implements DeviceUnderTest {
 
 /** What `folders add` is given. */
 export interface FolderSlice {
-  /** The source the folder's rows are keyed by (`folders.md` 10). */
-  source: string;
   types: string[];
   tier?: Tier;
   defaultType?: string;
@@ -654,18 +652,12 @@ export interface ScanReport {
   missing: number;
   deleted: number;
   skipped: number;
-  /** Items moved off a contested name and back (`folders.md` 24). */
-  parked: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 30). Counted in `created` too. */
+   *  or moved (`folders.md` 28). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 30). */
+   *  sent (`folders.md` 28). */
   lost: number;
-  /** Files sent as an edit over content another device made and this one
-   *  never read, the last writer winning (`folders.md` 13). Counted in
-   *  `updated` too. */
-  overwrote: number;
 }
 
 export interface PullReport {
@@ -677,11 +669,11 @@ export interface PullReport {
   unwritten: number;
   collided: number;
   outside: number;
-  /** Files of items that left the slice, taken away (`folders.md` 26). */
+  /** Files of items that left the slice, taken away (`folders.md` 24). */
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 29). */
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 27). */
   absent: number;
 }
 
@@ -731,15 +723,7 @@ export class CliFolder {
   }
 
   async add(slice: FolderSlice): Promise<Outcome<unknown>> {
-    const args = [
-      "folders",
-      "add",
-      this.dir,
-      "--source",
-      slice.source,
-      "--types",
-      slice.types.join(","),
-    ];
+    const args = ["folders", "add", this.dir, "--types", slice.types.join(",")];
     if (slice.tier !== undefined) args.push("--tier", slice.tier);
     if (slice.defaultType !== undefined)
       args.push("--default-type", slice.defaultType);

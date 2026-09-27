@@ -18,7 +18,6 @@ import {
 import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
-  SERVED_SOURCE,
   edgesPage,
   headRead,
   itemsPage,
@@ -309,13 +308,6 @@ export interface FolderHarness {
 }
 
 /**
- * The source a fixture's folder is keyed by where it names none: the one
- * `wireItem` stamps a served row with, so a row the hydration served is one
- * this folder's natural key reaches.
- */
-export const FOLDER_SOURCE = SERVED_SOURCE;
-
-/**
  * A folder on a scripted server, added and hydrated.
  *
  * `rows` seeds what the hydration answers, so a fixture about an item
@@ -324,7 +316,7 @@ export const FOLDER_SOURCE = SERVED_SOURCE;
 export async function folderHarness(
   label: string,
   options: {
-    slice?: Omit<FolderSlice, "source"> & { source?: string };
+    slice?: FolderSlice;
     /**
      * Another harness's server, for two folders on one server, and the key
      * this folder's machine holds.
@@ -356,12 +348,9 @@ export async function folderHarness(
     url: server.url,
     key: options.sharing?.key ?? KEY,
   });
-  const slice: FolderSlice = {
-    source: FOLDER_SOURCE,
-    ...(options.slice ?? {
-      types: ["core.note"],
-      defaultType: "core.note",
-    }),
+  const slice: FolderSlice = options.slice ?? {
+    types: ["core.note"],
+    defaultType: "core.note",
   };
   const stop = async (): Promise<void> => {
     const unscripted = [...server.unmatchedRequests];

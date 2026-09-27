@@ -564,31 +564,24 @@ mod tests {
                 command: FoldersCommand::Scan { .. }
             }
         ));
-        match Cli::try_parse_from([
+        let add = [
             "marfa",
             "folders",
             "add",
-            "notes",
-            "--source",
             "notes",
             "--types",
             "core.note,core.file",
             "--tag",
             "inbox",
-        ])
-        .unwrap()
-        .command
-        {
+        ];
+        assert!(
+            Cli::try_parse_from(add.iter().copied().chain(["--source", "notes"])).is_err(),
+            "a folder names no source (`folders.md` 8)"
+        );
+        match Cli::try_parse_from(add).unwrap().command {
             Command::Folders {
-                command:
-                    FoldersCommand::Add {
-                        source,
-                        types,
-                        tags,
-                        ..
-                    },
+                command: FoldersCommand::Add { types, tags, .. },
             } => {
-                assert_eq!(source, "notes");
                 assert_eq!(types, vec!["core.note", "core.file"]);
                 assert_eq!(tags, vec!["inbox"]);
             }
