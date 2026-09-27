@@ -142,7 +142,8 @@ enum Command {
     Operations,
     /// A working copy of a slice of one server, in the store --db names.
     Device(DeviceArgs),
-    /// Folders on this machine: a directory that holds a slice as files.
+    /// Folders on this machine, a directory that holds a slice as files, and
+    /// their settings on the server.
     Folders {
         #[command(subcommand)]
         command: FoldersCommand,

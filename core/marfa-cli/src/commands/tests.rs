@@ -606,6 +606,72 @@ fn a_housekeeping_job_is_listed_and_run_by_name() {
 }
 
 #[test]
+fn a_folder_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
+    let created = folders::create_request(&folders::CreateArgs {
+        settings: folders::SettingsArgs {
+            body: Some(r#"{"search":{"types":["core.note"]}}"#.into()),
+            title: Some("Project".into()),
+            include: vec!["*.md".into()],
+            first_placement: vec!["core.note=Notes".into()],
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(created.method, Method::Post);
+    assert_eq!(created.path(), "/folders");
+    assert_eq!(
+        body(&created),
+        &json!({
+            "search": { "types": ["core.note"] },
+            "title": "Project",
+            "include": ["*.md"],
+            "first_placement": { "core.note": "Notes" },
+        })
+    );
+
+    let changed = folders::change_request(&folders::ChangeArgs {
+        id: "f1".into(),
+        version: 3,
+        settings: folders::SettingsArgs {
+            ignore: vec!["drafts/".into()],
+            ..Default::default()
+        },
+        idempotency: items::IdempotencyArgs {
+            idempotency_key: Some("k1".into()),
+        },
+    })
+    .unwrap();
+    assert_eq!(changed.method, Method::Patch);
+    assert_eq!(changed.path(), "/folders/f1");
+    assert_eq!(
+        body(&changed),
+        &json!({ "ignore": ["drafts/"], "version": 3 })
+    );
+    assert!(
+        changed
+            .headers
+            .iter()
+            .any(|(name, value)| name == "Idempotency-Key" && value == "k1")
+    );
+
+    let revoked = folders::revoke_request("f1", &items::IdempotencyArgs::default());
+    assert_eq!(revoked.method, Method::Post);
+    assert_eq!(revoked.path(), "/folders/f1/revoke");
+    assert_eq!(revoked.body, Body::None);
+
+    let twice = folders::create_request(&folders::CreateArgs {
+        settings: folders::SettingsArgs {
+            body: Some(r#"{"title":"a"}"#.into()),
+            title: Some("b".into()),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    assert!(matches!(twice, Err(CliError::Invalid(_))), "{twice:?}");
+}
+
+#[test]
 fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
     let registered = connectors::register_request("mail", Some("reads a mailbox"));
     assert_eq!(registered.method, Method::Post);

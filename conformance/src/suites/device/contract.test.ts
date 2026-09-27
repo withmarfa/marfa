@@ -431,6 +431,9 @@ const invocations: Record<string, () => string[]> = {
     ID,
   ],
   "connectors runs": () => [ID],
+  "folders create": () => ["--title", "t"],
+  "folders change": () => ["--version", "1", "--title", "t", ID],
+  "folders revoke": () => [ID],
   login: () => ["--no-browser", "--print-token"],
   "owner show": () => [],
   "owner create": () => ["--email", "owner@example.com", "--password-stdin"],
@@ -487,8 +490,9 @@ const NOT_DRIVEN: Record<string, string> = {
 const GROUPS = ["items bulk-action"];
 
 /**
- * Roots whose every command goes through the core's transport rather than
- * the binary's, which the working-copy block below holds to the contract.
+ * Roots whose commands go through the core's transport rather than the
+ * binary's, which the working-copy block below holds to the contract; those
+ * the table names (`folders create`, `change`, `revoke`) are driven above.
  */
 const THROUGH_THE_CORE = ["device", "folders"];
 
