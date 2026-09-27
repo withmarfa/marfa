@@ -53,9 +53,6 @@ describe("a folder round trip", () => {
       "folders",
       "add",
       dir,
-      // The key's own source, which it may always name.
-      "--source",
-      c.ctx.source,
       "--types",
       "core.note",
       "--default-type",
@@ -91,49 +88,43 @@ describe("a folder round trip", () => {
     expect(pushed.scan.created).toBe(1);
     expect(pushed.drain.sent).toBe(1);
 
-    // It is in Marfa, by its natural key: the path inside the folder.
-    const listed = await c.cli.json<{
-      data: Array<{
-        id: string;
-        source_id?: string;
-        version: number;
-        properties: Record<string, unknown>;
-      }>;
-    }>(["items", "list", "--type", "core.note", "--source", c.ctx.source]);
-    const landed = listed.data.find((row) => row.source_id === "dropped.md");
-    expect(
-      landed,
-      "the dropped note did not land under its natural key",
-    ).toBeDefined();
-    const elsewhere = await c.cli.json<{ data: Array<{ id: string }> }>([
-      "items",
-      "list",
-      "--type",
-      "core.note",
-      "--source",
-      unique("cli-nobody"),
-    ]);
-    expect(elsewhere.data).toEqual([]);
-    trackItem(c.ctx, landed!.id);
-    expect(landed!.properties.title).toBe(title);
-    expect(landed!.properties.status).toBe("dropped in a folder");
-    // The folder's own identity record is written into the file and never
-    // sent as a property of the item.
-    expect(landed!.properties.marfa_id).toBeUndefined();
+    // It is in Marfa under the id the folder minted, with no natural key.
+    const queued = await c.cli.json<
+      Array<{ kind: string; item_id: string | null }>
+    >(["device", "--db", store, "queue"]);
+    const minted = queued.find((row) => row.kind === "create_item")?.item_id;
+    expect(minted, "the folder queued no create for the note").toBeTruthy();
+    const landed = (
+      await c.cli.json<{
+        item: {
+          id: string;
+          source_id?: string | null;
+          version: number;
+          properties: Record<string, unknown>;
+        };
+      }>(["items", "get", String(minted)])
+    ).item;
+    trackItem(c.ctx, landed.id);
+    expect(landed.source_id ?? null).toBeNull();
+    expect(landed.properties.title).toBe(title);
+    expect(landed.properties.status).toBe("dropped in a folder");
+    // The id is written into the file and never sent as a property of the
+    // item.
+    expect(landed.properties.marfa_id).toBeUndefined();
 
     // An agent with its own key changes it from anywhere.
     const changed = await c.cli.json<ItemEnvelope>([
       "items",
       "update",
-      landed!.id,
+      landed.id,
       "--version",
-      String(landed!.version),
+      String(landed.version),
       "--prop",
       "status=changed elsewhere",
       "--prop",
       "body=Changed by an agent with its own key.\n",
     ]);
-    expect(changed.item.version).toBe(landed!.version + 1);
+    expect(changed.item.version).toBe(landed.version + 1);
 
     // The change comes back to the folder: the working copy catches up,
     // then the pull writes the file.
@@ -151,7 +142,7 @@ describe("a folder round trip", () => {
     const file = readFileSync(join(dir, "dropped.md"), "utf8");
     expect(file).toContain("status: changed elsewhere");
     expect(file).toContain("Changed by an agent with its own key.");
-    expect(file).toContain(`marfa_id: ${landed!.id}`);
+    expect(file).toContain(`marfa_id: ${landed.id}`);
     // A person's own fields keep the order they wrote them in.
     expect(file.indexOf("title:")).toBeLessThan(file.indexOf("status:"));
 

@@ -356,7 +356,7 @@ pub struct Edit {
     pub properties: Map<String, Value>,
     pub base_version: Option<i64>,
     /// The natural key this row should be under, where the caller is
-    /// moving it (`folders.md` 23). Sent under the item's id and the
+    /// moving it (`items.md` 22). Sent under the item's id and the
     /// version it read, so a key another item holds is refused rather
     /// than taken. Absent leaves the key alone.
     pub source_id: Option<String>,

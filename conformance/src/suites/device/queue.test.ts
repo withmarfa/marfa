@@ -2335,6 +2335,69 @@ describe("an answer the device applies keeps what it has not had answered", () =
     }
   });
 
+  it("refuses a create whose natural key names a row somebody trashed, and forgets its row", async () => {
+    // The server acknowledges such a create with the row in the bin and
+    // writes nothing (`versions.md` 10).
+    const BINNED = "01a00000-0000-7000-8000-0000000000b1";
+    harness = await hydratedHarness("queue-create-onto-trashed");
+    const { device, server } = harness;
+    const door = new FolderDoor([
+      [
+        BINNED,
+        {
+          properties: { title: "binned", body: "theirs" },
+          source: "notes",
+          source_id: "binned.md",
+          type: "core.note",
+          version: 3,
+          trashed: true,
+        },
+      ],
+    ]);
+    scriptWrites(server, {
+      create: [
+        (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
+      ],
+    });
+    // The witness: a create under a key that names nothing lands, so the
+    // refusal below is the bin's and not the door's.
+    const control = await device.create({
+      type: "core.note",
+      properties: { title: "free", body: "mine" },
+      source: "notes",
+      sourceId: "free.md",
+    });
+    const onto = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "binned.md",
+    });
+    expect(control.ok && onto.ok).toBe(true);
+    if (!control.ok || !onto.ok) return;
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.map((entry) => [entry.verdict, entry.reason]),
+      "a create the server acknowledged and did not write was taken as accepted, so what it carried is dropped with nothing saying so",
+    ).toEqual([
+      ["accepted", null],
+      ["refused", "trashed"],
+    ]);
+    const queued = await queueOf(device);
+    expect(
+      queued.map((row) => [row.verdict, row.reason]).at(-1),
+      "the queue keeps a different reason than the drain reported",
+    ).toEqual(["refused", "trashed"]);
+    const held = await device.get(onto.value.item_id ?? "");
+    expect(
+      held.ok,
+      "the copy still holds the row the refused create was queued as",
+    ).toBe(false);
+    expect(door.rows.get(BINNED)?.properties.body).toBe("theirs");
+  });
+
   it("refuses the writes behind a landed create that would take from the row, and sends those that add", async () => {
     // Each was made against the row this device created. On the row another
     // device made, one that replaces, removes or moves its state would do
