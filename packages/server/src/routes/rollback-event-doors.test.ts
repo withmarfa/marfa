@@ -1187,8 +1187,8 @@ interface PublishingFile {
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   "routes/items.ts": {
-    sites: 14,
-    why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, the two the purge door emits, and the four tag and metadata doors",
+    sites: 15,
+    why: "create, upsert, patch, the conflicted copy a resolving patch spawns and the edges it copies, delete, the two the purge door emits, and the four tag and metadata doors",
   },
   "routes/items-lifecycle.ts": {
     sites: 3,

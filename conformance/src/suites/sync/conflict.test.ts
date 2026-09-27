@@ -44,6 +44,90 @@ afterAll(async () => {
 });
 
 describe("the server resolves a conflict", () => {
+  it("gives the conflicted copy the original's tags and every edge a second copy may hold", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const make = async (title: string, tags?: string[]) => {
+      const r = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title, body: `${title} body` },
+          ...(tags !== undefined && { tags }),
+        }),
+      );
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item;
+    };
+    const tag = `kept-${ctx.runId}`;
+    const original = await make("original", [tag]);
+    const parent = await make("parent");
+    const child = await make("child");
+    const topic = await make("topic");
+    const successor = await make("successor");
+    const link = async (
+      source_id: string,
+      target_id: string,
+      edge_type: string,
+    ) => {
+      const r = await client.createEdge({ source_id, target_id, edge_type });
+      expect(r.ok, edge_type).toBe(true);
+    };
+    await link(parent.id, original.id, "parent-of");
+    await link(original.id, child.id, "parent-of");
+    await link(original.id, topic.id, "about");
+    await link(successor.id, original.id, "supersedes");
+
+    const base = original.version;
+    expect(
+      (
+        await client.updateItem(original.id, {
+          properties: { body: "linked body from the winner" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "linked body from the loser" },
+        version: base,
+      },
+    });
+    expect(resolved.ok).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy, "no conflicted copy was written").toBeTruthy();
+
+    const meta = await client.getMetadata(copy!);
+    expect(meta.ok).toBe(true);
+    expect(meta.data.metadata.tags.sort()).toEqual(
+      [tag, "conflicted-copy"].sort(),
+    );
+
+    const out = await client.listItemEdges(copy!);
+    const back = await client.listItemBackrefs(copy!);
+    expect(out.ok && back.ok).toBe(true);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
+    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    // Its place under the same parent, and what it is about.
+    expect(inbound).toContain(`${parent.id}>parent-of`);
+    expect(outbound).toContain(`about>${topic.id}`);
+    // Not the original's children, each of which has one parent, and not a
+    // supersedes, which is one-to-one at both ends. The witness: the
+    // original still holds both.
+    expect(outbound).not.toContain(`parent-of>${child.id}`);
+    expect(inbound).not.toContain(`${successor.id}>supersedes`);
+    const originalOut = await client.listItemEdges(original.id);
+    const originalBack = await client.listItemBackrefs(original.id);
+    expect(originalOut.data.data.map((e) => e.target_id)).toContain(child.id);
+    expect(originalBack.data.data.map((e) => e.source_id)).toContain(
+      successor.id,
+    );
+  });
+
   it("keeps both copies in one write where the type says to", async () => {
     requireRule(caps, "serverSideMerge");
 

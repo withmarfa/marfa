@@ -2609,6 +2609,7 @@ export function itemRoutes(storage: Storage) {
     const {
       conflict_resolution: resolution,
       conflict_sibling: sibling,
+      conflict_sibling_edges: siblingEdges,
       ...resolvedItem
     } = txResult;
 
@@ -2623,6 +2624,7 @@ export function itemRoutes(storage: Storage) {
         item: sibling,
         metadata: await storage.metadata.get(sibling.id),
       });
+      await announceInlineEdges({ created: siblingEdges ?? [], deleted: [] });
     }
     await publish({
       type: "updated",

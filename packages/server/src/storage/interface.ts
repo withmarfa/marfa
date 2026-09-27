@@ -542,6 +542,11 @@ export type ResolvedItem = Item & {
    * report a create that did not happen.
    */
   conflict_sibling?: Item;
+  /**
+   * The edges the sibling was given as copies of the original's, announced
+   * after it for the same reason it is, and absent where it got none.
+   */
+  conflict_sibling_edges?: Edge[];
 };
 
 /**

@@ -7,6 +7,7 @@ import type {
   ConflictResolutionReport,
   ConflictResponse,
   ConflictSnapshot,
+  Edge,
   Item,
   MergePolicy,
   MergeStrategy,
@@ -569,11 +570,14 @@ export function attachResolution(
   item: Item,
   resolution: ConflictResolutionReport | undefined,
   sibling?: Item,
+  siblingEdges?: Edge[],
 ): ResolvedItem {
   if (resolution === undefined) return item;
   return {
     ...item,
     conflict_resolution: resolution,
     ...(sibling !== undefined && { conflict_sibling: sibling }),
+    ...(siblingEdges !== undefined &&
+      siblingEdges.length > 0 && { conflict_sibling_edges: siblingEdges }),
   };
 }
