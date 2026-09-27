@@ -19,6 +19,7 @@ describe("validateEdgeTypeSchema", () => {
       target_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       property_schema: {},
+      written_at: "source",
     });
   });
 
@@ -219,5 +220,33 @@ describe("role constraints", () => {
     // The witness: the shipped set does declare reverse names, so the check
     // above is over more than the ids.
     expect(names.length).toBeGreaterThan(ALL_EDGE_TYPES.length);
+  });
+
+  it("writes an edge at its source unless told, and refuses the target without a reverse name", () => {
+    const plain = validateEdgeTypeSchema({
+      id: "cites",
+      cardinality: "many-to-many",
+    });
+    expect(plain.success && plain.data.written_at).toBe("source");
+
+    const atTarget = validateEdgeTypeSchema({
+      id: "mentors",
+      cardinality: "one-to-many",
+      reverse_name: "mentored-by",
+      written_at: "target",
+    });
+    expect(atTarget.success && atTarget.data.written_at).toBe("target");
+
+    for (const written_at of ["target", "middle"]) {
+      const refused = validateEdgeTypeSchema({
+        id: "mentors",
+        cardinality: "one-to-many",
+        written_at,
+      });
+      expect(refused.success, written_at).toBe(false);
+      if (!refused.success) {
+        expect(refused.errors.map((e) => e.field)).toContain("written_at");
+      }
+    }
   });
 });

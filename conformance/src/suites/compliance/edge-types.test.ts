@@ -285,6 +285,21 @@ describe("custom edge-type registration", () => {
     expect(reverse["references"]).toBeNull();
   });
 
+  it("lists the end whose file writes each shipped edge type", async () => {
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    const writtenAt = Object.fromEntries(
+      r.data.data
+        .filter((t) => !t.id.includes("."))
+        .map((t) => [t.id, t.written_at]),
+    );
+    // A child names its parent; everything else is written by its source,
+    // an attachment included, which names what it was made for.
+    expect(writtenAt["parent-of"]).toBe("target");
+    expect(writtenAt["attached-to"]).toBe("source");
+    expect(writtenAt["references"]).toBe("source");
+  });
+
   it("registers an edge type with a reverse name and lists it", async () => {
     const etId = `mock.reversed.${ctx.runId}`;
     const reverse = `mock.reversed-by.${ctx.runId}`;
@@ -340,6 +355,47 @@ describe("custom edge-type registration", () => {
       expect(refused.status, JSON.stringify(body)).toBe(409);
       expect(refused.error?.error.code).toBe("conflict");
     }
+  });
+
+  it("registers an edge type written at its target, and refuses one with no name to write it under", async () => {
+    const etId = `mock.written-at.${ctx.runId}`;
+    const reverse = `mock.written-by.${ctx.runId}`;
+    const r = await client.registerEdgeType({
+      id: etId,
+      cardinality: "one-to-many",
+      reverse_name: reverse,
+      written_at: "target",
+    });
+    expect(r.status).toBe(201);
+    trackEdgeType(ctx, etId);
+    expect(r.data.edge_type.written_at).toBe("target");
+
+    // The default is the source, and says so.
+    const plainId = `mock.written-default.${ctx.runId}`;
+    const plain = await client.registerEdgeType({
+      id: plainId,
+      cardinality: "many-to-many",
+    });
+    expect(plain.status).toBe(201);
+    trackEdgeType(ctx, plainId);
+    expect(plain.data.edge_type.written_at).toBe("source");
+
+    // The target's file can only write an edge under a name read from the
+    // target, so a type written there must declare one.
+    const nameless = await client.registerEdgeType({
+      id: `mock.written-nameless.${ctx.runId}`,
+      cardinality: "one-to-many",
+      written_at: "target",
+    });
+    expect(nameless.status).toBe(400);
+    expect(nameless.error?.error.code).toBe("validation_error");
+
+    const elsewhere = await client.registerEdgeType({
+      id: `mock.written-elsewhere.${ctx.runId}`,
+      cardinality: "one-to-many",
+      ...({ written_at: "middle" } as Record<string, unknown>),
+    });
+    expect(elsewhere.status).toBe(400);
   });
 
   it("refuses a reverse name that is not an edge type identifier", async () => {

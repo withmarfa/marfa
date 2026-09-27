@@ -8,6 +8,7 @@ import {
   unregisterEdgeTypeSchema,
   isValidEdgeTypeIdentifier,
   edgeNameHolder,
+  getEdgeTypeSchema,
   isRoleConstraint,
   roleFromConstraint,
   TYPE_ROLES,
@@ -111,7 +112,13 @@ export const EdgeTypeRequestSchema = z
       .string()
       .optional()
       .describe(
-        "The name the edge goes by read from its target, such as `child-of` for `parent-of`. A folder writes an edge of a type that declares one in the target's file. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.",
+        "The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.",
+      ),
+    written_at: z
+      .enum(["source", "target"])
+      .optional()
+      .describe(
+        "The end whose file writes an edge of this type, `source` unless named. Where the file at that end cannot carry frontmatter, the other end writes it under the name read from there. `target` needs a `reverse_name`.",
       ),
   })
   .openapi("EdgeTypeRequest");
@@ -132,6 +139,7 @@ const EdgeTypeResponseSchema = z
     cascade_on_delete: z.enum(["cascade", "orphan", "block"]),
     property_schema: z.record(z.string(), z.unknown()),
     reverse_name: z.string().optional(),
+    written_at: z.enum(["source", "target"]),
   })
   .openapi("EdgeType");
 
@@ -151,6 +159,13 @@ export function edgeTypeFromRequest(
       ErrorCode.VALIDATION_ERROR,
       "Invalid reverse_name: it takes the edge-type identifier grammar",
       { field: "reverse_name" },
+    );
+  }
+  if (body.written_at === "target" && reverse === undefined) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "written_at: target needs a reverse_name, the name the target's file writes the edge under",
+      { field: "written_at" },
     );
   }
   if (reverse === body.id) {
@@ -187,6 +202,7 @@ export function edgeTypeFromRequest(
       FieldDefinition
     >,
     ...(reverse !== undefined && { reverse_name: reverse }),
+    written_at: body.written_at ?? "source",
   };
 }
 
@@ -376,10 +392,23 @@ export function edgeTypeRoutes(storage: Storage) {
       );
     }
 
+    // The name checks and the registry claim run with nothing awaited
+    // between them, so two registrations in flight cannot both take a name;
+    // the claim is given back if the row is not written.
+    if (getEdgeTypeSchema(body.id)) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Edge type ${body.id} already exists`,
+      );
+    }
     const schema = edgeTypeFromRequest(body);
-
-    await storage.edgeTypes.create(schema);
     registerEdgeTypeSchema(schema);
+    try {
+      await storage.edgeTypes.create(schema);
+    } catch (err) {
+      unregisterEdgeTypeSchema(schema.id);
+      throw err;
+    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

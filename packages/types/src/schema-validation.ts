@@ -13,6 +13,7 @@ import type {
   EdgeCardinality,
   EdgeCascade,
   EdgeTypeSchema,
+  EdgeWrittenAt,
   FieldDefinition,
   FieldFormat,
   FieldType,
@@ -1559,6 +1560,30 @@ export function validateEdgeTypeSchema(
     }
   }
 
+  if (
+    obj.written_at !== undefined &&
+    obj.written_at !== "source" &&
+    obj.written_at !== "target"
+  ) {
+    errors.push(
+      issue({
+        field: "written_at",
+        expected: 'one of: "source", "target"',
+        actual: describe(obj.written_at),
+        hint: "Name the end whose file writes the edge, or omit it for the source.",
+      }),
+    );
+  } else if (obj.written_at === "target" && obj.reverse_name === undefined) {
+    errors.push(
+      issue({
+        field: "written_at",
+        expected: "a reverse_name beside written_at: target",
+        actual: "no reverse_name",
+        hint: "The target's file writes the edge under the name read from the target.",
+      }),
+    );
+  }
+
   if (obj.reverse_name !== undefined) {
     if (
       typeof obj.reverse_name !== "string" ||
@@ -1705,6 +1730,7 @@ export function validateEdgeTypeSchema(
     cascade_on_delete:
       (obj.cascade_on_delete as EdgeCascade | undefined) ?? "orphan",
     property_schema: propertySchema,
+    written_at: (obj.written_at as EdgeWrittenAt | undefined) ?? "source",
   };
   if (typeof obj.label === "string") data.label = obj.label;
   if (typeof obj.description === "string") data.description = obj.description;
@@ -1757,6 +1783,7 @@ export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
     cascade_on_delete: true,
     property_schema: true,
     reverse_name: true,
+    written_at: true,
   } satisfies Record<keyof EdgeTypeSchema, true>),
 );
 

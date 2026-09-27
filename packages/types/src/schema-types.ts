@@ -225,4 +225,15 @@ export interface EdgeTypeSchema {
    * still written somewhere. Nothing about how the edge is stored changes.
    */
   reverse_name?: string;
+  /**
+   * The end whose file writes an edge of this type: `source` unless the type
+   * says otherwise. Where the file at that end cannot carry frontmatter, the
+   * other end writes it under the name read from there, and an edge with no
+   * such name is written in no file. `target` needs a `reverse_name`, since
+   * that is the only name the target's file can write it under.
+   */
+  written_at: EdgeWrittenAt;
 }
+
+/** The end of an edge whose file writes it. */
+export type EdgeWrittenAt = "source" | "target";

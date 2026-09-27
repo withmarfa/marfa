@@ -463,6 +463,7 @@ for (const edge of edgeSchemas) {
   if (edge.reverse_name) {
     edgeLines.push(`  reverse_name: ${quote(edge.reverse_name)},`);
   }
+  edgeLines.push(`  written_at: ${quote(edge.written_at)},`);
   const propSchema = edge.property_schema;
   if (Object.keys(propSchema).length === 0) {
     edgeLines.push(`  property_schema: {},`);

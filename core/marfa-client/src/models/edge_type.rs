@@ -31,6 +31,8 @@ pub struct EdgeType {
     pub property_schema: std::collections::HashMap<String, serde_json::Value>,
     #[serde(rename = "reverse_name", skip_serializing_if = "Option::is_none")]
     pub reverse_name: Option<String>,
+    #[serde(rename = "written_at")]
+    pub written_at: WrittenAt,
 }
 
 impl EdgeType {
@@ -41,6 +43,7 @@ impl EdgeType {
         target_type_constraints: Vec<String>,
         cascade_on_delete: CascadeOnDelete,
         property_schema: std::collections::HashMap<String, serde_json::Value>,
+        written_at: WrittenAt,
     ) -> EdgeType {
         EdgeType {
             id,
@@ -52,6 +55,7 @@ impl EdgeType {
             cascade_on_delete,
             property_schema,
             reverse_name: None,
+            written_at,
         }
     }
 }
@@ -87,5 +91,19 @@ pub enum CascadeOnDelete {
 impl Default for CascadeOnDelete {
     fn default() -> CascadeOnDelete {
         Self::Cascade
+    }
+}
+///
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum WrittenAt {
+    #[serde(rename = "source")]
+    Source,
+    #[serde(rename = "target")]
+    Target,
+}
+
+impl Default for WrittenAt {
+    fn default() -> WrittenAt {
+        Self::Source
     }
 }

@@ -123,6 +123,7 @@ describe("unreadTopLevelKeys", () => {
       cascade_on_delete: "orphan",
       property_schema: {},
       reverse_name: "cited-by",
+      written_at: "source",
     };
     expect(Object.keys(full).sort()).toEqual([...EDGE_TYPE_SCHEMA_KEYS].sort());
     expect(keysRead(full, validateEdgeTypeSchema)).toEqual(

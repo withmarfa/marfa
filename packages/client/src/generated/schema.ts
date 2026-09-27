@@ -1822,6 +1822,8 @@ export interface components {
                 [key: string]: unknown;
             };
             reverse_name?: string;
+            /** @enum {string} */
+            written_at: "source" | "target";
         };
         ConflictRefusal: {
             error: {
@@ -1856,8 +1858,13 @@ export interface components {
                     format?: string;
                 };
             };
-            /** @description The name the edge goes by read from its target, such as `child-of` for `parent-of`. A folder writes an edge of a type that declares one in the target's file. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name. */
+            /** @description The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name. */
             reverse_name?: string;
+            /**
+             * @description The end whose file writes an edge of this type, `source` unless named. Where the file at that end cannot carry frontmatter, the other end writes it under the name read from there. `target` needs a `reverse_name`.
+             * @enum {string}
+             */
+            written_at?: "source" | "target";
         };
         EdgeTypePage: {
             data: components["schemas"]["EdgeType"][];

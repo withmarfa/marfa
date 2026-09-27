@@ -143,6 +143,7 @@ describe("archives carry type registrations", () => {
       target_type_constraints: ["*"],
       cascade_on_delete: "orphan",
       property_schema: {},
+      written_at: "source",
     });
 
     const recipe = await source.storage.items.create({
