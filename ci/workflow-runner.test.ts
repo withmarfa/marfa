@@ -46,7 +46,7 @@ describe("jobs use local macOS and Blacksmith, with hosted release publishing", 
       jobsOf(readFileSync(join(WORKFLOWS, file), "utf8")),
     )) {
       const expected = MAC_JOBS.has(`${file}:${job}`)
-        ? ["self-hosted", "macOS", "ARM64", "withmarfa"]
+        ? ["self-hosted", "macOS", "ARM64", "withmarfa", "aic-mbp"]
         : file === "release.yml" && job === "publish"
           ? "ubuntu-latest"
           : "blacksmith-2vcpu-ubuntu-2404";

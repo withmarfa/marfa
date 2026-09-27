@@ -53,7 +53,7 @@ jobs:
   core:
     name: Core (Rust, bindings, live)
     timeout-minutes: 90
-    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
     # Local jobs share machine resources and must not contend.
     concurrency:
       group: marfa-suite-shared-host
@@ -66,6 +66,11 @@ jobs:
       - name: Check Xcode
         run: xcodebuild -version
 
+      # Homebrew rustup can be on PATH while its compiler proxies are not.
+      - name: Put Rust executables on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
