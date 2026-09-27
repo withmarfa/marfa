@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackItem,
+  trackEdge,
+  trackKey,
+  trackEdgeType,
+  cleanup,
+} from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import {
   detectSyncCapabilities,
@@ -44,6 +51,291 @@ afterAll(async () => {
 });
 
 describe("the server resolves a conflict", () => {
+  it("gives the conflicted copy the original's tags and every edge a second copy may hold", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const make = async (title: string, tags?: string[]) => {
+      const r = await client.createItem(
+        createNote({
+          source: ctx.source,
+          properties: { title, body: `${title} body` },
+          ...(tags !== undefined && { tags }),
+        }),
+      );
+      expect(r.ok).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item;
+    };
+    const tag = `kept-${ctx.runId}`;
+    const original = await make("original", [tag]);
+    const parent = await make("parent");
+    const child = await make("child");
+    const topic = await make("topic");
+    const successor = await make("successor");
+    const older = await make("older");
+    const link = async (
+      source_id: string,
+      target_id: string,
+      edge_type: string,
+    ) => {
+      const r = await client.createEdge({ source_id, target_id, edge_type });
+      expect(r.ok, edge_type).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
+    };
+    await link(parent.id, original.id, "parent-of");
+    await link(original.id, child.id, "parent-of");
+    await link(original.id, topic.id, "about");
+    await link(successor.id, original.id, "supersedes");
+    await link(original.id, older.id, "supersedes");
+
+    const base = original.version;
+    expect(
+      (
+        await client.updateItem(original.id, {
+          properties: { body: "linked body from the winner" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "linked body from the loser" },
+        version: base,
+      },
+    });
+    expect(resolved.ok).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy, "no conflicted copy was written").toBeTruthy();
+
+    const meta = await client.getMetadata(copy!);
+    expect(meta.ok).toBe(true);
+    expect(meta.data.metadata.tags.sort()).toEqual(
+      [tag, "conflicted-copy"].sort(),
+    );
+
+    const out = await client.listItemEdges(copy!);
+    const back = await client.listItemBackrefs(copy!);
+    expect(out.ok && back.ok).toBe(true);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
+    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    // Its place under the same parent, and what it is about.
+    expect(inbound).toContain(`${parent.id}>parent-of`);
+    expect(outbound).toContain(`about>${topic.id}`);
+    // Not the original's children, each of which has one parent, and not a
+    // supersedes, which is one-to-one at both ends. The witness: the
+    // original still holds both.
+    expect(outbound).not.toContain(`parent-of>${child.id}`);
+    expect(inbound).not.toContain(`${successor.id}>supersedes`);
+    // Its own file writes the supersedes it draws, and the type's
+    // cardinality still keeps it off the copy.
+    expect(outbound).not.toContain(`supersedes>${older.id}`);
+    const originalOut = await client.listItemEdges(original.id);
+    const originalBack = await client.listItemBackrefs(original.id);
+    expect(originalOut.data.data.map((e) => e.target_id)).toContain(child.id);
+    expect(originalOut.data.data.map((e) => e.target_id)).toContain(older.id);
+    expect(originalBack.data.data.map((e) => e.source_id)).toContain(
+      successor.id,
+    );
+  });
+
+  it("gives the conflicted copy no edge its writer could not have made, and none to a row in the bin", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    // The writer may write notes and the edges below, and only read
+    // bookmarks: a bookmark's edge is one it could not have made itself.
+    const keyResp = await client.createKey({
+      label: "conflict-copy-narrow",
+      source: `${ctx.source}-narrow`,
+      permissions: [],
+      type_permissions: { "core.note": "write", "core.bookmark": "read" },
+      edge_permissions: { "parent-of": "write", about: "write" },
+    });
+    expect(keyResp.ok, JSON.stringify(keyResp.error)).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const make = async (type: string, title: string) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties:
+          type === "core.bookmark"
+            ? { title, url: "https://example.com/" }
+            : { title, body: `${title} body` },
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item;
+    };
+    const original = await make("core.note", "narrow original");
+    const noteParent = await make("core.note", "note parent");
+    const bookmarkRow = await make("core.bookmark", "bookmark");
+    const binned = await make("core.note", "binned topic");
+    const link = async (
+      source_id: string,
+      target_id: string,
+      edge_type: string,
+    ) => {
+      const r = await client.createEdge({ source_id, target_id, edge_type });
+      expect(r.ok, edge_type).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
+    };
+    await link(noteParent.id, original.id, "parent-of");
+    await link(bookmarkRow.id, original.id, "about");
+    await link(original.id, binned.id, "about");
+    const lacked = await make("core.note", "lacked target");
+    await link(original.id, lacked.id, "references");
+    expect((await client.deleteItem(binned.id)).ok).toBe(true);
+
+    const base = original.version;
+    expect(
+      (
+        await client.updateItem(original.id, {
+          properties: { body: "narrow body from the winner" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await narrow.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "narrow body from the loser" },
+        version: base,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    const back = await client.listItemBackrefs(copy!);
+    const out = await client.listItemEdges(copy!);
+    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
+    // The witness: an edge this writer could have made comes with the copy.
+    expect(inbound).toContain(`${noteParent.id}>parent-of`);
+    expect(inbound).not.toContain(`${bookmarkRow.id}>about`);
+    expect(outbound).not.toContain(`about>${binned.id}`);
+    // `references` is an edge type the writer's key does not reach.
+    expect(outbound).not.toContain(`references>${lacked.id}`);
+  });
+
+  it("gives the conflicted copy only the edges the original's own file writes, none that cascade or block", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    const make = async (type: string, title: string) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties: { title, body: `${title} body` },
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item;
+    };
+    const cascading = `mock.copy-cascades.${ctx.runId}`;
+    const blocking = `mock.copy-blocks.${ctx.runId}`;
+    const under = `mock.copy-under.${ctx.runId}`;
+    const registeredUnder = await client.registerEdgeType({
+      id: under,
+      cardinality: "many-to-many",
+      reverse_name: `mock.copy-over.${ctx.runId}`,
+      written_at: "target",
+    });
+    expect(registeredUnder.ok, JSON.stringify(registeredUnder.error)).toBe(
+      true,
+    );
+    trackEdgeType(ctx, under);
+    for (const [id, cascade_on_delete] of [
+      [cascading, "cascade"],
+      [blocking, "block"],
+    ] as const) {
+      const r = await client.registerEdgeType({
+        id,
+        cardinality: "many-to-many",
+        cascade_on_delete,
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackEdgeType(ctx, id);
+    }
+    // An album is a container with a keep-both body: the case where copying
+    // every edge the cardinality allows made its tracks the copy's too.
+    const album = await make("core.media.album", "album");
+    const track = await make("core.note", "track");
+    const topic = await make("core.note", "topic");
+    const part = await make("core.note", "part");
+    const held = await make("core.note", "held");
+    const link = async (
+      source_id: string,
+      target_id: string,
+      edge_type: string,
+    ) => {
+      const r = await client.createEdge({ source_id, target_id, edge_type });
+      expect(r.ok, edge_type).toBe(true);
+      trackEdge(ctx, r.data.edge.id);
+    };
+    await link(track.id, album.id, "in-collection");
+    await link(album.id, topic.id, "about");
+    await link(album.id, part.id, cascading);
+    await link(album.id, held.id, blocking);
+    const over = await make("core.note", "over");
+    const binnedOver = await make("core.note", "binned over");
+    await link(over.id, album.id, under);
+    await link(binnedOver.id, album.id, under);
+    expect((await client.deleteItem(binnedOver.id)).ok).toBe(true);
+
+    const base = album.version;
+    expect(
+      (
+        await client.updateItem(album.id, {
+          properties: { body: "album body from the winner" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${album.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "album body from the loser" },
+        version: base,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    const out = await client.listItemEdges(copy!);
+    const back = await client.listItemBackrefs(copy!);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
+    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    // The witness: an edge the album's own file writes comes with the copy.
+    expect(outbound).toContain(`about>${topic.id}`);
+    // An inbound edge the album's own file writes comes with it, and not
+    // one from a row in the bin.
+    expect(inbound).toContain(`${over.id}>${under}`);
+    expect(inbound).not.toContain(`${binnedOver.id}>${under}`);
+    // A track names its album; the copy is not made its album too.
+    expect(inbound).not.toContain(`${track.id}>in-collection`);
+    // Discarding the copy must not take what the album points at to the bin,
+    // nor be refused for it.
+    expect(outbound).not.toContain(`${cascading}>${part.id}`);
+    expect(outbound).not.toContain(`${blocking}>${held.id}`);
+    expect((await client.deleteItem(copy!)).ok).toBe(true);
+    expect((await client.getItem(part.id)).status).toBe(200);
+  });
+
   it("keeps both copies in one write where the type says to", async () => {
     requireRule(caps, "serverSideMerge");
 

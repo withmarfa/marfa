@@ -267,6 +267,68 @@ describe("event stream contract", () => {
     expect(data.item.state).toBe("active");
   });
 
+  it("announces edge.created for an edge a conflicted copy is given", async ({
+    signal,
+  }) => {
+    const parent = await seed("copy-parent");
+    const original = await seed("copy-original");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: original,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    const read = await client.getItem(original);
+    const base = read.data.item.version;
+    expect(
+      (
+        await client.updateItem(original, {
+          properties: { body: "the winner's body" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    let copy: string | undefined;
+    const stream = await openEventStream(apiUrl, apiKey);
+    try {
+      await new Promise((r) => setTimeout(r, 250));
+      const resolved = await client.rawRequest<{
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${original}?conflict=auto`, {
+        method: "PATCH",
+        body: { properties: { body: "the loser's body" }, version: base },
+      });
+      expect(resolved.ok).toBe(true);
+      copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+      expect(copy).toBeTruthy();
+      const { events } = await collectUntil(
+        stream,
+        (evts) =>
+          evts.some(
+            (e) =>
+              e.event === "edge.created" &&
+              (e.data as { edge?: { target_id?: string } }).edge?.target_id ===
+                copy,
+          ),
+        `edge.created for the copy ${String(copy)}`,
+        signal,
+      );
+      const created = events.find(
+        (e) =>
+          e.event === "edge.created" &&
+          (e.data as { edge?: { target_id?: string } }).edge?.target_id ===
+            copy,
+      );
+      const data = created?.data as {
+        edge: { source_id: string; edge_type: string };
+      };
+      expect(data.edge.source_id).toBe(parent);
+      expect(data.edge.edge_type).toBe("parent-of");
+    } finally {
+      await stream.close();
+    }
+  });
+
   it("announces item.state_changed on a lifecycle transition", async ({
     signal,
   }) => {

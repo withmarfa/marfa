@@ -43,7 +43,7 @@ import {
 } from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
-import type { TypeFilter } from "@withmarfa/shared";
+import type { TypeFilter, Edge } from "@withmarfa/shared";
 import type {
   ItemStatsAxis,
   StoredCreateItemInput,
@@ -188,18 +188,24 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  * deliberately does not inherit `source_id`: that tuple is unique,
  * and a copy claiming the original's natural key is a second row asserting it
  * is the same upstream record.
+ *
+ * It takes the original's tags and the edges the original's own file writes,
+ * so it stays where the original was found; only those a second holder may
+ * take, the writer could make, not to the bin, and none that cascade outbound
+ * or block a delete, so discarding it touches nothing else.
  */
 async function insertConflictedSibling(
   tx: SqliteTx,
   searchStore: SqliteSearchStore,
   args: {
     siblingId: string;
-    row: { type: string; source: string | null; tier: string };
+    row: { id: string; type: string; source: string | null; tier: string };
     now: string;
     properties: Record<string, unknown>;
+    mayCopyEdge?: (edgeType: string, sourceType: string) => boolean;
   },
-): Promise<Item | null> {
-  const { siblingId, row, now, properties } = args;
+): Promise<{ sibling: Item; edges: Edge[] } | null> {
+  const { siblingId, row, now, properties, mayCopyEdge } = args;
   const schemaVersion = getTypeSchema(row.type)?.version ?? 1;
   const inserted = await tx
     .insert(items)
@@ -224,14 +230,76 @@ async function insertConflictedSibling(
   // create that did not happen.
   if (inserted.length === 0) return null;
 
+  const [held] = await tx
+    .select({ tags: metadata.tags })
+    .from(metadata)
+    .where(eq(metadata.item_id, row.id))
+    .all();
+  const tags = [
+    ...new Set([
+      ...(held
+        ? safeJsonParse<string[]>(held.tags, [], "conflicted copy tags")
+        : []),
+      CONFLICTED_COPY_TAG,
+    ]),
+  ];
   await tx
     .insert(metadata)
-    .values({
-      item_id: siblingId,
-      tags: JSON.stringify([CONFLICTED_COPY_TAG]),
-    })
+    .values({ item_id: siblingId, tags: JSON.stringify(tags) })
     .onConflictDoNothing()
     .run();
+
+  const copied: Edge[] = [];
+  const touching = await tx
+    .select()
+    .from(edges)
+    .where(or(eq(edges.source_id, row.id), eq(edges.target_id, row.id)))
+    .all();
+  for (const edge of touching) {
+    const outbound = edge.source_id === row.id;
+    const [other] = await tx
+      .select({ type: items.type, state: items.state })
+      .from(items)
+      .where(eq(items.id, outbound ? edge.target_id : edge.source_id))
+      .all();
+    // An end in the bin, or gone, is one the edge door would refuse.
+    if (other === undefined || other.state === "trashed") continue;
+    const schema = getEdgeTypeSchema(edge.edge_type);
+    if (schema === undefined) continue;
+    const own = outbound
+      ? schema.written_at === "source"
+      : schema.written_at === "target";
+    if (!own) continue;
+    if (schema.cascade_on_delete === "block") continue;
+    if (outbound && schema.cascade_on_delete === "cascade") continue;
+    const sourceType = outbound ? row.type : other.type;
+    if (mayCopyEdge?.(edge.edge_type, sourceType) !== true) continue;
+    const allowed = outbound
+      ? schema.cardinality === "many-to-one" ||
+        schema.cardinality === "many-to-many"
+      : schema.cardinality === "one-to-many" ||
+        schema.cardinality === "many-to-many";
+    if (!allowed) continue;
+    const copy = {
+      id: generateId(),
+      source_id: outbound ? siblingId : edge.source_id,
+      target_id: outbound ? edge.target_id : siblingId,
+      edge_type: edge.edge_type,
+      properties: edge.properties,
+      created_at: now,
+      updated_at: now,
+      version: 1,
+    };
+    await tx.insert(edges).values(copy).run();
+    copied.push({
+      ...copy,
+      properties: safeJsonParse<Record<string, unknown>>(
+        copy.properties,
+        {},
+        "conflicted copy edge properties",
+      ),
+    });
+  }
 
   // Everything `create()` does, because this row is a create. Skipping the
   // index left the sibling unfindable by the search that is the ordinary way
@@ -239,18 +307,21 @@ async function insertConflictedSibling(
   await searchStore.index(siblingId, properties, row.type);
 
   return {
-    id: siblingId,
-    type: row.type,
-    state: "active",
-    tier: row.tier as Tier,
-    properties,
-    created_at: now,
-    updated_at: now,
-    occurred_at: now,
-    version: 1,
-    schema_version: schemaVersion,
-    source: row.source ?? "unknown",
-  } satisfies Item;
+    sibling: {
+      id: siblingId,
+      type: row.type,
+      state: "active",
+      tier: row.tier as Tier,
+      properties,
+      created_at: now,
+      updated_at: now,
+      occurred_at: now,
+      version: 1,
+      schema_version: schemaVersion,
+      source: row.source ?? "unknown",
+    } satisfies Item,
+    edges: copied,
+  };
 }
 
 export class SqliteItemStore implements ItemStore {
@@ -981,7 +1052,7 @@ export class SqliteItemStore implements ItemStore {
       let resolvedFields: ItemFieldValues;
       let resolution: ConflictResolutionReport | undefined;
       // Null on the idempotent retry, where the row already existed.
-      let sibling: Item | null = null;
+      let sibling: { sibling: Item; edges: Edge[] } | null = null;
 
       // A move onto a row another writer has moved since the version the
       // caller read collides on the type, whatever else the write carries:
@@ -1049,6 +1120,7 @@ export class SqliteItemStore implements ItemStore {
           siblingId = conflictedSiblingIdFor(id, input.version, input);
           sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,
+            mayCopyEdge: input.may_copy_edge,
             row,
             now,
             properties: conflictedSiblingProperties({
@@ -1164,7 +1236,8 @@ export class SqliteItemStore implements ItemStore {
           }),
         }),
         resolution,
-        sibling ?? undefined,
+        sibling?.sibling,
+        sibling?.edges,
       );
     });
   }

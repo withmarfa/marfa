@@ -542,6 +542,10 @@ export type ResolvedItem = Item & {
    * report a create that did not happen.
    */
   conflict_sibling?: Item;
+  /**
+   * Edges copied to the sibling, announced after it.
+   */
+  conflict_sibling_edges?: Edge[];
 };
 
 /**
@@ -564,6 +568,10 @@ export interface ConflictResolutionInput {
    * way to tell a retry from a second edit.
    */
   idempotency_key?: string;
+  /**
+   * Whether the writer could create this edge; a sibling is given only those.
+   */
+  may_copy_edge?: (edgeType: string, sourceType: string) => boolean;
 }
 
 /**
