@@ -1345,10 +1345,8 @@ describe("catch-up ends on the replay's marker", () => {
     server.answer(
       "GET",
       "/events",
-      // The head is 14 and the device is sent only 11: 12 to 14 are rows the
-      // filter withheld, so no frame it is sent reaches the head. The marker
-      // says the replay is done and how far it reached, and the stream stays
-      // open as a real one does.
+      // The head is 14 and the device is sent only 11: 12 to 14 are rows its
+      // credential may not read, so no frame it is sent reaches the head.
       liveReplay("14", [
         itemEvent("11", "item.created", wireItem({ id: "seen" })),
       ]),
@@ -1511,6 +1509,92 @@ describe("catch-up keeps the copy to its slice", () => {
       edges.ok ? edges.value.map((edge) => edge.id) : [],
       "a row that came into the slice by retype arrived without the edges it draws, and nothing brings them until a hydration",
     ).toEqual(["its-own"]);
+  });
+
+  it("adds a row entering the slice by a move of tier, with its edges", async () => {
+    harness = await startHarness("entering-by-tier");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10", rows: { "core.note": [] } });
+    // A note the copy never held because it was in the feed, now moved to
+    // the library the slice holds.
+    const moved = wireItem({ id: "moved", tier: "library", version: 2 });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", moved)]),
+    );
+    server.answer(
+      "GET",
+      "/items/moved",
+      answers.updated({
+        ...moved,
+        edges: {
+          references: {
+            data: [
+              wireEdge({
+                id: "its-own",
+                source_id: "moved",
+                target_id: "elsewhere",
+              }),
+            ],
+            next_cursor: null,
+          },
+        },
+      }),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect((await device.get("moved")).ok).toBe(true);
+    const edges = await device.edgesFrom("moved");
+    expect(
+      edges.ok ? edges.value.map((edge) => edge.id) : [],
+      "a row that came into the slice by a move of tier arrived without the edges it draws",
+    ).toEqual(["its-own"]);
+  });
+
+  it("adds a row entering the slice with every page of its edges", async () => {
+    harness = await startHarness("entering-paged-edges");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10", rows: { "core.note": [] } });
+    const entered = wireItem({ id: "entered", version: 3 });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", entered)]),
+    );
+    const edge = (id: string): Record<string, unknown> =>
+      wireEdge({ id, source_id: "entered", target_id: "elsewhere" });
+    server.answer(
+      "GET",
+      "/items/entered",
+      answers.updated({
+        ...entered,
+        edges: {
+          references: { data: [edge("first-page")], next_cursor: "page-2" },
+        },
+      }),
+    );
+    server.answer("GET", "/items/entered/edges", {
+      kind: "json",
+      status: 200,
+      body: { data: [edge("second-page")], next_cursor: null },
+    });
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    const edges = await device.edgesFrom("entered");
+    expect(
+      edges.ok ? edges.value.map((edge) => edge.id).sort() : [],
+      "a row entering the slice kept only the edges its first page carried",
+    ).toEqual(["first-page", "second-page"]);
+    const paged = server.requests.find(
+      (request) => request.pathname === "/items/entered/edges",
+    );
+    expect(paged?.query.get("cursor")).toBe("page-2");
+    expect(paged?.query.get("edge_type")).toBe("references");
   });
 
   it("leaves the cursor before a row entering the slice whose edges it could not read", async () => {
