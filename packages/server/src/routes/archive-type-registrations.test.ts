@@ -559,8 +559,9 @@ describe("archives carry type registrations", () => {
 
     // An id claimed earlier in the batch, named later as a reverse name.
     const claimed = `user.claimed-${uniqueSuffix()}`;
+    const batchDestination = await newContext();
     const idThenReverse = await restore(
-      await newContext(),
+      batchDestination,
       await withEdgeTypes(
         { id: claimed, cardinality: "many-to-many" },
         {
@@ -571,6 +572,75 @@ describe("archives carry type registrations", () => {
       ),
     );
     expect(idThenReverse.status).toBe(409);
+    // Refused while the archive is read, before anything is written: the
+    // first entry is not left behind by a refusal the second one earned.
+    const left = await batchDestination.storage.edgeTypes.list();
+    expect(left.map((schema) => schema.id)).not.toContain(claimed);
+  });
+
+  it("claims an edge type's names where it registers it, and gives them back if its row is not written", async () => {
+    const source = await newContext();
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-claim",
+      source_id: "c1",
+    });
+    const entries = await extractArchive(await exportArchive(source));
+    const id = `user.claims-${uniqueSuffix()}`;
+    const reverse = `user.claimed-by-${uniqueSuffix()}`;
+    const archive = await repack(entries, {
+      "types.ndjson":
+        JSON.stringify({
+          edge_type: { id, cardinality: "many-to-many", reverse_name: reverse },
+        }) + "\n",
+    });
+
+    // A registration arriving while the restore awaits takes the name first:
+    // the restore reads what is registered and then writes, and the name
+    // must be checked again where it is claimed, not only where it was read.
+    const racing = await newContext();
+    const listRegistered = racing.storage.types.listRegistered.bind(
+      racing.storage.types,
+    );
+    const rival = `user.rival-${uniqueSuffix()}`;
+    racing.storage.types.listRegistered = async () => {
+      const rows = await listRegistered();
+      const res = await request(racing.app, "POST", "/edge-types", {
+        key: racing.workingKey,
+        body: { id: rival, cardinality: "many-to-many", reverse_name: reverse },
+      });
+      expect(res.status).toBe(201);
+      return rows;
+    };
+    const raced = await restore(racing, archive);
+    racing.storage.types.listRegistered = listRegistered;
+    expect(raced.status).toBe(409);
+
+    // A row that is not written gives its names back: the same archive
+    // restores once the store writes again.
+    const failing = await newContext();
+    const create = failing.storage.edgeTypes.create.bind(
+      failing.storage.edgeTypes,
+    );
+    const freeId = `user.gives-back-${uniqueSuffix()}`;
+    const freeArchive = await repack(entries, {
+      "types.ndjson":
+        JSON.stringify({
+          edge_type: {
+            id: freeId,
+            cardinality: "many-to-many",
+            reverse_name: `${freeId}-by`,
+          },
+        }) + "\n",
+    });
+    failing.storage.edgeTypes.create = () =>
+      Promise.reject(new Error("the row could not be written"));
+    const failed = await restore(failing, freeArchive);
+    failing.storage.edgeTypes.create = create;
+    expect(failed.status).toBe(500);
+    const again = await restore(failing, freeArchive);
+    expect(again.status, await again.clone().text()).toBe(200);
   });
 
   it("refuses an archive carrying an edge type with a thumbnail property", async () => {

@@ -20,6 +20,7 @@ import {
   isValidTypeIdentifier,
   isValidEdgeTypeIdentifier,
   registerEdgeTypeSchema,
+  getEdgeTypeSchema,
   unregisterEdgeTypeSchema,
   validateTypeSchema,
   malformedTypeIdentifier,
@@ -402,6 +403,15 @@ export async function registerArchiveTypes(
   // awaited since, so each is checked again where it is claimed, and the
   // claim made before the row is written, as the route does.
   for (const schema of edgeTypesToWrite) {
+    // An id registered since the rows were read was registered by a request
+    // that is writing its own row now, and registering over it would put
+    // this archive's schema in its place.
+    if (getEdgeTypeSchema(schema.id)) {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Archive carries "${schema.id}", which was registered while the restore ran`,
+      );
+    }
     assertEdgeNamesFree(schema.id, schema.reverse_name);
     registerEdgeTypeSchema(schema);
     try {
