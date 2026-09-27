@@ -44,33 +44,33 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Self-hosted with no hosted fallback, like every job but the release's
-# publish. No cache action anywhere in this file: the pool keeps its pnpm
-# store and cargo registry between jobs, so a cache would restore nothing and
-# its post step would tar both.
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
 jobs:
   core:
     name: Core (Rust, bindings, live)
     timeout-minutes: 90
-    runs-on: self-hosted
-    # The same group as ci.yml's suite, and for the same reason: the resource
-    # is the machine. cargo takes every core, so a second copy of either job
-    # manufactures failures in a branch that caused none. `queue: max` rather
-    # than the default, which cancels the pending entry instead of queueing
-    # it.
-    concurrency:
-      group: marfa-suite-shared-host
-      cancel-in-progress: false
-      queue: max
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
-
-      # Homebrew's rustup is keg-only, so nothing it installs is on the
-      # default PATH.
-      - name: Put the Rust toolchain on PATH
+      - name: Select the image's release Xcode
         run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            core/bindings/swift
+          key: ${{ github.job }}
 
       - uses: pnpm/action-setup@v6
         with:
@@ -78,6 +78,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: pnpm
       - run: pnpm install --frozen-lockfile
       # server-up.sh runs the server through tsx, which resolves
       # @withmarfa/shared through its dist.

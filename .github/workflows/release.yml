@@ -50,10 +50,15 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
 jobs:
   require-green-ci:
     name: Require green CI
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -88,7 +93,7 @@ jobs:
   build:
     name: Build the artifacts
     needs: require-green-ci
-    runs-on: self-hosted
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: read
@@ -193,12 +198,15 @@ jobs:
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
-      # Homebrew's rustup is keg-only, so nothing it installs is on the
-      # default PATH.
-      - name: Put the Rust toolchain on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            core/bindings/swift
+          key: ${{ github.job }}
 
       - uses: pnpm/action-setup@v6
         with:
@@ -206,10 +214,11 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
+          cache: pnpm
 
       # The stamp's `cargo update` runs offline, so it needs every crate the
-      # lockfiles name already in the cargo cache, which a runner new to the
-      # pool does not have. `--locked` refuses rather than resolving anew.
+      # lockfiles name already in the cargo cache. `--locked` refuses rather
+      # than resolving anew.
       - name: Fetch the crates the lockfiles name
         run: |
           cargo fetch --locked --manifest-path core/Cargo.toml
@@ -331,10 +340,7 @@ jobs:
   # whether its version is already there and skips if it is, so a re-run
   # repeats nothing.
   #
-  # The one job off the runner pool, and the only one allowed to be
-  # (`ci/workflow-runner.test.ts`): npm's trusted publishing accepts the
-  # OIDC identity of a GitHub-hosted runner only. It builds nothing; it
-  # publishes what the build job made on the pool.
+  # Publishing needs the GitHub-hosted OIDC identity trusted by npm.
   publish:
     name: Publish
     needs: build
