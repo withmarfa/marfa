@@ -565,7 +565,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/transition moves an item's state",
     family: "item",
-    transactions: 0,
+    transactions: 1,
     breakage: () => breakWrite(ctx.storage.items, "transition"),
     setup: async () => ({ item: await makeNote("transitioning") }),
     act: async (s) => {
@@ -589,7 +589,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/restore brings an item back",
     family: "item",
-    transactions: 0,
+    transactions: 1,
     breakage: () => breakWrite(ctx.storage.items, "restore"),
     setup: async () => {
       const item = await makeNote("to restore");
@@ -1190,7 +1190,10 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
     sites: 14,
     why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, the two the purge door emits, and the four tag and metadata doors",
   },
-  "routes/items-lifecycle.ts": { sites: 2, why: "transition and restore" },
+  "routes/items-lifecycle.ts": {
+    sites: 3,
+    why: "transition and restore, and the rows either brings back that the row's trash took",
+  },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
   "routes/extensions.ts": { sites: 2, why: "the two extension doors" },
   "routes/bulk.ts": {
@@ -1199,8 +1202,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   },
   "routes/edges-bulk.ts": { sites: 2, why: "the atomic edge batch" },
   "bulk-actions/runner.ts": {
-    sites: 5,
-    why: "six arms through five sites: transition and update_tags publish for themselves, purge announces its cascade and its rows through two, and the three property-shaped arms share one local helper",
+    sites: 6,
+    why: "six arms through six sites: transition publishes for itself and for the rows a restore out of the bin brings back, update_tags for itself, purge announces its cascade and its rows through two, and the three property-shaped arms share one local helper",
   },
   "routes/_edges-inline.ts": {
     sites: 2,

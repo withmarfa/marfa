@@ -99,6 +99,65 @@ describe("POST /items/bulk-actions (async)", () => {
     expect(item.item.state).toBe("archived");
   });
 
+  it("a transition out of the bin brings back what each row's trash took", async () => {
+    const tag = `trans-back-${Math.random().toString(36).slice(2, 8)}`;
+    const [parent] = await seed("core.note", 1, { tags: [tag] });
+    const [child] = await seed("core.note", 1);
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parent, target_id: child, edge_type: "parent-of" },
+    });
+    await request(ctx.app, "DELETE", `/items/${parent!}`, {
+      key: ctx.workingKey,
+    });
+    const hidden = await request(ctx.app, "GET", `/items/${child!}`, {
+      key: ctx.workingKey,
+    });
+    expect(hidden.status).toBe(404);
+
+    const { result } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "transition",
+        state: "active",
+        filter: { tags: [tag], state: "trashed" },
+      },
+      ctx.workingKey,
+    );
+    expect(result?.succeeded).toBe(1);
+    const back = await request(ctx.app, "GET", `/items/${child!}`, {
+      key: ctx.workingKey,
+    });
+    expect(back.status).toBe(200);
+  });
+
+  it("restores a whole subtree in one bulk transition without counting a row twice", async () => {
+    const tag = `subtree-${Math.random().toString(36).slice(2, 8)}`;
+    // The child is made first, so it lists before its parent: the parent's
+    // restore then brings it back before the job reaches it.
+    const [child] = await seed("core.note", 1, { tags: [tag] });
+    const [parent] = await seed("core.note", 1, { tags: [tag] });
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parent, target_id: child, edge_type: "parent-of" },
+    });
+    await request(ctx.app, "DELETE", `/items/${parent!}`, {
+      key: ctx.workingKey,
+    });
+
+    const { result } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "transition",
+        state: "active",
+        filter: { tags: [tag], state: "trashed" },
+      },
+      ctx.workingKey,
+    );
+    expect(result?.errored, JSON.stringify(result)).toBe(0);
+    expect(result?.succeeded).toBe(2);
+  });
+
   it("purge action requires confirm=PURGE", async () => {
     const tag = `purge-confirm-${Math.random().toString(36).slice(2, 8)}`;
     await seed("core.note", 1, { tags: [tag] });

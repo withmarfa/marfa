@@ -249,6 +249,7 @@ export class BulkActionWorker {
     const accSucceeded: string[] = [];
     const accErrors: { id: string; code: string; message: string }[] = [];
     const accBlobHashes = new Set<string>();
+    const broughtBack = new Set<string>();
     let processed = 0;
 
     for (let i = 0; i < matchedIds.length; i += this.chunkSize) {
@@ -274,6 +275,7 @@ export class BulkActionWorker {
           storage: this.storage,
           input,
           ids: slice,
+          broughtBack,
         });
       } catch (err) {
         // Whole-chunk failure inside the transaction — a database error,

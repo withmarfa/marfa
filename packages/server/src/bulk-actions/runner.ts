@@ -46,6 +46,13 @@ export interface RunChunkContext {
   input: BulkActionInput;
   /** Ids the worker has assigned to this chunk. */
   ids: string[];
+  /**
+   * Rows a restore out of the bin brought back earlier in the same job,
+   * because the trash that took them was undone. Such a row is in the match
+   * set too, and moving it again would refuse a row that is already where
+   * the job put it.
+   */
+  broughtBack?: Set<string>;
 }
 
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
@@ -77,6 +84,7 @@ async function runTransitionChunk({
   storage,
   input,
   ids,
+  broughtBack: brought,
 }: RunChunkContext): Promise<ChunkOutcome> {
   if (input.action !== "transition")
     throw new Error("runTransitionChunk: wrong action");
@@ -85,6 +93,13 @@ async function runTransitionChunk({
   // Collected inside the transaction and published after it commits, so a
   // subscriber is never told about a row a rollback then took away.
   const moved: Item[] = [];
+  // Rows a restore out of the bin brought back because the trash that took
+  // them was undone, announced as the single restore door announces them.
+  const broughtBack: Item[] = [];
+  const alreadyBack = brought ?? new Set<string>();
+  // Joined to the job's set only once this chunk's transaction commits: a
+  // chunk rolled back as a whole brought nothing back.
+  const backInChunk = new Set<string>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -97,16 +112,43 @@ async function runTransitionChunk({
         // reaching this loop can name a connection, and a refusal here
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
+        if (
+          input.state === "active" &&
+          (alreadyBack.has(id) || backInChunk.has(id))
+        ) {
+          succeeded.push(id);
+          continue;
+        }
+        const row =
+          input.state === "active"
+            ? await storage.items.getIncludingTrashed(id)
+            : null;
+        const back =
+          row?.state === "trashed"
+            ? await storage.items.restoreBeneath(id)
+            : [];
         moved.push(await storage.items.transition(id, input.state));
+        for (const item of back) {
+          broughtBack.push(item);
+          backInChunk.add(item.id);
+        }
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
       }
     }
   });
+  for (const id of backInChunk) alreadyBack.add(id);
   for (const item of moved) {
     await publish({
       type: "state_changed",
+      item,
+      enableFanout: fansOutFor(input),
+    });
+  }
+  for (const item of broughtBack) {
+    await publish({
+      type: "restored",
       item,
       enableFanout: fansOutFor(input),
     });

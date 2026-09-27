@@ -211,6 +211,62 @@ describe("event stream contract", () => {
     expect(data.item.state).toBe("active");
   });
 
+  it("announces item.restored for a row the restore of its parent brings back", async ({
+    signal,
+  }) => {
+    const parent = await seed("restored-parent");
+    const child = await seed("restored-child");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    const event = await deliver(
+      "item.restored",
+      child,
+      async () => {
+        expect((await client.restoreItem(parent)).ok).toBe(true);
+      },
+      signal,
+    );
+    const data = event?.data as { item: { id: string; state: string } };
+    expect(data.item.id).toBe(child);
+    expect(data.item.state).toBe("active");
+  });
+
+  it("announces item.restored for a row a transition out of the bin brings back, at any depth", async ({
+    signal,
+  }) => {
+    const parent = await seed("moved-parent");
+    const child = await seed("moved-child");
+    const grandchild = await seed("moved-grandchild");
+    for (const [source_id, target_id] of [
+      [parent, child],
+      [child, grandchild],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    const event = await deliver(
+      "item.restored",
+      grandchild,
+      async () => {
+        expect((await client.transitionItem(parent, "active")).ok).toBe(true);
+      },
+      signal,
+    );
+    const data = event?.data as { item: { id: string; state: string } };
+    expect(data.item.id).toBe(grandchild);
+    expect(data.item.state).toBe("active");
+  });
+
   it("announces item.state_changed on a lifecycle transition", async ({
     signal,
   }) => {

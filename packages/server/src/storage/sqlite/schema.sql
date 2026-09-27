@@ -503,6 +503,14 @@ CREATE TABLE IF NOT EXISTS `settings` (
 	`value` text NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS `trash_cascades` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`trashed_with` text NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`trashed_with`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_trash_cascades_with` ON `trash_cascades` (`trashed_with`);
 CREATE TABLE IF NOT EXISTS `types` (
 	`id` text PRIMARY KEY NOT NULL,
 	`schema` text NOT NULL,

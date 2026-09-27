@@ -1,5 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -27,7 +28,7 @@ const restoreItemRoute = createRoute({
   tags: ["Items"],
   summary: "Restore a trashed item",
   description:
-    "Restores a trashed item to active. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
+    "Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored`; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -134,6 +135,24 @@ const transitionItemRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
+/**
+ * Announces each row a restore brought back because the trash that took it
+ * was undone, after the transaction that restored them has committed, as a
+ * restore of its own.
+ */
+async function publishBroughtBack(
+  storage: Storage,
+  broughtBack: readonly Item[],
+): Promise<void> {
+  for (const item of broughtBack) {
+    await publish({
+      type: "restored",
+      item,
+      metadata: await storage.metadata.get(item.id),
+    });
+  }
+}
+
 export function itemsLifecycleRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -155,13 +174,19 @@ export function itemsLifecycleRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, pending.type, "write");
-    const restored = await storage.items.restore(id);
+    const { restored, broughtBack } = await storage.runInTransaction(
+      async () => {
+        const back = await storage.items.restoreBeneath(id);
+        return { restored: await storage.items.restore(id), broughtBack: back };
+      },
+    );
     const metadata = await storage.metadata.get(id);
     await publish({
       type: "restored",
       item: restored,
       metadata,
     });
+    await publishBroughtBack(storage, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -213,13 +238,25 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // is worse than none because it reads as a protection somebody is relying
     // on. `item-state-doors.test.ts` pins the lifecycle rule and
     // `auth-grant-visibility.test.ts` pins what a caller actually meets.
-    const updated = await storage.items.transition(id, state);
+    const { updated, broughtBack } = await storage.runInTransaction(
+      async () => {
+        const back =
+          item.state === "trashed" && state === "active"
+            ? await storage.items.restoreBeneath(id)
+            : [];
+        return {
+          updated: await storage.items.transition(id, state),
+          broughtBack: back,
+        };
+      },
+    );
     const metadata = await storage.metadata.get(id);
     await publish({
       type: "state_changed",
       item: updated,
       metadata,
     });
+    await publishBroughtBack(storage, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

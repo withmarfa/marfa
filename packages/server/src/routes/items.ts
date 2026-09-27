@@ -2704,7 +2704,7 @@ export function itemRoutes(storage: Storage) {
         refuseUnlessUninstalled(snap);
       }
       for (const delId of toDelete) {
-        await storage.items.delete(delId);
+        await storage.items.delete(delId, delId === id ? undefined : id);
       }
       return snaps;
     });

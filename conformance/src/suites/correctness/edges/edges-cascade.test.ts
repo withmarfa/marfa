@@ -62,6 +62,182 @@ describe("edge cascade semantics", () => {
     expect(trashed.data.data.map((i) => i.id)).toContain(child);
   });
 
+  it("restoring a parent brings back what its trash took, at every depth, and nothing trashed on its own", async () => {
+    const parent = await makeItem("r-parent");
+    const child = await makeItem("r-child");
+    const grandchild = await makeItem("r-grandchild");
+    const alone = await makeItem("r-alone");
+    for (const [source_id, target_id] of [
+      [parent, child],
+      [child, grandchild],
+      [parent, alone],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+
+    // Trashed on its own first, so the parent's trash does not take it.
+    expect((await client.deleteItem(alone)).ok).toBe(true);
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    for (const id of [child, grandchild]) {
+      expect((await client.getItem(id)).status).toBe(404);
+    }
+
+    const restored = await client.restoreItem(parent);
+    expect(restored.ok).toBe(true);
+    for (const id of [parent, child, grandchild]) {
+      const read = await client.getItem(id);
+      expect(read.status, id).toBe(200);
+      expect(read.data.item.state).toBe("active");
+    }
+    // The witness for the three above: a row the parent's trash did not
+    // take stays where its own trash put it.
+    expect((await client.getItem(alone)).status).toBe(404);
+  });
+
+  it("a transition out of the bin brings back what the trash took, as a restore does", async () => {
+    const parent = await makeItem("t-parent");
+    const child = await makeItem("t-child");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.getItem(child)).status).toBe(404);
+
+    expect((await client.transitionItem(parent, "active")).ok).toBe(true);
+    expect((await client.getItem(child)).status).toBe(200);
+  });
+
+  it("restoring a row the trash above took brings back what that trash took beneath it, and not its siblings", async () => {
+    const parent = await makeItem("m-parent");
+    const middle = await makeItem("m-middle");
+    const beneath = await makeItem("m-beneath");
+    const sibling = await makeItem("m-sibling");
+    for (const [source_id, target_id] of [
+      [parent, middle],
+      [middle, beneath],
+      [parent, sibling],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+
+    expect((await client.restoreItem(middle)).ok).toBe(true);
+    expect((await client.getItem(beneath)).status).toBe(200);
+    // The witness: what the same trash took from beside it stays.
+    expect((await client.getItem(sibling)).status).toBe(404);
+    expect((await client.getItem(parent)).status).toBe(404);
+  });
+
+  it("restores a parent whose trash took a child purged since", async () => {
+    const parent = await makeItem("p-parent");
+    const purged = await makeItem("p-purged");
+    const kept = await makeItem("p-kept");
+    for (const target_id of [purged, kept]) {
+      const edge = await client.createEdge({
+        source_id: parent,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.purgeItem(purged)).ok).toBe(true);
+
+    const restored = await client.restoreItem(parent);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect((await client.getItem(kept)).status).toBe(200);
+  });
+
+  it("restoring a row brings back what lay beneath it after the parent whose trash took them is purged", async () => {
+    const parent = await makeItem("g-parent");
+    const middle = await makeItem("g-middle");
+    const beneath = await makeItem("g-beneath");
+    for (const [source_id, target_id] of [
+      [parent, middle],
+      [middle, beneath],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.purgeItem(parent)).ok).toBe(true);
+
+    expect((await client.restoreItem(middle)).ok).toBe(true);
+    expect(
+      (await client.getItem(beneath)).status,
+      "the row beneath stayed in the bin once the trash that took it lost its parent",
+    ).toBe(200);
+  });
+
+  it("does not restore with a parent a child that left the bin and was trashed on its own since", async () => {
+    const parent = await makeItem("o-parent");
+    const child = await makeItem("o-child");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.transitionItem(child, "active")).ok).toBe(true);
+    expect((await client.deleteItem(child)).ok).toBe(true);
+
+    expect((await client.restoreItem(parent)).ok).toBe(true);
+    expect(
+      (await client.getItem(child)).status,
+      "a child trashed on its own came back with the parent whose trash had once taken it",
+    ).toBe(404);
+  });
+
+  it("restoring a child alone brings back only that child", async () => {
+    const parent = await makeItem("c-parent");
+    const child = await makeItem("c-child");
+    const sibling = await makeItem("c-sibling");
+    for (const target_id of [child, sibling]) {
+      const edge = await client.createEdge({
+        source_id: parent,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+
+    expect((await client.restoreItem(child)).ok).toBe(true);
+    expect((await client.getItem(child)).status).toBe(200);
+    expect((await client.getItem(parent)).status).toBe(404);
+    expect((await client.getItem(sibling)).status).toBe(404);
+
+    // The parent's restore still brings back the sibling its trash took,
+    // and answers for the child already back rather than refusing.
+    expect((await client.restoreItem(parent)).ok).toBe(true);
+    expect((await client.getItem(sibling)).status).toBe(200);
+  });
+
   it("supersedes defaults to orphan: deleting head leaves predecessor intact", async () => {
     const predecessor = await makeItem("pred");
     const head = await makeItem("head");

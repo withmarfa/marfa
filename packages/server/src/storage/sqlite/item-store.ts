@@ -26,6 +26,7 @@ import {
   getTypeSchema,
   validateProperties,
   validateTransition,
+  getEdgeTypeSchema,
   softDeleteState,
   parseFilter,
   MarfaError,
@@ -84,7 +85,7 @@ import {
   versionConflict,
 } from "../conflict.js";
 import type { ItemFieldValues, SnapshotItemFields } from "../conflict.js";
-import { edges, items, metadata } from "./schema.js";
+import { edges, items, metadata, trash_cascades } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
@@ -1168,7 +1169,7 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, trashedWith?: string): Promise<void> {
     const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -1201,6 +1202,12 @@ export class SqliteItemStore implements ItemStore {
         ...softDeleteClock(row.type, row.state, target, now),
       })
       .where(eq(items.id, id));
+    if (trashedWith !== undefined && target === "trashed") {
+      await this.db
+        .insert(trash_cascades)
+        .values({ item_id: id, trashed_with: trashedWith })
+        .run();
+    }
 
     await this.searchStore.remove(id);
   }
@@ -1226,6 +1233,7 @@ export class SqliteItemStore implements ItemStore {
       );
     }
 
+    await this.rehomeTrashRecords([id]);
     // metadata and versions cascade; search index must be removed explicitly.
     await this.db.delete(items).where(eq(items.id, id)).run();
 
@@ -1249,6 +1257,7 @@ export class SqliteItemStore implements ItemStore {
       for (const id of scopedIds) {
         await this.searchStore.remove(id);
       }
+      await this.rehomeTrashRecords(scopedIds, tx);
       await tx.delete(items).where(inArray(items.id, scopedIds)).run();
       return scopedIds.length;
     });
@@ -1284,6 +1293,7 @@ export class SqliteItemStore implements ItemStore {
       // Nothing is announced for any of it, here or in the revoked-grant
       // sweep: `TrashPurger` carries why, and it is a decision rather than
       // an omission.
+      await this.rehomeTrashRecords(ids, tx);
       await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
       await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
       await tx.delete(items).where(inArray(items.id, ids)).run();
@@ -1404,10 +1414,123 @@ export class SqliteItemStore implements ItemStore {
       })
       .where(eq(items.id, id))
       .run();
+    await this.db
+      .delete(trash_cascades)
+      .where(eq(trash_cascades.item_id, id))
+      .run();
 
     await this.searchStore.index(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
+  }
+
+  async restoreBeneath(id: string): Promise<Item[]> {
+    const [own] = await this.db
+      .select({ trashed_with: trash_cascades.trashed_with })
+      .from(trash_cascades)
+      .where(eq(trash_cascades.item_id, id))
+      .all();
+    const trashes = own === undefined ? [id] : [id, own.trashed_with];
+    const taken = await this.db
+      .select({ item_id: trash_cascades.item_id })
+      .from(trash_cascades)
+      .where(inArray(trash_cascades.trashed_with, trashes))
+      .all();
+    // A row a trash above took is brought back only from beneath this one:
+    // restoring a child brings back its own children, not its siblings.
+    const beneath = own === undefined ? null : await this.beneath(id);
+    const restored: Item[] = [];
+    for (const { item_id } of taken) {
+      if (item_id === id || (beneath !== null && !beneath.has(item_id))) {
+        continue;
+      }
+      const row = await this.getRaw(item_id);
+      if (row?.state !== "trashed") {
+        // Out of the bin by a door that kept no record of it, which leaves
+        // nothing to bring back and a record that says otherwise.
+        await this.db
+          .delete(trash_cascades)
+          .where(eq(trash_cascades.item_id, item_id))
+          .run();
+        continue;
+      }
+      restored.push(await this.restore(item_id));
+    }
+    return restored;
+  }
+
+  /** Every row reachable from `id` along edges whose type cascades on
+   *  delete, whatever their state: the rows a trash of `id` would take. */
+  private async beneath(
+    id: string,
+    db: DrizzleDb | SqliteTx = this.db,
+  ): Promise<Set<string>> {
+    const reached = new Set<string>();
+    let frontier = [id];
+    while (frontier.length > 0) {
+      const out = await db
+        .select({ target_id: edges.target_id, edge_type: edges.edge_type })
+        .from(edges)
+        .where(inArray(edges.source_id, frontier))
+        .all();
+      frontier = [];
+      for (const edge of out) {
+        if (getEdgeTypeSchema(edge.edge_type)?.cascade_on_delete !== "cascade")
+          continue;
+        if (reached.has(edge.target_id) || edge.target_id === id) continue;
+        reached.add(edge.target_id);
+        frontier.push(edge.target_id);
+      }
+    }
+    return reached;
+  }
+
+  /**
+   * Keeps what a trash took restorable when the row it is keyed to is purged.
+   * Each row that trash took becomes its own trash's root unless another of
+   * them lies above it, and the rows beneath a root are keyed to it, so
+   * restoring a row still brings back what lay beneath it. Without this the
+   * records went with the purged row, and a row restored from the middle of
+   * the subtree came back alone.
+   */
+  private async rehomeTrashRecords(
+    purged: readonly string[],
+    db: DrizzleDb | SqliteTx = this.db,
+  ): Promise<void> {
+    if (purged.length === 0) return;
+    const gone = new Set(purged);
+    const orphaned = (
+      await db
+        .select({ item_id: trash_cascades.item_id })
+        .from(trash_cascades)
+        .where(inArray(trash_cascades.trashed_with, [...gone]))
+        .all()
+    )
+      .map((row) => row.item_id)
+      .filter((id) => !gone.has(id));
+    if (orphaned.length === 0) return;
+    const under = new Map<string, Set<string>>();
+    for (const id of orphaned) under.set(id, await this.beneath(id, db));
+    for (const root of orphaned) {
+      const above = orphaned.some(
+        (other) => other !== root && under.get(other)?.has(root) === true,
+      );
+      if (above) continue;
+      await db
+        .delete(trash_cascades)
+        .where(eq(trash_cascades.item_id, root))
+        .run();
+      const mine = orphaned.filter(
+        (id) => id !== root && under.get(root)?.has(id) === true,
+      );
+      if (mine.length > 0) {
+        await db
+          .update(trash_cascades)
+          .set({ trashed_with: root })
+          .where(inArray(trash_cascades.item_id, mine))
+          .run();
+      }
+    }
   }
 
   async transition(id: string, state: ItemState): Promise<Item> {
@@ -1443,6 +1566,10 @@ export class SqliteItemStore implements ItemStore {
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
+      await this.db
+        .delete(trash_cascades)
+        .where(eq(trash_cascades.item_id, id))
+        .run();
       await this.searchStore.index(id, row.properties, row.type);
     }
 
