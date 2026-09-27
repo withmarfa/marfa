@@ -65,6 +65,19 @@ describe("jobs use local macOS and Blacksmith, with hosted release publishing", 
     }
   });
 
+  it.each(["ci.yml", "core.yml"])(
+    "%s cancels a branch's superseded run and keeps one waiting run on main",
+    (file) => {
+      const { concurrency } = parse(
+        readFileSync(join(WORKFLOWS, file), "utf8"),
+      ) as { concurrency?: unknown };
+      expect(concurrency).toEqual({
+        group: "${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}",
+      });
+    },
+  );
+
   it("finds every macOS job named by the policy", () => {
     for (const key of MAC_JOBS.keys()) {
       const [file = "", job = ""] = key.split(":");

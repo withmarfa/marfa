@@ -36,16 +36,11 @@ on:
   # A path-gated workflow has no other way to be started by hand.
   workflow_dispatch:
 
-# A superseded run on a branch describes a tree nobody has any more, so
-# canceling it costs nothing. On `main` every commit keeps its own answer.
-# Nothing reads a run of this workflow at a specific commit; `release.yml`
-# asks for ci.yml's. If that ever changes, this is the line to change with it.
+# As in `ci.yml`: a branch cancels a superseded run, and on `main` a started
+# run finishes while a newer commit replaces one still waiting.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-  # A queue cannot be combined with cancel-in-progress, so main queues and
-  # branches cancel.
-  queue: ${{ github.ref == 'refs/heads/main' && 'max' || 'single' }}
 
 env:
   CARGO_BUILD_JOBS: 2
