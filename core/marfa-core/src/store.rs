@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::catalog::Indexing;
 use crate::error::CoreError;
+use crate::js;
 use crate::model::{
     BlockedReason, Edge, Item, ItemState, QueuedWrite, Subject, Tier, Verdict, WriteKind,
 };
@@ -943,7 +944,7 @@ pub fn upsert_item(
             item.occurred_at,
             item.created_at,
             item.updated_at,
-            Value::Object(item.properties.clone()).to_string(),
+            js::json(&Value::Object(item.properties.clone())),
         ],
     )?;
     if let Some(tags) = tags {

@@ -1911,6 +1911,30 @@ describe("GET /items?filter=...", () => {
     expect(res.status).toBe(400);
   });
 
+  it("refuses a number no double holds on the listing and the search", async () => {
+    const huge = `1${"0".repeat(400)}`;
+    for (const door of ["/items?", "/search?q=note&"]) {
+      const witness = await request(
+        ctx.app,
+        "GET",
+        `${door}filter=${encodeURIComponent("properties.n gt 1")}`,
+        { key: ctx.workingKey },
+      );
+      expect(witness.status).toBe(200);
+      for (const number of [huge, `-${huge}`]) {
+        const res = await request(
+          ctx.app,
+          "GET",
+          `${door}filter=${encodeURIComponent(`properties.n gt ${number}`)}`,
+          { key: ctx.workingKey },
+        );
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error: { code: string } };
+        expect(body.error.code).toBe("validation_error");
+      }
+    }
+  });
+
   it("filters by tags contains", async () => {
     // Create an item with tags
     await request(ctx.app, "POST", "/items", {

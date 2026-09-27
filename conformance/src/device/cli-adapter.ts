@@ -173,8 +173,8 @@ export class CliDevice implements DeviceUnderTest {
     for (const tag of filters.tags ?? []) args.push("--tag", tag);
     if (filters.limit !== undefined)
       args.push("--limit", String(filters.limit));
-    if (filters.unsupported !== undefined)
-      args.push(filters.unsupported[0], filters.unsupported[1]);
+    if (filters.filter !== undefined) args.push("--filter", filters.filter);
+    if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
     return this.json<Item[]>(args);
   }
 
@@ -212,6 +212,8 @@ export class CliDevice implements DeviceUnderTest {
     if (filters.allStates === true) args.push("--all-states");
     if (filters.type !== undefined) args.push("--type", filters.type);
     for (const tag of filters.tags ?? []) args.push("--tag", tag);
+    if (filters.filter !== undefined) args.push("--filter", filters.filter);
+    if (filters.beneath !== undefined) args.push("--beneath", filters.beneath);
     if (limit !== undefined) args.push("--limit", String(limit));
     return this.json<SearchHit[]>(args);
   }

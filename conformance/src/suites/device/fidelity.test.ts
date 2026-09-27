@@ -28,6 +28,8 @@ import {
 } from "../../device/scripted-server.js";
 import { v7 as uuidv7 } from "uuid";
 import { FolderDoor, type DoorCreate } from "../../device/folder-door.js";
+import { CliDevice, newStore } from "../../device/cli-adapter.js";
+import { requireBinary } from "./harness.js";
 
 /**
  * The control on the scripted server.
@@ -1806,5 +1808,227 @@ describe("the scripted answers match the server's", () => {
       { kind: "json", status: 200, body: scriptedLive.data },
       { same: ["type"], shape: ["cursor"] },
     );
+  });
+});
+
+/**
+ * The listing grammar a device answers from its copy (`device.md` 24 and
+ * 36), held against the server that defines it. A device hydrates a slice of
+ * one type the run registers, so the server's answer and the device's are
+ * about the same four rows and no others, and each expression is asked of
+ * both.
+ */
+describe("a local read answers the listing grammar as the server does", () => {
+  it("answers each filter expression with the ids the server answers", async () => {
+    const type = `user.filtered-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: {
+        title: { type: "string" },
+        status: { type: "string" },
+        rating: { type: "number" },
+        flag: { type: "boolean" },
+        note: { type: "string" },
+      },
+      display_hints: { title_field: "title" },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+
+    const seed = async (
+      properties: Record<string, unknown>,
+      tags: string[],
+      edges?: Record<string, string[]>,
+      sourceId?: string,
+    ): Promise<string> => {
+      const created = await client.createItem({
+        type,
+        source: ctx.source,
+        properties,
+        tags,
+        ...(edges === undefined ? {} : { edges }),
+        ...(sourceId === undefined ? {} : { source_id: sourceId }),
+      });
+      expect(
+        created.ok,
+        `the fixture could not seed a row: ${JSON.stringify(created.error)}`,
+      ).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      return created.data.item.id;
+    };
+    const grandchild = await seed(
+      {
+        title: "marsh grandchild",
+        status: "open",
+        flag: false,
+        note: "a heron by the pond",
+      },
+      ["birds", "garden"],
+    );
+    const stranger = await seed(
+      { title: "marsh stranger", status: "open", rating: 9, flag: true },
+      [],
+      undefined,
+      "5.0",
+    );
+    const child = await seed(
+      { title: "marsh child", status: "closed", rating: 2, flag: true },
+      ["birds"],
+      { "parent-of": [grandchild], references: [stranger] },
+      "5",
+    );
+    const root = await seed(
+      { title: "marsh root", status: "open", rating: 5 },
+      ["garden"],
+      { "parent-of": [child] },
+    );
+    // Text a numeric bound casts, a source_id a boolean's REAL matches or
+    // not, and floats inside a container that JavaScript spells in full.
+    const five = await seed({ title: "five", s: "5" }, [], undefined, "1.0");
+    const ten = await seed({ title: "ten", s: "10" }, [], undefined, "1");
+    const letters = await seed(
+      { title: "letters", s: "abc", list: [1e20] },
+      [],
+    );
+    const blank = await seed({ title: "blank", s: "", list: [0.0000015] }, []);
+    const names = new Map([
+      [root, "root"],
+      [child, "child"],
+      [grandchild, "grandchild"],
+      [stranger, "stranger"],
+      [five, "five"],
+      [ten, "ten"],
+      [letters, "letters"],
+      [blank, "blank"],
+    ]);
+    const named = (ids: string[]): string[] =>
+      ids.map((id) => names.get(id) ?? id).sort();
+
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("fidelity-filter"),
+      url: apiUrl,
+      key: apiKey,
+    });
+    const hydrated = await device.hydrate([type], "library");
+    expect(
+      hydrated.ok,
+      `the device could not hydrate from the server: ${JSON.stringify(hydrated)}`,
+    ).toBe(true);
+
+    const expressions = [
+      'properties.status eq "open"',
+      'properties.note contains "HERON"',
+      'properties.status starts_with "clo"',
+      "properties.rating gt 4",
+      "properties.rating lte 5",
+      "properties.rating not_exists",
+      "properties.flag eq true",
+      "properties.flag eq false",
+      "properties.status eq null",
+      'tags contains "birds"',
+      "tags not_exists",
+      `edge[parent-of] eq "${child}"`,
+      `edge[parent-of] neq "${child}"`,
+      "edge[references] exists",
+      "edge[parent-of] not_exists",
+      "properties.s gt 4",
+      "source_id eq true",
+      'properties.list contains "100000000000000000000"',
+      'properties.list contains "0.0000015"',
+      `id eq "${stranger}"`,
+      // The server binds every number as a REAL, which a text column reads
+      // as `5.0`: this selects the row spelled that way, not the one
+      // spelled `5`.
+      "source_id eq 5",
+      "version gte 1",
+      'state eq "archived"',
+      'properties.status eq "open" AND tags contains "garden"',
+      'properties.status eq "closed" OR tags not_exists',
+    ];
+    const selective: string[] = [];
+    for (const filter of expressions) {
+      const served = await client.listItems({ type, filter, limit: 100 });
+      expect(
+        served.ok,
+        `the server refused ${filter}: ${JSON.stringify(served.error)}`,
+      ).toBe(true);
+      const local = await device.list({ filter });
+      expect(
+        local.ok,
+        `the device refused ${filter}, which the server answers: ${JSON.stringify(local)}`,
+      ).toBe(true);
+      const expected = named(served.data.data.map((item) => item.id));
+      expect(
+        named(local.ok ? local.value.map((item) => item.id) : []),
+        `the device answers ${filter} with other rows than the server does`,
+      ).toEqual(expected);
+      if (expected.length > 0 && expected.length < names.size) {
+        selective.push(filter);
+      }
+    }
+    // The witness: agreement on expressions that select everything or
+    // nothing would be agreement a device that ignored the filter, or
+    // matched nothing, reaches too.
+    expect(
+      selective.length,
+      "too few expressions select some rows and not others for the agreement above to mean anything",
+    ).toBeGreaterThanOrEqual(expressions.length - 3);
+    // And the rows that tell a cast, a REAL and a number's text apart.
+    for (const [filter, rows] of [
+      ["properties.s gt 4", ["five", "ten"]],
+      ["source_id eq true", ["five"]],
+      ['properties.list contains "100000000000000000000"', ["letters"]],
+      ['properties.list contains "0.0000015"', ["blank"]],
+    ] as const) {
+      const served = await client.listItems({ type, filter, limit: 100 });
+      expect(
+        named(served.ok ? served.data.data.map((item) => item.id) : []),
+        `the server answers ${filter} otherwise than this case assumes`,
+      ).toEqual(rows);
+    }
+
+    for (const filter of [
+      'properties.status eq "open"',
+      `edge[parent-of] eq "${child}"`,
+      'properties.status eq "closed" OR tags not_exists',
+    ]) {
+      const served = await client.search("marsh", { type, filter });
+      expect(
+        served.ok,
+        `the server refused a search by ${filter}: ${JSON.stringify(served.error)}`,
+      ).toBe(true);
+      const local = await device.search("marsh", { filter });
+      expect(local.ok).toBe(true);
+      expect(
+        named(local.ok ? local.value.map((hit) => hit.item.id) : []),
+        `the device searches by ${filter} and answers other rows than the server does`,
+      ).toEqual(named(served.data.data.map((hit) => hit.item.id)));
+    }
+
+    for (const filter of [
+      'properties.meta.author eq "x"',
+      'title eq "x"',
+      "",
+      Array.from({ length: 11 }, () => "tags exists").join(" AND "),
+      `properties.title eq "${"x".repeat(2049 - 'properties.title eq ""'.length)}"`,
+      `properties.rating gt 1${"0".repeat(400)}`,
+    ]) {
+      const served = await client.listItems({ type, filter });
+      expect(served.status, `the server answered ${filter} with no 400`).toBe(
+        400,
+      );
+      const local = await device.list({ filter });
+      expect(local.ok, `the device accepted ${filter}`).toBe(false);
+      if (local.ok) continue;
+      // The binary's class is its own closed set; the code beside it is the
+      // one the server answers with, and that is what has to agree.
+      const envelope = JSON.parse(local.refusal.raw) as {
+        error: { server: { code: string | null } | null };
+      };
+      expect(
+        envelope.error.server?.code,
+        `the device refuses ${filter} otherwise than the server does`,
+      ).toBe(served.error?.error.code);
+    }
   });
 });

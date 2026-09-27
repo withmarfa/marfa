@@ -78,7 +78,8 @@ pub struct Edge {
 }
 
 /// Narrowing for a search: the state rule a list takes, a type with its
-/// subtree, and tags, each read as the list reads it.
+/// subtree, tags, a listing-grammar expression and `beneath`, each read as
+/// the list reads it.
 #[napi(object)]
 #[derive(Default)]
 pub struct SearchFilters {
@@ -87,6 +88,13 @@ pub struct SearchFilters {
     #[napi(js_name = "type")]
     pub type_: Option<String>,
     pub tags: Option<Vec<String>>,
+    /// An expression in the server's listing grammar, answered as the server
+    /// answers `filter` and refused `validation_error` where it refuses it.
+    /// A `backref` condition is refused `invalid`.
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, as far as the copy holds them.
+    pub beneath: Option<String>,
 }
 
 /// Narrowing for a list. Leaving `state` unset answers the active state, as
@@ -102,6 +110,13 @@ pub struct ListFilters {
     pub tags: Option<Vec<String>>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
+    /// An expression in the server's listing grammar, answered as the server
+    /// answers `filter` and refused `validation_error` where it refuses it.
+    /// A `backref` condition is refused `invalid`.
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, as far as the copy holds them.
+    pub beneath: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -445,6 +460,8 @@ impl From<SearchFilters> for marfa_core::SearchFilters {
             all_states: filters.all_states.unwrap_or(false),
             r#type: filters.type_,
             tags: filters.tags.unwrap_or_default(),
+            filter: filters.filter,
+            beneath: filters.beneath,
         }
     }
 }
@@ -567,6 +584,8 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
         tags: filters.tags.unwrap_or_default(),
         occurred_after: filters.occurred_after,
         occurred_before: filters.occurred_before,
+        filter: filters.filter,
+        beneath: filters.beneath,
         limit: filters.limit,
         offset: filters.offset,
     }
@@ -1341,12 +1360,47 @@ mod tests {
     }
 
     #[test]
+    fn list_filters_cross_whole() {
+        let crossed = filters(Some(ListFilters {
+            type_: Some("core.note".into()),
+            state: Some(ItemState::Archived),
+            all_states: Some(true),
+            tier: Some(Tier::Feed),
+            tags: Some(vec!["a".into()]),
+            occurred_after: Some("after".into()),
+            occurred_before: Some("before".into()),
+            filter: Some("tags exists".into()),
+            beneath: Some("root".into()),
+            limit: Some(3),
+            offset: Some(4),
+        }));
+        assert_eq!(
+            crossed,
+            marfa_core::ListFilters {
+                r#type: Some("core.note".into()),
+                state: Some(marfa_core::ItemState::Archived),
+                all_states: true,
+                tier: Some(marfa_core::Tier::Feed),
+                tags: vec!["a".into()],
+                occurred_after: Some("after".into()),
+                occurred_before: Some("before".into()),
+                filter: Some("tags exists".into()),
+                beneath: Some("root".into()),
+                limit: Some(3),
+                offset: Some(4),
+            }
+        );
+    }
+
+    #[test]
     fn search_filters_cross_whole() {
         let crossed: marfa_core::SearchFilters = SearchFilters {
             state: Some(ItemState::Archived),
             all_states: Some(true),
             type_: Some("core.note".into()),
             tags: Some(vec!["a".into(), "b".into()]),
+            filter: Some("tags exists".into()),
+            beneath: Some("root".into()),
         }
         .into();
         assert_eq!(
@@ -1356,6 +1410,8 @@ mod tests {
                 all_states: true,
                 r#type: Some("core.note".into()),
                 tags: vec!["a".into(), "b".into()],
+                filter: Some("tags exists".into()),
+                beneath: Some("root".into()),
             }
         );
     }

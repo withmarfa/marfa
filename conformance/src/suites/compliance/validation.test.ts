@@ -80,6 +80,29 @@ describe("validation edge cases", () => {
     expect((fetched.data.item.properties.body as string).length).toBe(100_000);
   });
 
+  it("refuses a filter number no double holds, on the listing and the search", async () => {
+    const huge = `1${"0".repeat(400)}`;
+    // The witness: the same expression with a number a double holds.
+    expect((await client.listItems({ filter: "properties.n gt 1" })).ok).toBe(
+      true,
+    );
+    expect(
+      (await client.search("note", { filter: "properties.n gt 1" })).ok,
+    ).toBe(true);
+    for (const filter of [
+      `properties.n gt ${huge}`,
+      `properties.n gt -${huge}`,
+    ]) {
+      for (const refused of [
+        await client.listItems({ filter }),
+        await client.search("note", { filter }),
+      ]) {
+        expect(refused.status).toBe(400);
+        expect(refused.error?.error.code).toBe("validation_error");
+      }
+    }
+  });
+
   it("accepts quotes, ampersands and parentheses in a search query", async () => {
     const r = await client.search('hello "world" & (test)');
     expect(r.status).toBe(200);
