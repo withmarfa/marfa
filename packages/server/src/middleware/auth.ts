@@ -523,10 +523,8 @@ export function mayWriteReserved(key: ApiKey, type: string): boolean {
 }
 
 /**
- * Whether this credential may create an edge of `edgeType` from a row of
- * `sourceType`: the two questions `POST /edges` asks, as a predicate, for a
- * door that makes an edge on a writer's behalf and skips one the writer could
- * not have made rather than refusing the whole write.
+ * Whether this credential may create an edge of `edgeType` from a
+ * `sourceType` row, as `POST /edges` decides.
  */
 export function mayWriteEdge(
   key: ApiKey,

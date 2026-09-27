@@ -189,21 +189,10 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  * and a copy claiming the original's natural key is a second row asserting it
  * is the same upstream record.
  *
- * It carries the original's tags beside `conflicted-copy`, and a copy of the
- * edges that are the original's own: those its own file would write, an
- * outbound edge of a type written at its source and an inbound one of a type
- * written at its target, so its place under its parent and what it is about
- * come with it, while a track that names its album is not made the copy's
- * track. A copy with no edges and no tags sits outside every project and view
- * the original was in, which is where nobody looks for it.
- *
- * Of those, only what a second holder may take: the edge type's cardinality
- * allows it, the writer could have made it, the other end is not in the bin,
- * and discarding the copy, the ordinary thing done with one, reaches nothing
- * the original points at and is not held back by what it points at: no
- * outbound edge that cascades, and no edge that blocks a delete. Neither
- * cycle-prone type can close a cycle through the copy: it takes an inbound
- * `parent-of` and no outbound one, and no `supersedes` at all.
+ * It takes the original's tags and the edges the original's own file writes,
+ * so it stays where the original was found; only those a second holder may
+ * take, the writer could make, not to the bin, and none that cascade outbound
+ * or block a delete, so discarding it touches nothing else.
  */
 async function insertConflictedSibling(
   tx: SqliteTx,
@@ -285,8 +274,6 @@ async function insertConflictedSibling(
     if (outbound && schema.cascade_on_delete === "cascade") continue;
     const sourceType = outbound ? row.type : other.type;
     if (mayCopyEdge?.(edge.edge_type, sourceType) !== true) continue;
-    // A second source for the same target is what `*-to-many` on the target's
-    // side forbids nothing of; a second target for the same source likewise.
     const allowed = outbound
       ? schema.cardinality === "many-to-one" ||
         schema.cardinality === "many-to-many"
