@@ -1038,6 +1038,7 @@ impl MarfaCore {
             properties: object(&edit.properties_json)?,
             base_version: edit.base_version,
             source_id: edit.source_id,
+            ..Default::default()
         };
         queued(self.inner.update_item(&id, &edit)?)
     }
@@ -1050,6 +1051,7 @@ impl MarfaCore {
             properties: object(&edit.properties_json)?,
             base_version: edit.base_version,
             source_id: edit.source_id,
+            ..Default::default()
         };
         queued(self.inner.update_item_as_read(&id, &edit)?)
     }

@@ -194,10 +194,7 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> 
         }
     }
     for id in items {
-        let Some(held) = store::item_by_id(conn, id)? else {
-            continue;
-        };
-        store::lay_waiting_writes_over(conn, id, &catalog.indexing(&held.r#type))?;
+        store::lay_waiting_writes_over(conn, id, &|laid| catalog.indexing(laid))?;
     }
     for id in edges {
         store::lay_waiting_edge_writes_over(conn, id)?;

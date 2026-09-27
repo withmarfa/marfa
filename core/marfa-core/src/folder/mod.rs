@@ -957,6 +957,7 @@ impl Folder {
             // another item holds, which would take the person's editing
             // down with it.
             source_id: (bound.path != key && self.own(&held)).then(|| key.to_string()),
+            ..Edit::default()
         };
         match based {
             crate::Based::AsRead => self.core.update_item_as_read(item_id, &edit)?,
@@ -1065,6 +1066,7 @@ impl Folder {
             // A move carries the name only for a row this folder keys, as a
             // document's does.
             source_id: (bound.path != key && self.own(held)).then(|| key.to_string()),
+            ..Edit::default()
         };
         // A title the folder gave the file follows it to its new name; one
         // somebody set on the item stays theirs.
@@ -1183,6 +1185,7 @@ impl Folder {
                 properties: held.properties.clone(),
                 base_version: Some(held.version),
                 source_id: Some(key.to_string()),
+                ..Edit::default()
             },
         )?;
         Ok(())

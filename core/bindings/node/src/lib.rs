@@ -1046,6 +1046,7 @@ impl MarfaCore {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
             source_id: edit.source_id,
+            ..Default::default()
         };
         queued(self.inner.update_item(&id, &edit).map_err(failure)?)
     }
@@ -1059,6 +1060,7 @@ impl MarfaCore {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
             source_id: edit.source_id,
+            ..Default::default()
         };
         queued(
             self.inner

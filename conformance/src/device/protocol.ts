@@ -197,6 +197,10 @@ export interface Edit {
   /** The version is one read before the version the copy holds, and the
    *  server merges the edit against it (`queue-and-verdicts.md` 43). */
   asRead?: boolean;
+  /** The type to move the row to; sent as a retype. */
+  type?: string;
+  /** The tier to move the row to. */
+  tier?: "library" | "feed";
 }
 
 /** An edge, before it is queued. */

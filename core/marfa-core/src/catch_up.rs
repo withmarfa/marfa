@@ -652,7 +652,7 @@ fn apply(
                     .map(|metadata| metadata.tags.as_slice());
                 let indexing = catalog.indexing(&item.r#type);
                 store::upsert_item(tx, item, tags, &indexing)?;
-                store::lay_waiting_writes_over(tx, &item.id, &indexing)?;
+                store::lay_waiting_writes_over(tx, &item.id, &|laid| catalog.indexing(laid))?;
                 Ok(true)
             } else {
                 store::evict_item(tx, &item.id)
