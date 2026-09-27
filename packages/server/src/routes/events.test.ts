@@ -425,7 +425,9 @@ describe("GET /events — a replay that sends nothing for a while", () => {
    * replay waits, whose stored copy is then spoiled, so its live copy is the
    * one it has.
    */
-  async function busyReplay(damaged?: "stored" | "published"): Promise<string> {
+  async function busyReplay(
+    damaged?: "stored" | "published" | "published-late",
+  ): Promise<string> {
     const cursor = await createNote("busy-cursor");
     const run = (
       ctx.storage as unknown as {
@@ -446,7 +448,8 @@ describe("GET /events — a replay that sends nothing for a while", () => {
         [new Date().toISOString()],
       );
     }
-    if (damaged !== "published") await seed();
+    const published = damaged === "published" || damaged === "published-late";
+    if (!published) await seed();
 
     const store = ctx.storage.eventLog;
     const real = store.getAfter.bind(store);
@@ -454,7 +457,7 @@ describe("GET /events — a replay that sends nothing for a while", () => {
     const atRead = new Promise<void>((resolve) => (reached = resolve));
     let release!: () => void;
     const released = new Promise<void>((resolve) => (release = resolve));
-    if (damaged === "published") {
+    if (published) {
       let armed = true;
       store.getAfter = async (afterId, limit) => {
         if (armed) {
@@ -483,14 +486,17 @@ describe("GET /events — a replay that sends nothing for a while", () => {
         key: ctx.workingKey,
         headers: { "Last-Event-ID": String(cursor) },
       });
-      if (damaged === "published") {
+      if (published) {
         await atRead;
+        // Early, the replay reads the spoiled row before the hold fills;
+        // late, behind the withheld rows, after the hold was given up.
+        if (damaged === "published-late") await seed();
         await write();
         await run(
           "UPDATE event_log SET payload = 'not json' WHERE id = (SELECT MAX(id) FROM event_log)",
           [],
         );
-        await seed();
+        if (damaged === "published") await seed();
         release();
       }
       writer = (async () => {
@@ -511,7 +517,7 @@ describe("GET /events — a replay that sends nothing for a while", () => {
       await writer;
       // The damaged note's own live copy is held beside the writes.
       expect(
-        written + (damaged === "published" ? 1 : 0),
+        written + (published ? 1 : 0),
         "fewer frames were held during the replay than the hold holds, so it was never tested past its cap",
       ).toBeGreaterThan(500);
       if (damaged === undefined) {
@@ -556,6 +562,68 @@ describe("GET /events — a replay that sends nothing for a while", () => {
       "the replay went on past a row whose one carrier it had given up, so the reader resumes past an event it never had",
     ).toContain('"reason":"backlog_overflow"');
     expect(text).not.toContain("event: stream_live");
+  });
+
+  it("ends short at a row it cannot read whose live copy it took over from the hold", async () => {
+    const text = await busyReplay("published-late");
+    expect(
+      text,
+      "the replay passed a row it could not read after taking over its live copy, so the reader resumes past an event it never had",
+    ).toContain('"reason":"backlog_overflow"');
+    expect(text).not.toContain("event: stream_live");
+  });
+
+  it("reads again after an empty read while frames it took over are past it", async () => {
+    const note = async () => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "race" } },
+      });
+      expect(res.status).toBe(201);
+    };
+    const cursor = await createNote("race-cursor");
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    let reads = 0;
+    let late: bigint | undefined;
+    // The first read fills the hold to its cap; the second comes back
+    // empty, and a write landing while it is out gives the hold up past
+    // what it saw.
+    store.getAfter = async (afterId, limit) => {
+      reads += 1;
+      if (reads === 1) {
+        for (let i = 0; i < 500; i += 1) await note();
+      }
+      const rows = await real(afterId, limit);
+      if (reads === 2) {
+        await note();
+        late = (await store.getMaxId()) ?? undefined;
+      }
+      return rows;
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events?type=core.note", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      const { text } = await readSse(res, {
+        until: (seen) =>
+          seen.includes("event: stream_live") ||
+          seen.includes("event: stream_incomplete"),
+      });
+      expect(late).toBeDefined();
+      expect(
+        text,
+        "a frame given up while an empty read was out was never sent",
+      ).toContain(`id: ${String(late)}\n`);
+    } finally {
+      store.getAfter = real;
+      await (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun("DELETE FROM event_log", []);
+    }
   });
 
   it("passes a row it cannot read that was never this stream's to hold", async () => {

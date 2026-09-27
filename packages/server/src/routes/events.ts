@@ -183,7 +183,9 @@ const STREAM_INCOMPLETE_EVENT = "stream_incomplete";
 type StreamIncompleteReason =
   /** The `Last-Event-ID` catch-up threw partway through. */
   | "replay_failed"
-  /** Live frames held during the prologue outgrew {@link MAX_HELD_FRAMES}. */
+  /** Live frames held during the prologue outgrew {@link MAX_HELD_FRAMES},
+   *  or a replay reached a row it cannot read whose live copy it had taken
+   *  over from the hold. */
   | "backlog_overflow"
   /** The subscription failed for a reason that was not the client leaving. */
   | "live_delivery_failed"
@@ -228,7 +230,8 @@ type StreamIncompleteReason =
  * cost is the wrappers, and the retained cost is keeping up to this many
  * already-published events alive until the prologue ends. The viewer
  * ceiling bounds how many connections can be holding at once; this bounds
- * what each one accumulates.
+ * the frames each one accumulates. A replay that takes the hold over keeps
+ * only the ids of what it took, until it reads past them.
  */
 const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
 
@@ -970,7 +973,13 @@ export function eventRoutes(
                   REPLAY_BATCH_SIZE,
                 );
 
-                if (batch.length === 0) break;
+                if (batch.length === 0) {
+                  if (lastReplayedId >= replayReach) break;
+                  // Frames given up while this read was out are past what
+                  // it saw, so it reads again for them.
+                  await new Promise<void>((resolve) => setImmediate(resolve));
+                  continue;
+                }
 
                 // The sweep can run between the check above and any read
                 // here. A batch that does not start at the next id may
@@ -1114,6 +1123,7 @@ export function eventRoutes(
                         ? (parsedItem as { type?: unknown }).type
                         : undefined;
                     if (typeof named !== "string") {
+                      if (liveCopyGivenUp(event.id)) return false;
                       lastReplayedId = event.id;
                       lastRead = event.id;
                       continue;
@@ -1202,8 +1212,10 @@ export function eventRoutes(
                   lastRead = event.id;
                 }
 
+                // In id order, as given up.
                 for (const id of givenUp) {
-                  if (id <= lastReplayedId) givenUp.delete(id);
+                  if (id > lastReplayedId) break;
+                  givenUp.delete(id);
                 }
                 if (
                   batch.length < REPLAY_BATCH_SIZE &&
@@ -1241,6 +1253,8 @@ export function eventRoutes(
               return false;
             } finally {
               replayReach = null;
+              givenUp.clear();
+              unreadable.clear();
             }
           };
 
