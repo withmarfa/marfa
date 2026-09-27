@@ -127,6 +127,11 @@ describe("POST /folders", () => {
       "first_placement.core.note",
     ],
     [
+      { first_placement: { "core.note": "C:/out" } },
+      "validation_error",
+      "first_placement.core.note",
+    ],
+    [
       { first_placement: { "core.nope": "Notes" } },
       "unknown_type",
       "first_placement.core.nope",

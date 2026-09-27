@@ -169,7 +169,12 @@ function assertKnownType(path: string, id: string): void {
 
 /** Whether a relative directory path names somewhere outside the folder. */
 function leavesFolder(path: string): boolean {
-  if (path.startsWith("/") || path.includes("\\") || path.includes("\0")) {
+  if (
+    path.startsWith("/") ||
+    /^[A-Za-z]:/.test(path) ||
+    path.includes("\\") ||
+    path.includes("\0")
+  ) {
     return true;
   }
   let depth = 0;
