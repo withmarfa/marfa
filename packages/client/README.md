@@ -30,7 +30,7 @@ A door that takes raw bytes, such as `POST /blobs`, takes them as a `Blob`, an `
 
 ## The contract
 
-The client carries the contract version it was generated for as `CONTRACT_VERSION`, and every answer the server sends carries its own as the `X-Marfa-Contract` header. The client checks that header on each answer before handing it on: one that names another contract, or a success that names none, is refused with `ContractMismatchError`. An error answer with no header is handed on as it came, since a proxy in front of the server answers without one and its status is still the truth. The credential is sent only under the `baseUrl` the client was made for, and never after a redirect. Both happen inside the client's own `fetch`, so middleware added with `client.use` sees a request without the credential and an answer already checked.
+The client carries the contract version it was generated for as `CONTRACT_VERSION`, and every answer the server sends carries its own as the `X-Marfa-Contract` header. The client checks that header on each answer before handing it on: one that names another contract, or a success that names none, is refused with `ContractMismatchError`. An error answer with no header is handed on as it came, since a proxy in front of the server answers without one and its status is still the truth. The credential is sent only under the `baseUrl` the client was made for, and never after a redirect. One that is empty, or holds a character a bearer token cannot (RFC 6750's `b64token`), is refused by `createClient` with a `TypeError` that never repeats it. Both happen inside the client's own `fetch`, so middleware added with `client.use` sees a request without the credential and an answer already checked.
 
 ## Pages
 

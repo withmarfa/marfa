@@ -284,6 +284,56 @@ describe("where the credential goes", () => {
     expect(() => make(server, "ftp://marfa.example")).toThrow(TypeError);
   });
 
+  it("refuses a credential no bearer can carry, without repeating it", () => {
+    const secret = "marfa_k1_0f3a";
+    const injected = `${secret}\nX-Injected: 1`;
+    const refused = [
+      injected,
+      `${secret}€`,
+      `${secret}\u200b`,
+      `${secret} extra`,
+      `${secret}é`,
+      `=${secret}`,
+      "",
+    ];
+    // The witness: the platform's own refusal of the first quotes it whole.
+    expect(() => new Headers({ Authorization: `Bearer ${injected}` })).toThrow(
+      secret,
+    );
+    for (const credential of refused) {
+      let caught: unknown;
+      try {
+        createClient({ baseUrl: "https://marfa.example", credential });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(TypeError);
+      const error = caught as TypeError;
+      expect(error.cause).toBeUndefined();
+      if (credential !== "") {
+        expect(error.message).not.toContain(credential);
+        expect(error.message).not.toContain(secret);
+        expect(String(error.stack)).not.toContain(secret);
+      }
+    }
+  });
+
+  it("sends a credential of the characters a bearer holds, as it was given", async () => {
+    for (const credential of [
+      "marfa_k1_0123456789abcdef",
+      "marfa_at_AbCdEfGh0123",
+      "eyJhbGciOi.eyJzdWIi-_~+/.c2ln==",
+    ]) {
+      const server = stubServer();
+      await createClient({
+        baseUrl: "https://marfa.example",
+        credential,
+        fetch: server.fetch,
+      }).GET("/edge-types");
+      expect(server.seen[0]?.authorization).toBe(`Bearer ${credential}`);
+    }
+  });
+
   it("refuses a path parameter that would resolve to another route", async () => {
     const server = stubServer();
     const client = make(server);
