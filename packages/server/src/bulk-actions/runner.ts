@@ -101,6 +101,10 @@ async function runTransitionChunk({
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
         moved.push(await storage.items.transition(id, input.state));
+        // The transition has landed once `transition` returns, so it is
+        // announced even where bringing back what its trash took then fails
+        // and the row is reported errored: the chunk shares one transaction,
+        // and a caught failure does not take the transition back.
         if (input.state === "active") {
           broughtBack.push(...(await storage.items.restoreTrashedWith(id)));
         }

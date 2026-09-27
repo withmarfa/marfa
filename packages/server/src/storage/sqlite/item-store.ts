@@ -1205,10 +1205,6 @@ export class SqliteItemStore implements ItemStore {
       await this.db
         .insert(trash_cascades)
         .values({ item_id: id, trashed_with: trashedWith })
-        .onConflictDoUpdate({
-          target: trash_cascades.item_id,
-          set: { trashed_with: trashedWith },
-        })
         .run();
     }
 
