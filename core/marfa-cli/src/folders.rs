@@ -6,9 +6,11 @@ use std::time::Duration;
 use clap::Subcommand;
 use marfa_core::{CoreError, Folder, Slice};
 
+use crate::commands::folders as folder_settings;
+use crate::commands::items::IdempotencyArgs;
 use crate::error::CliError;
-use crate::output;
-use crate::remote::Named;
+use crate::output::{self, Printer};
+use crate::remote::{Named, Remote};
 use crate::values::{Tier, properties};
 use crate::watch;
 
@@ -58,6 +60,18 @@ pub enum FoldersCommand {
     Push {
         /// The folder.
         dir: PathBuf,
+    },
+    /// Create a folder's settings on the server, as a `system.folder`.
+    /// Needs write on `system.folder`.
+    Create(folder_settings::CreateArgs),
+    /// Change a folder's settings on the server, each named one replaced whole.
+    Change(folder_settings::ChangeArgs),
+    /// Retire a folder's settings on the server. A revoked folder does not change.
+    Revoke {
+        /// The folder's `system.folder` id.
+        id: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Watch a folder and keep it in step until interrupted.
     Watch {
@@ -175,7 +189,23 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Watch { dir, r#for } => {
             watch::watch(&dir, named.server()?, r#for.map(Duration::from_secs), json)
         }
+        FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
+        FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
+        FoldersCommand::Revoke { id, idempotency } => send(
+            folder_settings::revoke_request(&id, &idempotency),
+            named,
+            json,
+        ),
     }
+}
+
+fn send(
+    request: crate::remote::request::Request,
+    named: &Named,
+    json: bool,
+) -> Result<(), CliError> {
+    let answer = Remote::resolve(named)?.json(&request)?;
+    Printer { json }.value(&answer)
 }
 
 /// What a pull did, for somebody who did not ask for JSON.

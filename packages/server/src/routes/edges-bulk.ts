@@ -376,6 +376,7 @@ async function processBulkEdge(
       source_id: raw.source_id,
       target_id: raw.target_id,
       edge_type: raw.edge_type,
+      properties: raw.properties,
     });
     const createInput = {
       source_id: raw.source_id,

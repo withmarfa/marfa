@@ -144,6 +144,14 @@ Fixture paths are under `src/suites/`.
 | `POST /connectors/{id}/runs`      | covered | `compliance/connectors.test.ts` | The connector's own key only; `succeeded` or `failed`; the last hundred kept.                        |
 | `GET /connectors/{id}/runs`       | covered | `compliance/connectors.test.ts` | Any key; newest first, `limit` up to the shared ceiling.                                             |
 
+## Folders
+
+| Operation                   | Status  | Fixture                      | Notes                                                                                                              |
+| --------------------------- | ------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `POST /folders`             | covered | `compliance/folders.test.ts` | Write on `system.folder` in the type map; each setting checked and named when refused.                             |
+| `PATCH /folders/{id}`       | covered | `compliance/folders.test.ts` | Needs the version read; a stale change merges or answers `409 version_conflict`; a revoked folder does not change. |
+| `POST /folders/{id}/revoke` | covered | `compliance/folders.test.ts` | Terminal: a second revoke answers `400 invalid_transition`.                                                        |
+
 ## Operator maintenance
 
 | Operation                           | Status        | Fixture                                                                                                            | Notes                                                                                                          |

@@ -79,6 +79,10 @@ const scopedStub = {
     calls.push(`item-delete:${id}`);
     return Promise.resolve(nextResult(itemDeleteById, id, itemDeleteResult));
   },
+  revokeFolder: (id: string) => {
+    calls.push(`folder-revoke:${id}`);
+    return Promise.resolve(okResult);
+  },
   purgeItem: (id: string) => {
     calls.push(`item-purge:${id}`);
     return Promise.resolve(nextResult(itemPurgeById, id, itemPurgeResult));
@@ -101,6 +105,7 @@ function contextWithFixtures(): unknown {
     trackedEdges: ["e1"],
     trackedItems: ["i1"],
     trackedEdgeTypes: ["et1"],
+    trackedFolders: ["f1"],
     trackedWebhooks: [{ id: "w1" }],
     trackedTypes: [{ id: "t1" }],
     trackedKeys: ["k1"],
@@ -153,6 +158,15 @@ describe("cleanup", () => {
     expect(calls).toContain("key:k1");
     expect(calls.indexOf("scoped-type:t1")).toBeLessThan(
       calls.indexOf("key:k1"),
+    );
+  });
+
+  it("revokes a tracked folder before purging it", async () => {
+    const { cleanup } = await import("./setup.js");
+    await cleanup(contextWithFixtures() as Parameters<typeof cleanup>[0]);
+    expect(calls.indexOf("folder-revoke:f1")).toBeGreaterThan(-1);
+    expect(calls.indexOf("folder-revoke:f1")).toBeLessThan(
+      calls.indexOf("item-purge:f1"),
     );
   });
 

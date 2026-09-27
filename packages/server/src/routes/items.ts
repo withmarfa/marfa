@@ -141,7 +141,7 @@ const ConflictSnapshotSchema = z
   })
   .openapi("ConflictSnapshot");
 
-const ConflictResponseSchema = z
+export const ConflictResponseSchema = z
   .object({
     error: VersionConflictErrorSchema,
     current: ConflictSnapshotSchema,
@@ -172,7 +172,7 @@ const StaleVersionSchema = z
  * is no ancestor, so no field can be shown not to have collided, and a client
  * merging against an empty one spawns siblings holding text nobody typed.
  */
-const AncestorUnavailableSchema = z
+export const AncestorUnavailableSchema = z
   .object({
     error: z
       .object({

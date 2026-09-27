@@ -6,7 +6,7 @@ The specification has two halves.
 
 **The server's half** states the server's behavior over HTTP, and the server is the source: where it contradicts its own OpenAPI document, the statement says so and `findings.md` carries the detail.
 
-- `items.md`: items, their lifecycle, bulk doors, metadata, tags and extensions.
+- `items.md`: items, their lifecycle, bulk doors, metadata, tags and extensions, and the folder door that writes `system.folder`.
 - `types.md`: the type registry, its grammar, inheritance and enforcement levers.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.

@@ -560,6 +560,7 @@ export function edgeRoutes(storage: Storage) {
           source_id: body.source_id,
           target_id: body.target_id,
           edge_type: body.edge_type,
+          properties: body.properties,
         });
         return storage.edges.createRaw({
           id: body.id,

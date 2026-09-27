@@ -74,6 +74,7 @@ import {
   parseSortField,
 } from "../interface.js";
 import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
+import { closedToNewEdge } from "../edge-constraints.js";
 import {
   ancestorUnavailable,
   attachResolution,
@@ -262,8 +263,10 @@ async function insertConflictedSibling(
       .from(items)
       .where(eq(items.id, outbound ? edge.target_id : edge.source_id))
       .all();
-    // An end in the bin, or gone, is one the edge door would refuse.
+    // An end in the bin, gone, or closed to new edges is one the edge door
+    // would refuse.
     if (other === undefined || other.state === "trashed") continue;
+    if (outbound && closedToNewEdge(edge.edge_type, other.state)) continue;
     const schema = getEdgeTypeSchema(edge.edge_type);
     if (schema === undefined) continue;
     const own = outbound

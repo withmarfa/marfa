@@ -1572,6 +1572,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "system.app": "Connected apps.",
   "system.connection": "Connections to other apps and services.",
   "system.device": "Devices signed in to your account.",
+  "system.folder": "The settings of your folders.",
   "system.webhook": "Webhook subscriptions.",
 
   // Edge types: relationships between items.
@@ -1590,6 +1591,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "edge.parent-of": "Which items sit inside others.",
   "edge.in-thread": "Which thread an item belongs to.",
   "edge.in-collection": "Which collection an item belongs to.",
+  "edge.in-folder": "Where an item's file sits in a folder.",
   "edge.attached-to": "Which item a file is attached to.",
   "edge.references": "Which items point to others.",
   "edge.authored-by": "Who made an item.",

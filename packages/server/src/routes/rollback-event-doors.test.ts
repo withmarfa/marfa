@@ -371,6 +371,15 @@ async function itemBody(id: string): Promise<string | undefined> {
   return row?.properties.body as string | undefined;
 }
 
+async function makeFolder(): Promise<string> {
+  const res = await request(ctx.app, "POST", "/folders", {
+    key: ctx.workingKey,
+    body: { title: uniq("folder") },
+  });
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { item: { id: string } }).item.id;
+}
+
 function itemEventsFor(h: Heard, id: string): ItemEventWithId[] {
   return h.items.filter((e) => e.item.id === id);
 }
@@ -841,6 +850,62 @@ const doors: Door[] = [
     survivesBreakage: false,
   },
 
+  // --- folders ------------------------------------------------------------
+  {
+    name: "POST /folders creates a folder",
+    family: "item",
+    transactions: 0,
+    breakage: () => breakWrite(ctx.storage.items, "create"),
+    setup: () => Promise.resolve({ tag: uniq("folder") }),
+    act: async (s) => {
+      const res = await request(ctx.app, "POST", "/folders", {
+        key: ctx.workingKey,
+        body: { title: s.tag },
+      });
+      return res.status === 201;
+    },
+    attributable: (h, s) =>
+      h.items.filter((e) => e.item.properties.title === s.tag),
+    landed: async (s) =>
+      (
+        await ctx.storage.items.list({ type: "system.folder", limit: 500 })
+      ).data.some((row) => row.properties.title === s.tag),
+    survivesBreakage: false,
+  },
+  {
+    name: "PATCH /folders/{id} changes a folder's settings",
+    family: "item",
+    transactions: 1,
+    setup: async () => ({ item: await makeFolder() }),
+    act: async (s) => {
+      const res = await request(ctx.app, "PATCH", `/folders/${s.item}`, {
+        key: ctx.workingKey,
+        body: { version: 1, include: ["changed"] },
+      });
+      return res.status === 200;
+    },
+    attributable: (h, s) => itemEventsFor(h, s.item),
+    landed: async (s) =>
+      (await ctx.storage.items.get(s.item))?.properties.include !== undefined,
+    survivesBreakage: false,
+  },
+  {
+    name: "POST /folders/{id}/revoke revokes a folder",
+    family: "item",
+    transactions: 1,
+    setup: async () => ({ item: await makeFolder() }),
+    act: async (s) => {
+      const res = await request(ctx.app, "POST", `/folders/${s.item}/revoke`, {
+        key: ctx.workingKey,
+      });
+      return res.status === 200;
+    },
+    attributable: (h, s) => itemEventsFor(h, s.item),
+    landed: async (s) =>
+      (await ctx.storage.items.get(s.item))?.state === "revoked",
+    survivesBreakage: false,
+  },
+
   // --- bulk ---------------------------------------------------------------
   {
     name: "POST /items/bulk writes an atomic batch",
@@ -1195,6 +1260,10 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
     why: "transition and restore, and the rows either brings back that the row's trash took",
   },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
+  "routes/folders.ts": {
+    sites: 3,
+    why: "folder create, change and revoke",
+  },
   "routes/extensions.ts": { sites: 2, why: "the two extension doors" },
   "routes/bulk.ts": {
     sites: 2,
