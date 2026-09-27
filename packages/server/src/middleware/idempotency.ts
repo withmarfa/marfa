@@ -74,6 +74,9 @@ export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /edges",
   "PATCH /edges/:id",
   "DELETE /edges/:id",
+  "POST /folders",
+  "PATCH /folders/:id",
+  "POST /folders/:id/revoke",
 ];
 
 /**
@@ -251,12 +254,12 @@ async function fingerprint(
     canonicalPath(url.pathname),
     // The query is left as written, and the reason is checkable rather
     // than a judgment: no door in IDEMPOTENT_WRITE_DOORS carries a query
-    // value whose spelling can vary. Nine take no query parameter at all,
-    // and the tenth takes `conflict` on PATCH /items/{id}, a closed enum
-    // of ASCII words. A door that later accepts a free-text query value
-    // reopens exactly this bug on that axis, and canonicalizing the query
-    // then also means deciding whether parameter order is part of the
-    // request, which is a wider question than the path's.
+    // value whose spelling can vary. Only PATCH /items/{id} takes one,
+    // `conflict`, a closed enum of ASCII words. A door that later accepts
+    // a free-text query value reopens exactly this bug on that axis, and
+    // canonicalizing the query then also means deciding whether parameter
+    // order is part of the request, which is a wider question than the
+    // path's.
     url.search,
     credentialHandle(c),
     body,

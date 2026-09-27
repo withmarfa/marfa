@@ -9,6 +9,7 @@ src/apis/edges_api.rs
 src/apis/events_api.rs
 src/apis/export_api.rs
 src/apis/extensions_api.rs
+src/apis/folders_api.rs
 src/apis/housekeeping_api.rs
 src/apis/instance_api.rs
 src/apis/items_api.rs
@@ -95,6 +96,7 @@ src/models/create_edge_200_response.rs
 src/models/create_edge_409_response.rs
 src/models/create_edge_request.rs
 src/models/create_edge_type_201_response.rs
+src/models/create_folder_request.rs
 src/models/create_item_409_response.rs
 src/models/create_item_request.rs
 src/models/create_key_request.rs
@@ -132,6 +134,9 @@ src/models/edge_version_conflict.rs
 src/models/enforcement_override.rs
 src/models/extensions_response.rs
 src/models/field_definition.rs
+src/models/folder_defaults.rs
+src/models/folder_removal_threshold.rs
+src/models/folder_search.rs
 src/models/forbidden_or_scoped_credential_not_permitted_refusal.rs
 src/models/forbidden_or_scoped_credential_not_permitted_refusal_error.rs
 src/models/forbidden_or_type_not_permitted_refusal.rs
@@ -162,8 +167,12 @@ src/models/inheritance_violation_or_invalid_schema_or_validation_error_refusal.r
 src/models/inheritance_violation_or_invalid_schema_or_validation_error_refusal_error.rs
 src/models/instance_config.rs
 src/models/instance_config_enforcement.rs
+src/models/invalid_id_or_invalid_transition_or_missing_required_field_or_unknown_type_or_validation_error_refusal.rs
+src/models/invalid_id_or_invalid_transition_or_missing_required_field_or_unknown_type_or_validation_error_refusal_error.rs
 src/models/invalid_id_or_invalid_transition_or_missing_required_field_or_validation_error_refusal.rs
 src/models/invalid_id_or_invalid_transition_or_missing_required_field_or_validation_error_refusal_error.rs
+src/models/invalid_id_or_invalid_transition_refusal.rs
+src/models/invalid_id_or_invalid_transition_refusal_error.rs
 src/models/invalid_id_or_missing_required_field_or_validation_error_refusal.rs
 src/models/invalid_id_or_missing_required_field_or_validation_error_refusal_error.rs
 src/models/invalid_id_or_validation_error_refusal.rs
@@ -260,6 +269,8 @@ src/models/unknown_type_or_validation_error_refusal.rs
 src/models/unknown_type_or_validation_error_refusal_error.rs
 src/models/update_edge_409_response.rs
 src/models/update_edge_request.rs
+src/models/update_folder_409_response.rs
+src/models/update_folder_request.rs
 src/models/update_item_200_response.rs
 src/models/update_item_200_response_all_of_conflict_resolution.rs
 src/models/update_item_409_response.rs
