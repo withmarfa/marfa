@@ -93,7 +93,7 @@ jobs:
   build:
     name: Build the artifacts
     needs: require-green-ci
-    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
     # Local jobs share machine resources and must not contend.
     concurrency:
       group: marfa-suite-shared-host
@@ -203,6 +203,11 @@ jobs:
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
+      # Homebrew rustup can be on PATH while its compiler proxies are not.
+      - name: Put Rust executables on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

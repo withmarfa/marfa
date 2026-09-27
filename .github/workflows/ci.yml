@@ -94,7 +94,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Core checks
     timeout-minutes: 30
-    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
     # Local jobs share machine resources and must not contend.
     concurrency:
       group: marfa-suite-shared-host
@@ -102,6 +102,11 @@ jobs:
       queue: max
     steps:
       - uses: actions/checkout@v7
+      # Homebrew rustup can be on PATH while its compiler proxies are not.
+      - name: Put Rust executables on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -139,7 +144,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Conformance
     timeout-minutes: 60
-    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
     # Local jobs share machine resources and must not contend.
     concurrency:
       group: marfa-suite-shared-host
@@ -159,6 +164,11 @@ jobs:
       # type registry from the same place.
       - run: pnpm --filter "@withmarfa/server..." build
 
+      # Homebrew rustup can be on PATH while its compiler proxies are not.
+      - name: Put Rust executables on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -239,7 +249,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CLI scenarios
     timeout-minutes: 60
-    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
     # Local jobs share machine resources and must not contend.
     concurrency:
       group: marfa-suite-shared-host
@@ -256,6 +266,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
+      # Homebrew rustup can be on PATH while its compiler proxies are not.
+      - name: Put Rust executables on PATH
+        run: |
+          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
+          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
