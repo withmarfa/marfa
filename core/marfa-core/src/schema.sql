@@ -1,7 +1,7 @@
 -- The local store, written to the contract in `conformance/spec/device.md`
--- and `queue-and-verdicts.md`. One file and no migrations: a store this
--- schema does not match is refused by name, for a person to discard and
--- hydrate again. What that buys is this file readable as a description of
+-- and `queue-and-verdicts.md`. One file and no migrations: a store of another
+-- schema version is refused by name, for a person to discard and hydrate
+-- again. What that buys is this file readable as a description of
 -- what a device holds rather than the end of a chain of alterations.
 
 -- `meta` is not declared here. `store::prepare` creates it on its own before
