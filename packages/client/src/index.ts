@@ -1,4 +1,11 @@
-import createFetchClient, { type Client, type Middleware } from "openapi-fetch";
+import createFetchClient, {
+  defaultBodySerializer,
+  mergeHeaders,
+  type Client,
+  type HeadersOptions,
+  type Middleware,
+} from "openapi-fetch";
+import { BYTE_BODIES } from "./generated/byte-bodies.js";
 import { CONTRACT_VERSION } from "./generated/contract.js";
 import type { paths } from "./generated/schema.js";
 
@@ -122,9 +129,78 @@ export function createClient(options: ClientOptions): MarfaClient {
       return hold(response);
     },
   };
-  const client = createFetchClient<paths>({ baseUrl, fetch: send });
+  // openapi-fetch would JSON-encode bytes into the text of an object, and
+  // the server would store that text as the upload.
+  const client = createFetchClient<paths>({
+    baseUrl,
+    fetch: send,
+    bodySerializer: (body: unknown) =>
+      isBytes(body) ? body : defaultBodySerializer(body),
+  });
   client.use(gate);
+  labelBytes(client);
   return client;
+}
+
+type Bytes = Blob | ArrayBuffer | ArrayBufferView | ReadableStream;
+
+const isBytes = (body: unknown): body is Bytes =>
+  body instanceof Blob ||
+  body instanceof ArrayBuffer ||
+  ArrayBuffer.isView(body) ||
+  body instanceof ReadableStream;
+
+interface Init {
+  body?: unknown;
+  headers?: HeadersOptions;
+}
+
+/**
+ * Give a call that sends bytes the `Content-Type` its door declares, where
+ * the caller named none, rather than the `application/json` openapi-fetch
+ * sets on every body: the server stores a blob under the type it was sent
+ * with, and refuses an archive sent as anything but its own. A Blob's own
+ * type, where it has one, is the more exact name for its bytes.
+ *
+ * Done around each call because the serializer can change the body but not
+ * the headers, and the middleware sees the headers but no longer the body.
+ */
+function labelBytes(client: MarfaClient): void {
+  const label = (method: string, path: string, init?: Init) => {
+    const body = init?.body;
+    if (!init || !isBytes(body)) return init;
+    // A Blob's type is "" when it was made without one.
+    const own = body instanceof Blob ? body.type : "";
+    const type =
+      own !== ""
+        ? own
+        : (BYTE_BODIES[`${method} ${path}`] ?? "application/octet-stream");
+    return {
+      ...init,
+      headers: mergeHeaders({ "Content-Type": type }, init.headers),
+      // fetch refuses a streamed body unless told it is sent in one
+      // direction, before any answer is read.
+      ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
+    };
+  };
+  type Send = (method: string, path: string, init?: Init) => unknown;
+  const request = client.request as unknown as Send;
+  const labeled: Send = (method, path, init) =>
+    request(method, path, label(method.toUpperCase(), path, init));
+  const calls = client as unknown as Record<string, unknown>;
+  calls.request = labeled;
+  for (const method of [
+    "GET",
+    "PUT",
+    "POST",
+    "DELETE",
+    "OPTIONS",
+    "HEAD",
+    "PATCH",
+    "TRACE",
+  ]) {
+    calls[method] = (path: string, init?: Init) => labeled(method, path, init);
+  }
 }
 
 /** One page of a list or a search, as every such door answers. */

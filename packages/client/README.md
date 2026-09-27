@@ -26,6 +26,8 @@ for await (const item of everyItem) {
 }
 ```
 
+A door that takes raw bytes, such as `POST /blobs`, takes them as a `Blob`, an `ArrayBuffer`, a typed array or a `ReadableStream`, sent as they are, with the `Content-Type` the caller names, else a `Blob`'s own type, else the one the door declares: `await marfa.POST("/blobs", { body: bytes, headers: { "Content-Type": "image/png" } })`.
+
 ## The contract
 
 The client carries the contract version it was generated for as `CONTRACT_VERSION`, and every answer the server sends carries its own as the `X-Marfa-Contract` header. The client checks that header on each answer before handing it on: one that names another contract, or a success that names none, is refused with `ContractMismatchError`. An error answer with no header is handed on as it came, since a proxy in front of the server answers without one and its status is still the truth. The credential is sent only under the `baseUrl` the client was made for, and never after a redirect. Both happen inside the client's own `fetch`, so middleware added with `client.use` sees a request without the credential and an answer already checked.
@@ -40,4 +42,4 @@ It sends what the document declares and hands back what the server answered. It 
 
 ## Generating
 
-`src/generated/schema.ts` comes from [openapi-typescript](https://openapi-ts.dev) and `src/generated/contract.ts` from `scripts/generate-contract.ts`, both read off `openapi.json` by `pnpm generate` at the repository root. Both are committed and neither is edited by hand; CI's "Generated clients are fresh" job regenerates them into an emptied `src/generated/` and refuses any difference, including a file there the generator did not write. Requests go through [openapi-fetch](https://openapi-ts.dev/openapi-fetch/).
+`src/generated/schema.ts` and `src/generated/byte-bodies.ts` come from `scripts/generate-schema.ts`, which runs [openapi-typescript](https://openapi-ts.dev) with a request body of `format: binary` typed as bytes rather than a string, and `src/generated/contract.ts` from `scripts/generate-contract.ts`, all read off `openapi.json` by `pnpm generate` at the repository root. They are committed and none is edited by hand; CI's "Generated clients are fresh" job regenerates them into an emptied `src/generated/` and refuses any difference, including a file there the generator did not write. Requests go through [openapi-fetch](https://openapi-ts.dev/openapi-fetch/).

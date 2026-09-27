@@ -8307,7 +8307,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/octet-stream": string;
+                "application/octet-stream": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {
@@ -10911,7 +10911,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/gzip": string;
+                "application/gzip": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
             };
         };
         responses: {

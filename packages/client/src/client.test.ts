@@ -42,8 +42,29 @@ function stubServer(answer: (path: string) => Answer = () => ({})) {
   return { seen, redirects, fetch };
 }
 
+/** A server that stores whatever it is sent, recording the bytes and the
+ *  `Content-Type` exactly as they reached `fetch`. */
+function recordingServer() {
+  const sent: { contentType: string | null; bytes: Uint8Array }[] = [];
+  const fetch = async (input: string | URL | Request, init?: RequestInit) => {
+    const request = new Request(input, init);
+    sent.push({
+      contentType: request.headers.get("Content-Type"),
+      bytes: new Uint8Array(await request.arrayBuffer()),
+    });
+    return new Response(JSON.stringify({ hash: "sha256:0" }), {
+      status: 201,
+      headers: {
+        "Content-Type": "application/json",
+        [CONTRACT_HEADER]: String(CONTRACT_VERSION),
+      },
+    });
+  };
+  return { sent, fetch };
+}
+
 const make = (
-  server: ReturnType<typeof stubServer>,
+  server: { fetch: typeof globalThis.fetch },
   baseUrl = "https://marfa.example",
 ) => createClient({ baseUrl, credential: "k", fetch: server.fetch });
 
@@ -288,6 +309,98 @@ describe("where the credential goes", () => {
       void client.GET("/items/{id}", { params: { path: { id: "i" } } });
     };
     expect(typeof typed).toBe("function");
+  });
+});
+
+describe("a body of bytes", () => {
+  // A PNG signature and three more bytes: not text, and not JSON.
+  const png = [
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x7f,
+  ];
+
+  const bodies = (): [string, () => Blob | ArrayBuffer | ArrayBufferView][] => [
+    ["a Uint8Array", () => new Uint8Array(png)],
+    ["an ArrayBuffer", () => new Uint8Array(png).buffer],
+    ["a DataView", () => new DataView(new Uint8Array(png).buffer)],
+    ["a Blob", () => new Blob([new Uint8Array(png)])],
+  ];
+
+  for (const [name, body] of bodies()) {
+    it(`sends ${name} as the same bytes, labeled as the door declares`, async () => {
+      const server = recordingServer();
+      const { response } = await make(server).POST("/blobs", {
+        body: body(),
+      });
+      expect(response.status).toBe(201);
+      expect(server.sent).toEqual([
+        {
+          contentType: "application/octet-stream",
+          bytes: new Uint8Array(png),
+        },
+      ]);
+    });
+  }
+
+  it("sends a stream of bytes as it comes", async () => {
+    const server = recordingServer();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(png.slice(0, 4)));
+        controller.enqueue(new Uint8Array(png.slice(4)));
+        controller.close();
+      },
+    });
+    await make(server).POST("/blobs", { body: stream });
+    expect(server.sent).toEqual([
+      { contentType: "application/octet-stream", bytes: new Uint8Array(png) },
+    ]);
+  });
+
+  it("sends the caller's Content-Type, or a Blob's own, over the declared one", async () => {
+    const server = recordingServer();
+    const client = make(server);
+    await client.POST("/blobs", {
+      body: new Uint8Array(png),
+      headers: { "Content-Type": "image/png" },
+    });
+    await client.POST("/blobs", {
+      body: new Blob([new Uint8Array(png)], { type: "image/png" }),
+    });
+    await client.POST("/blobs", {
+      body: new Blob([new Uint8Array(png)], { type: "image/png" }),
+      headers: { "content-type": "text/plain" },
+    });
+    expect(server.sent.map((s) => s.contentType)).toEqual([
+      "image/png",
+      "image/png",
+      "text/plain",
+    ]);
+    expect(server.sent.every((s) => s.bytes.length === png.length)).toBe(true);
+  });
+
+  it("labels an archive with the media type its door declares", async () => {
+    const server = recordingServer();
+    const archive = new Uint8Array([0x1f, 0x8b, 0x08, 0x00]);
+    await make(server).POST("/admin/restore-archive", { body: archive });
+    // The same door reached through `request`, method in lower case.
+    await make(server).request("post", "/admin/restore-archive", {
+      body: archive,
+    });
+    expect(server.sent).toEqual([
+      { contentType: "application/gzip", bytes: archive },
+      { contentType: "application/gzip", bytes: archive },
+    ]);
+  });
+
+  it("still sends a JSON body as JSON", async () => {
+    // The witness that the bytes above were not simply left alone because
+    // nothing is serialized: an object body is encoded as before.
+    const server = recordingServer();
+    const item = { type: "task", properties: { title: "a" } };
+    await make(server).POST("/items", { body: item });
+    const [sent] = server.sent;
+    expect(sent?.contentType).toBe("application/json");
+    expect(JSON.parse(new TextDecoder().decode(sent?.bytes))).toEqual(item);
   });
 });
 
