@@ -2047,6 +2047,184 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toBe(false);
   });
 
+  it("takes the pin off a purged row", async () => {
+    harness = await startHarness("pinned-purged");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    const settings = wireItem({ id: "settings", type: "core.bookmark" });
+    server.answer("GET", "/items/settings", answers.updated(settings));
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.purged", settings)]),
+    );
+    const pinned = async () => {
+      const status = await device.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      return status.ok ? status.value.pinned : [];
+    };
+    const reads = () =>
+      server.requests.filter(
+        (request) => request.pathname === "/items/settings",
+      ).length;
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    // The witness: the pin is listed, and was read, before the purge.
+    expect(await pinned()).toEqual(["settings"]);
+    expect(reads()).toBe(1);
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect((await device.get("settings")).ok).toBe(false);
+    expect(
+      await pinned(),
+      "a purged row stayed pinned, so the report lists a row nothing holds",
+    ).toEqual([]);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      reads(),
+      "a hydration asked the server for a row it purged, because its pin outlived it",
+    ).toBe(1);
+  });
+
+  it("refuses to pin a row the server does not hold", async () => {
+    harness = await startHarness("pin-absent");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    server.answer(
+      "GET",
+      "/items/held",
+      answers.updated(wireItem({ id: "held", type: "core.bookmark" })),
+    );
+    server.answer(
+      "GET",
+      "/items/absent",
+      refusal(404, "not_found", "no item absent"),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: an id the server holds is pinned.
+    const held = await device.pin("held");
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+
+    const absent = await device.pin("absent");
+    expect(
+      absent.ok,
+      "a pin on an id the server does not hold was taken, so the copy promises a row it cannot keep",
+    ).toBe(false);
+    if (!absent.ok) expect(absent.refusal.code).toBe("not_found");
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "a refused pin was left in the store, so every hydration asks for a row the server does not hold",
+    ).toEqual(["held"]);
+  });
+
+  it("reads a row pinned already again, and says it was", async () => {
+    harness = await startHarness("pinned-twice");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    const settings = (version: number, title: string) =>
+      wireItem({
+        id: "settings",
+        type: "core.bookmark",
+        version,
+        properties: { title },
+      });
+    server.answer(
+      "GET",
+      "/items/settings",
+      answers.updated(settings(1, "first")),
+      answers.updated(settings(2, "second")),
+    );
+    const title = async (): Promise<unknown> => {
+      const held = await device.get("settings");
+      return held.ok ? held.value.properties.title : "not held";
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const first = await device.pin("settings");
+    // The witness: a first pin says the row was not pinned before.
+    expect(first.ok && first.value.was_pinned, JSON.stringify(first)).toBe(
+      false,
+    );
+    expect(await title()).toBe("first");
+
+    const second = await device.pin("settings");
+    expect(
+      second.ok && second.value.was_pinned,
+      "pinning a row pinned already did not say so",
+    ).toBe(true);
+    expect(
+      await title(),
+      "pinning a row pinned already did not read it again",
+    ).toBe("second");
+    const status = await device.status();
+    expect(status.ok && status.value.pinned).toEqual(["settings"]);
+  });
+
+  it("keeps a pin across the hydration that follows an aged-out cursor", async () => {
+    harness = await startHarness("pinned-aged-out");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    const settings = (version: number, title: string) =>
+      wireItem({
+        id: "settings",
+        type: "core.bookmark",
+        version,
+        properties: { title },
+      });
+    server.answer(
+      "GET",
+      "/items/settings",
+      answers.updated(settings(1, "pinned")),
+      answers.updated(settings(2, "read again")),
+    );
+    server.answer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, streamCursor("900"), catchupTooOld("500", "10")],
+    });
+    const title = async (): Promise<unknown> => {
+      const held = await device.get("settings");
+      return held.ok ? held.value.properties.title : "not held";
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(false);
+    // The witness: the cursor aged out with the pin in place.
+    const expired = await device.status();
+    expect(
+      expired.ok && [expired.value.hydration, expired.value.pinned],
+    ).toEqual(["expired", ["settings"]]);
+
+    server.answer("GET", "/events", headRead("900"));
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    const status = await device.status();
+    expect(
+      status.ok && status.value.pinned,
+      "the hydration that follows an aged-out cursor dropped the pins, so a folder loses the rows its files are bound to",
+    ).toEqual(["settings"]);
+    expect(
+      await title(),
+      "the hydration that follows an aged-out cursor did not read the pinned row again",
+    ).toBe("read again");
+  });
+
   it("drops the edges at both ends of a purged row", async () => {
     harness = await startHarness("purge-edges");
     const { server, device } = harness;

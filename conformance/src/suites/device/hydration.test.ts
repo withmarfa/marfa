@@ -1,14 +1,17 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
+  edgesPage,
   headRead,
   itemEvent,
   itemsPage,
   refusal,
   replay,
   typeCatalog,
+  wireEdge,
   wireItem,
 } from "../../device/marfa-answers.js";
+import type { DeviceUnderTest } from "../../device/protocol.js";
 
 /**
  * "Hydration subscribes first, then reads."
@@ -26,6 +29,12 @@ afterEach(async () => {
   await harness?.stop();
   harness = undefined;
 });
+
+async function edgeIds(device: DeviceUnderTest, id: string): Promise<string[]> {
+  const read = await device.edgesFrom(id);
+  expect(read.ok, JSON.stringify(read)).toBe(true);
+  return read.ok ? read.value.map((edge) => edge.id) : [];
+}
 
 describe("what a hydration declares", () => {
   it("refuses an empty type list and a bare wildcard before reading anything", async () => {
@@ -230,6 +239,101 @@ describe("what a hydration leaves behind", () => {
       hydrated.ok ? [hydrated.value.items, hydrated.value.pages] : hydrated,
       "the hydration stopped on the empty page rather than on the null cursor",
     ).toEqual([2, 3]);
+  });
+
+  it("walks every page of an edge type held whole", async () => {
+    harness = await startHarness("edge-pages");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "7",
+      rows: { "core.note": [{ item: { id: "ticket" } }] },
+    });
+    server.answer(
+      "GET",
+      "/edges",
+      edgesPage(
+        [
+          wireEdge({
+            id: "first",
+            source_id: "outer",
+            target_id: "inner",
+            edge_type: "parent-of",
+          }),
+        ],
+        { nextCursor: "e2" },
+      ),
+      edgesPage([
+        wireEdge({
+          id: "second",
+          source_id: "inner",
+          target_id: "ticket",
+          edge_type: "parent-of",
+        }),
+      ]),
+    );
+
+    const hydrated = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["parent-of"],
+    });
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(
+      server.requests
+        .filter((request) => request.pathname === "/edges")
+        .map((request) => request.query.get("cursor")),
+      "the hydration did not follow the edge listing's cursor",
+    ).toEqual([null, "e2"]);
+    expect(
+      [await edgeIds(device, "outer"), await edgeIds(device, "inner")],
+      "an edge on a page after the first was left out",
+    ).toEqual([["first"], ["second"]]);
+    expect(
+      hydrated.ok && [hydrated.value.edges, hydrated.value.pages],
+      "the report did not count the edge pages the hydration walked",
+    ).toEqual([2, 3]);
+  });
+
+  it("walks past an empty edge page that still carries a cursor", async () => {
+    harness = await startHarness("edge-empty-page");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "7",
+      rows: { "core.note": [{ item: { id: "ticket" } }] },
+    });
+    server.answer(
+      "GET",
+      "/edges",
+      edgesPage(
+        [
+          wireEdge({
+            id: "before",
+            source_id: "outer",
+            target_id: "inner",
+            edge_type: "parent-of",
+          }),
+        ],
+        { nextCursor: "e2" },
+      ),
+      edgesPage([], { nextCursor: "e3" }),
+      edgesPage([
+        wireEdge({
+          id: "after",
+          source_id: "inner",
+          target_id: "ticket",
+          edge_type: "parent-of",
+        }),
+      ]),
+    );
+
+    const hydrated = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["parent-of"],
+    });
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    // The witness: the edge before the empty page is held.
+    expect(await edgeIds(device, "outer")).toEqual(["before"]);
+    expect(
+      await edgeIds(device, "inner"),
+      "the hydration stopped on the empty edge page rather than on the null cursor",
+    ).toEqual(["after"]);
   });
 
   it("reports the counts, the pages and the cursor it stored", async () => {
