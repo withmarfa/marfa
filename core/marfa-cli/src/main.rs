@@ -266,9 +266,30 @@ mod tests {
             "--tier",
             "library",
         ]) {
-            DeviceCommand::Hydrate { types, tier } => {
+            DeviceCommand::Hydrate {
+                types,
+                tier,
+                edge_types,
+            } => {
                 assert_eq!(types, vec!["core.note", "core.file"]);
                 assert_eq!(tier, Tier::Library);
+                assert!(edge_types.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        match device(&[
+            "hydrate",
+            "--types",
+            "core.note",
+            "--tier",
+            "library",
+            "--edge-type",
+            "parent-of",
+            "--edge-type",
+            "references",
+        ]) {
+            DeviceCommand::Hydrate { edge_types, .. } => {
+                assert_eq!(edge_types, vec!["parent-of", "references"]);
             }
             other => panic!("{other:?}"),
         }

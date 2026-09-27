@@ -289,6 +289,8 @@ pub struct SearchHit {
 pub struct HydrateReport {
     pub types: Vec<String>,
     pub tier: Tier,
+    /// The edge types held whole, every edge of each the key reads.
+    pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
     pub pages: u64,
@@ -925,6 +927,10 @@ pub struct Status {
     pub server_origin: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
+    /// The edge types the slice holds whole.
+    pub slice_edge_types: Vec<String>,
+    /// The rows held by id whatever the slice says of them.
+    pub pinned: Vec<String>,
     pub event_cursor: Option<String>,
     pub hydration: Hydration,
     pub items: u64,

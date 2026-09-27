@@ -1716,6 +1716,253 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
+  it("applies an edge of a type held whole whatever its source", async () => {
+    harness = await startHarness("whole-edge-events");
+    const { server, device } = harness;
+    const beneath = {
+      id: "kept-beneath",
+      source_id: "leaves",
+      target_id: "below",
+      edge_type: "parent-of",
+    };
+    const drawn = { id: "drawn", source_id: "leaves", target_id: "below" };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "leaves",
+              edges: {
+                "parent-of": { data: [wireEdge(beneath)], next_cursor: null },
+                references: { data: [wireEdge(drawn)], next_cursor: null },
+              },
+            },
+          },
+        ],
+      },
+      edges: { "parent-of": [beneath] },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("13", [
+        edgeEvent(
+          "11",
+          "edge.created",
+          wireEdge({
+            id: "between-outsiders",
+            source_id: "outer",
+            target_id: "inner",
+            edge_type: "parent-of",
+          }),
+        ),
+        edgeEvent(
+          "12",
+          "edge.created",
+          wireEdge({ id: "not-whole", source_id: "outer", target_id: "inner" }),
+        ),
+        itemEvent(
+          "13",
+          "item.updated",
+          wireItem({ id: "leaves", tier: "feed", version: 2 }),
+        ),
+      ]),
+    );
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((edge) => edge.id).sort()
+        : [];
+    };
+
+    const hydrated = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["parent-of"],
+    });
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    // The witness: before the catch-up the row held both of its edges.
+    expect(await ids(device.edgesFrom("leaves"))).toEqual(
+      ["drawn", "kept-beneath"].sort(),
+    );
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+
+    expect(
+      await ids(device.edgesFrom("outer")),
+      "an edge of a type held whole was dropped for starting outside the slice, so a search for what lies beneath a project the copy does not hold cannot be answered",
+    ).toEqual(["between-outsiders"]);
+    expect(
+      (await device.get("leaves")).ok,
+      "the row that left the slice stayed, so the edges below are read against a copy that evicted nothing",
+    ).toBe(false);
+    expect(
+      await ids(device.edgesFrom("leaves")),
+      "a row that left the slice took an edge of a type held whole with it, or kept one of a type that is not",
+    ).toEqual(["kept-beneath"]);
+  });
+
+  it("keeps a pinned row outside the slice current", async () => {
+    harness = await startHarness("pinned-outside");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    const settings = (version: number, title: string) =>
+      wireItem({
+        id: "settings",
+        type: "core.bookmark",
+        version,
+        properties: { title },
+      });
+    server.answer(
+      "GET",
+      "/items/settings",
+      answers.updated(settings(1, "pinned")),
+      answers.updated(settings(3, "read again")),
+    );
+    server.answer(
+      "GET",
+      "/events",
+      replay("12", [
+        itemEvent("11", "item.updated", settings(2, "changed")),
+        itemEvent(
+          "12",
+          "item.updated",
+          wireItem({ id: "stranger", type: "core.bookmark", version: 2 }),
+        ),
+      ]),
+      headRead("12"),
+    );
+    const title = async (): Promise<unknown> => {
+      const held = await device.get("settings");
+      return held.ok ? held.value.properties.title : "not held";
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: the slice does not take the row.
+    expect(await title()).toBe("not held");
+
+    const pinned = await device.pin("settings");
+    expect(pinned.ok, JSON.stringify(pinned)).toBe(true);
+    expect(await title(), "a pin did not read the row it names").toBe("pinned");
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect(
+      await title(),
+      "a catch-up left a pinned row outside the slice as it was pinned, so a folder's settings go stale",
+    ).toBe("changed");
+    expect(
+      (await device.get("stranger")).ok,
+      "a row outside the slice that nobody pinned was added, so the copy holds whatever the stream carries",
+    ).toBe(false);
+
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      await title(),
+      "a hydration dropped the pinned row, or kept it without reading it again",
+    ).toBe("read again");
+    const status = await device.status();
+    expect(status.ok && status.value.pinned).toEqual(["settings"]);
+  });
+
+  it("keeps a pinned row that leaves the slice", async () => {
+    harness = await startHarness("pinned-leaves");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "bound" } }, { item: { id: "free" } }],
+      },
+    });
+    server.answer(
+      "GET",
+      "/items/bound",
+      answers.updated(wireItem({ id: "bound" })),
+    );
+    server.answer(
+      "GET",
+      "/events",
+      replay("12", [
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({ id: "bound", tier: "feed", version: 2 }),
+        ),
+        itemEvent(
+          "12",
+          "item.updated",
+          wireItem({ id: "free", tier: "feed", version: 2 }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const pinned = await device.pin("bound");
+    expect(pinned.ok, JSON.stringify(pinned)).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+
+    // The witness: a row that nobody pinned leaves as it always has.
+    expect((await device.get("free")).ok).toBe(false);
+    const bound = await device.get("bound");
+    expect(
+      bound.ok ? [bound.value.tier, bound.value.version] : "not held",
+      "a pinned row was evicted for leaving the slice, so a file bound to it loses its item",
+    ).toEqual(["feed", 2]);
+  });
+
+  it("lets an unpinned row outside the slice go", async () => {
+    harness = await startHarness("unpinned");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "stays" } }] },
+    });
+    const settings = (version: number) =>
+      wireItem({ id: "settings", type: "core.bookmark", version });
+    server.answer("GET", "/items/settings", answers.updated(settings(1)));
+    server.answer(
+      "GET",
+      "/items/stays",
+      answers.updated(wireItem({ id: "stays" })),
+    );
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("11", "item.updated", settings(2))]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.pin("settings")).ok).toBe(true);
+    expect((await device.pin("stays")).ok).toBe(true);
+    // The witness: the pin held the row.
+    expect((await device.get("settings")).ok).toBe(true);
+
+    expect((await device.unpin("settings")).ok).toBe(true);
+    expect((await device.unpin("stays")).ok).toBe(true);
+    expect(
+      (await device.get("settings")).ok,
+      "a row outside the slice stayed after its pin was taken off, so nothing a caller does lets it go",
+    ).toBe(false);
+    expect(
+      (await device.get("stays")).ok,
+      "unpinning a row the slice holds took it away",
+    ).toBe(true);
+    const status = await device.status();
+    expect(status.ok && status.value.pinned).toEqual([]);
+
+    expect((await device.catchUp()).ok).toBe(true);
+    expect(
+      (await device.get("settings")).ok,
+      "an event brought back a row outside the slice whose pin was taken off",
+    ).toBe(false);
+  });
+
   it("drops the edges at both ends of a purged row", async () => {
     harness = await startHarness("purge-edges");
     const { server, device } = harness;

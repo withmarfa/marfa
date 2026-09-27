@@ -39,6 +39,8 @@ export interface Item {
 export interface HydrateReport {
   types: string[];
   tier: Tier;
+  /** The edge types held whole, every edge of each the key can read. */
+  edge_types: string[];
   items: number;
   edges: number;
   pages: number;
@@ -77,6 +79,10 @@ export interface Status {
   server_origin?: string | null;
   slice_types: string[];
   slice_tier?: Tier | null;
+  /** The edge types the slice holds whole. */
+  slice_edge_types: string[];
+  /** The rows held by id whatever the slice says of them. */
+  pinned: string[];
   event_cursor?: string | null;
   hydration: "never" | "in_progress" | "complete" | "expired";
   items: number;
@@ -245,7 +251,15 @@ export interface DeviceUnderTest {
   /** The store this device reads and writes. One device, one store. */
   readonly store: string;
 
-  hydrate(types: string[], tier: Tier): Promise<Outcome<HydrateReport>>;
+  hydrate(
+    types: string[],
+    tier: Tier,
+    options?: { edgeTypes?: string[] },
+  ): Promise<Outcome<HydrateReport>>;
+  /** Hold one row by id, whatever the slice says of it, read now. */
+  pin(id: string): Promise<Outcome<unknown>>;
+  /** Stop holding a row by id; one outside the slice goes. */
+  unpin(id: string): Promise<Outcome<unknown>>;
   catchUp(): Promise<Outcome<CatchUpReport>>;
   list(filters?: ListFilters): Promise<Outcome<Item[]>>;
   get(id: string): Promise<Outcome<Item>>;

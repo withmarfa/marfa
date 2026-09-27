@@ -254,6 +254,22 @@ impl Http {
         self.get_json(&["items", id, "edges"], &params)
     }
 
+    /// A page of every edge of `edge_type` the key reads, whichever ends the
+    /// copy holds. The listing leaves out a row the key cannot read, so a
+    /// page can be short or empty with a cursor still to follow.
+    pub fn edges_page(
+        &self,
+        edge_type: &str,
+        cursor: Option<&str>,
+    ) -> Result<WirePage<WireEdge>, CoreError> {
+        let limit = PAGE_LIMIT.to_string();
+        let mut params: Vec<(&str, &str)> = vec![("edge_type", edge_type), ("limit", &limit)];
+        if let Some(cursor) = cursor {
+            params.push(("cursor", cursor));
+        }
+        self.get_json(&["edges"], &params)
+    }
+
     /// One item by id with its edges, as a hydration reads each row: a row
     /// that comes into the slice after the hydration needs what it draws.
     pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {

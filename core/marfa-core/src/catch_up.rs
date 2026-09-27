@@ -58,6 +58,8 @@ pub(crate) const PACE: Pace = Pace {
 struct Slice {
     types: Vec<String>,
     tier: Tier,
+    /// The edge types held whole, whichever ends the copy holds.
+    whole: Vec<String>,
 }
 
 /// The events that decide a row by its type: whether the slice holds it, and
@@ -76,9 +78,9 @@ const ITEM_CHANGES: [&str; 6] = [
 type Unexplained = (String, Option<String>);
 
 /// What an item event names that the catalog cannot answer for, where the
-/// row could be in the slice, and that it has not been read again for
-/// already: a type the catalog does not hold, or an image's data URI under a
-/// property it does not know as that type's thumbnail.
+/// row could be in the slice or is `pinned`, and that it has not been read
+/// again for already: a type the catalog does not hold, or an image's data
+/// URI under a property it does not know as that type's thumbnail.
 ///
 /// Either may mean the server's catalog changed after this one was read, and
 /// taking the event by this one would drop a row the slice holds through a
@@ -101,23 +103,25 @@ fn unexplained(
     kind: &str,
     payload: &EventPayload,
     refreshed: &HashSet<Unexplained>,
+    pinned: bool,
 ) -> Option<Unexplained> {
     if !ITEM_CHANGES.contains(&kind) {
         return None;
     }
     let item = payload.item.as_ref()?;
     // A row of the other tier leaves the copy whatever its type is.
-    if Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
+    if !pinned && Tier::parse_wire(item.tier.as_deref()).ok()? != Some(slice.tier) {
         return None;
     }
     if !catalog.known(&item.r#type) {
         let named = (item.r#type.clone(), None);
         return (!refreshed.contains(&named)).then_some(named);
     }
-    if !slice
-        .types
-        .iter()
-        .any(|declared| catalog.matches(declared, &item.r#type))
+    if !pinned
+        && !slice
+            .types
+            .iter()
+            .any(|declared| catalog.matches(declared, &item.r#type))
     {
         return None;
     }
@@ -173,7 +177,17 @@ fn start(core: &Core) -> Result<(Slice, String)> {
         )));
     }
     let (types, tier) = store::slice(&conn)?.ok_or(CoreError::NoCursor)?;
-    Ok((Slice { types, tier }, cursor))
+    let whole = store::whole_edge_types(&conn)?;
+    Ok((Slice { types, tier, whole }, cursor))
+}
+
+/// Whether the row an event is about is pinned, held whatever the slice says
+/// of it.
+fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
+    match &payload.item {
+        Some(item) => store::pinned(&*core.conn()?, &item.id),
+        None => Ok(false),
+    }
 }
 
 /// The type catalog as the server has it now, written only where it differs
@@ -351,8 +365,9 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                     }
                     kind => {
                         let Some(id) = id else { continue };
+                        let pinned = pinned_row(core, &payload)?;
                         while let Some(named) =
-                            unexplained(&catalog, &slice, kind, &payload, &refreshed)
+                            unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
                         {
                             refreshed.insert(named);
                             catalog = adopt(core, &http.types()?)?;
@@ -497,7 +512,10 @@ fn follow_paced(
                     // Left untaken with the cursor before it: the stream
                     // opened again at once reads the catalog first, then
                     // replays this event.
-                    if let Some(named) = unexplained(&catalog, &slice, kind, &payload, &refreshed) {
+                    let pinned = pinned_row(core, &payload)?;
+                    if let Some(named) =
+                        unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
+                    {
                         refreshed.insert(named);
                         behind = true;
                         break;
@@ -610,17 +628,19 @@ fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
             .any(|declared| catalog.matches(declared, &item.r#type)))
 }
 
-/// The edges a row coming into the slice draws, read before the event is
-/// applied so no transaction waits on the network.
+/// The edges a row coming into the slice, or pinned, draws, read before the
+/// event is applied so no transaction waits on the network.
 ///
 /// A frame carries a row's fields and tags and never its edges, and the
 /// edge frames a row drew went by while the copy did not hold it (`apply`
-/// takes an edge only from a held row). A created row needs none: its edges
-/// are written after it and their frames follow. Any other row the copy does
-/// not hold but the slice now takes came in by a retype or a move of tier,
-/// and without this it would sit in the copy with none of its edges until a
-/// hydration. A read that fails ends the catch-up before this event, which
-/// is taken again next time.
+/// takes an edge from a held row, and from any other only of a type held
+/// whole). A created row needs none: its edges are written after it and
+/// their frames follow. Any other row the copy does not hold but the slice
+/// now takes came in by a retype or a move of tier, and one pinned is one
+/// the server did not hold when it was last read; without this either would
+/// sit in the copy with none of its edges until a hydration. A read that
+/// fails ends the catch-up before this event, which is taken again next
+/// time.
 fn edges_of_entering_row(
     core: &Core,
     catalog: &Catalog,
@@ -631,24 +651,20 @@ fn edges_of_entering_row(
     let Some(item) = &payload.item else {
         return Ok(Vec::new());
     };
-    if kind == "item.created" || !ITEM_CHANGES.contains(&kind) || !in_slice(catalog, slice, item)? {
+    if kind == "item.created" || !ITEM_CHANGES.contains(&kind) {
         return Ok(Vec::new());
     }
-    if store::item_held(&*core.conn()?, &item.id)? {
-        return Ok(Vec::new());
+    {
+        let conn = core.conn()?;
+        if store::item_held(&conn, &item.id)?
+            || !(in_slice(catalog, slice, item)? || store::pinned(&conn, &item.id)?)
+        {
+            return Ok(Vec::new());
+        }
     }
-    let http = core.http()?;
-    let Some(read) = http.item_with_edges(&item.id)? else {
-        return Ok(Vec::new());
-    };
-    let mut edges = Vec::new();
-    for (edge_type, block) in read.item.edges.iter().flatten() {
-        edges.extend(block.data.iter().cloned());
-        edges.extend(crate::hydrate::fetch_overflow(
-            http, &item.id, edge_type, block,
-        )?);
-    }
-    Ok(edges)
+    Ok(crate::hydrate::read_with_edges(core.http()?, &item.id)?
+        .map(|(_, edges)| edges)
+        .unwrap_or_default())
 }
 
 fn apply(
@@ -692,7 +708,7 @@ fn apply(
             {
                 return Ok(false);
             }
-            if in_slice(catalog, slice, item)? {
+            if in_slice(catalog, slice, item)? || store::pinned(tx, &item.id)? {
                 let tags = payload
                     .metadata
                     .as_ref()
@@ -702,14 +718,14 @@ fn apply(
                 store::lay_waiting_writes_over(tx, &item.id, &|laid| catalog.indexing(laid))?;
                 Ok(true)
             } else {
-                store::evict_item(tx, &item.id)
+                store::evict_item(tx, &item.id, &slice.whole)
             }
         }
         "edge.created" | "edge.updated" => {
             let Some(edge) = &payload.edge else {
                 return Ok(false);
             };
-            if store::item_held(tx, &edge.source_id)? {
+            if store::item_held(tx, &edge.source_id)? || slice.whole.contains(&edge.edge_type) {
                 store::upsert_edge(tx, edge)?;
                 store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
@@ -1338,6 +1354,7 @@ mod tests {
         let slice = Slice {
             types: vec!["user.photo".into()],
             tier: Tier::Library,
+            whole: Vec::new(),
         };
         let event = |r#type: &str| {
             let image = "data:image/png;base64,iVBORw0KGgo=";
@@ -1362,7 +1379,9 @@ mod tests {
         let mut refreshed = HashSet::new();
         let photo = event("user.photo");
         let mut met = Vec::new();
-        while let Some(next) = unexplained(&catalog, &slice, "item.created", &photo, &refreshed) {
+        while let Some(next) =
+            unexplained(&catalog, &slice, "item.created", &photo, &refreshed, false)
+        {
             met.push(next.clone());
             refreshed.insert(next);
         }
@@ -1375,12 +1394,12 @@ mod tests {
         let gone = event("user.gone");
         let unknown = ("user.gone".to_string(), None);
         assert_eq!(
-            unexplained(&catalog, &slice, "item.created", &gone, &refreshed),
+            unexplained(&catalog, &slice, "item.created", &gone, &refreshed, false),
             Some(unknown.clone())
         );
         refreshed.insert(unknown);
         assert_eq!(
-            unexplained(&catalog, &slice, "item.created", &gone, &refreshed),
+            unexplained(&catalog, &slice, "item.created", &gone, &refreshed, false),
             None
         );
     }
