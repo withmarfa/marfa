@@ -668,7 +668,8 @@ describe("what a drain sends and reports", () => {
     expect((await device.drain()).ok).toBe(true);
     // The witness: the attachment is held, outside the note slice, before
     // the edit.
-    expect((await device.get(fileId)).ok).toBe(true);
+    const before = await device.get(fileId);
+    expect(before.ok, JSON.stringify(before)).toBe(true);
     expect(
       (
         await device.update(fileId, {
@@ -698,9 +699,11 @@ describe("what a drain sends and reports", () => {
       "/events",
       replay("11", [itemEvent("11", "item.updated", theirs)]),
     );
-    expect(
-      (await device.hydrate(["core.note", "core.bookmark"], "library")).ok,
-    ).toBe(true);
+    const hydrated = await device.hydrate(
+      ["core.note", "core.bookmark"],
+      "library",
+    );
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
     expect((await device.catchUp()).ok).toBe(true);
     expect(
       (

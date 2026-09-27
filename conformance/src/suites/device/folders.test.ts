@@ -1115,6 +1115,40 @@ describe("files and items", () => {
       }
     });
 
+    it("waits out a rate limit's Retry-After before hydrating again while watching", async () => {
+      const asked: number[] = [];
+      const timed =
+        (answer: Answer): Responder =>
+        () => {
+          asked.push(Date.now());
+          return answer;
+        };
+      harness = await behind("folder-watch-hydration-limited", [
+        agedOut,
+        timed(answers.rateLimited()),
+        timed(headRead("900")),
+        liveReplay("900", []),
+      ]);
+      const watching = harness.folder.watch();
+      try {
+        await vi.waitFor(
+          () =>
+            expect(read(harness!, "aged.md"), watching.stderr).toContain(
+              "changed elsewhere",
+            ),
+          { timeout: 20_000, interval: 100 },
+        );
+      } finally {
+        await watching.stop();
+      }
+      // The first wait is a second; the rate limit names two.
+      expect(asked).toHaveLength(2);
+      expect(
+        asked[1]! - asked[0]!,
+        "the watch hydrated again before the wait the rate limit named",
+      ).toBeGreaterThanOrEqual(1900);
+    });
+
     it("ends the watch and says so when its hydration meets an answer no retry changes", async () => {
       harness = await behind("folder-watch-hydration-refused", [
         agedOut,

@@ -2353,6 +2353,51 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual([]);
   });
 
+  it("takes the pin off a row whose create was refused, even where reading it back fails", async () => {
+    harness = await startHarness("pinned-create-refused-unread");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "note" } }] },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "refused", body: "refused" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    // The pin's read, then the read back after the refusal.
+    server.answer(
+      "GET",
+      `/items/${local}`,
+      refusal(404, "not_found", "no such item"),
+      refusal(503, "service_unavailable", "later"),
+    );
+    expect((await device.pin(local)).ok).toBe(true);
+    const before = await device.status();
+    expect(before.ok && before.value.pinned).toEqual([local]);
+
+    scriptWrites(server, {
+      create: [refusal(400, "invalid_properties", "not a note")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    // The witness: the read back was asked, and failed.
+    expect(
+      server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${local}`,
+      ).length,
+    ).toBe(2);
+    const after = await device.status();
+    expect(
+      after.ok && after.value.pinned,
+      "a refused create whose read back failed kept its pin for good, since the server never holds that id",
+    ).toEqual([]);
+  });
+
   it("lays a waiting write over a row it pins", async () => {
     harness = await startHarness("pinned-waiting");
     const { server, device } = harness;
