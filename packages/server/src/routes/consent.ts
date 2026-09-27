@@ -617,6 +617,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   // it says the same.
   "system.connection": "Connections",
   "system.device": "Devices",
+  "system.folder": "Folders",
   "system.webhook": "Webhooks",
   profile: "Profile",
   "profile.name": "Name",

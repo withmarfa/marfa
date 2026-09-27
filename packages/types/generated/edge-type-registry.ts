@@ -66,6 +66,20 @@ const inCollection: EdgeTypeSchema = {
   },
 };
 
+const inFolder: EdgeTypeSchema = {
+  id: "in-folder",
+  label: "In folder",
+  description: "Where an item's file sits in a folder: the source is the item, the target the folder's `system.folder`, and `path` the file's path relative to the folder's root. Placement only; a folder's search alone decides what it holds, and the edge is never written in a file's frontmatter. An item may sit in any number of folders. Revoking or removing the folder leaves its items in place.",
+  cardinality: "many-to-many",
+  source_type_constraints: ["*"],
+  target_type_constraints: ["system.folder"],
+  cascade_on_delete: "orphan",
+  written_at: "source",
+  property_schema: {
+    path: { type: "string", description: "The file's path relative to the folder's root." },
+  },
+};
+
 const inThread: EdgeTypeSchema = {
   id: "in-thread",
   label: "In thread",
@@ -123,6 +137,7 @@ export const ALL_EDGE_TYPES: EdgeTypeSchema[] = [
   authoredBy,
   derivedFrom,
   inCollection,
+  inFolder,
   inThread,
   parentOf,
   references,
@@ -192,6 +207,22 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
     ],
     "target_type_constraints": [
       "role:container"
+    ],
+    "written_at": "source"
+  },
+  "in-folder": {
+    "cardinality": "many-to-many",
+    "cascade_on_delete": "orphan",
+    "property_schema": {
+      "path": {
+        "type": "string"
+      }
+    },
+    "source_type_constraints": [
+      "*"
+    ],
+    "target_type_constraints": [
+      "system.folder"
     ],
     "written_at": "source"
   },

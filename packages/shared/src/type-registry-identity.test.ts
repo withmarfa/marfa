@@ -52,6 +52,7 @@ const SYSTEM_TYPE_IDENTIFIERS = [
   "system.app",
   "system.connection",
   "system.device",
+  "system.folder",
   "system.webhook",
 ];
 
@@ -104,6 +105,7 @@ const CORE_EDGE_TYPE_IDENTIFIERS = [
   "authored-by",
   "derived-from",
   "in-collection",
+  "in-folder",
   "in-thread",
   "parent-of",
   "references",

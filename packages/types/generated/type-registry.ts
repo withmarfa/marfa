@@ -588,6 +588,23 @@ const systemDevice: TypeSchema = {
   },
 };
 
+const systemFolder: TypeSchema = {
+  id: "system.folder",
+  label: "Folder",
+  description: "A folder's settings, held here and shared by every machine bound to the folder; each machine chooses only the directory. Written only through `/folders`: created, changed at a version, and revoked. Lifecycle bounded to active | revoked. Has no tier.",
+  version: 1,
+  fields: {
+    title: { type: "string", description: "The folder's name", required: true },
+    search: { type: "object", description: "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library` or `feed`, the one tier the folder holds; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`." },
+    defaults: { type: "object", description: "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to target ids, so a folder whose search follows an edge gives every new file that edge." },
+    include: { type: "array", description: "Paths the folder takes, as gitignore patterns relative to its root; empty or absent takes every path", items_type: "string" },
+    ignore: { type: "array", description: "Paths the folder leaves alone, as gitignore patterns relative to its root, on top of the built-in ignores", items_type: "string" },
+    first_placement: { type: "object", description: "Where a new item of a type made elsewhere first appears: a map from type identifier to a directory relative to the folder's root. Placement only; it never decides membership." },
+    removal_threshold: { type: "object", description: "When a removal pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Absent members are 10 and 0.25." },
+    revoked_at: { type: "datetime", description: "When the folder was revoked" },
+  },
+};
+
 const systemWebhook: TypeSchema = {
   id: "system.webhook",
   label: "Webhook",
@@ -606,6 +623,7 @@ export const ALL_SYSTEM_TYPES: TypeSchema[] = [
   systemApp,
   systemConnection,
   systemDevice,
+  systemFolder,
   systemWebhook,
 ];
 
@@ -635,6 +653,7 @@ export const ALL_TYPE_IDS = [
   "system.app",
   "system.connection",
   "system.device",
+  "system.folder",
   "system.webhook",
 ] as const;
 
@@ -1934,6 +1953,38 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "datetime"
       },
       "name": {
+        "required": true,
+        "type": "string"
+      }
+    },
+    "version": 1
+  },
+  "system.folder": {
+    "fields": {
+      "defaults": {
+        "type": "object"
+      },
+      "first_placement": {
+        "type": "object"
+      },
+      "ignore": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "include": {
+        "items_type": "string",
+        "type": "array"
+      },
+      "removal_threshold": {
+        "type": "object"
+      },
+      "revoked_at": {
+        "type": "datetime"
+      },
+      "search": {
+        "type": "object"
+      },
+      "title": {
         "required": true,
         "type": "string"
       }
