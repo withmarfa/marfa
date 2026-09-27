@@ -1698,6 +1698,56 @@ describe("identity", () => {
     expect(copy).not.toBe(id);
   });
 
+  it("keeps the id with the older of two unbound files that carry it", async () => {
+    const held = "01a00000-0000-7000-8000-00000000000b";
+    harness = await folderHarness("folder-copy-unbound", {
+      rows: {
+        "core.note": [
+          { item: { id: held, properties: { title: "Held", body: "held\n" } } },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    // The row is held and no file is bound to it yet: neither file is the
+    // binding's.
+    const bytes = `---\nmarfa_id: ${held}\ntitle: Held\n---\nheld\n`;
+    put(harness, "z-older.md", bytes);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    put(harness, "a-newer.md", bytes);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.created).toBe(1);
+    const [copy] = sentCreates(harness);
+    expect(copy?.id).not.toBe(held);
+    expect(
+      idIn(harness, "z-older.md"),
+      "the id went to the newer file because it sorts first",
+    ).toBe(held);
+    expect(idIn(harness, "a-newer.md")).toBe(copy?.id);
+  });
+
+  it("reads a .txt file that opens with a --- block as a body", async () => {
+    harness = await folderHarness("folder-txt-fence");
+    scriptFolderWrites(harness);
+    const text = "---\ntitle: Fenced\n---\nafter the fence\n";
+    // The witness: the same bytes in a Markdown file are frontmatter.
+    put(harness, "fenced.md", text);
+    put(harness, "fenced.txt", text);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const sent = sentCreates(harness).map(
+      (create) => create.properties as Record<string, unknown>,
+    );
+    const md = sent.find((properties) => properties.title === "Fenced");
+    expect(md?.body).toBe("after the fence\n");
+    const txt = sent.find((properties) => properties !== md);
+    expect(
+      txt?.body,
+      "a .txt file's opening block was read as frontmatter and left its body",
+    ).toBe(text);
+    expect(read(harness, "fenced.txt")).toBe(text);
+  });
+
   it("gives a fresh id to a file whose id names nothing", async () => {
     harness = await folderHarness("folder-id-names-nothing");
     const rows = scriptFolderWrites(harness);
