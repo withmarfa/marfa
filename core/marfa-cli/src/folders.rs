@@ -54,7 +54,7 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Scan, drain and pull: everything a folder does, once.
+    /// Scan, drain, catch up and pull: everything a folder does, once.
     Push {
         /// The folder.
         dir: PathBuf,
@@ -125,11 +125,16 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             let folder = Folder::open(&dir, Some(named.server()?))?;
             let scanned = folder.scan()?;
             let drained = folder.core().drain()?;
+            // Before the pull, so what another device changed since the
+            // copy's cursor is written out rather than waiting for a
+            // hydration that nothing asks for.
+            let caught = folder.catch_up()?;
             let pulled = folder.pull()?;
             output::report(
                 &serde_json::json!({
                     "scan": scanned,
                     "drain": drained,
+                    "catch_up": caught,
                     "pull": pulled,
                 }),
                 json,

@@ -262,6 +262,18 @@ impl Http {
     /// server refused changed nothing and so produced no event for catch-up
     /// to replay. `Ok(None)` is a 404, which is the server saying it holds
     /// no such row — for a refused create, the honest answer.
+    /// One item by id with its edges, as a hydration reads each row: a row
+    /// that comes into the slice after the hydration needs what it draws.
+    pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
+        match self
+            .get_json::<WireItemWithMetadata>(&["items", id], &[("include", "edges,metadata")])
+        {
+            Ok(item) => Ok(Some(item)),
+            Err(CoreError::NotFound { .. }) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
     pub fn item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         match self.get_json::<WireItemWithMetadata>(&["items", id], &[("include", "metadata")]) {
             Ok(item) => Ok(Some(item)),
@@ -346,15 +358,9 @@ impl Http {
     pub fn open_events(
         &self,
         last_event_id: Option<&str>,
-        types: &[String],
         body_timeout: Duration,
     ) -> Result<Box<dyn Read + Send>, CoreError> {
-        let joined = types.join(",");
-        let mut params: Vec<(&str, &str)> = vec![("edges", "all")];
-        if !types.is_empty() {
-            params.push(("type", &joined));
-        }
-        let url = self.url(&["events"], &params);
+        let url = self.url(&["events"], &[("edges", "all")]);
         let mut request = self
             .agent
             .get(url.as_str())

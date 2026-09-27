@@ -1465,6 +1465,97 @@ describe("catch-up keeps the copy to its slice", () => {
     ).not.toContain("leaves");
   });
 
+  it("adds a row entering the slice by retype, with its tags and its edges", async () => {
+    harness = await startHarness("entering-by-retype");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10", rows: { "core.note": [] } });
+    // A row the copy never held, now of a type the slice declares: a retype
+    // into the slice. Its frame carries its tags; its edges are its own and
+    // no frame carries them.
+    const entered = wireItem({ id: "entered", version: 3 });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent("11", "item.updated", entered, { tags: ["kept"] }),
+      ]),
+    );
+    server.answer(
+      "GET",
+      "/items/entered",
+      answers.updated({
+        ...entered,
+        edges: {
+          references: {
+            data: [
+              wireEdge({
+                id: "its-own",
+                source_id: "entered",
+                target_id: "elsewhere",
+              }),
+            ],
+            next_cursor: null,
+          },
+        },
+      }),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+
+    const held = await device.get("entered");
+    expect(held.ok && held.value.tags).toEqual(["kept"]);
+    const edges = await device.edgesFrom("entered");
+    expect(
+      edges.ok ? edges.value.map((edge) => edge.id) : [],
+      "a row that came into the slice by retype arrived without the edges it draws, and nothing brings them until a hydration",
+    ).toEqual(["its-own"]);
+  });
+
+  it("learns a row retyped out of its slice, asking the stream for every type", async () => {
+    harness = await startHarness("retyped-out");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [{ item: { id: "stays" } }, { item: { id: "moves" } }],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent(
+          "11",
+          "item.updated",
+          wireItem({ id: "moves", type: "core.bookmark", version: 2 }),
+        ),
+      ]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const held = await device.list();
+    const ids = held.ok ? held.value.map((item) => item.id) : [];
+    expect(ids).toContain("stays");
+    expect(ids).not.toContain("moves");
+    // What makes the eviction possible against the real server: a stream
+    // narrowed to the slice's types withholds the frame of a row that left
+    // them, since the server narrows by the type a row has now.
+    const opened = server.requests.filter(
+      (request) =>
+        request.method === "GET" &&
+        request.pathname === "/events" &&
+        request.headers["last-event-id"] !== undefined,
+    );
+    expect(opened.length).toBeGreaterThan(0);
+    expect(
+      opened.map((request) => request.query.get("type")),
+      "the catch-up asked for its slice's types alone, so a row retyped out of them is never heard of again",
+    ).toEqual(opened.map(() => null));
+  });
+
   it("keeps the edges a held row draws to a row that leaves the slice", async () => {
     harness = await startHarness("eviction-edges");
     const { server, device } = harness;

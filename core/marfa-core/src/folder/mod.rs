@@ -215,6 +215,24 @@ impl Folder {
         self.core.hydrate(&self.slice.types, self.slice.tier)
     }
 
+    /// Takes in what the server has recorded since the copy's cursor, so a
+    /// pull after it writes another device's changes out. Where the log has
+    /// aged past the cursor the copy is hydrated again instead (`device.md`
+    /// 16), and the queue survives that as it survives any hydration.
+    pub fn catch_up(&self) -> Result<CaughtUp> {
+        match self.core.catch_up() {
+            Ok(report) => Ok(CaughtUp {
+                caught_up: Some(report),
+                hydrated: None,
+            }),
+            Err(CoreError::CatchUpTooOld { .. }) => Ok(CaughtUp {
+                caught_up: None,
+                hydrated: Some(self.hydrate()?),
+            }),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Every file the folder watches, in a stable order.
     ///
     /// Dot-led directories are excluded at any depth (`folders.md` 17), which
@@ -1870,6 +1888,14 @@ pub const LINK_EDGE: &str = "references";
 
 /// The frontmatter field a folder writes an item's id into.
 pub const ID_FIELD: &str = "marfa_id";
+
+/// What a folder's catch-up did: one of the two, a catch-up from the
+/// cursor or, where the log had aged past it, a fresh hydration.
+#[derive(Debug, Clone, Serialize)]
+pub struct CaughtUp {
+    pub caught_up: Option<crate::model::CatchUpReport>,
+    pub hydrated: Option<crate::model::HydrateReport>,
+}
 
 /// What a pull did.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
