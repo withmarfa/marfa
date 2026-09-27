@@ -37,7 +37,7 @@ pub use blob::{file_type_for, mime_type_for};
 pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
-pub use folder::{Folder, PullReport, ScanReport, Slice};
+pub use folder::{Drained, Folder, PullReport, ScanReport, Slice};
 pub use lock::Handle;
 pub use model::{
     Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit,
@@ -452,6 +452,38 @@ impl Core {
         // one, and the count that came back described neither.
         tx.commit()?;
         Ok(released)
+    }
+
+    /// Moves an edit blocked `ancestor_unavailable` onto the version the copy
+    /// holds, to go again under a fresh key (`queue-and-verdicts.md` 22).
+    pub(crate) fn rebase_on_held(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        let Some(row) = store::queued_write(&tx, id)? else {
+            return Ok(false);
+        };
+        if row.kind != WriteKind::UpdateItem
+            || row.blocked_reason() != Some(BlockedReason::AncestorUnavailable)
+        {
+            return Ok(false);
+        }
+        let Some(held) = row
+            .item_id
+            .as_deref()
+            .map(|item| store::item_by_id(&tx, item))
+            .transpose()?
+            .flatten()
+        else {
+            return Ok(false);
+        };
+        if row.base_version.is_none_or(|base| base >= held.version) {
+            return Ok(false);
+        }
+        store::move_edit(&tx, id, held.version)?;
+        store::release(&tx, id)?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Queues a create, and holds the row locally until it is answered
@@ -1925,6 +1957,10 @@ mod tests {
                 "release_reason",
                 reader.release_reason(BlockedReason::KeySpent).unwrap_err(),
             ),
+            (
+                "rebase_on_held",
+                reader.rebase_on_held("blocked").unwrap_err(),
+            ),
             // A drain writes verdicts and adopts rows, so it is a write door
             // like the rest. It refuses at the handle before it reaches the
             // missing server, which is why this is a `ReadingHandle` and not
@@ -1999,7 +2035,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            28,
+            29,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

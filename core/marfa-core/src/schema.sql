@@ -247,7 +247,7 @@ CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
 -- is equality on the whole string, which misses every row waiting on two
 -- creates. An index here would say the lookup was cheap without making it so.
 
--- A folder's own state (`folders.md` 18). In this file rather than beside it
+-- A folder's own state (`folders.md` 20). In this file rather than beside it
 -- because the mapping, the journal and the queue have to move together: a
 -- file bound to an item whose create did not queue is a file the folder
 -- thinks it has pushed, and one transaction is what stops that.
@@ -269,19 +269,22 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The bytes the folder itself last wrote at this path, hashed; null where
   -- the last agreement was a scan's read of the person's bytes. A pull takes
   -- away the file of an item that left the slice only when the file still
-  -- holds these bytes (`folders.md` 24): a file the folder never wrote, or
+  -- holds these bytes (`folders.md` 26): a file the folder never wrote, or
   -- the person changed since, is theirs and stays.
   written_hash TEXT,
   -- The item ids the links in those bytes named, as a JSON array. What tells
   -- a link the person removed from an edge that has not been rendered yet
-  -- (`folders.md` 21): both are an edge the copy holds that the body does not
+  -- (`folders.md` 23): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
   -- The targets whose rendered link the person took out, for edges of a kind
-  -- the folder could not have made, as a JSON array. The edge stays (21), so
+  -- the folder could not have made, as a JSON array. The edge stays (23), so
   -- without this the next pull writes the link back and the person removes
-  -- it again, forever (`folders.md` 25). Naming the link again lifts it.
+  -- it again, forever (`folders.md` 27). Naming the link again lifts it.
   declined_links TEXT NOT NULL,
+  -- The version line the file's last edit since the folder wrote it was read
+  -- at, 0 where it carried none; null where none went (`folders.md` 17, 18).
+  edit_line INTEGER,
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);

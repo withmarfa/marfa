@@ -377,6 +377,12 @@ export class FolderDoor {
       : refusal(404, "item_not_found", `Item ${id} not found`);
   }
 
+  /** Drops the snapshot of one version, as the server's version thinning
+   *  does: a write naming it is then refused `ancestor_unavailable`. */
+  thin(id: string, version: number): void {
+    this.snapshots.get(id)?.delete(version);
+  }
+
   /** Moves a row to the bin, as another device's delete would. */
   trash(id: string): void {
     const row = this.rows.get(id);

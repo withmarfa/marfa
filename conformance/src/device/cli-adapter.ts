@@ -653,10 +653,10 @@ export interface ScanReport {
   deleted: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 28). Counted in `created` too. */
+   *  or moved (`folders.md` 30). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 28). */
+   *  sent (`folders.md` 30). */
   lost: number;
 }
 
@@ -669,11 +669,11 @@ export interface PullReport {
   unwritten: number;
   collided: number;
   outside: number;
-  /** Files of items that left the slice, taken away (`folders.md` 24). */
+  /** Files of items that left the slice, taken away (`folders.md` 26). */
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 27). */
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 29). */
   absent: number;
 }
 
@@ -681,7 +681,9 @@ export interface PushReport {
   /** The hydration a copy that could not answer took first, if it needed one. */
   hydrated: HydrateReport | null;
   scan: ScanReport;
-  drain: DrainReport;
+  /** With the edits the server refused `ancestor_unavailable`, sent again on
+   *  the version the copy holds (`folders.md` 17). */
+  drain: DrainReport & { rebased: number };
   /** A catch-up from the copy's cursor, a hydration where the log had aged
    *  past it, or the reason the server could not be reached for either. */
   catch_up: {
