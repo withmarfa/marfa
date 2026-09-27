@@ -587,14 +587,10 @@ export function checkTypeAccess(
 }
 
 /**
- * The credential's own type map, asked without the reserved-namespace fence
- * `checkTypeAccess` puts in front of it.
- *
- * The purge door is the one caller that wants this half alone. A reserved
- * row reaches its soft-deleted state by paths that do not ask the fence of
- * it, a delete cascade and an archive restore. The fence stopped neither, and
- * it admits no credential, so asking it at purge would only strand the row.
- * Which rows a credential may destroy is still its map's to say.
+ * The credential's own type map, without the reserved-namespace fence
+ * `checkTypeAccess` puts in front of it. Only the purge door wants this half
+ * alone, for a reserved row already soft-deleted: no credential gets past
+ * the fence and the map both, so the fence would strand the row.
  */
 export function checkTypePermission(
   apiKey: ApiKey | undefined,

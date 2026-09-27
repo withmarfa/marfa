@@ -1203,7 +1203,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`items.purge` is missing, the credential's type permissions do not reach the item's type at `write`, or the item is in a reserved namespace and not soft-deleted. The type permissions are asked whatever state the row is in, as the restore door asks them, so a key that may only read a type purges none of its trashed rows. The reserved namespace is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make.",
+        "`items.purge` is missing; the credential may not write the item's type, asked whatever state the row is in, as restore asks; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed.",
     },
     404: {
       content: {
@@ -2903,51 +2903,26 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     requirePermission(c, "items.purge");
-    // Read before removing: a purge that never looks at the row cannot
-    // tell a connection from a note.
-    //
-    // **Including trashed, and that is the whole of what this door normally
-    // sees.** A plain `get` answers `null` for a `trashed` row, so on the
-    // ordinary path (trash, then purge) it would come back empty, the type
-    // gate below would have no type to ask about, and the announcement
-    // would never fire. This is the same read `storage.items.purge` runs
-    // for its own gate.
+    // Read including trashed: on the ordinary path (trash, then purge) a
+    // plain `get` answers `null`, leaving no type to ask about. The same read
+    // `storage.items.purge` gates on.
     const purgeTarget = await storage.items.getIncludingTrashed(id);
     refuseUnlessUninstalled(purgeTarget);
 
-    // **The type map is asked whatever state the row is in.** `items.purge`
-    // opens the door and the credential's type permissions say which rows it
-    // destroys, as the restore door beside it and the bulk purge both ask. A
-    // row in the bin is still its type's: a key refused restoring a trashed
-    // `core.task` because it may only read the type is refused destroying
-    // it too, since that is the one write nobody can take back.
+    // The key's type map is asked whatever state the row is in, as restore
+    // and the bulk purge ask it: a key that may only read a type destroys
+    // none of its rows, trashed or not.
     //
-    // **The reserved-namespace fence is asked only of a row that is not
-    // soft-deleted**, and there it names the real reason. Purging is
-    // soft-delete-then-purge, so a caller meets `DELETE /items/{id}` first.
-    // For a reserved-namespace row every credential is refused there, by
-    // name: "no credential writes system.* items". The row therefore never
-    // reaches its soft-deleted state through that door, and this door would
-    // answer "Only
-    // revoked items can be purged", which is true and reads as an ordering
-    // mistake the caller did not make. Asking the fence here names the real
-    // reason instead, and runs only where the purge was going to be refused
-    // anyway.
+    // The reserved-namespace fence is asked only of a row not yet
+    // soft-deleted. There it names the real reason (no credential trashes a
+    // `system.*` row), where the state check below would read as an ordering
+    // mistake. A reserved row already soft-deleted got there by a cascade or
+    // an archive restore; no credential gets past the fence and the map both,
+    // so asking the fence would strand the row for good.
     //
-    // A reserved row that is soft-deleted got there by a path that does not
-    // ask the fence: a delete cascade, which gates only the row it names, or
-    // an archive restore. The fence admits no credential, so asking it here
-    // would leave such a row to housekeeping alone, and no housekeeping job
-    // sweeps a revoked connector connection. The map decides it, as it
-    // decides any other.
-    //
-    // **The state compared is the type's own, never the literal `trashed`.**
-    // `softDeleteState` resolves `revoked` for a type with a bounded
-    // lifecycle, which `system.connection` has; a literal comparison would
-    // send every revoked connection to the fence, leaving every revoked
-    // grant permanently unpurgeable. `storage.items.purge` gates on the same
-    // derived state, and the two have to agree or one of them refuses what the other
-    // admits.
+    // The state is the type's own soft-deleted state, not the literal
+    // `trashed`: a `system.connection` ends `revoked`, and
+    // `storage.items.purge` gates on the same derived state.
     if (purgeTarget) {
       if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
         checkTypePermission(c.get("apiKey"), purgeTarget.type, "write");

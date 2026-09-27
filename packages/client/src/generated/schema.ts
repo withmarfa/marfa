@@ -3613,7 +3613,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may not write the item's type. Asked of the trashed row, so a key that may only read the type restores none of its rows. */
+            /** @description The credential may not write the item's type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4507,7 +4507,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `items.purge` is missing, the credential's type permissions do not reach the item's type at `write`, or the item is in a reserved namespace and not soft-deleted. The type permissions are asked whatever state the row is in, as the restore door asks them, so a key that may only read a type purges none of its trashed rows. The reserved namespace is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make. */
+            /** @description `items.purge` is missing; the credential may not write the item's type, asked whatever state the row is in, as restore asks; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

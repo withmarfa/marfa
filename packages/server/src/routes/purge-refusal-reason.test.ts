@@ -1,21 +1,11 @@
 /**
- * The purge door says which of two refusals this is.
+ * Which refusal the purge door gives, and to whom.
  *
- * Purging is trash-then-purge, so a caller meets `DELETE /items/{id}` first.
- * For a reserved-namespace row a working credential is refused there `403`,
- * by name: "no credential writes `marfa.*` items". The row therefore never
- * becomes trashed through that door, and a purge that asked nothing first
- * would answer `400` "Only trashed items can be purged", which is true and
- * describes an ordering mistake the caller did not make. The later message
- * is the one acted on, and it sends somebody looking for a trash step they
- * think they skipped while the namespace gate is never suspected.
- *
- * So the door asks the reserved-namespace fence on the not-trashed path,
- * which is the path the purge was going to be refused on anyway. The
- * assertions here are about *which message* comes back, and the case that
- * matters most is the one proving the ordinary refusal is unchanged: a fix
- * that renamed every refusal would pass a test that only checked the
- * reserved-namespace one.
+ * No working credential can trash a reserved-namespace row, so on a row not
+ * yet trashed the door names the namespace fence rather than answering "Only
+ * trashed items can be purged", which would send the caller looking for a
+ * trash step they never skipped. The ordinary refusal must stay as it was, so
+ * that case is asserted too. A soft-deleted row is asked the key's type map.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
@@ -125,13 +115,9 @@ describe("purging a row a working credential may not write", () => {
   });
 
   it("purges a reserved-namespace row once it is trashed", async () => {
-    // What the fence's placement exists for: it runs only on the not-trashed
-    // path, so an already-trashed row is purged as any other, by a key whose
-    // own map writes the type.
-    //
-    // Trashed through the storage layer, standing in for the doors that do
-    // put a reserved row there, a delete cascade and an archive restore: the
-    // trash door asks the fence and refuses every working credential.
+    // An already-trashed reserved row is purged as any other, by a key whose
+    // map writes the type. Trashed through storage, standing in for the
+    // cascade and archive restore that put such rows there.
     const id = await seedReservedRow("relic:refusal-2");
     await ctx.storage.items.transition(id, "trashed");
 
@@ -142,14 +128,7 @@ describe("purging a row a working credential may not write", () => {
   });
 });
 
-/**
- * A soft-deleted row takes write on its type, from the credential's own map.
- *
- * The door opens on `items.purge`, and the map says which rows it destroys,
- * as the restore door beside it asks. The reserved-namespace fence is the one
- * half of the write rule a soft-deleted row is not asked: the row got there
- * by a door that does not ask it, and the fence admits no credential.
- */
+/** A soft-deleted row takes write on its type in the key's own map, as restore asks. */
 describe("purging a soft-deleted row", () => {
   /** Holds `items.purge`, writes `core.note`, and only reads `core.task`. */
   let coreOnlyKey: string;
@@ -214,9 +193,7 @@ describe("purging a soft-deleted row", () => {
   });
 
   it("purges a revoked connection for a key whose map writes the type, and only for one", async () => {
-    // The bounded lifecycle: a connection soft-deletes to `revoked`, not to
-    // `trashed`, and a revoked one is ordinary history the liveness refusal
-    // lets go.
+    // A connection soft-deletes to `revoked`, not `trashed`.
     const conn = await ctx.storage.items.create({
       type: "system.connection",
       properties: {

@@ -66,8 +66,7 @@ const restoreItemRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "The credential may not write the item's type. Asked of the trashed row, so a key that may only read the type restores none of its rows.",
+      description: "The credential may not write the item's type.",
     },
     404: {
       content: {
