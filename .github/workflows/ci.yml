@@ -23,8 +23,8 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Each job gets an isolated GitHub-hosted VM. Apple builds and credential
-# tests stay on ARM64 macOS; portable checks use Linux.
+# Apple builds and credential tests use the private local macOS pool.
+# Portable checks use Blacksmith.
 env:
   CARGO_BUILD_JOBS: 2
   CARGO_PROFILE_DEV_DEBUG: 0
@@ -34,7 +34,7 @@ jobs:
   ci-sqlite:
     name: CI (SQLite)
     timeout-minutes: 60
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -72,18 +72,17 @@ jobs:
   core-checks:
     name: Core checks
     timeout-minutes: 30
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    # Local jobs share machine resources and must not contend.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            core
-            core/bindings/swift
-          key: ${{ github.job }}
       - name: Check the core workspace
         working-directory: core
         run: |
@@ -116,7 +115,12 @@ jobs:
   conformance:
     name: Conformance
     timeout-minutes: 60
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    # Local jobs share machine resources and must not contend.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -125,7 +129,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       # `marfa:up` runs the server through tsx, which resolves
       # @withmarfa/shared through its dist, and the offline lane reads the
@@ -135,12 +138,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            core
-            core/bindings/swift
-          key: ${{ github.job }}
       - name: Build the device under test
         working-directory: core
         run: |
@@ -216,7 +213,12 @@ jobs:
   cli-scenarios:
     name: CLI scenarios
     timeout-minutes: 60
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    # Local jobs share machine resources and must not contend.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -225,19 +227,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            core
-            core/bindings/swift
-          key: ${{ github.job }}
       - name: Build the binary under test
         working-directory: core
         run: |
@@ -286,7 +281,7 @@ jobs:
   restore-drill:
     name: Restore drill
     timeout-minutes: 30
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -339,7 +334,7 @@ jobs:
   types-freshness:
     name: Types codegen freshness
     timeout-minutes: 15
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -364,7 +359,7 @@ jobs:
   openapi-freshness:
     name: OpenAPI spec freshness
     timeout-minutes: 15
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -389,7 +384,7 @@ jobs:
   version-fields:
     name: No file holds a version
     timeout-minutes: 10
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -426,7 +421,7 @@ jobs:
   clients-freshness:
     name: Generated clients are fresh
     timeout-minutes: 15
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6

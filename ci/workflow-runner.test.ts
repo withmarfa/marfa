@@ -1,8 +1,4 @@
-/**
- * Standard hosted runners isolate pull-request code from developer machines.
- * Literal labels also keep a variable or a larger runner from changing that
- * security and billing boundary without a reviewed policy change.
- */
+/** Literal routing prevents an accidental return to paid hosted macOS. */
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -33,17 +29,9 @@ function jobsOf(text: string): Workflow["jobs"] {
   return (parse(text) as Workflow).jobs;
 }
 
-function isStandardHosted(runner: unknown): boolean {
-  return (
-    runner === "ubuntu-24.04" ||
-    runner === "ubuntu-latest" ||
-    runner === "macos-26"
-  );
-}
-
 const files = readdirSync(WORKFLOWS).filter((f) => /\.ya?ml$/.test(f));
 
-describe("every job runs on a standard GitHub-hosted runner", () => {
+describe("jobs use local macOS and Blacksmith, with hosted release publishing", () => {
   it("finds workflows and jobs rather than passing over an empty tree", () => {
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
@@ -58,18 +46,20 @@ describe("every job runs on a standard GitHub-hosted runner", () => {
       jobsOf(readFileSync(join(WORKFLOWS, file), "utf8")),
     )) {
       const expected = MAC_JOBS.has(`${file}:${job}`)
-        ? "macos-26"
+        ? ["self-hosted", "macOS", "ARM64", "withmarfa"]
         : file === "release.yml" && job === "publish"
           ? "ubuntu-latest"
-          : "ubuntu-24.04";
-      expect(config["runs-on"], `${file}: ${job}`).toBe(expected);
-      expect(isStandardHosted(config["runs-on"])).toBe(true);
-      // Separate VMs do not compete for a developer machine. Workflow-level
-      // cancellation still applies; no job should wait for the old host lock.
-      expect(
-        config.concurrency,
-        `${file}: ${job} serializes isolated VMs`,
-      ).toBeUndefined();
+          : "blacksmith-2vcpu-ubuntu-2404";
+      expect(config["runs-on"], `${file}: ${job}`).toEqual(expected);
+      if (MAC_JOBS.has(`${file}:${job}`)) {
+        expect(config.concurrency, `${file}: ${job}`).toEqual({
+          group: "marfa-suite-shared-host",
+          "cancel-in-progress": false,
+          queue: "max",
+        });
+      } else {
+        expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
+      }
     }
   });
 
@@ -82,22 +72,4 @@ describe("every job runs on a standard GitHub-hosted runner", () => {
       ).toBeDefined();
     }
   });
-
-  it.each([
-    "self-hosted",
-    ["self-hosted", "macOS", "ARM64"],
-    "macos-26-large",
-    "macos-26-xlarge",
-    "${{ vars.CI_RUNNER || 'ubuntu-24.04' }}",
-    undefined,
-  ])("refuses nonstandard selection %j", (runner) => {
-    expect(isStandardHosted(runner)).toBe(false);
-  });
-
-  it.each(["ubuntu-24.04", "ubuntu-latest", "macos-26"])(
-    "accepts %s",
-    (runner) => {
-      expect(isStandardHosted(runner)).toBe(true);
-    },
-  );
 });
