@@ -409,6 +409,53 @@ describe("the folder door", () => {
     expect(repeat.data.item.id).toBe(first.data.item.id);
   });
 
+  it("refuses 422 a key sent again with another request on each folder door", async () => {
+    const [a, b, c, d] = [
+      await folder(),
+      await folder(),
+      await folder(),
+      await folder(),
+    ];
+    const doors: [string, string, [string, unknown?], [string, unknown?]][] = [
+      [
+        "POST",
+        "/folders",
+        ["/folders", { title: "a" }],
+        ["/folders", { title: "b" }],
+      ],
+      [
+        "PATCH",
+        "/folders/{id}",
+        [`/folders/${a.id}`, { version: a.version, title: "a" }],
+        [`/folders/${b.id}`, { version: b.version, title: "b" }],
+      ],
+      [
+        "POST",
+        "/folders/{id}/revoke",
+        [`/folders/${c.id}/revoke`],
+        [`/folders/${d.id}/revoke`],
+      ],
+    ];
+    for (const [method, template, first, second] of doors) {
+      const key = `folders-${ctx.runId}-${template}-${String(Date.now())}`;
+      const send = ([path, body]: [string, unknown?]) =>
+        client.rawRequest<{ item?: { id: string } } & Refusal>(path, {
+          method,
+          headers: { "Idempotency-Key": key },
+          ...(body === undefined ? {} : { body }),
+        });
+      const accepted = await send(first);
+      expect(accepted.status, `${method} ${template}`).toBeLessThan(300);
+      if (template === "/folders" && accepted.data.item)
+        trackFolder(ctx, accepted.data.item.id);
+      const refused = await send(second);
+      expect(
+        [refused.status, refused.data.error?.code],
+        `${method} ${template} served one request's answer to another`,
+      ).toEqual([422, "idempotency_key_reused"]);
+    }
+  });
+
   it("publishes a folder's create, change and revoke as item events", async ({
     signal,
   }) => {
