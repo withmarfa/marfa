@@ -67,7 +67,8 @@ pub struct Edge {
 }
 
 /// Narrowing for a search: the state rule a list takes, a type with its
-/// subtree, and tags, each read as the list reads it.
+/// subtree, tags, a listing-grammar expression and `beneath`, each read as
+/// the list reads it.
 #[derive(Debug, Clone, Default, uniffi::Record)]
 pub struct SearchFilters {
     #[uniffi(default = None)]
@@ -78,6 +79,14 @@ pub struct SearchFilters {
     pub r#type: Option<String>,
     #[uniffi(default = [])]
     pub tags: Vec<String>,
+    /// An expression in the server's listing grammar, answered as the server
+    /// answers `filter` and refused `validation_error` where it refuses it.
+    #[uniffi(default = None)]
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, as far as the copy holds them.
+    #[uniffi(default = None)]
+    pub beneath: Option<String>,
 }
 
 /// Narrowing for a list. Leaving `state` unset answers the active state, as
@@ -98,6 +107,14 @@ pub struct ListFilters {
     pub occurred_after: Option<String>,
     #[uniffi(default = None)]
     pub occurred_before: Option<String>,
+    /// An expression in the server's listing grammar, answered as the server
+    /// answers `filter` and refused `validation_error` where it refuses it.
+    #[uniffi(default = None)]
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, as far as the copy holds them.
+    #[uniffi(default = None)]
+    pub beneath: Option<String>,
     #[uniffi(default = None)]
     pub limit: Option<u32>,
     #[uniffi(default = None)]
@@ -647,6 +664,8 @@ impl From<ListFilters> for marfa_core::ListFilters {
             tags: filters.tags,
             occurred_after: filters.occurred_after,
             occurred_before: filters.occurred_before,
+            filter: filters.filter,
+            beneath: filters.beneath,
             limit: filters.limit,
             offset: filters.offset,
         }
@@ -725,6 +744,8 @@ impl From<SearchFilters> for marfa_core::SearchFilters {
             all_states: filters.all_states,
             r#type: filters.r#type,
             tags: filters.tags,
+            filter: filters.filter,
+            beneath: filters.beneath,
         }
     }
 }
@@ -1444,6 +1465,8 @@ mod tests {
             all_states: true,
             r#type: Some("core.note".into()),
             tags: vec!["a".into(), "b".into()],
+            filter: Some("tags exists".into()),
+            beneath: Some("root".into()),
         }
         .into();
         assert_eq!(
@@ -1453,6 +1476,8 @@ mod tests {
                 all_states: true,
                 r#type: Some("core.note".into()),
                 tags: vec!["a".into(), "b".into()],
+                filter: Some("tags exists".into()),
+                beneath: Some("root".into()),
             }
         );
     }

@@ -209,12 +209,17 @@ export interface EdgeDraft {
 }
 
 /** Narrowing for a local search: the state axis, a type with its subtree,
- *  and tags, each read as the list reads it. */
+ *  tags, a listing-grammar expression and a subtree, each read as the list
+ *  reads it. */
 export interface SearchFilters {
   state?: string;
   allStates?: boolean;
   type?: string;
   tags?: string[];
+  /** An expression in the server's listing grammar, the `filter` of `GET /items`. */
+  filter?: string;
+  /** An item and everything it reaches along `parent-of` edges. */
+  beneath?: string;
 }
 
 export interface ListFilters {
@@ -228,8 +233,10 @@ export interface ListFilters {
   tier?: Tier;
   tags?: string[];
   limit?: number;
-  /** A filter the device is not expected to implement, so a fixture can check it is refused. */
-  unsupported?: [string, string];
+  /** An expression in the server's listing grammar, the `filter` of `GET /items`. */
+  filter?: string;
+  /** An item and everything it reaches along `parent-of` edges. */
+  beneath?: string;
 }
 
 /**

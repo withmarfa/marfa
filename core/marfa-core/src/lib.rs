@@ -8,6 +8,7 @@ mod catch_up;
 pub mod contract;
 mod drain;
 mod error;
+mod filter;
 pub mod folder;
 /// The working copy's transport, public for the call shapes it shares with
 /// the binary's own transport.

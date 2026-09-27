@@ -87,6 +87,13 @@ pub enum DeviceCommand {
         /// Hits must carry every tag given.
         #[arg(long = "tag", value_name = "TAG")]
         tags: Vec<String>,
+        /// An expression in the server's listing grammar, answered as the
+        /// server answers `filter`.
+        #[arg(long, value_name = "EXPR")]
+        filter: Option<String>,
+        /// Only this item and what it reaches along `parent-of` edges.
+        #[arg(long, value_name = "ID")]
+        beneath: Option<String>,
         /// How many hits at most.
         #[arg(long, default_value_t = 20)]
         limit: usize,
@@ -417,6 +424,13 @@ pub struct ListArgs {
     /// Exclusive upper bound on the item's own time, RFC 3339.
     #[arg(long = "occurred-before", value_name = "TIME")]
     pub occurred_before: Option<String>,
+    /// An expression in the server's listing grammar, answered as the
+    /// server answers `filter`.
+    #[arg(long, value_name = "EXPR")]
+    pub filter: Option<String>,
+    /// Only this item and what it reaches along `parent-of` edges.
+    #[arg(long, value_name = "ID")]
+    pub beneath: Option<String>,
     /// The time to order by.
     #[arg(long, default_value = "created-at")]
     pub sort: SortField,
@@ -560,6 +574,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                         tags: args.tags,
                         occurred_after: args.occurred_after,
                         occurred_before: args.occurred_before,
+                        filter: args.filter,
+                        beneath: args.beneath,
                         limit: args.limit,
                         offset: args.offset,
                     };
@@ -681,6 +697,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             all_states,
             type_,
             tags,
+            filter,
+            beneath,
             limit,
         } => {
             let filters = SearchFilters {
@@ -688,6 +706,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 all_states,
                 r#type: type_,
                 tags,
+                filter,
+                beneath,
             };
             output::hits(&store.open(None)?.search(&query, &filters, limit)?, json)
         }

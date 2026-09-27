@@ -181,19 +181,29 @@ pub struct ListFilters {
     pub tags: Vec<String>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
+    /// An expression in the server's listing grammar, answered as the
+    /// server answers it and refused `validation_error` where the server
+    /// refuses it.
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, at any depth, as far as the copy holds those edges.
+    pub beneath: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
 
 /// Narrowing for a local search: the state rule the list takes, a type
-/// with its subtree, and tags, each read exactly as the list reads it. The
-/// rest of the listing grammar is a list's, and has no field here.
+/// with its subtree, tags, a listing-grammar expression and `beneath`, each
+/// read exactly as the list reads it. The tier and the time bounds are a
+/// list's, and have no field here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilters {
     pub state: Option<ItemState>,
     pub all_states: bool,
     pub r#type: Option<String>,
     pub tags: Vec<String>,
+    pub filter: Option<String>,
+    pub beneath: Option<String>,
 }
 
 // Every sortable column is a verb plus `_at`, so the shared `At` suffix the

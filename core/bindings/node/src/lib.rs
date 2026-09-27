@@ -78,7 +78,8 @@ pub struct Edge {
 }
 
 /// Narrowing for a search: the state rule a list takes, a type with its
-/// subtree, and tags, each read as the list reads it.
+/// subtree, tags, a listing-grammar expression and `beneath`, each read as
+/// the list reads it.
 #[napi(object)]
 #[derive(Default)]
 pub struct SearchFilters {
@@ -87,6 +88,12 @@ pub struct SearchFilters {
     #[napi(js_name = "type")]
     pub type_: Option<String>,
     pub tags: Option<Vec<String>>,
+    /// An expression in the server's listing grammar, answered as the server
+    /// answers `filter` and refused `validation_error` where it refuses it.
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, as far as the copy holds them.
+    pub beneath: Option<String>,
 }
 
 /// Narrowing for a list. Leaving `state` unset answers the active state, as
@@ -102,6 +109,12 @@ pub struct ListFilters {
     pub tags: Option<Vec<String>>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
+    /// An expression in the server's listing grammar, answered as the server
+    /// answers `filter` and refused `validation_error` where it refuses it.
+    pub filter: Option<String>,
+    /// An item id: that item and every item it reaches along `parent-of`
+    /// edges, as far as the copy holds them.
+    pub beneath: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -445,6 +458,8 @@ impl From<SearchFilters> for marfa_core::SearchFilters {
             all_states: filters.all_states.unwrap_or(false),
             r#type: filters.type_,
             tags: filters.tags.unwrap_or_default(),
+            filter: filters.filter,
+            beneath: filters.beneath,
         }
     }
 }
@@ -567,6 +582,8 @@ fn filters(filters: Option<ListFilters>) -> marfa_core::ListFilters {
         tags: filters.tags.unwrap_or_default(),
         occurred_after: filters.occurred_after,
         occurred_before: filters.occurred_before,
+        filter: filters.filter,
+        beneath: filters.beneath,
         limit: filters.limit,
         offset: filters.offset,
     }
@@ -1345,6 +1362,8 @@ mod tests {
             all_states: Some(true),
             type_: Some("core.note".into()),
             tags: Some(vec!["a".into(), "b".into()]),
+            filter: Some("tags exists".into()),
+            beneath: Some("root".into()),
         }
         .into();
         assert_eq!(
@@ -1354,6 +1373,8 @@ mod tests {
                 all_states: true,
                 r#type: Some("core.note".into()),
                 tags: vec!["a".into(), "b".into()],
+                filter: Some("tags exists".into()),
+                beneath: Some("root".into()),
             }
         );
     }

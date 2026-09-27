@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::Result;
 use crate::catalog::Catalog;
+use crate::filter;
 use crate::model::{Item, ListFilters, Sort};
 use crate::store;
 
@@ -45,6 +46,12 @@ pub(crate) fn list(
         clauses.push("occurred_at < ?".into());
         values.push(Value::String(before.clone()));
     }
+    filter::narrow(
+        filters.filter.as_deref(),
+        filters.beneath.as_deref(),
+        &mut clauses,
+        &mut values,
+    )?;
     let where_sql = if clauses.is_empty() {
         "1 = 1".to_string()
     } else {
@@ -107,7 +114,7 @@ pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values:
     }
 }
 
-fn escape_like(text: &str) -> String {
+pub(crate) fn escape_like(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")

@@ -3,6 +3,7 @@ use serde_json::Value;
 
 use crate::Result;
 use crate::catalog::Catalog;
+use crate::filter;
 use crate::model::{SearchFilters, SearchHit};
 use crate::query;
 use crate::store;
@@ -14,11 +15,8 @@ pub(crate) fn search(
     filters: &SearchFilters,
     limit: usize,
 ) -> Result<Vec<SearchHit>> {
-    let Some(expression) = fts_expression(query) else {
-        return Ok(Vec::new());
-    };
     let mut clauses: Vec<String> = Vec::new();
-    let mut values: Vec<Value> = vec![Value::String(expression)];
+    let mut values: Vec<Value> = Vec::new();
     // The same three-way rule the list takes: a named state wins, the
     // widening suppresses the narrowing, and a caller who said neither is
     // answered the active state.
@@ -37,6 +35,18 @@ pub(crate) fn search(
         &mut values,
     );
     query::narrow_by_tags(&filters.tags, &mut clauses, &mut values);
+    // Before the query is looked at, so an expression the grammar refuses
+    // is refused on a search with no words as on any other.
+    filter::narrow(
+        filters.filter.as_deref(),
+        filters.beneath.as_deref(),
+        &mut clauses,
+        &mut values,
+    )?;
+    let Some(expression) = fts_expression(query) else {
+        return Ok(Vec::new());
+    };
+    values.insert(0, Value::String(expression));
     let narrowing: String = clauses
         .iter()
         .map(|clause| format!(" AND {clause}"))

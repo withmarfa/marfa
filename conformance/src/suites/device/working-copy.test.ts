@@ -1900,6 +1900,261 @@ describe("a local search narrows as a list does", () => {
   });
 });
 
+/**
+ * A local read takes the server's listing grammar and answers it from the
+ * copy (`device.md` 24 and 36).
+ *
+ * A filter the copy answered differently from the server would show one set
+ * of rows offline and another online for the same question, with nothing to
+ * say which is right. Four notes: `root` is the parent of `child`, which is the parent of
+ * `grandchild` and refers to `stranger`. Every expression below selects some
+ * of the four and not all of them, so each answer is the narrowing and not a
+ * listing that ignored it.
+ */
+describe("a local read narrows by the listing grammar", () => {
+  const edge = (id: string, source: string, target: string, type: string) => ({
+    id,
+    source_id: source,
+    target_id: target,
+    edge_type: type,
+    properties: {},
+    version: 1,
+    created_at: "2026-09-18T00:00:00.000Z",
+    updated_at: "2026-09-18T00:00:00.000Z",
+  });
+  const block = (...edges: ReturnType<typeof edge>[]) => ({
+    data: edges,
+    next_cursor: null,
+  });
+  const ALL = ["child", "grandchild", "root", "stranger"];
+
+  async function hydrateFamily(label: string): Promise<void> {
+    harness = await startHarness(label);
+    scriptHydration(harness.server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "root",
+              properties: {
+                title: "root",
+                body: "marsh root",
+                status: "open",
+                rating: 5,
+              },
+              edges: {
+                "parent-of": block(edge("r-c", "root", "child", "parent-of")),
+              },
+            },
+            tags: ["garden"],
+          },
+          {
+            item: {
+              id: "child",
+              properties: {
+                title: "child",
+                body: "marsh child",
+                status: "closed",
+                rating: 2,
+              },
+              edges: {
+                "parent-of": block(
+                  edge("c-g", "child", "grandchild", "parent-of"),
+                ),
+                references: block(
+                  edge("c-s", "child", "stranger", "references"),
+                ),
+              },
+            },
+            tags: ["birds"],
+          },
+          {
+            item: {
+              id: "grandchild",
+              properties: {
+                title: "grandchild",
+                body: "marsh grandchild",
+                status: "open",
+                note: "a heron by the pond",
+              },
+            },
+            tags: ["birds", "garden"],
+          },
+          {
+            item: {
+              id: "stranger",
+              properties: {
+                title: "stranger",
+                body: "marsh stranger",
+                status: "open",
+                rating: 9,
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["core.note"], "library")).ok,
+      "the hydration failed, so nothing below is a statement about a filter",
+    ).toBe(true);
+  }
+
+  async function listed(filters: {
+    filter?: string;
+    beneath?: string;
+    tags?: string[];
+  }): Promise<string[]> {
+    const answer = await harness!.device.list(filters);
+    expect(
+      answer.ok,
+      `a local list narrowed by ${JSON.stringify(filters)} was refused: ${JSON.stringify(answer)}`,
+    ).toBe(true);
+    return answer.ok ? answer.value.map((item) => item.id).sort() : [];
+  }
+
+  async function searched(filters: {
+    filter?: string;
+    beneath?: string;
+  }): Promise<string[]> {
+    const answer = await harness!.device.search("marsh", filters);
+    expect(
+      answer.ok,
+      `a local search narrowed by ${JSON.stringify(filters)} was refused: ${JSON.stringify(answer)}`,
+    ).toBe(true);
+    return answer.ok ? answer.value.map((hit) => hit.item.id).sort() : [];
+  }
+
+  it("narrows a local list by a property, a tag and the grammar's logic", async () => {
+    await hydrateFamily("filter-properties");
+    // The control: unnarrowed, the list holds all four.
+    expect(await listed({})).toEqual(ALL);
+    expect(
+      await listed({ filter: 'properties.status eq "open"' }),
+      "a property equality answered a row whose property differs, or dropped one that matches",
+    ).toEqual(["grandchild", "root", "stranger"]);
+    expect(
+      await listed({ filter: 'properties.note contains "HERON"' }),
+      "`contains` is a case-insensitive substring on the server, and the copy answered it otherwise",
+    ).toEqual(["grandchild"]);
+    expect(
+      await listed({ filter: "properties.rating gt 4" }),
+      "a numeric comparison on a property answered another set",
+    ).toEqual(["root", "stranger"]);
+    expect(
+      await listed({ filter: "properties.rating not_exists" }),
+      "a property that is absent was not told apart from one that is present",
+    ).toEqual(["grandchild"]);
+    expect(
+      await listed({ filter: 'tags contains "birds"' }),
+      "a tag condition answered a row without the tag",
+    ).toEqual(["child", "grandchild"]);
+    expect(
+      await listed({ filter: "tags not_exists" }),
+      "a row with no tags was not told apart from one with some",
+    ).toEqual(["stranger"]);
+    expect(
+      await listed({
+        filter: 'properties.status eq "open" AND tags contains "garden"',
+      }),
+      "AND answered a row meeting only one of its conditions",
+    ).toEqual(["grandchild", "root"]);
+    expect(
+      await listed({
+        filter: 'properties.status eq "closed" OR tags not_exists',
+      }),
+      "OR answered only the rows meeting both, or a row meeting neither",
+    ).toEqual(["child", "stranger"]);
+    expect(
+      await listed({
+        filter: 'properties.status eq "open"',
+        tags: ["birds"],
+      }),
+      "a filter and a tag given beside it are both required, as on the server",
+    ).toEqual(["grandchild"]);
+    expect(
+      await listed({ filter: "properties.status eq null" }),
+      "`eq null` matches nothing on the server, and the copy matched rows",
+    ).toEqual([]);
+  });
+
+  it("narrows a local list by an edge from an item and a backref to one", async () => {
+    await hydrateFamily("filter-edges");
+    expect(await listed({})).toEqual(ALL);
+    expect(
+      await listed({ filter: 'edge[parent-of] eq "child"' }),
+      "an edge condition answered a row that draws no such edge to the item",
+    ).toEqual(["root"]);
+    expect(
+      await listed({ filter: 'edge[references] eq "stranger"' }),
+      "an edge condition answered a row that draws no such edge to the item",
+    ).toEqual(["child"]);
+    expect(
+      await listed({ filter: 'backref[parent-of] eq "root"' }),
+      "a backref condition answered a row the item draws no such edge to",
+    ).toEqual(["child"]);
+    expect(
+      await listed({ filter: "edge[parent-of] exists" }),
+      "`exists` on an edge type answered a row that draws none of that type",
+    ).toEqual(["child", "root"]);
+    expect(
+      await listed({ filter: "backref[parent-of] not_exists" }),
+      "`not_exists` on a backref answered a row something points at",
+    ).toEqual(["root", "stranger"]);
+    expect(
+      await listed({ filter: 'edge[parent-of] neq "child"' }),
+      "`neq` on an edge answered the row that draws exactly that edge",
+    ).toEqual(["child", "grandchild", "stranger"]);
+  });
+
+  it("narrows a local list to an item and everything beneath it", async () => {
+    await hydrateFamily("filter-beneath");
+    expect(await listed({})).toEqual(ALL);
+    expect(
+      await listed({ beneath: "root" }),
+      "beneath an item is the item itself and every item it reaches along parent-of, at any depth: the item, its child and its grandchild",
+    ).toEqual(["child", "grandchild", "root"]);
+    expect(
+      await listed({ beneath: "child" }),
+      "beneath a middle item climbed to its parent, or missed its own child",
+    ).toEqual(["child", "grandchild"]);
+    expect(
+      await listed({ beneath: "stranger" }),
+      "beneath an item with no children is the item alone, and a `references` edge does not make a child",
+    ).toEqual(["stranger"]);
+    expect(
+      await listed({ beneath: "root", filter: 'tags contains "birds"' }),
+      "a subtree and a filter given together are both required",
+    ).toEqual(["child", "grandchild"]);
+  });
+
+  it("narrows a local search by the listing grammar and beneath, as a list does", async () => {
+    await hydrateFamily("filter-search");
+    // The control: every note carries the word, so every absence below is
+    // the narrowing.
+    expect(await searched({})).toEqual(ALL);
+    expect(
+      await searched({ filter: 'properties.status eq "open"' }),
+      "a search narrowed by a property answered another set from the list's",
+    ).toEqual(["grandchild", "root", "stranger"]);
+    expect(
+      await searched({ filter: 'backref[parent-of] eq "root"' }),
+      "a search narrowed by a backref answered another set from the list's",
+    ).toEqual(["child"]);
+    expect(
+      await searched({
+        filter: 'properties.status eq "closed" OR tags not_exists',
+      }),
+      "a search narrowed by OR answered another set from the list's",
+    ).toEqual(["child", "stranger"]);
+    expect(
+      await searched({ beneath: "child" }),
+      "a search beneath an item answered another set from the list's",
+    ).toEqual(["child", "grandchild"]);
+  });
+});
+
 describe("a local list narrows on the item's own time", () => {
   /**
    * Both bounds are exclusive, which is one rule across the whole API

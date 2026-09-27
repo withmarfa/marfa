@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
-import type { DeviceUnderTest } from "../../device/protocol.js";
+import type { DeviceUnderTest, Outcome } from "../../device/protocol.js";
 import {
   hydratedHarness,
   scriptHydration,
@@ -42,58 +42,121 @@ async function hydrated(label: string): Promise<Harness> {
   return started;
 }
 
-describe("a device refuses a filter it does not implement", () => {
-  it("refuses a list filter it does not implement", async () => {
+/**
+ * Each expression the server's listing grammar refuses with
+ * `validation_error`, beside the reason. An expression the device dropped
+ * instead would answer every row, and one it refused some other way would
+ * tell a caller something different from what the server tells them.
+ */
+const OUTSIDE_THE_GRAMMAR: Array<[string, string]> = [
+  ['properties.meta.author eq "n1"', "a nested property path"],
+  ['title eq "n1"', "a field the grammar does not know"],
+  ['tags eq "n1"', "an operator tags do not take"],
+  ['edge[parent-of] gt "n1"', "an operator edges do not take"],
+  ["state exists", "a presence test on a field every item has"],
+  [
+    'properties.title eq "n1" AND properties.body eq "x" OR tags exists',
+    "AND and OR in one expression",
+  ],
+  ['properties.title eq "n1" AND', "a logical operator with nothing after it"],
+  ['properties.title eq "n1', "an unterminated string"],
+  ["properties.title eq n1", "a bare word where a value goes"],
+  ["", "an empty expression"],
+  [
+    Array.from({ length: 11 }, () => "tags exists").join(" AND "),
+    "eleven conditions",
+  ],
+  [
+    `properties.title eq "${"x".repeat(2049 - 'properties.title eq ""'.length)}"`,
+    "2049 characters",
+  ],
+];
+
+/**
+ * A refusal refused as the server refuses it: the binary's `validation`
+ * class, carrying the server's own `validation_error` beside it, which is
+ * what the same expression sent to the server comes back as.
+ */
+function expectRefusedAsTheServerDoes(
+  outcome: Outcome<unknown>,
+  why: string,
+): void {
+  expect(
+    outcome.ok,
+    `${why} was accepted, so the read answered as though the filter matched`,
+  ).toBe(false);
+  if (outcome.ok) return;
+  const envelope = JSON.parse(outcome.refusal.raw) as {
+    error: { code: string; server: { code: string | null } | null };
+  };
+  expect(
+    [envelope.error.code, envelope.error.server?.code],
+    `${why} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
+  ).toEqual(["validation", "validation_error"]);
+}
+
+describe("a device refuses a filter outside the listing grammar", () => {
+  it("refuses a list filter the grammar refuses, as the server does", async () => {
     harness = await hydrated("list-filter");
     const { device } = harness;
 
-    // The control. A listing the device does implement has to answer, or the
-    // refusal below is a device that cannot list at all.
-    const listed = await device.list({ type: "core.note" });
-    expect(listed.ok).toBe(true);
-    expect(listed.ok ? listed.value.length : 0).toBe(1);
-
-    const refused = await device.list({
-      type: "core.note",
-      unsupported: ["--filter", 'title eq "nothing here"'],
+    // The witnesses. A filter inside the grammar answers, and narrows: one
+    // selects the row and one does not, so the refusals below are the
+    // grammar's rather than a device that refuses every filter, and the
+    // limits are refused one past where they stop, not at them.
+    const matched = await device.list({ filter: 'properties.title eq "n1"' });
+    expect(
+      matched.ok,
+      `a well-formed filter was refused: ${JSON.stringify(matched)}`,
+    ).toBe(true);
+    expect(matched.ok ? matched.value.map((item) => item.id) : []).toEqual([
+      "n1",
+    ]);
+    const missed = await device.list({ filter: 'properties.title eq "n2"' });
+    expect(missed.ok ? missed.value.length : -1).toBe(0);
+    const ten = await device.list({
+      filter: Array.from({ length: 10 }, () => "tags not_exists").join(" AND "),
     });
     expect(
-      refused.ok,
-      "a filter the device does not implement was accepted, so the listing answered every row and a caller reads that as a filter that matched",
-    ).toBe(false);
-    if (!refused.ok) {
-      expect(
-        refused.refusal.code,
-        `the device refused, but not by saying it does not offer the filter: ${refused.refusal.raw}`,
-      ).toBe("usage");
+      ten.ok,
+      `ten conditions are within the grammar and were refused: ${JSON.stringify(ten)}`,
+    ).toBe(true);
+    const longest = await device.list({
+      filter: `properties.title eq "${"x".repeat(2048 - 'properties.title eq ""'.length)}"`,
+    });
+    expect(
+      longest.ok,
+      `2048 characters are within the grammar and were refused: ${JSON.stringify(longest)}`,
+    ).toBe(true);
+
+    for (const [expression, why] of OUTSIDE_THE_GRAMMAR) {
+      expectRefusedAsTheServerDoes(
+        await device.list({ filter: expression }),
+        why,
+      );
     }
   });
 
-  it("refuses a search filter it does not implement", async () => {
+  it("refuses a search filter the grammar refuses, as the server does", async () => {
     harness = await hydrated("search-filter");
     const { device } = harness;
 
-    const found = await device.search("n1");
+    const found = await device.search("n1", {
+      filter: 'properties.title eq "n1"',
+    });
     expect(
       found.ok,
-      `search itself was refused: ${JSON.stringify(found)}`,
+      `a well-formed search filter was refused: ${JSON.stringify(found)}`,
     ).toBe(true);
-
-    const refused = await device.attempt([
-      "search",
+    expect(found.ok ? found.value.map((hit) => hit.item.id) : []).toEqual([
       "n1",
-      "--filter",
-      'type eq "core.bookmark"',
     ]);
-    expect(
-      refused.ok,
-      "a search filter the device does not implement was accepted, so the search answered the unfiltered set and reported it as filtered",
-    ).toBe(false);
-    if (!refused.ok) {
-      expect(
-        refused.refusal.code,
-        `the device refused, but not by saying it does not offer the filter: ${refused.refusal.raw}`,
-      ).toBe("usage");
+
+    for (const [expression, why] of OUTSIDE_THE_GRAMMAR) {
+      expectRefusedAsTheServerDoes(
+        await device.search("n1", { filter: expression }),
+        `on a search, ${why}`,
+      );
     }
   });
 });
