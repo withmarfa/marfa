@@ -865,25 +865,24 @@ export function eventRoutes(
               // is a client that has missed nothing: it is every device
               // that hydrated an instance with an empty log. A log with no
               // events never trips the check.
-              {
+              const retiredAfter = async (after: bigint): Promise<boolean> => {
                 const minRetained = await storage.eventLog.getMinRetainedId();
-                if (
-                  minRetained !== null &&
-                  afterIdResolved + 1n < minRetained
-                ) {
-                  const payload = JSON.stringify({
-                    type: "catchup_too_old",
-                    min_retained_id: String(minRetained),
-                    requested: String(afterIdResolved),
-                  });
-                  // id is the min retained id so clients don't store a cursor older than the log can serve.
-                  send(
-                    `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
-                  );
-                  endStream();
+                if (minRetained === null || after + 1n >= minRetained) {
                   return false;
                 }
-              }
+                const payload = JSON.stringify({
+                  type: "catchup_too_old",
+                  min_retained_id: String(minRetained),
+                  requested: String(afterIdResolved),
+                });
+                // id is the min retained id so clients don't store a cursor older than the log can serve.
+                send(
+                  `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
+                );
+                endStream();
+                return true;
+              };
+              if (await retiredAfter(afterIdResolved)) return false;
 
               // What is safe to discard is an id this replay actually
               // sent, so that is what is recorded rather than the
@@ -916,6 +915,19 @@ export function eventRoutes(
                 );
 
                 if (batch.length === 0) break;
+
+                // The sweep can run between the check above and any read
+                // here. A batch that does not start at the next id may be
+                // one that lost the events between to it, and only the
+                // oldest retained id, read after the batch, tells which.
+                const [first] = batch;
+                if (
+                  first !== undefined &&
+                  first.id !== lastReplayedId + 1n &&
+                  (await retiredAfter(lastReplayedId))
+                ) {
+                  return false;
+                }
 
                 // The batch's edge rows, decoded once and their source
                 // items read in one query.

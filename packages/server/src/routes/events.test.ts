@@ -174,6 +174,66 @@ describe("GET /events — catchup_too_old", () => {
     expect(text).not.toContain("event: stream_live");
   });
 
+  it("refuses a replay the sweep overtakes after the cursor was checked", async () => {
+    const cursor = await createNote("overtaken-1");
+    await createNote("overtaken-2");
+    await createNote("overtaken-3");
+    const newest = await createNote("overtaken-4");
+
+    // The first read of the replay waits here, after the cursor was checked
+    // against the oldest retained id and before the log is read.
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    let reached!: () => void;
+    const atRead = new Promise<void>((resolve) => (reached = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let armed = true;
+    store.getAfter = async (afterId, limit) => {
+      if (armed && afterId === cursor) {
+        armed = false;
+        reached();
+        await released;
+      }
+      return real(afterId, limit);
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      await atRead;
+      const run = (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun;
+      await run("DELETE FROM event_log WHERE id < ?", [Number(newest)]);
+      expect(await store.getMinRetainedId()).toBe(newest);
+      release();
+
+      const { text } = await readSse(res, {
+        until: (seen) =>
+          seen.includes("event: catchup_too_old") ||
+          seen.includes("event: stream_live"),
+      });
+      expect(
+        text,
+        "a sweep that retired the events after the cursor mid-replay was replayed over in silence, so the reader resumes past events it never saw",
+      ).not.toContain("event: stream_live");
+      const frame = findEvent(text, "catchup_too_old");
+      expect(frame).not.toBeNull();
+      expect(frame!.id).toBe(String(newest));
+    } finally {
+      store.getAfter = real;
+      await (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun("DELETE FROM event_log", []);
+    }
+  });
+
   it("replays from a cursor one below the oldest retained id, which is a client exactly in step", async () => {
     // A cursor of `0` against a log whose first event is `1` is a device
     // that hydrated an empty instance and has missed nothing, and a
