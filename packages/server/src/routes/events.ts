@@ -971,9 +971,6 @@ export function eventRoutes(
                 );
 
                 if (batch.length === 0) break;
-                if (Date.now() - lastWriteAt >= REPLAY_PROGRESS_MS) {
-                  send(": replaying\n\n");
-                }
 
                 // The sweep can run between the check above and any read
                 // here. A batch that does not start at the next id may
@@ -986,6 +983,9 @@ export function eventRoutes(
                   (await retiredAfter(lastReplayedId))
                 ) {
                   return false;
+                }
+                if (Date.now() - lastWriteAt >= REPLAY_PROGRESS_MS) {
+                  send(": replaying\n\n");
                 }
 
                 // The batch's edge rows, decoded once and their source

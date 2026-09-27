@@ -564,6 +564,62 @@ describe("GET /events — a replay that sends nothing for a while", () => {
     ).toContain("event: stream_live");
   });
 
+  it("refuses a replay the sweep overtakes between its reads", async () => {
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    const newest = await createNote("sweep-newest");
+    // Rows older than the retention below the newest, more than one batch
+    // of them, so the sweep can land between two reads.
+    await run(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+       INSERT INTO event_log (id, event_type, item_id, payload, enable_fanout, created_at)
+       SELECT ? - 2001 + i, event_type, item_id, payload, 0, ?
+       FROM event_log, n WHERE event_log.id = ?`,
+      [
+        Number(newest),
+        new Date(Date.now() - 3 * 3_600_000).toISOString(),
+        Number(newest),
+      ],
+    );
+    const cursor = newest - 2001n;
+    expect(await ctx.storage.eventLog.getMinRetainedId()).toBe(cursor + 1n);
+
+    // The sweep runs in the turn the replay gives up after its first read.
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    let armed = true;
+    store.getAfter = async (afterId, limit) => {
+      const rows = await real(afterId, limit);
+      if (armed) {
+        armed = false;
+        setImmediate(() => void store.cleanup(1));
+      }
+      return rows;
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      const { text } = await readSse(res, {
+        until: (seen) =>
+          seen.includes("event: catchup_too_old") ||
+          seen.includes("event: stream_live"),
+      });
+      expect(
+        text,
+        "a sweep between two reads of the replay was replayed over in silence",
+      ).not.toContain("event: stream_live");
+      expect(findEvent(text, "catchup_too_old")).not.toBeNull();
+    } finally {
+      store.getAfter = real;
+      await run("DELETE FROM event_log", []);
+    }
+  });
+
   it("lets the process answer other work between its reads of the log", async () => {
     const cursor = await createNote("yield-cursor");
     const run = (
