@@ -219,6 +219,60 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     ).toBe(false);
     expect(await logSince(cursor)).toHaveLength(0);
   });
+
+  it("gives a retry no second copy of an edge the sibling was given", async () => {
+    const { id, base } = await collidingNote();
+    const parent = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "the retried parent" } },
+    });
+    const parentId = ((await parent.json()) as { item: { id: string } }).item
+      .id;
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: parentId, target_id: id, edge_type: "parent-of" },
+    });
+    expect(edge.status).toBe(201);
+    const key = `retry-edge-${Math.random().toString(36).slice(2, 10)}`;
+
+    const first = await request(
+      ctx.app,
+      "PATCH",
+      `/items/${id}?conflict=auto`,
+      {
+        key: ctx.workingKey,
+        headers: { "Idempotency-Key": key },
+        body: { properties: { body: "retried edit, parented" }, version: base },
+      },
+    );
+    expect(first.status).toBe(200);
+    const siblingId = (
+      (await first.json()) as {
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }
+    ).conflict_resolution?.conflicted_copy_id;
+    const parentsOf = async () =>
+      (await ctx.storage.edges.listToTarget(siblingId!)).data.filter(
+        (held) => held.edge_type === "parent-of",
+      );
+    // The witness: the first execution gave the sibling its parent.
+    expect(await parentsOf()).toHaveLength(1);
+
+    const cursor = await logCursor();
+    const again = await ctx.storage.items.update(id, {
+      properties: { body: "retried edit, parented" },
+      version: base,
+      conflict_mode: "auto",
+      idempotency_key: key,
+      may_copy_edge: () => true,
+    });
+    expect("error" in again).toBe(false);
+    expect(
+      await parentsOf(),
+      "a retry gave the sibling a second copy of its parent edge",
+    ).toHaveLength(1);
+    expect(await logSince(cursor)).toHaveLength(0);
+  });
 });
 
 describe("a conflicted copy is findable", () => {
