@@ -728,7 +728,7 @@ impl Folder {
             // earlier save go on the version they were read at (`folders.md` 31).
             let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
             // A line an earlier edit already went on is spent: this edit was
-            // made against that one (`queue-and-verdicts.md` 43).
+            // made against that one (`folders.md` 17).
             let line = file
                 .line
                 .filter(|line| *line < held.version && edit_line != Some(*line));
@@ -1200,6 +1200,15 @@ impl Folder {
                 report.moved += 1;
             }
 
+            // Written over an edit still waiting, the file's line is spent
+            // once that edit lands (`folders.md` 17, 18).
+            let edit_line = if carries_frontmatter(Path::new(&want))
+                && crate::store::item_waits(&*self.core.conn()?, &item.id)?
+            {
+                Some(item.version)
+            } else {
+                bound.as_ref().and_then(|bound| bound.edit_line)
+            };
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent).map_err(|error| {
                     CoreError::Store(format!("cannot make {}: {error}", parent.display()))
@@ -1217,7 +1226,7 @@ impl Folder {
                         written_hash: Some(hash.clone()),
                         links: wrote.clone(),
                         declined: declined.clone(),
-                        edit_line: None,
+                        edit_line,
                     },
                 )?;
                 // Counted, because one row this clears can be a person's own
@@ -1255,7 +1264,7 @@ impl Folder {
                         written_hash: Some(hash),
                         links: wrote,
                         declined,
-                        edit_line: None,
+                        edit_line,
                     },
                 )?;
             }
@@ -1314,16 +1323,19 @@ impl Folder {
         if !carries_frontmatter(Path::new(&bound.path)) {
             return Ok(false);
         }
-        if bound.edit_line.is_some() {
-            let conn = self.core.conn()?;
-            if !crate::store::item_waits(&conn, &item.id)? {
-                return Ok(false);
-            }
-        }
         let Ok(found) = std::fs::read_to_string(self.root.join(&bound.path)) else {
             return Ok(false);
         };
         let line = line_of(&document::read(&found).properties);
+        // A line no newer than the one its own edit spent is rewritten once
+        // that edit lands.
+        if bound
+            .edit_line
+            .is_some_and(|spent| line.unwrap_or(0) <= spent)
+            && !crate::store::item_waits(&*self.core.conn()?, &item.id)?
+        {
+            return Ok(false);
+        }
         let (text, _) = self.render(item, declined, true, line)?;
         Ok(state::hash(text.as_bytes()) == bound.content_hash)
     }
@@ -1347,9 +1359,8 @@ impl Folder {
         }
     }
 
-    /// An item as a file's bytes, and the targets of the links in its body.
-    /// The id and the version line go in where the file carries frontmatter
-    /// (`folders.md` 8, 17).
+    /// An item as a file's bytes and its body's link targets, with the id and
+    /// version line where the file carries frontmatter (`folders.md` 8, 17).
     fn render(
         &self,
         item: &Item,
@@ -1501,9 +1512,8 @@ pub struct PullReport {
     pub kept: usize,
 }
 
-/// A file's frontmatter as the properties of a write, without its
-/// `marfa_id` and `marfa_version`, which name the item and the version rather
-/// than being fields of it.
+/// A file's frontmatter as a write's properties, without `marfa_id` and
+/// `marfa_version`, which name the item and version rather than fields.
 fn sendable(mut properties: Map<String, Value>) -> Map<String, Value> {
     // `shift_remove`: `remove` moves the last field into the hole, which
     // reorders the frontmatter (`folders.md` 5).

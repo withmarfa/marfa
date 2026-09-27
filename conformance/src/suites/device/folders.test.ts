@@ -2714,9 +2714,8 @@ describe("writing", () => {
   it("bases a stale file's edit on the version written in it", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b1";
     const { rows, held } = await heldWhileRetitled("folder-version-base", id);
-    // The editor saves what it held over the file, the body changed, and
-    // saves again before anything is sent: the second is made against the
-    // first, not against the version the line names.
+    // Saved twice before anything is sent: the second is made against the
+    // first, not the version the line names.
     for (const body of ["my edit", "my edit, twice"]) {
       put(harness!, "Note.md", held.replace("as read", body));
       const scanned = await harness!.folder.scan();
@@ -2792,14 +2791,53 @@ describe("writing", () => {
     expect(door.conflictedCopies()).toEqual([]);
     expect(read(harness!, "Note.md")).toContain("marfa_version: 4");
 
-    // Said in words too, where the editor saves its old text once more.
+    // The old text saved once more is on a spent line, so nothing is rebased.
     put(harness!, "Note.md", held.replace("as read", "my edit, again"));
+    const again = await harness!.folder.push();
+    expect(
+      again.ok && [
+        again.value.drain.rebased,
+        sentUpdates(harness!).at(-1)?.body.version,
+      ],
+    ).toEqual([0, 4]);
+    expect(rows.get(id)?.properties.body).toBe("my edit, again\n");
+  });
+
+  it("says in words that an edit went over a thinned version", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b6";
+    const { door, held } = await heldWhileRetitled(
+      "folder-version-thinned-words",
+      id,
+    );
+    door.thin(id, 1);
+    put(harness!, "Note.md", held.replace("as read", "my edit"));
     const said = await harness!.folder.pushText();
     expect(said.ok, JSON.stringify(said)).toBe(true);
     expect(said.ok && said.value).toContain(
       "1 edit(s) written from a version the server no longer holds, sent again on the version this copy holds",
     );
-    expect(rows.get(id)?.properties.body).toBe("my edit, again\n");
+  });
+
+  it("says while watching that an edit went over a thinned version", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b7";
+    const { door, held } = await heldWhileRetitled(
+      "folder-version-thinned-watched",
+      id,
+    );
+    door.thin(id, 1);
+    put(harness!, "Note.md", held.replace("as read", "my edit"));
+    const watching = harness!.folder.watchText();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout).toContain(
+            "1 edit(s) written from a version the server no longer holds",
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
   });
 
   it("does not rewrite a file for its version line alone", async () => {
@@ -2886,6 +2924,126 @@ describe("writing", () => {
     expect(theirs.ok, JSON.stringify(theirs)).toBe(true);
     expect(read(harness, "Note.md")).toContain("theirs");
     expect(read(harness, "Note.md")).toContain("marfa_version: 4");
+  });
+
+  it("rewrites the line once its own edit lands, where a pull wrote the file while that edit waited", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b4";
+    harness = await folderHarness("folder-version-written-while-waiting", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "Note", body: "as read\n", extra: "theirs" },
+            }),
+          ),
+        ]),
+        liveReplay("3", []),
+      ],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const written = read(harness, "Note.md");
+    door!.update(id, { properties: { extra: "theirs" }, version: 1 });
+    // The first send meets a failing server, so the edit still waits when
+    // the pull writes the other machine's change out.
+    const update = door!.update.bind(door!);
+    let failed = false;
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) => {
+      if (failed) return update(...args);
+      failed = true;
+      return refusal(503, "service_unavailable", "later");
+    }) as FolderDoor["update"];
+
+    put(harness, "Note.md", written.replace("as read", "mine"));
+    const waiting = await harness.folder.push();
+    expect(waiting.ok, JSON.stringify(waiting)).toBe(true);
+    // The witness: the pull wrote the file over the waiting edit.
+    expect(read(harness, "Note.md")).toContain("extra: theirs");
+    expect(read(harness, "Note.md")).toContain("mine");
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2");
+
+    const landed = await harness.folder.push();
+    expect(landed.ok, JSON.stringify(landed)).toBe(true);
+    expect(rows.get(id)?.version).toBe(3);
+    expect(
+      read(harness, "Note.md"),
+      "the line stayed behind the file's own edit, so the next edit is merged against it as though another machine wrote it",
+    ).toContain("marfa_version: 3");
+
+    put(
+      harness,
+      "Note.md",
+      read(harness, "Note.md").replace("mine", "mine, more"),
+    );
+    const more = await harness.folder.push();
+    expect(more.ok, JSON.stringify(more)).toBe(true);
+    expect(more.ok && more.value.drain.verdicts.map((v) => v.verdict)).toEqual([
+      "accepted",
+    ]);
+    expect(rows.get(id)?.properties.body).toBe("mine, more\n");
+    expect(door!.conflictedCopies()).toEqual([]);
+  });
+
+  it("keeps a line an edit spent spent after the pull rewrites it", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000b5";
+    harness = await folderHarness("folder-version-spent-rewritten", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [liveReplay("1", [])],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Note.md");
+
+    // An agent writes from what it read, and does not read the file again.
+    put(harness, "Note.md", held.replace("as read", "first"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the own edit landed and the pull wrote its line.
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2");
+
+    put(harness, "Note.md", held.replace("as read", "first, then more"));
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      sentUpdates(harness).map((update) => update.body.version),
+      "the second save went on the line the first already spent, and was merged against the first as though another machine wrote it",
+    ).toEqual([1, 2]);
+    expect(rows.get(id)?.properties.body).toBe("first, then more\n");
+    expect(door!.conflictedCopies()).toEqual([]);
   });
 
   it("defers a delete past the rename grace", async () => {
@@ -3488,7 +3646,7 @@ describe("what a pull does with a file whose item left the slice", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders.md` 32).
+    // again (`folders.md` 30).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();
