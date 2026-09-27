@@ -26,6 +26,9 @@ importers:
       prettier:
         specifier: ^3.9.6
         version: 3.9.6
+      smol-toml:
+        specifier: ^1.9.0
+        version: 1.9.0
       tslib:
         specifier: ^2.8.1
         version: 2.8.1
@@ -3463,6 +3466,10 @@ packages:
     resolution: {integrity: sha512-94hK0Hh8rPqQl2xXc3HsaBoOXKV20MToPkcXvwbISWLEs+64sBq5kFgn2kJDHb1Pry9yrP0dxrCI9RRci7RXKg==}
     engines: {node: '>= 6.0.0', npm: '>= 3.0.0'}
 
+  smol-toml@1.9.0:
+    resolution: {integrity: sha512-hpd+HLON7HdZXqYchMM/+LaTTbdK0AU3NngIJ4KVyWbY9bfQqdL9cD+4yf6dUoU2Ap4VsU0JkQi6FxAI1B2mXQ==}
+    engines: {node: '>= 18'}
+
   socks-proxy-agent@10.1.0:
     resolution: {integrity: sha512-WlMj/67cEJ6MDI1OcsnjuYKDNDoyPCCYZ249kuuXPiMDw9F8PXkVaQ7YWu3siTydfQ/4BEZcvGzu+aYvz7dDCQ==}
     engines: {node: '>= 20'}
@@ -6813,6 +6820,8 @@ snapshots:
     optional: true
 
   smart-buffer@4.2.0: {}
+
+  smol-toml@1.9.0: {}
 
   socks-proxy-agent@10.1.0:
     dependencies:

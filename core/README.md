@@ -45,18 +45,25 @@ Three commands, which `Core checks` in `ci.yml` runs on every pull request:
 ```sh
 cargo fmt --all --check
 cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
-cargo test --locked --workspace --exclude marfa-client
+cargo nextest run --locked --workspace --exclude marfa-client
 ```
 
 and again in `bindings/swift`, its own workspace, as plain `cargo fmt --check`,
-`cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked`.
+`cargo clippy --locked --all-targets -- -D warnings` and `cargo nextest run --locked`.
 The generated `marfa-client` is held to its generator rather than to clippy or
 the tests; formatting takes it too, since the generator formats what it writes.
+
+The tests run under [cargo-nextest](https://nexte.st), which kills a test still
+running after the budget in `.config/nextest.toml`. Every test binary, under
+nextest or `cargo test`, also runs through `scripts/test-limits.sh`
+(`.cargo/config.toml` names it), which caps the size of any file the binary
+writes and the processor time it takes. The kernel holds that cap, so it stops a
+runaway test even when the runner that started it is gone.
 
 `core.yml` runs the rest on a change to the core, to the packages the server is
 built from, or to the workspace's manifests: a lane against a real server, where
 `scripts/server-up.sh` boots one and mints a key and
-`cargo test --workspace --exclude marfa-client -- --ignored` runs the tests
+`cargo nextest run --workspace --exclude marfa-client --run-ignored only` runs the tests
 that need one, the Swift FFI crate's release build, and the Node binding's
 proof. That is what `scripts` is for.
 

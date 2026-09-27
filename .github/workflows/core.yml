@@ -79,6 +79,9 @@ jobs:
         with:
           components: rustfmt, clippy
           targets: aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9
 
       - uses: pnpm/action-setup@v6
         with:
@@ -116,7 +119,7 @@ jobs:
           # succeeds; an assignment carries the script's own status.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
-          cargo test --locked --workspace --exclude marfa-client -- --ignored
+          cargo nextest run --locked --workspace --exclude marfa-client --run-ignored only
 
       # The crate marfa-swift packages with `build.sh` at the commit it
       # pins, built here for each system that script targets, so a change

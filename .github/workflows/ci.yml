@@ -114,6 +114,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # nextest, so a test past the budget in `core/.config/nextest.toml` is
+      # killed rather than left running.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest@0.9
       - name: Check the core workspace
         working-directory: core
         run: |
@@ -121,7 +126,7 @@ jobs:
           cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
           # The tests keep in keychain files of their own; the login
           # keychain holds after them what it held before.
-          scripts/login-keychain-unchanged.sh cargo test --locked --workspace --exclude marfa-client
+          scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace --exclude marfa-client
       # Its own workspace, so its own three commands: cargo-swift refuses to
       # name a package inside a multi-crate workspace.
       - name: Check the Swift FFI crate
@@ -129,7 +134,7 @@ jobs:
         run: |
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
-          cargo test --locked
+          cargo nextest run --locked
 
   # The contract, run against the server in this same checkout.
   #
