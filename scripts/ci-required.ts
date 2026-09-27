@@ -7,9 +7,7 @@ function documentationOnly(path: string) {
   return (
     /^[^/]+\.md$/.test(path) ||
     path === "LICENSE" ||
-    path === ".github/CODEOWNERS" ||
-    path === ".github/PULL_REQUEST_TEMPLATE.md" ||
-    path.startsWith(".github/ISSUE_TEMPLATE/")
+    path === ".github/CODEOWNERS"
   );
 }
 
