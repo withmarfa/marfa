@@ -140,15 +140,18 @@ pub(crate) fn hydrate(
         }
     }
 
-    // Read after the pages, so a pin made while they were read is kept too.
     let pinned = store::pins(&*core.conn()?)?;
     for id in pinned {
         if store::item_held(&*core.conn()?, &id)? {
             continue;
         }
-        // A pinned row the server does not hold stays pinned and holds
-        // nothing until an event brings it.
-        let Some((row, edges)) = read_with_edges(http, &id)? else {
+        // A pinned row the server does not hold, or the key can no longer
+        // read, stays pinned and holds nothing until an event brings it.
+        let read = match read_with_edges(http, &id) {
+            Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => None,
+            read => read?,
+        };
+        let Some((row, edges)) = read else {
             continue;
         };
         let mut conn = core.conn()?;

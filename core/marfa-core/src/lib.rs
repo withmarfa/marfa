@@ -197,7 +197,8 @@ impl Core {
     }
 
     /// Holds `id` whatever the slice says of it (`device.md` 1), read now; one
-    /// neither the server nor the copy holds is refused. True if newly pinned.
+    /// neither the server nor the copy holds is refused. Answers whether it
+    /// was pinned already.
     pub fn pin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let http = self.http()?;
@@ -225,7 +226,7 @@ impl Core {
             store::unpin(&*self.conn()?, id)?;
         }
         match held? {
-            true => Ok(added),
+            true => Ok(!added),
             false => Err(CoreError::NotFound {
                 code: "not_found".into(),
                 message: format!("the server holds no item {id} to pin"),
@@ -233,23 +234,20 @@ impl Core {
         }
     }
 
-    /// Stops holding `id` by id; a row the slice does not take goes. True if
-    /// it was pinned.
+    /// Stops holding `id` by id; a row the slice does not take goes, unless
+    /// writes to it still wait. Answers whether it was pinned.
     pub fn unpin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         let pinned = store::unpin(&tx, id)?;
         if pinned
+            && store::waiting_writes_for_item(&tx, id)?.is_empty()
             && let Some((types, tier)) = store::slice(&tx)?
             && let Some(held) = store::items_by_ids(&tx, &[id.to_string()])?.pop()
         {
             let catalog = catalog::Catalog::load(&tx)?;
-            let taken = held.tier == Some(tier)
-                && types
-                    .iter()
-                    .any(|declared| catalog.matches(declared, &held.r#type));
-            if !taken {
+            if !store::slice_takes(&catalog, &types, tier, &held.r#type, held.tier) {
                 store::evict_item(&tx, id, &store::whole_edge_types(&tx)?)?;
             }
         }

@@ -24,17 +24,13 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "10";
 
-/// Each schema version from 6 and the statements it named, hashed as the
-/// folder mapping hashes bytes. A change to `schema.sql` without a new version
-/// would open a store from the earlier build and fail on its first read of a
-/// column that build never wrote, so the test holds the statements to the row
-/// for the version above: a new schema is a new row under a new version, and
-/// moving the version to a row that names other statements fails it.
+/// Each schema version from 6 and the statements it names, hashed as the
+/// folder mapping hashes bytes. While no store is live the version does not
+/// move: a change to `schema.sql` rewrites the hash in the current version's
+/// row, and the test holds the statements to that row.
 ///
-/// Over the statements SQLite executes, not the file: a comment cannot make
-/// one build read a column another build never wrote, and a hash that moved
-/// on one would price every edit to the prose at a version bump that refuses
-/// every working copy on disk.
+/// Over the statements SQLite executes, not the file, so a comment moves no
+/// hash.
 #[cfg(test)]
 const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("6", "f73a05f772245511"),
@@ -248,8 +244,8 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
 }
 
-/// Whether the copy keeps this row: pinned, or one of the slice's types,
-/// with the subtree, at its tier. A copy that has never hydrated keeps nothing.
+/// Whether the copy keeps this row: pinned, or taken by the slice. A copy
+/// that has never hydrated keeps nothing.
 pub fn slice_holds(
     conn: &Connection,
     catalog: &crate::catalog::Catalog,
@@ -261,10 +257,28 @@ pub fn slice_holds(
     let Some((types, tier)) = slice(conn)? else {
         return Ok(false);
     };
-    Ok(Tier::parse_wire(item.tier.as_deref())? == Some(tier)
+    Ok(slice_takes(
+        catalog,
+        &types,
+        tier,
+        &item.r#type,
+        Tier::parse_wire(item.tier.as_deref())?,
+    ))
+}
+
+/// Whether a slice of `types` at `tier` takes a row: one of its types, with
+/// the subtree, at its tier.
+pub fn slice_takes(
+    catalog: &crate::catalog::Catalog,
+    types: &[String],
+    tier: Tier,
+    row_type: &str,
+    row_tier: Option<Tier>,
+) -> bool {
+    row_tier == Some(tier)
         && types
             .iter()
-            .any(|declared| catalog.matches(declared, &item.r#type)))
+            .any(|declared| catalog.matches(declared, row_type))
 }
 
 /// The slice a hydration declared: its types and its tier, or nothing where
@@ -631,7 +645,7 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
 /// The writes still waiting on one item, read through the index rather than
 /// by reading the whole queue, because this runs once per answer and once
 /// per event.
-fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+pub fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
         "WHERE item_id = ?1 AND (verdict IS NULL OR verdict = ?2)",
@@ -1620,8 +1634,8 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The version names this schema and no other: a change to the
-    /// statements moves both, or this says so.
+    /// The current version's row names this schema's statements and no
+    /// other version's.
     #[test]
     fn the_schema_version_names_the_schema_as_it_is() {
         let versions: Vec<&str> = SCHEMA_HASHES.iter().map(|(version, _)| *version).collect();
@@ -1645,7 +1659,7 @@ mod tests {
         assert_eq!(
             crate::folder::state::hash(schema_statements().as_bytes()),
             hashes[hashes.len() - 1],
-            "schema.sql's statements changed: move SCHEMA_VERSION on and add its row to SCHEMA_HASHES"
+            "schema.sql's statements changed: write their hash into SCHEMA_HASHES's row for SCHEMA_VERSION"
         );
     }
 
@@ -3173,13 +3187,14 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     )?)
 }
 
-/// Drops a row the server holds nothing for.
+/// Drops a row the server holds nothing for, with its pin.
 ///
 /// What reconciling a refused create means (`queue-and-verdicts.md` 12): the
 /// working copy minted the row locally and the server declined it, so there
 /// is nothing to reconcile it to and leaving it would be the copy reporting
 /// an item that exists nowhere.
 pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    unpin(conn, id)?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],

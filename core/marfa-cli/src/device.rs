@@ -486,26 +486,26 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             })
         }
         DeviceCommand::Pin { id } => {
-            let added = store.open_with_server(named)?.pin(&id)?;
+            let was_pinned = store.open_with_server(named)?.pin(&id)?;
             output::report(
-                &serde_json::json!({ "id": id, "pinned": true, "was_pinned": !added }),
+                &serde_json::json!({ "id": id, "pinned": true, "was_pinned": was_pinned }),
                 json,
                 || {
-                    if added {
-                        format!("pinned {id}")
-                    } else {
+                    if was_pinned {
                         format!("{id} was pinned already, and is read again")
+                    } else {
+                        format!("pinned {id}")
                     }
                 },
             )
         }
         DeviceCommand::Unpin { id } => {
-            let removed = store.open(None)?.unpin(&id)?;
+            let was_pinned = store.open(None)?.unpin(&id)?;
             output::report(
-                &serde_json::json!({ "id": id, "pinned": false, "was_pinned": removed }),
+                &serde_json::json!({ "id": id, "pinned": false, "was_pinned": was_pinned }),
                 json,
                 || {
-                    if removed {
+                    if was_pinned {
                         format!("unpinned {id}")
                     } else {
                         format!("{id} was not pinned")
