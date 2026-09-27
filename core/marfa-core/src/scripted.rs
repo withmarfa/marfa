@@ -45,6 +45,14 @@ pub enum Then {
     /// The body is cut off inside a chunk, which the reading end sees as an
     /// error and not as the end of the stream.
     Break,
+    /// Says `: keepalive` every `keepalive` until `after`, then writes
+    /// `frames` and holds the connection open: a replay that reads for a
+    /// while before its marker.
+    Later {
+        keepalive: Duration,
+        after: Duration,
+        frames: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -237,6 +245,30 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 let _ = stream.write_all(body.as_bytes());
             }
             let _ = stream.flush();
+            if let Then::Later {
+                keepalive,
+                after,
+                frames,
+            } = &then
+            {
+                let started = Instant::now();
+                let mut said = Instant::now();
+                while !stopping.load(Ordering::Relaxed) && started.elapsed() < *after {
+                    thread::sleep(Duration::from_millis(5));
+                    if said.elapsed() >= *keepalive {
+                        if stream.write_all(b": keepalive\n\n").is_err() {
+                            return;
+                        }
+                        said = Instant::now();
+                    }
+                }
+                if stream.write_all(frames.concat().as_bytes()).is_err() {
+                    return;
+                }
+                while !stopping.load(Ordering::Relaxed) {
+                    thread::sleep(Duration::from_millis(5));
+                }
+            }
             if let Then::Hold { keepalive, lasting } = then {
                 let started = Instant::now();
                 let mut said = Instant::now();

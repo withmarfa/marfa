@@ -362,3 +362,381 @@ describe("MARFA_EVENT_LOG_RETENTION_HOURS parser", () => {
     expect(parseEventLogRetentionHours("not-a-number")).toBe(168);
   });
 });
+
+describe("GET /events — a replay that sends nothing for a while", () => {
+  it("says it is still reading, so a reader waiting on silence does not give up", async () => {
+    const cursor = await createNote("withheld-cursor");
+    const withheld = await createNote("withheld-row");
+    await createNote("withheld-row-2");
+
+    // A read of the log slow enough to outlast the progress interval, over
+    // rows the type filter withholds, so the replay itself sends nothing.
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    store.getAfter = async (afterId, limit) => {
+      const rows = await real(afterId, limit);
+      if (afterId === cursor) await new Promise((r) => setTimeout(r, 1_200));
+      return rows;
+    };
+    try {
+      const withheldRes = await request(
+        ctx.app,
+        "GET",
+        "/events?type=core.task",
+        {
+          key: ctx.workingKey,
+          headers: { "Last-Event-ID": String(cursor) },
+        },
+      );
+      const { text } = await readSse(withheldRes, {
+        until: (seen) => seen.includes("event: stream_live"),
+      });
+      expect(text).not.toContain(`id: ${String(withheld)}`);
+      const said = text.indexOf(": replaying");
+      expect(
+        said,
+        "a replay reading withheld rows sent nothing until its marker, so a reader that ends on silence stops short of the head",
+      ).toBeGreaterThan(-1);
+      expect(said).toBeLessThan(text.indexOf("event: stream_live"));
+
+      // The witness: a replay whose read is quick says nothing extra.
+      store.getAfter = real;
+      const quickRes = await request(ctx.app, "GET", "/events?type=core.task", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      const quick = await readSse(quickRes, {
+        until: (seen) => seen.includes("event: stream_live"),
+      });
+      expect(quick.text).not.toContain(": replaying");
+    } finally {
+      store.getAfter = real;
+    }
+  });
+
+  /**
+   * A replay over 30,000 rows the type filter withholds, with writers
+   * taking their turns between its reads, as requests arriving on sockets
+   * do, and publishing notes this reader may see.
+   *
+   * `damaged` puts a row the replay cannot read ahead of the withheld rows:
+   * `"stored"` one written straight to the log, which no subscriber was
+   * ever sent, and `"published"` a note published to this stream while its
+   * replay waits, whose stored copy is then spoiled, so its live copy is the
+   * one it has.
+   */
+  async function busyReplay(
+    damaged?: "stored" | "published" | "published-late",
+  ): Promise<string> {
+    const cursor = await createNote("busy-cursor");
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    const seed = () =>
+      run(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 30000)
+         INSERT INTO event_log (event_type, item_id, payload, enable_fanout, created_at)
+         SELECT event_type, item_id, REPLACE(payload, '"core.note"', '"core.task"'), 0, created_at
+         FROM event_log, n WHERE event_log.id = ?`,
+        [Number(cursor)],
+      );
+    if (damaged === "stored") {
+      await run(
+        "INSERT INTO event_log (event_type, item_id, payload, enable_fanout, created_at) VALUES ('created', 'unreadable', 'not json', 0, ?)",
+        [new Date().toISOString()],
+      );
+    }
+    const published = damaged === "published" || damaged === "published-late";
+    if (!published) await seed();
+
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    let reached!: () => void;
+    const atRead = new Promise<void>((resolve) => (reached = resolve));
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    if (published) {
+      let armed = true;
+      store.getAfter = async (afterId, limit) => {
+        if (armed) {
+          armed = false;
+          reached();
+          await released;
+        }
+        return real(afterId, limit);
+      };
+    }
+
+    const writing = { on: true };
+    // Read through a call: the flag is cleared from outside the loop.
+    const stillWriting = () => writing.on;
+    let written = 0;
+    let writer: Promise<void> | undefined;
+    const write = async () => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "busy" } },
+      });
+      expect(res.status).toBe(201);
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events?type=core.note", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      if (published) {
+        await atRead;
+        // Early, the replay reads the spoiled row before the hold fills;
+        // late, behind the withheld rows, after the hold was given up.
+        if (damaged === "published-late") await seed();
+        await write();
+        await run(
+          "UPDATE event_log SET payload = 'not json' WHERE id = (SELECT MAX(id) FROM event_log)",
+          [],
+        );
+        if (damaged === "published") await seed();
+        release();
+      }
+      writer = (async () => {
+        while (stillWriting()) {
+          await new Promise((resolve) => setImmediate(resolve));
+          for (let i = 0; i < 20 && stillWriting(); i += 1) {
+            await write();
+            written += 1;
+          }
+        }
+      })();
+      const { text } = await readSse(res, {
+        until: (seen) =>
+          seen.includes("event: stream_live") ||
+          seen.includes("event: stream_incomplete"),
+      });
+      writing.on = false;
+      await writer;
+      // The damaged note's own live copy is held beside the writes.
+      expect(
+        written + (published ? 1 : 0),
+        "fewer frames were held during the replay than the hold holds, so it was never tested past its cap",
+      ).toBeGreaterThan(500);
+      if (damaged === undefined) {
+        const ids = [...text.matchAll(/^id: (\d+)$/gm)].map((m) =>
+          BigInt(m[1]!),
+        );
+        expect(new Set(ids).size).toBe(ids.length);
+        expect([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))).toEqual(
+          ids,
+        );
+        const logged = await real(cursor + 30_000n, 5_000);
+        const marker = /"cursor":"(\d+)"/.exec(
+          text.slice(text.indexOf("event: stream_live")),
+        );
+        const reached = BigInt(marker![1]!);
+        expect(ids).toEqual(
+          logged.map((row) => row.id).filter((id) => id <= reached),
+        );
+      }
+      return text;
+    } finally {
+      writing.on = false;
+      release();
+      await writer;
+      store.getAfter = real;
+      await run("DELETE FROM event_log", []);
+    }
+  }
+
+  it("keeps the stream through more writes during a long replay than it can hold", async () => {
+    const text = await busyReplay();
+    expect(
+      text,
+      "writes during the replay filled the hold and ended the stream, so a busy instance never lets a long catch-up finish",
+    ).toContain("event: stream_live");
+  });
+
+  it("ends short rather than pass a row it cannot read whose live copy the hold gave up", async () => {
+    const text = await busyReplay("published");
+    expect(
+      text,
+      "the replay went on past a row whose one carrier it had given up, so the reader resumes past an event it never had",
+    ).toContain('"reason":"backlog_overflow"');
+    expect(text).not.toContain("event: stream_live");
+  });
+
+  it("ends short at a row it cannot read whose live copy it took over from the hold", async () => {
+    const text = await busyReplay("published-late");
+    expect(
+      text,
+      "the replay passed a row it could not read after taking over its live copy, so the reader resumes past an event it never had",
+    ).toContain('"reason":"backlog_overflow"');
+    expect(text).not.toContain("event: stream_live");
+  });
+
+  it("reads again after an empty read while frames it took over are past it", async () => {
+    const note = async () => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "race" } },
+      });
+      expect(res.status).toBe(201);
+    };
+    const cursor = await createNote("race-cursor");
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    let reads = 0;
+    let late: bigint | undefined;
+    // The first read fills the hold to its cap; the second comes back
+    // empty, and a write landing while it is out gives the hold up past
+    // what it saw.
+    store.getAfter = async (afterId, limit) => {
+      reads += 1;
+      if (reads === 1) {
+        for (let i = 0; i < 500; i += 1) await note();
+      }
+      const rows = await real(afterId, limit);
+      if (reads === 2) {
+        await note();
+        late = (await store.getMaxId()) ?? undefined;
+      }
+      return rows;
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events?type=core.note", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      const { text } = await readSse(res, {
+        until: (seen) =>
+          seen.includes("event: stream_live") ||
+          seen.includes("event: stream_incomplete"),
+      });
+      expect(late).toBeDefined();
+      expect(
+        text,
+        "a frame given up while an empty read was out was never sent",
+      ).toContain(`id: ${String(late)}\n`);
+    } finally {
+      store.getAfter = real;
+      await (
+        ctx.storage as unknown as {
+          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+        }
+      ).__sqliteRun("DELETE FROM event_log", []);
+    }
+  });
+
+  it("passes a row it cannot read that was never this stream's to hold", async () => {
+    const text = await busyReplay("stored");
+    expect(
+      text,
+      "a row nobody published to this stream ended it, so every reconnect ends on it again for as long as writes go on",
+    ).toContain("event: stream_live");
+  });
+
+  it("refuses a replay the sweep overtakes between its reads", async () => {
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    const newest = await createNote("sweep-newest");
+    // Rows older than the retention below the newest, more than one batch
+    // of them, so the sweep can land between two reads.
+    await run(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 2000)
+       INSERT INTO event_log (id, event_type, item_id, payload, enable_fanout, created_at)
+       SELECT ? - 2001 + i, event_type, item_id, payload, 0, ?
+       FROM event_log, n WHERE event_log.id = ?`,
+      [
+        Number(newest),
+        new Date(Date.now() - 3 * 3_600_000).toISOString(),
+        Number(newest),
+      ],
+    );
+    const cursor = newest - 2001n;
+    expect(await ctx.storage.eventLog.getMinRetainedId()).toBe(cursor + 1n);
+
+    // The sweep runs in the turn the replay gives up after its first read.
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    let armed = true;
+    store.getAfter = async (afterId, limit) => {
+      const rows = await real(afterId, limit);
+      if (armed) {
+        armed = false;
+        setImmediate(() => void store.cleanup(1));
+      }
+      return rows;
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      const { text } = await readSse(res, {
+        until: (seen) =>
+          seen.includes("event: catchup_too_old") ||
+          seen.includes("event: stream_live"),
+      });
+      expect(
+        text,
+        "a sweep between two reads of the replay was replayed over in silence",
+      ).not.toContain("event: stream_live");
+      expect(findEvent(text, "catchup_too_old")).not.toBeNull();
+    } finally {
+      store.getAfter = real;
+      await run("DELETE FROM event_log", []);
+    }
+  });
+
+  it("lets the process answer other work between its reads of the log", async () => {
+    const cursor = await createNote("yield-cursor");
+    const run = (
+      ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      }
+    ).__sqliteRun;
+    // More than one batch of rows the type filter withholds, copied from a
+    // real row so each decodes as an item of another type.
+    await run(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 600)
+       INSERT INTO event_log (event_type, item_id, payload, enable_fanout, created_at)
+       SELECT event_type, item_id, REPLACE(payload, '"core.note"', '"core.task"'), 0, created_at
+       FROM event_log, n WHERE event_log.id = ?`,
+      [Number(cursor)],
+    );
+
+    // A task queued at each read has run by the next only where the replay
+    // gave the event loop a turn between them.
+    const store = ctx.storage.eventLog;
+    const real = store.getAfter.bind(store);
+    const turns: boolean[] = [];
+    let turned = true;
+    store.getAfter = async (afterId, limit) => {
+      turns.push(turned);
+      turned = false;
+      setImmediate(() => (turned = true));
+      return real(afterId, limit);
+    };
+    try {
+      const res = await request(ctx.app, "GET", "/events?type=core.task", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": String(cursor) },
+      });
+      await readSse(res, {
+        until: (seen) => seen.includes("event: stream_live"),
+      });
+      expect(
+        turns.length,
+        "the replay read the log once, so there was no second read to have yielded before",
+      ).toBeGreaterThan(1);
+      expect(
+        turns.slice(1),
+        "the replay read batch after batch without a turn of the event loop, so a long one answers no other request and flushes nothing it wrote",
+      ).not.toContain(false);
+    } finally {
+      store.getAfter = real;
+    }
+  });
+});
