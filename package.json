@@ -8,7 +8,6 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "prepare": "git rev-parse --is-inside-work-tree >/dev/null 2>&1 && git config --local core.hooksPath hooks || true",
     "build": "pnpm -r --workspace-concurrency=1 run build",
     "generate": "pnpm --filter @withmarfa/server run generate:openapi && pnpm --filter @withmarfa/client run generate && pnpm run generate:rust && pnpm run generate:core",
     "generate:rust": "cd core/marfa-client && openapi-generator-cli generate --generator-key marfa-client && cargo fmt -p marfa-client",
