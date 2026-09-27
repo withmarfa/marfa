@@ -599,6 +599,21 @@ export function checkTypeAccess(
     }
   }
 
+  checkTypePermission(key, type, level);
+}
+
+/**
+ * The credential's own type map, without the reserved-namespace fence
+ * `checkTypeAccess` puts in front of it. Only the purge door wants this half
+ * alone, for a reserved row already soft-deleted: no credential gets past
+ * the fence and the map both, so the fence would strand the row.
+ */
+export function checkTypePermission(
+  apiKey: ApiKey | undefined,
+  type: string,
+  level: "read" | "write",
+): void {
+  const key = checkAuth(apiKey);
   if (!mayReadType(key, type)) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,

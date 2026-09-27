@@ -1,23 +1,11 @@
 /**
- * The purge door says which of two refusals this is.
+ * Which refusal the purge door gives, and to whom.
  *
- * Purging is trash-then-purge, so a caller meets `DELETE /items/{id}` first.
- * For a reserved-namespace row a working credential is refused there,
- * by name: "no credential writes `marfa.*` items". The row
- * therefore never becomes trashed, and `DELETE /items/{id}/purge` then
- * answers "Only trashed items can be purged" — which is true, and which
- * describes an ordering mistake the caller did not make.
- *
- * **Two refusals sharing a status is what makes this expensive.** Both are
- * 400-shaped to a reader skimming, so the second message is the one acted
- * on, and it sends somebody looking for a trash step they think they
- * skipped, and the namespace gate above it is never suspected.
- *
- * So the door asks the write rule on the not-trashed path, which is the path
- * the purge was going to be refused on anyway. So the assertions here are about
- * *which message* comes back, and the case that matters most is the one
- * proving the ordinary refusal is unchanged — a fix that renamed every
- * refusal would pass a test that only checked the reserved-namespace one.
+ * No working credential can trash a reserved-namespace row, so on a row not
+ * yet trashed the door names the namespace fence rather than answering "Only
+ * trashed items can be purged", which would send the caller looking for a
+ * trash step they never skipped. The ordinary refusal must stay as it was, so
+ * that case is asserted too. A soft-deleted row is asked the key's type map.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
@@ -127,14 +115,9 @@ describe("purging a row a working credential may not write", () => {
   });
 
   it("purges a reserved-namespace row once it is trashed", async () => {
-    // What the guard's placement exists for: the check runs only on the
-    // not-trashed path, so an already-trashed row is purged as any other.
-    //
-    // Trashed through the storage layer, which is how a reserved-namespace
-    // row reaches that state at all: the trash door asks the same write rule
-    // and refuses every working credential, and the operator key holds no
-    // permissions to pass it with either. So the platform's own machinery is
-    // what moves these rows.
+    // An already-trashed reserved row is purged as any other, by a key whose
+    // map writes the type. Trashed through storage, standing in for the
+    // cascade and archive restore that put such rows there.
     const id = await seedReservedRow("relic:refusal-2");
     await ctx.storage.items.transition(id, "trashed");
 
@@ -142,5 +125,95 @@ describe("purging a row a working credential may not write", () => {
       key: workingKey,
     });
     expect(purged.status).toBe(200);
+  });
+});
+
+/** A soft-deleted row takes write on its type in the key's own map, as restore asks. */
+describe("purging a soft-deleted row", () => {
+  /** Holds `items.purge`, writes `core.note`, and only reads `core.task`. */
+  let coreOnlyKey: string;
+
+  beforeAll(async () => {
+    coreOnlyKey = await mintWorkingKey(ctx, {
+      label: "core-purger",
+      source: "core-purger",
+      type_permissions: { "core.note": "write", "core.task": "read" },
+      permissions: ["items.purge"],
+    });
+  });
+
+  async function trashedNote(): Promise<string> {
+    const note = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "trashed" },
+    });
+    await ctx.storage.items.delete(note.id);
+    return note.id;
+  }
+
+  async function expectRefused(id: string, key: string): Promise<void> {
+    const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+      key,
+    });
+    const body = (await res.json()) as { error: { code: string } };
+    expect(res.status, JSON.stringify(body)).toBe(403);
+    expect(body.error.code).toBe("type_not_permitted");
+    expect(await ctx.storage.items.getIncludingTrashed(id)).not.toBeNull();
+  }
+
+  it("refuses a trashed row of a type the key may only read", async () => {
+    const task = await ctx.storage.items.create({
+      type: "core.task",
+      properties: { title: "read only here" },
+    });
+    await ctx.storage.items.delete(task.id);
+
+    await expectRefused(task.id, coreOnlyKey);
+
+    // The witness: the same key purges a trashed row of the type it writes.
+    const purged = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${await trashedNote()}/purge`,
+      { key: coreOnlyKey },
+    );
+    expect(purged.status).toBe(200);
+  });
+
+  it("refuses a trashed reserved-namespace row to a key whose map does not reach it", async () => {
+    const id = await seedReservedRow("relic:narrow-map");
+    await ctx.storage.items.transition(id, "trashed");
+
+    await expectRefused(id, coreOnlyKey);
+
+    const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+      key: workingKey,
+    });
+    expect(purged.status).toBe(200);
+  });
+
+  it("purges a revoked connection for a key whose map writes the type, and only for one", async () => {
+    // A connection soft-deletes to `revoked`, not `trashed`.
+    const conn = await ctx.storage.items.create({
+      type: "system.connection",
+      properties: {
+        kind: "connector",
+        status: "revoked",
+        granted_at: new Date().toISOString(),
+        connector_id: "acme.demo",
+      },
+    });
+    await ctx.storage.items.delete(conn.id);
+    expect((await ctx.storage.items.getIncludingTrashed(conn.id))?.state).toBe(
+      "revoked",
+    );
+
+    await expectRefused(conn.id, coreOnlyKey);
+
+    const purged = await request(ctx.app, "DELETE", `/items/${conn.id}/purge`, {
+      key: workingKey,
+    });
+    expect(purged.status).toBe(200);
+    expect(await ctx.storage.items.getIncludingTrashed(conn.id)).toBeNull();
   });
 });

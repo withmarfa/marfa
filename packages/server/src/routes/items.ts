@@ -45,6 +45,7 @@ import {
   itemProvenanceSource,
   requireDeclaredTypeMatches,
   checkTypeAccess,
+  checkTypePermission,
   requireEdgePermission,
   getTypeFilter,
 } from "../middleware/auth.js";
@@ -1167,7 +1168,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1206,7 +1207,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`items.purge` is missing, or the item is in a reserved namespace this credential may not write. The second is reached only by a credential that could not have trashed the row either: purging is trash-then-purge, and being told the item is not trashed would describe an ordering mistake the caller did not make.",
+        "`items.purge` is missing; the credential may not write the item's type, asked whatever state the row is in, as restore asks; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed.",
     },
     404: {
       content: {
@@ -2910,50 +2911,37 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     requirePermission(c, "items.purge");
-    // Read before removing: a purge that never looks at the row cannot
-    // tell a connection from a note.
-    //
-    // **Including trashed, and that is the whole of what this door normally
-    // sees.** A plain `get` answers `null` for a `trashed` row, so on the
-    // ordinary path (trash, then purge) it would come back empty and the
-    // announcement below would never fire. The two refusals above only
-    // have anything to say about a row that is NOT soft-deleted, which is
-    // exactly the shape a plain `get` does return. This is the same read
-    // `items.purge` runs for its own gate.
+    // Read including trashed: on the ordinary path (trash, then purge) a
+    // plain `get` answers `null`, leaving no type to ask about. The same read
+    // `storage.items.purge` gates on.
     const purgeTarget = await storage.items.getIncludingTrashed(id);
     refuseUnlessUninstalled(purgeTarget);
 
-    // Two doors refuse one operation, and reading only the second one sends
-    // you somewhere there is nothing to find.
+    // The key's type map is asked whatever state the row is in, as restore
+    // and the bulk purge ask it: a key that may only read a type destroys
+    // none of its rows, trashed or not.
     //
-    // Purging is soft-delete-then-purge, so a caller meets `DELETE
-    // /items/{id}` first. For a reserved-namespace row every credential is
-    // refused there, by name: "no credential writes system.* items". The
-    // row therefore never reaches its soft-deleted state, and
-    // this door would answer "Only revoked items can be purged", which is
-    // true and reads as an ordering mistake the caller did not make.
-    // Somebody following it goes looking for a step they never skipped.
-    // Asking the write rule here names the real reason instead, and runs
-    // only where the purge was going to be refused anyway.
+    // The reserved-namespace fence is asked only of a row not yet
+    // soft-deleted. There it names the real reason (no credential trashes a
+    // `system.*` row), where the state check below would read as an ordering
+    // mistake. A reserved row already soft-deleted got there by a cascade or
+    // an archive restore; no credential gets past the fence and the map both,
+    // so asking the fence would strand the row for good.
     //
-    // **The state compared is the type's own, never the literal `trashed`.**
-    // `softDeleteState` resolves `revoked` for a type with a bounded
-    // lifecycle, which `system.connection` has; a literal comparison would
-    // send every revoked connection down this branch to be refused by the
-    // write rule that no credential passes, leaving every revoked grant
-    // permanently unpurgeable. `items.purge` gates on the same
-    // derived state, and the two have to agree or one of them refuses what
-    // the other admits.
-    if (
-      purgeTarget &&
-      purgeTarget.state !== softDeleteState(purgeTarget.type)
-    ) {
-      checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
+    // The state is the type's own soft-deleted state, not the literal
+    // `trashed`: a `system.connection` ends `revoked`, and
+    // `storage.items.purge` gates on the same derived state.
+    if (purgeTarget) {
+      if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
+        checkTypePermission(c.get("apiKey"), purgeTarget.type, "write");
+      } else {
+        checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
+      }
     }
 
     // **No provenance guard here**, and that is a finding rather than an
     // omission: a row is refused or purged by the permission asked above and
-    // the write rule, and nothing marks a row as one writer's rather than
+    // the type gate, and nothing marks a row as one writer's rather than
     // another's. A guard here would be unreachable code no test could pin,
     // which is worse than none because it reads as a protection somebody is
     // relying on.

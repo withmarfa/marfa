@@ -40,14 +40,13 @@ import type { Item } from "@withmarfa/shared";
  * purge door asks it directly, because it reads the row before it asks the
  * write question.
  *
- * The single transition door and the two bulk doors used to ask it too, and
- * none of them could answer: the transition route sits behind the same type
+ * The transition door and the two bulk doors do not ask it, because none of
+ * them can reach a connection: the transition route sits behind the same type
  * gate and behind a lifecycle table that admits only `revoked` for a
  * `system.*` type, which its schema cannot name, and the bulk door's
  * reserved-namespace narrowing keeps a connection out of the match set
- * entirely. The properties door is not covered:
- * `status` is an ordinary property a working credential can patch, which is the
- * remaining way to make a live grant read as revoked, tracked separately.
+ * entirely. `PATCH /items/{id}` sits behind the same type gate, so no
+ * credential writes `status` to make a live grant read as revoked either.
  */
 export function liveConnectionRefusal(
   item: Pick<Item, "id" | "type" | "properties"> | null | undefined,

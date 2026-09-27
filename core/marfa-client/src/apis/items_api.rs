@@ -536,6 +536,7 @@ pub enum RemoveItemTagError {
 pub enum RestoreItemError {
     Status400(models::InvalidTransitionOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status409(models::IdempotencyKeyInFlightRefusal),
     Status413(models::RequestTooLargeRefusal),
@@ -1188,7 +1189,7 @@ pub fn list_occurrences(
     }
 }
 
-/// Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
+/// Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
 pub fn purge_item(
     configuration: &configuration::Configuration,
     params: PurgeItemParams,
