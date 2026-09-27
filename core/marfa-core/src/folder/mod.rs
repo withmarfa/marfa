@@ -467,6 +467,14 @@ impl Folder {
             let Some(id) = file.id.as_deref() else {
                 continue;
             };
+            // A copy bound to its own item before its id line was rewritten
+            // stays that item's file (`folders.md` 10).
+            if by_path
+                .get(file.key.as_str())
+                .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
+            {
+                continue;
+            }
             // A file item's file is its bytes, never a document naming it.
             if self
                 .core
@@ -700,8 +708,12 @@ impl Folder {
             .unwrap_or_default();
         let document = file.document();
         let properties = sendable(document.properties);
+        // A save that only dropped the id line changes nothing.
         let in_step = match bound {
-            Some(bound) => bound.content_hash == file.hash,
+            Some(bound) => {
+                bound.content_hash == file.hash
+                    || file.id.is_none() && properties == held.properties
+            }
             None => properties
                 .iter()
                 .all(|(field, value)| held.properties.get(field) == Some(value)),

@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -1335,7 +1336,7 @@ describe("identity", () => {
     ).toBe("string");
     expect(
       [sent?.source, sent?.source_id, sent?.version],
-      "the create carried a natural key or a version, which a folder's create no longer has",
+      "the create carried a natural key or a version, which nothing the server holds can give a file",
     ).toEqual([undefined, undefined, undefined]);
     expect(rows.has(String(sent?.id))).toBe(true);
     expect(
@@ -1727,6 +1728,194 @@ describe("identity", () => {
     expect(idIn(harness, "a-newer.md")).toBe(copy?.id);
   });
 
+  it("keeps the id with the original an editor saved without its line, over a copy carrying it", async () => {
+    harness = await folderHarness("folder-copy-original-dropped-line");
+    const rows = scriptFolderWrites(harness);
+    put(harness, "b.md", "---\ntitle: B\n---\nthe original\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "b.md") ?? "";
+    // The witness: the copy carries the id and is the older file.
+    writeFileSync(
+      join(harness.dir, "z-copy.md"),
+      read(harness, "b.md").replace("the original", "the copy"),
+    );
+    expect(idIn(harness, "z-copy.md")).toBe(id);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    saveAtomically(
+      harness,
+      "b.md",
+      "---\ntitle: B\n---\nthe original, edited\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      idIn(harness, "b.md"),
+      "the original lost its item to a copy because its editor dropped the line",
+    ).toBe(id);
+    expect(rows.get(id)?.properties.body).toBe("the original, edited\n");
+    expect(idIn(harness, "z-copy.md")).not.toBe(id);
+  });
+
+  it("keeps a copy its own item once the original goes, before its id line is rewritten", async () => {
+    harness = await folderHarness("folder-copy-original-gone");
+    const rows = scriptFolderWrites(harness);
+    put(harness, "n.md", "---\ntitle: Note\n---\nthe original\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "n.md") ?? "";
+    writeFileSync(
+      join(harness.dir, "copy.md"),
+      read(harness, "n.md").replace("the original", "the copy"),
+    );
+    const copied = await harness.folder.scan();
+    // The witness: the copy was made a new item while it still carries the id.
+    expect(copied.ok && copied.value.created).toBe(1);
+    expect(idIn(harness, "copy.md")).toBe(id);
+
+    rmSync(join(harness.dir, "n.md"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentUpdates(harness).map((update) => update.id),
+      "the copy took the original's item once the original went, and sent its words over it",
+    ).toEqual([]);
+    expect(rows.get(id)?.properties.body).toBe("the original\n");
+    const copy = sentCreates(harness)[1]?.id;
+    expect(copy).toBeDefined();
+    expect(idIn(harness, "copy.md")).toBe(copy);
+  });
+
+  it("sends nothing for a save that only drops the id line", async () => {
+    harness = await folderHarness("folder-id-dropped-only");
+    scriptFolderWrites(harness);
+    const text = "---\ntitle: Note\n---\nbody\n";
+    put(harness, "note.md", text);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "note.md");
+    // The witness is `› keeps the item when a save drops the id line`: the
+    // same save with a new body is sent.
+    saveAtomically(harness, "note.md", text);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentUpdates(harness),
+      "a save that changed nothing but the id line sent an edit",
+    ).toEqual([]);
+    expect(idIn(harness, "note.md")).toBe(id);
+  });
+
+  it("sends a checked-out file's edits to the item its id names, and nothing for one in step", async () => {
+    const [edited, same] = [
+      "01a00000-0000-7000-8000-00000000000c",
+      "01a00000-0000-7000-8000-00000000000d",
+    ];
+    harness = await folderHarness("folder-id-checked-out", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: edited,
+              properties: { title: "Edited", body: "server\n" },
+            },
+          },
+          {
+            item: { id: same, properties: { title: "Same", body: "server\n" } },
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    // A fresh folder over files from a checkout: nothing is bound yet.
+    put(
+      harness,
+      "edited.md",
+      `---\nmarfa_id: ${edited}\ntitle: Edited\n---\nin a checkout\n`,
+    );
+    put(
+      harness,
+      "same.md",
+      `---\nmarfa_id: ${same}\ntitle: Same\n---\nserver\n`,
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(sentCreates(harness)).toEqual([]);
+    expect(
+      sentUpdates(harness).map((update) => update.id),
+      "a checked-out file's edit never reached its item, or one in step was sent",
+    ).toEqual([edited]);
+    expect(rows.get(edited)?.properties.body).toBe("in a checkout\n");
+  });
+
+  it("reads the id of a Markdown file whatever the case of its extension", async () => {
+    harness = await folderHarness("folder-id-extensions");
+    const rows = scriptFolderWrites(harness);
+    put(harness, "UP.MD", "---\ntitle: Up\n---\nupper\n");
+    put(harness, "long.Markdown", "---\ntitle: Long\n---\nlong\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const up = idIn(harness, "UP.MD");
+    expect(up).toBeDefined();
+    expect(idIn(harness, "long.Markdown")).toBeDefined();
+    // Moved by copy and delete, so only the id can follow them.
+    writeFileSync(join(harness.dir, "moved.MD"), read(harness, "UP.MD"));
+    rmSync(join(harness.dir, "UP.MD"));
+    writeFileSync(
+      join(harness.dir, "moved.markdown"),
+      read(harness, "long.Markdown"),
+    );
+    rmSync(join(harness.dir, "long.Markdown"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      pushed.ok && [pushed.value.scan.renamed, pushed.value.scan.created],
+      "a moved file's id went unread for the case of its extension",
+    ).toEqual([2, 0]);
+    expect(idIn(harness, "moved.MD")).toBe(up);
+    expect(rows.size).toBe(2);
+  });
+
+  it("reads no id from a .txt file or from a document naming a file item", async () => {
+    const fileId = "01a00000-0000-7000-8000-0000000000f1";
+    const bytes = Buffer.from("bytes\n");
+    harness = await folderHarness("folder-id-not-read", {
+      slice: { types: ["core.note", "core.file"], defaultType: "core.note" },
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id: fileId,
+              type: "core.file",
+              properties: {
+                title: "x.bin",
+                blob_ref: hashOf(bytes),
+                mime_type: "application/octet-stream",
+              },
+            },
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    scriptBlob(harness.server, bytes);
+    put(harness, "n.md", "---\ntitle: N\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "n.md") ?? "";
+    // Both files go, so the .txt and the document are each the only file
+    // carrying their id.
+    expect(existsSync(join(harness.dir, "x.bin"))).toBe(true);
+    rmSync(join(harness.dir, "n.md"));
+    rmSync(join(harness.dir, "x.bin"));
+    put(harness, "t.txt", `---\nmarfa_id: ${id}\n---\ntext\n`);
+    put(harness, "doc.md", `---\nmarfa_id: ${fileId}\ntitle: Doc\n---\nbody\n`);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentUpdates(harness),
+      "a .txt file or a document naming a file item was read as that item's file",
+    ).toEqual([]);
+    expect(pushed.ok && pushed.value.scan.created).toBe(2);
+    expect(rows.get(id)?.properties.body).toBe("body\n");
+  });
+
   it("reads a .txt file that opens with a --- block as a body", async () => {
     harness = await folderHarness("folder-txt-fence");
     scriptFolderWrites(harness);
@@ -2071,6 +2260,51 @@ describe("identity", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(door.rows.get(live)?.properties.body).toBe("live\n");
     expect(idIn(harness, "a.md")).toBe(live);
+  });
+
+  it("keeps a live file's binding when it takes a lost file's old name, across a push", async () => {
+    // As above, with a push in place of the scans: the pull must not find the
+    // live item without a file and write it a second one.
+    harness = await folderHarness("folder-lost-swap-pushed");
+    const door = new FolderDoor();
+    scriptWrites(harness.server, {
+      create: [
+        refusal(400, "invalid_properties", "the body is not allowed"),
+        (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
+      ],
+      update: [
+        (request) =>
+          door.update(
+            request.pathname.split("/").at(-1) ?? "",
+            JSON.parse(request.body) as { version: number },
+            { resolve: true },
+          ),
+      ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
+    });
+    put(harness, "a.md", "---\ntitle: Lost\n---\nnot allowed\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "b.md", "---\ntitle: Live\n---\nlive\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const live = idIn(harness, "b.md") ?? "";
+
+    renameSync(join(harness.dir, "a.md"), join(harness.dir, "c.md"));
+    writeFileSync(
+      join(harness.dir, "c.md"),
+      "---\ntitle: Found\n---\nallowed now\n",
+    );
+    renameSync(join(harness.dir, "b.md"), join(harness.dir, "a.md"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      readdirSync(harness.dir)
+        .filter((name) => !name.startsWith("."))
+        .sort(),
+      "the live item lost its file's binding and was written a second file",
+    ).toEqual(["a.md", "c.md"]);
+    expect(idIn(harness, "a.md")).toBe(live);
+    expect(again.ok && again.value.scan.created).toBe(0);
   });
 
   it("queues a file whose row the copy lost again once it moves", async () => {

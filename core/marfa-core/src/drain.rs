@@ -38,10 +38,9 @@ pub struct DrainReport {
     /// other way a pass ends early is an answer on another contract, and that
     /// ends it as a refusal rather than as a report (`device.md` 42).
     pub stopped: Option<String>,
-    /// The sources the server said this credential's key does not claim,
-    /// once each, where a create naming one was refused for it this pass
-    /// (`queue-and-verdicts.md` 40). Every create naming one is blocked `credential_refused`, a reason that alone
-    /// reads as a key that no longer works; this says which claim is missing.
+    /// The sources this credential's key does not claim, once each, where a
+    /// create naming one was refused this pass (`queue-and-verdicts.md` 40):
+    /// `credential_refused` alone reads as a key that no longer works.
     pub unclaimed_sources: Vec<String>,
     /// The longest wait the server asked for this pass, where it asked.
     ///
