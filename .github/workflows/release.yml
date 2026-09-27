@@ -587,7 +587,9 @@ jobs:
               cat "$RUNNER_TEMP/npm-view.err"
               exit 1
             fi
-            npm publish "artifacts/withmarfa-$package-$VERSION.tgz" --access public
+            # A path, not `artifacts/…`, which npm reads as GitHub shorthand
+            # for a repository and tries to clone.
+            npm publish "./artifacts/withmarfa-$package-$VERSION.tgz" --access public
           done
 
       - name: Make the GitHub release public
