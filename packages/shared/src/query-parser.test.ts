@@ -504,6 +504,15 @@ describe("parseFilter", () => {
       expectValidationError('properties.foo eq "unterminated');
     });
 
+    it("rejects a number no double holds with VALIDATION_ERROR", () => {
+      const largest = "9".repeat(308);
+      expect(
+        parseFilter(`properties.n gt ${largest}`).conditions[0]?.value,
+      ).toBe(Number(largest));
+      expectValidationError(`properties.n gt 1${"0".repeat(400)}`);
+      expectValidationError(`properties.n lt -1${"0".repeat(400)}`);
+    });
+
     it("rejects malformed edge bracket — empty type", () => {
       expectValidationError("edge[]=foo");
     });

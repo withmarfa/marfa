@@ -219,9 +219,17 @@ function tokenize(input: string): Token[] {
           while (i < input.length && isDigit(charAt(input, i))) i++;
         }
         const raw = input.slice(start, i);
+        const value = Number(raw);
+        // Enough digits read as Infinity, which no column compares to.
+        if (!Number.isFinite(value)) {
+          throw new MarfaError(
+            ErrorCode.VALIDATION_ERROR,
+            `Number out of range "${raw}" at position ${String(start)}`,
+          );
+        }
         tokens.push({
           kind: TokenKind.Number,
-          value: Number(raw),
+          value,
           raw,
           pos: start,
         });
