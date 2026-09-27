@@ -94,9 +94,10 @@ jobs:
     name: Build the artifacts
     needs: require-green-ci
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # Local jobs share machine resources and must not contend.
+    # The local pool runs two queues, so at most two jobs share the machine:
+    # Rust and Apple builds in this one, booted-server suites in the other.
     concurrency:
-      group: marfa-suite-shared-host
+      group: marfa-mac-build
       cancel-in-progress: false
       queue: max
     timeout-minutes: 60
