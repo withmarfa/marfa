@@ -7,24 +7,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Cancels a superseded run on a branch, and deliberately does not on `main`.
+# A branch cancels a superseded run outright. On `main` a started run always
+# finishes, and a newer commit replaces only a run still waiting, so merges in
+# quick succession verify their newest commit rather than queueing one run each.
 #
-# On a branch a second push means the first answer describes a tree nobody has
-# any more, so canceling is free. `main` is not a branch in that sense: every
-# commit on it is a release candidate, and `release.yml` refuses a tag unless
-# a *successful* `ci.yml` run exists at that exact SHA. A canceled run is not
-# a successful one, so a superseded main commit becomes permanently
-# unreleasable, silently, because nothing errors and the commit looks fine.
-#
-# Before adding `cancel-in-progress` to any group, ask what consumes the run's
-# result at a specific SHA. Cancellation is safe where only the latest answer
-# is wanted and unsafe wherever a per-commit answer is a gate.
+# `release.yml` refuses a tag unless a successful `ci.yml` run exists at that
+# exact SHA, so tag a commit whose run finished: one superseded while waiting
+# has none.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
-  # A queue cannot be combined with cancel-in-progress, so main queues and
-  # branches cancel.
-  queue: ${{ github.ref == 'refs/heads/main' && 'max' || 'single' }}
 
 # Apple builds and credential tests use the private local macOS pool.
 # Portable checks use Blacksmith.
