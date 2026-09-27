@@ -254,15 +254,13 @@ CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
 --
 -- A device that is not a folder simply has no rows here.
 CREATE TABLE IF NOT EXISTS folder_files (
-  -- The path inside the folder, separators normalized. The natural key a
-  -- folder gives a file (`folders.md` 10): nothing about the machine, so the
-  -- same file in the same place on two machines is one item.
+  -- The path inside the folder, separators normalized.
   path TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
   -- Device, inode and birth time, joined. Null where the filesystem gave no
   -- usable identity, which is not the same as a file nobody has seen: a null
   -- here means a rename cannot be followed and the file becomes a new item
-  -- rather than a guess (`folders.md` 8).
+  -- rather than a guess (`folders.md` 12).
   identity TEXT,
   -- The bytes the folder last agreed with, hashed. What makes echo
   -- suppression have no gap (`folders.md` 14): a change whose content the
@@ -271,7 +269,7 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The bytes the folder itself last wrote at this path, hashed; null where
   -- the last agreement was a scan's read of the person's bytes. A pull takes
   -- away the file of an item that left the slice only when the file still
-  -- holds these bytes (`folders.md` 26): a file the folder never wrote, or
+  -- holds these bytes (`folders.md` 24): a file the folder never wrote, or
   -- the person changed since, is theirs and stays.
   written_hash TEXT,
   -- The item ids the links in those bytes named, as a JSON array. What tells
@@ -282,12 +280,11 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The targets whose rendered link the person took out, for edges of a kind
   -- the folder could not have made, as a JSON array. The edge stays (21), so
   -- without this the next pull writes the link back and the person removes
-  -- it again, forever (`folders.md` 27). Naming the link again lifts it.
+  -- it again, forever (`folders.md` 25). Naming the link again lifts it.
   declined_links TEXT NOT NULL,
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
-CREATE INDEX IF NOT EXISTS folder_files_identity ON folder_files (identity);
 
 -- Deletes, journaled and deferred (`folders.md` 15, 16). A file that
 -- disappears is recorded here rather than sent, because the first half of a

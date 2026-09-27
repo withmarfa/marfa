@@ -104,6 +104,7 @@ export async function createTestContext(
     trackedKeys: [],
     trackedEdges: [],
     trackedEdgeTypes: [],
+    trackedFolders: [],
     trackedWebhooks: [],
     trackedTypes: [],
     client: undefined as unknown as MarfaClient,
@@ -175,6 +176,12 @@ export function trackKey(ctx: TestContext, id: string): void {
 export function trackEdge(ctx: TestContext, id: string): void {
   if (!ctx.trackedEdges.includes(id)) {
     ctx.trackedEdges.push(id);
+  }
+}
+
+export function trackFolder(ctx: TestContext, id: string): void {
+  if (!ctx.trackedFolders.includes(id)) {
+    ctx.trackedFolders.push(id);
   }
 }
 
@@ -434,6 +441,20 @@ export async function cleanup(ctx: TestContext): Promise<void> {
         return removeReported ? removed : purged;
       },
       "Item",
+    ),
+  );
+  outcomes.push(
+    await deleteAll(
+      ctx.trackedFolders,
+      async (id) => {
+        const revoked = await scoped.revokeFolder(id);
+        const purged = await scoped.purgeItem(id);
+        // 400 is `invalid_transition`: the fixture revoked it already.
+        const revokeReported =
+          !revoked.ok && revoked.status !== 404 && revoked.status !== 400;
+        return revokeReported ? revoked : purged;
+      },
+      "Folder",
     ),
   );
   outcomes.push(

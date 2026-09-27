@@ -116,6 +116,11 @@ const PUBLIC_TAGS = [
       "A process outside the server, registered under its key: heartbeats and the runs it reports.",
   },
   {
+    name: "Folders",
+    description:
+      "A folder's settings, held as a `system.folder` item: created, changed at a version, and revoked.",
+  },
+  {
     name: "Housekeeping",
     description:
       "The housekeeping jobs the server runs on itself: what runs, when, and what the last run did.",

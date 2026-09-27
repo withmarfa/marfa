@@ -16,20 +16,13 @@ use crate::output;
 /// it. The debounce is what makes a burst of events one scan.
 const SETTLE: Duration = Duration::from_millis(250);
 
-/// How often the folder acts with nothing happening.
-///
-/// A journaled delete becomes a delete when its grace runs out
-/// (`folders.md` 15), and nothing on the filesystem marks that moment: the
-/// file is already gone. Without a tick, a folder that went quiet after a
-/// delete would hold the journal until something else happened.
+/// How often the folder acts with nothing happening: nothing on the
+/// filesystem marks the moment a journaled delete's grace runs out
+/// (`folders.md` 15).
 const TICK: Duration = Duration::from_secs(1);
 
-/// Watches a folder and keeps it in step.
-///
-/// One path through the scan, and the watcher takes it (`folders.md` 9): the
-/// same bytes present at startup and the same bytes arriving while running
-/// reach the same item, because the initial pass below and every pass after
-/// it are the same call.
+/// Watches a folder and keeps it in step. Every pass, the first included, is
+/// the same scan (`folders.md` 13).
 pub fn watch(
     dir: &Path,
     server: Server,
@@ -166,10 +159,8 @@ fn watch_files(
                 if matches!(event.kind, EventKind::Access(_)) {
                     continue;
                 }
-                // The folder's own state is never watched (`folders.md` 18),
-                // and nor is anything else dot-led (17). The scan excludes
-                // them too; this stops a write under `.marfa` from waking a
-                // pass that would find nothing.
+                // Dot-led paths are never watched (`folders.md` 17, 18); this
+                // stops a write under `.marfa` waking a pass.
                 if event.paths.iter().all(|path| dot_led(dir, path)) {
                     continue;
                 }
@@ -209,9 +200,8 @@ fn watch_files(
     Ok(())
 }
 
-/// What a pass leaves standing rather than does: files that are not in step
-/// and sources the key does not claim. Said when it changes, not on every
-/// pass it stays the same.
+/// What a pass leaves standing rather than does: files that are not in step.
+/// Said when it changes, not on every pass it stays the same.
 #[derive(Debug, Clone, PartialEq)]
 struct Standing {
     lost: usize,
@@ -220,40 +210,22 @@ struct Standing {
     outside: usize,
     absent: usize,
     kept: usize,
-    unclaimed: Vec<String>,
 }
 
 /// One pass: read the folder, send what it queued, write back what came in.
-///
-/// Paced: a source the key was found not to claim is asked about again only
-/// once a minute, where a `push` asks at once (`queue-and-verdicts.md` 40).
 fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<(), CliError> {
     let scanned = folder.scan()?;
-    let drained = folder.core().drain_paced()?;
+    let drained = folder.core().drain()?;
     let pulled = folder.pull()?;
-    // Quiet unless something happened or what stands changed, because a
-    // watcher printing a line a second is a watcher nobody reads. The counts
-    // of files already in step, and of files outside the slice, are not
-    // events: every folder with files has some on every pass. Nor is a create
-    // asking about an unclaimed source again and being told the same.
-    let news = drained
-        .verdicts
-        .iter()
-        .filter(|entry| {
-            let unclaimed = !drained.unclaimed_sources.is_empty()
-                && entry.verdict == Some(marfa_core::Verdict::Blocked)
-                && entry.reason.as_deref() == Some("credential_refused");
-            !unclaimed
-        })
-        .count();
+    // Quiet unless something happened or what stands changed. Files already
+    // in step, or outside the slice, are not events.
     let happened = scanned.created
         + scanned.updated
         + scanned.renamed
         + scanned.missing
         + scanned.deleted
-        + scanned.parked
         + scanned.requeued
-        + news
+        + drained.verdicts.len()
         + pulled.written
         + pulled.rewritten
         + pulled.moved
@@ -267,12 +239,8 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         outside: pulled.outside,
         absent: pulled.absent,
         kept: pulled.kept,
-        unclaimed: drained.unclaimed_sources.clone(),
     };
     let changed = standing.as_ref() != Some(&now);
-    let unclaimed_changed = standing
-        .as_ref()
-        .is_none_or(|before| before.unclaimed != now.unclaimed);
     *standing = Some(now);
     if !happened && !changed {
         return Ok(());
@@ -281,12 +249,10 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         &serde_json::json!({ "scan": scanned, "drain": drained, "pull": pulled }),
         json,
         || {
-            // The counts that mean an item has no file are named rather than
-            // left out: a watcher that prints zeroes while declining to write
-            // is a watcher telling somebody nothing is wrong.
+            // An item with no file is named, never left out of the line.
             let held = pulled.unwritten + pulled.collided + pulled.outside + pulled.absent;
-            let mut lines = vec![format!(
-                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}",
+            format!(
+                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
@@ -302,20 +268,8 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
                     format!(", {} bound to an item that is gone", scanned.lost)
                 } else {
                     String::new()
-                },
-                if scanned.overwrote > 0 {
-                    format!(
-                        "; {} sent over another device's content, which it never read",
-                        scanned.overwrote
-                    )
-                } else {
-                    String::new()
                 }
-            )];
-            if unclaimed_changed {
-                lines.extend(output::unclaimed(&drained));
-            }
-            lines.join("\n")
+            )
         },
     )
 }

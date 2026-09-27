@@ -409,15 +409,7 @@ impl Core {
         // missing server would tell it the wrong thing about why it may
         // not write.
         self.lock.refuse_unless_writer()?;
-        drain::drain(self, self.http()?, drain::Asked::Now)
-    }
-
-    /// The same, as a folder left watching drains: a source the key was
-    /// found not to claim a moment ago is not asked about again until
-    /// `drain::UNCLAIMED_RETRY` has passed (`queue-and-verdicts.md` 40).
-    pub fn drain_paced(&self) -> Result<DrainReport> {
-        self.lock.refuse_unless_writer()?;
-        drain::drain(self, self.http()?, drain::Asked::Paced)
+        drain::drain(self, self.http()?)
     }
 
     /// Sends a blocked or dead row again, under a fresh idempotency key
@@ -1938,7 +1930,6 @@ mod tests {
             // missing server, which is why this is a `ReadingHandle` and not
             // a `NoServer`.
             ("drain", reader.drain().unwrap_err()),
-            ("drain_paced", reader.drain_paced().unwrap_err()),
             // Clearing answered rows is a write to the queue like any
             // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
@@ -2008,7 +1999,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            29,
+            28,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -2047,7 +2038,7 @@ mod tests {
                     "with_upload",
                 ][..],
             ),
-            // `drain::drain`, which `Core::drain` and `drain_paced` reach.
+            // `drain::drain`, which `Core::drain` reaches.
             (include_str!("drain.rs"), &["drain"][..]),
         ] {
             let mut current: Option<&str> = None;

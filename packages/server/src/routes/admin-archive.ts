@@ -802,15 +802,25 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           // contract is to skip and count.
           //
           // Registered edge types resolve because the archive's own
-          // registrations are replayed before this loop runs.
+          // registrations are replayed before this loop runs. `replay` lets a
+          // revoked folder keep the placements it held before its revoke.
           try {
-            await assertEdgesCanBeCreated(storage.edges, storage.items, [
-              {
-                source_id: sourceId,
-                target_id: targetId,
-                edge_type: edgeType,
-              },
-            ]);
+            await assertEdgesCanBeCreated(
+              storage.edges,
+              storage.items,
+              [
+                {
+                  source_id: sourceId,
+                  target_id: targetId,
+                  edge_type: edgeType,
+                  properties: (edge.properties ?? {}) as Record<
+                    string,
+                    unknown
+                  >,
+                },
+              ],
+              { replay: true },
+            );
           } catch (err) {
             if (err instanceof MarfaError) {
               skipEdge(err.code);

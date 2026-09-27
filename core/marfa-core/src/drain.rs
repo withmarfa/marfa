@@ -38,12 +38,9 @@ pub struct DrainReport {
     /// other way a pass ends early is an answer on another contract, and that
     /// ends it as a refusal rather than as a report (`device.md` 42).
     pub stopped: Option<String>,
-    /// The sources the server said this credential's key does not claim,
-    /// once each: where a create naming one was refused for it this pass, or
-    /// where a paced drain left the creates naming it blocked because it was
-    /// found unclaimed a moment ago (`queue-and-verdicts.md` 40). Every
-    /// create naming one is blocked `credential_refused`, a reason that alone
-    /// reads as a key that no longer works; this says which claim is missing.
+    /// The sources this credential's key does not claim, once each, where a
+    /// create naming one was refused this pass (`queue-and-verdicts.md` 40):
+    /// `credential_refused` alone reads as a key that no longer works.
     pub unclaimed_sources: Vec<String>,
     /// The longest wait the server asked for this pass, where it asked.
     ///
@@ -572,57 +569,18 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     })
 }
 
-/// How long a drain that nobody asked for leaves the creates naming a source
-/// the credential's key was found not to claim before asking about it again
-/// (`queue-and-verdicts.md` 40).
-///
-/// A folder left watching drains every second, and a claim is granted by a
-/// person, not by time: asking once a second is a refused request a second
-/// for as long as nobody grants it. A drain a caller asked for asks at once.
-pub const UNCLAIMED_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// Whether a caller asked for this drain, or it is one a folder left watching
-/// runs on its own cadence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Asked {
-    /// A caller asked: `push`, `device drain`, a binding's drain.
-    Now,
-    /// A folder left watching, which asks about an unclaimed source again
-    /// only once `UNCLAIMED_RETRY` has passed.
-    Paced,
-}
-
-/// The sources a drain leaves the creates of blocked: found unclaimed less
-/// than `UNCLAIMED_RETRY` before `now`, where nobody asked for the drain.
-fn held_back(conn: &rusqlite::Connection, asked: Asked, now: &str) -> Result<Vec<String>> {
-    if asked == Asked::Now {
-        return Ok(Vec::new());
-    }
-    Ok(store::unclaimed_sources(conn)?
-        .into_iter()
-        .filter(|(_, since)| !crate::folder::elapsed_past(since, now, UNCLAIMED_RETRY))
-        .map(|(source, _)| source)
-        .collect())
-}
-
 /// Sends what the queue holds and records what came back.
-pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
+pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
     // A drain writes verdicts and adopts rows, so it is a write door and a
     // reading handle is refused at it exactly as it is at the others.
     core.lock_ref().refuse_unless_writer()?;
-    // The sources found unclaimed recently enough that a paced drain leaves
-    // their creates blocked, and reports them as still unclaimed.
-    let held = {
-        let conn = core.conn()?;
-        held_back(&conn, asked, &store::now_iso())?
-    };
     {
         let conn = core.conn()?;
         // Before anything is read: a row blocked for a reason that clears on
         // its own is a finding of the last drain rather than a state, and
         // leaving it blocked here would make this drain skip a dependency
         // that has since been answered (`queue-and-verdicts.md` 24, 27).
-        store::unblock_self_clearing_but(&conn, &held)?;
+        store::unblock_self_clearing(&conn)?;
     }
 
     let mut report = DrainReport {
@@ -630,7 +588,7 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
         held: 0,
         verdicts: Vec::new(),
         stopped: None,
-        unclaimed_sources: held,
+        unclaimed_sources: Vec::new(),
         retry_after_seconds: None,
     };
 
@@ -807,19 +765,6 @@ pub fn drain(core: &Core, http: &Http, asked: Asked) -> Result<DrainReport> {
 
         let class = refine(row, &payload, &answer, classify(&answer));
         let settled = settle(core, row, &answer, class, shape)?;
-        // A create naming a source landed, so the key claims it now.
-        if row.kind == WriteKind::CreateItem
-            && matches!(
-                settled.verdict,
-                Some(Verdict::Accepted | Verdict::Merged | Verdict::Conflicted)
-            )
-            && let Some(source) = serde_json::from_str::<serde_json::Value>(&payload)
-                .ok()
-                .and_then(|sent| sent.get("source")?.as_str().map(str::to_string))
-        {
-            let conn = core.conn()?;
-            store::clear_unclaimed(&conn, &source)?;
-        }
         if let Some(wait) = settled.retry_after_seconds {
             report.retry_after_seconds = Some(
                 report
@@ -1279,7 +1224,7 @@ fn settle(
                     // device's own earlier save: the file holds the newest,
                     // which the row does not, so the pull leaves the file and
                     // the next scan sends it as an edit of the row as it now
-                    // stands (`folders.md` 13).
+                    // stands (`folders.md` 29).
                     if verdict == Verdict::Conflicted
                         && row.kind == WriteKind::UpdateItem
                         && against_its_own(&tx, row, &parsed)?
@@ -1447,9 +1392,8 @@ fn settle(
         Classified::Landed { id, code } => land(core, row, answer, shape, &id, code),
         Classified::Trashed => {
             // Refused rather than accepted, and the row the create was
-            // queued as goes: nothing was written, so the file stays with
-            // what it holds, bound to a row the copy no longer holds
-            // (`folders.md` 30), and the next scan reports it.
+            // queued as goes: nothing was written (`queue-and-verdicts.md`
+            // 41).
             {
                 let conn = core.conn()?;
                 store::record_verdict(
@@ -1488,7 +1432,6 @@ fn settle(
             // The rest of the creates naming it, which would each be asked
             // the same question and given the same answer.
             let blocked = store::block_creates_naming(&tx, &source)?;
-            store::record_unclaimed(&tx, &source)?;
             let mut also = Vec::new();
             for id in blocked {
                 if let Some(other) = store::queued_write(&tx, &id)? {
@@ -1621,7 +1564,7 @@ fn land(
         let indexing = catalog.indexing(&found.item.r#type);
         store::upsert_item(&tx, &found.item, Some(&found.metadata.tags), &indexing)?;
     }
-    let refused = store::land_on_held_row(&tx, row, id, read_at)?;
+    let refused = store::land_on_held_row(&tx, row, id)?;
     store::record_verdict(
         &tx,
         &row.id,
@@ -1893,22 +1836,6 @@ mod tests {
         assert_eq!(held(Some(Verdict::Refused), &[]), Some(false));
         // The edit follows the create too: any answer to it releases.
         assert_eq!(edit.follows.as_deref(), Some(create.id.as_str()));
-    }
-
-    /// A paced drain holds a source back for a minute from when it was found
-    /// unclaimed, and a drain somebody asked for never does. The witness is
-    /// the same record past the minute, released.
-    #[test]
-    fn holds_an_unclaimed_source_back_for_a_minute_where_nobody_asked() {
-        let conn = store::open_in_memory().unwrap();
-        store::meta_set(&conn, "unclaimed_source:notes", "2026-09-24T10:00:00.000Z").unwrap();
-        let soon = "2026-09-24T10:00:59.000Z";
-        let later = "2026-09-24T10:01:00.000Z";
-        assert_eq!(held_back(&conn, Asked::Paced, soon).unwrap(), vec!["notes"]);
-        assert!(held_back(&conn, Asked::Now, soon).unwrap().is_empty());
-        assert!(held_back(&conn, Asked::Paced, later).unwrap().is_empty());
-        store::clear_unclaimed(&conn, "notes").unwrap();
-        assert!(held_back(&conn, Asked::Paced, soon).unwrap().is_empty());
     }
 
     /// The version a queued write will go out on, as the queue reports it

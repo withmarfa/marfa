@@ -1,10 +1,9 @@
-//! Which file is which, across a rename.
+//! Which file is which across a rename, for a file that cannot carry a
+//! `marfa_id` (`folders.md` 12).
 //!
-//! **Fail-closed** (`folders.md` 8). A file is the same file when its device,
-//! inode and birth time all match; a zero birth time yields no identity, and
-//! an identity two files share yields none. No identity means a new item,
-//! never a guess — because a guess that is wrong writes one file's contents
-//! over another item, and nothing anywhere reports it.
+//! Fail-closed: a file is the same file when its device, inode and birth time
+//! all match. A zero birth time yields no identity, an identity two files
+//! share yields none, and no identity means a new item, never a guess.
 
 use std::collections::HashMap;
 use std::fs::Metadata;
@@ -12,23 +11,11 @@ use std::path::Path;
 
 use crate::error::CoreError;
 
-/// The rule that decides whether two paths are one file, and the only way
-/// to make one.
-///
-/// A module of its own with private fields, so nothing outside it can build
-/// an `Identity` without going through `from_parts`. **That is structural
-/// rather than tested, deliberately**: the zero case cannot be reached
-/// through a real file on a filesystem that keeps birth times, so a test
-/// that the door consults the rule would be comparing two paths that must
-/// agree. Making the rule the only constructor means there is no door to
-/// bypass it from.
+/// Private fields, so `from_parts` is the only way to make an `Identity` and
+/// the zero rule cannot be bypassed.
 mod rule {
-    /// What makes a file the same file.
-    ///
-    /// The three together and nothing else. An inode alone is reused by the
-    /// filesystem the moment a file is deleted, so a new file can be handed
-    /// the inode of one the folder still remembers — and the birth time is
-    /// what tells those two apart.
+    /// What makes a file the same file. The birth time is what tells a reused
+    /// inode from the file that had it.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Identity {
         device: u64,
@@ -40,14 +27,9 @@ mod rule {
 
     impl Identity {
         /// The rule itself, apart from the filesystem that feeds it.
-        ///
-        /// The **only** way to make an `Identity`, which is what makes the
-        /// refusal below unavoidable rather than merely usual.
         pub fn from_parts(device: u64, inode: u64, born_at: u128) -> Option<Identity> {
-            // Zero yields no identity. A filesystem that does not keep a
-            // birth time reports one for every file, and two files that both
-            // report zero would match each other on device and inode alone —
-            // which is the inode reuse this exists to catch.
+            // A filesystem that keeps no birth time reports zero for every
+            // file, which would match a reused inode.
             if born_at == 0 {
                 return None;
             }
@@ -69,13 +51,21 @@ pub use rule::Identity;
 
 /// The identity of a file, or nothing if this filesystem cannot give one.
 pub fn of(metadata: &Metadata) -> Option<Identity> {
-    let born_at = metadata
-        .created()
-        .ok()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .ok()?
-        .as_nanos();
-    Identity::from_parts(device_of(metadata), inode_of(metadata), born_at)
+    Identity::from_parts(device_of(metadata), inode_of(metadata), born(metadata)?)
+}
+
+/// A file's birth time in nanoseconds since the epoch, where the filesystem
+/// keeps one.
+pub fn born(metadata: &Metadata) -> Option<u128> {
+    Some(
+        metadata
+            .created()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos(),
+    )
+    .filter(|nanos| *nanos > 0)
 }
 
 #[cfg(unix)]
@@ -100,19 +90,15 @@ fn inode_of(_metadata: &Metadata) -> u64 {
     0
 }
 
-/// The identity of every file in a set, with the shared ones withheld.
-///
-/// **An identity two files share yields none**, for both of them. Two files
-/// claiming one identity is the filesystem telling the folder something it
-/// cannot act on, and picking either would bind the wrong file to the item.
+/// The identity of every file in a set, with an identity two files share
+/// withheld from both.
 pub fn resolve(paths: &[std::path::PathBuf]) -> HashMap<std::path::PathBuf, Identity> {
     let mut seen: HashMap<Identity, Vec<std::path::PathBuf>> = HashMap::new();
     for path in paths {
         let Ok(metadata) = std::fs::symlink_metadata(path) else {
             continue;
         };
-        // A symlink is not the file it points at, and following one would
-        // give two paths the same identity on purpose.
+        // A symlink is not the file it points at.
         if metadata.is_symlink() || !metadata.is_file() {
             continue;
         }
@@ -129,13 +115,9 @@ pub fn resolve(paths: &[std::path::PathBuf]) -> HashMap<std::path::PathBuf, Iden
     resolved
 }
 
-/// The natural key a folder gives a file.
-///
-/// The path inside the folder, and nothing about the machine
-/// (`folders.md` 10). The same file in the same place on two machines is one
-/// item, whatever credential each machine holds, so anything here that
-/// differed per machine would make every file two items.
-pub fn natural_key(folder: &Path, path: &Path) -> Result<String, CoreError> {
+/// A file's path inside the folder, with `/` between its components on any
+/// machine.
+pub fn relative(folder: &Path, path: &Path) -> Result<String, CoreError> {
     let relative = path.strip_prefix(folder).map_err(|_| {
         CoreError::Invalid(format!(
             "{} is not inside {}, so it has no place in this folder",
@@ -143,8 +125,6 @@ pub fn natural_key(folder: &Path, path: &Path) -> Result<String, CoreError> {
             folder.display()
         ))
     })?;
-    // Separators normalized, so the same file is one key on either kind of
-    // machine rather than two.
     Ok(relative
         .components()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
@@ -156,15 +136,8 @@ pub fn natural_key(folder: &Path, path: &Path) -> Result<String, CoreError> {
 mod tests {
     use super::*;
 
-    /// The zero case, reached where it can be reached.
-    ///
-    /// Not through a file: this filesystem keeps a birth time for
-    /// everything, so no fixture driving the binary can produce one. The
-    /// filesystems the rule exists for — some Linux ones, some network
-    /// mounts — report zero, and a device built there would follow a rename
-    /// onto the wrong file. What keeps the door honest is not a test but the
-    /// module above: `from_parts` is the only constructor, so there is
-    /// nowhere the rule can be bypassed from.
+    /// The zero case, which no file on a filesystem keeping birth times can
+    /// reach.
     #[test]
     fn a_zero_birth_time_yields_no_identity() {
         assert!(
@@ -227,18 +200,15 @@ mod tests {
     }
 
     #[test]
-    fn the_natural_key_is_the_path_and_nothing_about_the_machine() {
+    fn the_relative_path_is_the_path_inside_the_folder() {
         let root = Path::new("/somewhere/notes");
         assert_eq!(
-            natural_key(root, &root.join("deep").join("note.md")).unwrap(),
-            "deep/note.md",
-            "the natural key carries something other than the path inside the \
-             folder, so the same file on two machines is two items and neither \
-             can say why"
+            relative(root, &root.join("deep").join("note.md")).unwrap(),
+            "deep/note.md"
         );
         assert!(
-            natural_key(root, Path::new("/elsewhere/note.md")).is_err(),
-            "a file outside the folder was given a key inside it"
+            relative(root, Path::new("/elsewhere/note.md")).is_err(),
+            "a file outside the folder was given a path inside it"
         );
     }
 }

@@ -10,34 +10,26 @@ use crate::store::now_iso;
 pub struct Bound {
     pub path: String,
     pub item_id: String,
-    /// Null where the filesystem gave none: a rename cannot be followed and
-    /// the file becomes a new item rather than a guess (`folders.md` 8).
+    /// Device, inode and birth time. Null where the filesystem gave none
+    /// (`folders.md` 12).
     pub identity: Option<String>,
     pub content_hash: String,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
-    /// where the last agreement was a scan's read of the person's bytes.
-    /// What a pull checks before taking a departed item's file away
-    /// (`folders.md` 26): a file the folder never wrote is not its to remove.
+    /// where the last agreement was a scan's read. A pull removes only a
+    /// file it wrote (`folders.md` 24).
     pub written_hash: Option<String>,
     /// The item ids the links in those bytes named, as the folder last read
     /// or wrote them. Empty where the file named none.
     pub links: Vec<String>,
-    /// The targets whose rendered link the person took out, where the edge
-    /// is of a kind the folder could not have made and so keeps
-    /// (`folders.md` 27). A pull renders no link for them.
+    /// The targets whose rendered link the person took out, for an edge the
+    /// folder keeps (`folders.md` 25). A pull renders no link for them.
     pub declined: Vec<String>,
 }
 
-/// What the folder last agreed with, for the bytes of a file.
-///
-/// A hash rather than the bytes: the mapping is read on every scan and a
-/// folder holding a second copy of every file it watches would be a second
-/// copy to keep in step. The comparison it serves is equality and nothing
-/// else.
+/// What the folder last agreed with, for the bytes of a file. Equality is
+/// all it answers.
 pub fn hash(bytes: &[u8]) -> String {
-    // FNV-1a, 64-bit. Written out because this is not a security boundary —
-    // it answers "are these the bytes the folder wrote", and the file it is
-    // asked about is one the folder already has open.
+    // FNV-1a, 64-bit: not a security boundary.
     let mut sum: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in bytes {
         sum ^= u64::from(*byte);
@@ -46,38 +38,20 @@ pub fn hash(bytes: &[u8]) -> String {
     format!("{sum:016x}")
 }
 
-/// A binding's content hash where its bytes are ones the server never took:
-/// a create refused because another device's row already held the natural
-/// key, whose copy moved onto that row (`folders.md` 13). No bytes hash to
-/// either mark, so a scan reads the file as changed and a pull as the
-/// person's, and neither writes over it.
-///
-/// `read@<version>` is a row the copy had read at that version when the
-/// create was based on it: the next edit is based on that version, so the
-/// server merges it against what was read, whatever the copy has caught up
-/// to since.
+/// A content hash no bytes have, for a save set aside in a conflicted copy
+/// against this device's own (`folders.md` 29): the file reads as changed,
+/// and its next edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
 }
 
 const UNTAKEN_READ_PREFIX: &str = "read@";
 
-/// The same for a row the copy never read, or read at a version the server
-/// no longer holds, which is as good as never read: another device's
-/// content, which an edit from this file replaces as the last writer.
-pub const UNTAKEN_UNREAD: &str = "unread";
-
-/// The version a binding's untaken bytes were based on, where the copy had
-/// read the row.
+/// The version a binding's untaken bytes were read at.
 pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
     content_hash
         .strip_prefix(UNTAKEN_READ_PREFIX)
         .and_then(|version| version.parse().ok())
-}
-
-/// Whether a binding's bytes are ones the server never took.
-pub fn untaken(content_hash: &str) -> bool {
-    content_hash == UNTAKEN_UNREAD || untaken_read_version(content_hash).is_some()
 }
 
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
@@ -121,20 +95,6 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
         .optional()?)
 }
 
-/// The file this identity was last bound to, wherever it now sits.
-///
-/// What follows a rename: the path changed and the identity did not, so the
-/// item the old path named is the item the new path names.
-pub fn bound_to_identity(conn: &Connection, identity: &str) -> Result<Option<Bound>, CoreError> {
-    Ok(conn
-        .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links FROM folder_files WHERE identity = ?1",
-            [identity],
-            read_bound,
-        )
-        .optional()?)
-}
-
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
@@ -166,20 +126,15 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
         identity: row.get(2)?,
         content_hash: row.get(3)?,
         written_hash: row.get(4)?,
-        // A row nobody can read as a list names no links, which makes the
-        // folder keep every edge rather than remove one it cannot account for.
+        // Unreadable, it names no links, so no edge is removed for it; and
+        // declines none, so the pull renders every link.
         links: serde_json::from_str(&links).unwrap_or_default(),
-        // And declines none, which makes the pull render every link: the
-        // person removes one again rather than losing one for good.
         declined: serde_json::from_str(&declined).unwrap_or_default(),
     })
 }
 
-/// Records a file as missing, if it is not already.
-///
-/// The moment is kept from the first sighting and not refreshed: the grace
-/// runs from when the file went, so a folder scanning every second does not
-/// push the delete out of reach forever.
+/// Records a file as missing, if it is not already. The moment is the first
+/// sighting, so a folder scanning every second still reaches the grace.
 pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute(
         "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
@@ -189,16 +144,8 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     Ok(())
 }
 
-/// Takes a path out of the journal, and every caller is the same rule: a
-/// journal row must not outlive the question it asks.
-///
-/// The question is whether an item should be deleted because its file went.
-/// So the row goes the moment the file is there after all — a scan that
-/// found it under its own name, a scan that followed it to a new one, a
-/// pull about to write it — and it goes the moment the question has been
-/// answered or stopped applying: the sweep that has already sent the
-/// delete, a pull taking a departed file away. A row that survives either
-/// becomes a delete nobody asked for.
+/// Takes a path out of the journal. A row that outlives its question becomes
+/// a delete nobody asked for.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM folder_journal WHERE path = ?1", [path])?;
     Ok(())

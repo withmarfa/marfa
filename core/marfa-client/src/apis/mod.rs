@@ -123,6 +123,7 @@ pub mod edges_api;
 pub mod events_api;
 pub mod export_api;
 pub mod extensions_api;
+pub mod folders_api;
 pub mod housekeeping_api;
 pub mod instance_api;
 pub mod items_api;

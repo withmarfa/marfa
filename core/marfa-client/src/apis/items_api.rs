@@ -552,6 +552,7 @@ pub enum RestoreItemError {
 pub enum TransitionItemError {
     Status400(models::InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status409(models::IdempotencyKeyInFlightRefusal),
     Status413(models::RequestTooLargeRefusal),

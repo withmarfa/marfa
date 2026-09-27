@@ -6,9 +6,11 @@ use std::time::Duration;
 use clap::Subcommand;
 use marfa_core::{CoreError, Folder, Slice};
 
+use crate::commands::folders as folder_settings;
+use crate::commands::items::IdempotencyArgs;
 use crate::error::CliError;
-use crate::output;
-use crate::remote::Named;
+use crate::output::{self, Printer};
+use crate::remote::{Named, Remote};
 use crate::values::{Tier, properties};
 use crate::watch;
 
@@ -18,11 +20,6 @@ pub enum FoldersCommand {
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
-        /// The source every item this folder creates is keyed by. Name the
-        /// same one on every machine that holds this folder, so one file is
-        /// one item on all of them.
-        #[arg(long)]
-        source: String,
         /// The types this folder holds.
         #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
         types: Vec<String>,
@@ -59,6 +56,18 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
+    /// Create a folder's settings on the server, as a `system.folder`.
+    /// Needs write on `system.folder`.
+    Create(folder_settings::CreateArgs),
+    /// Change a folder's settings on the server, each named one replaced whole.
+    Change(folder_settings::ChangeArgs),
+    /// Retire a folder's settings on the server. A revoked folder does not change.
+    Revoke {
+        /// The folder's `system.folder` id.
+        id: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
     /// Watch a folder and keep it in step until interrupted.
     Watch {
         /// The directory to watch, recursively.
@@ -77,7 +86,6 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
     match command {
         FoldersCommand::Add {
             dir,
-            source,
             types,
             tier,
             default_type,
@@ -85,7 +93,6 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             tags,
         } => {
             let slice = Slice {
-                source,
                 default_type: default_type
                     .unwrap_or_else(|| types.first().cloned().unwrap_or_default()),
                 types,
@@ -158,7 +165,6 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     }
                     lines.push(describe_scan(&scanned));
                     lines.push(format!("sent {}, held {}", drained.sent, drained.held));
-                    lines.extend(output::unclaimed(&drained));
                     if let Some(error) = &failed {
                         lines.push(format!("could not catch up: {error}"));
                     }
@@ -175,19 +181,30 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Watch { dir, r#for } => {
             watch::watch(&dir, named.server()?, r#for.map(Duration::from_secs), json)
         }
+        FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
+        FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
+        FoldersCommand::Revoke { id, idempotency } => send(
+            folder_settings::revoke_request(&id, &idempotency),
+            named,
+            json,
+        ),
     }
+}
+
+fn send(
+    request: crate::remote::request::Request,
+    named: &Named,
+    json: bool,
+) -> Result<(), CliError> {
+    let answer = Remote::resolve(named)?.json(&request)?;
+    Printer { json }.value(&answer)
 }
 
 /// What a pull did, for somebody who did not ask for JSON.
 ///
-/// The counts after the semicolon are items that have no file and are not
-/// going to get one on this pass. `folders.md` 20 requires the path outside
-/// the folder be reported, 22 the file not written over, and 29 the bytes
-/// that could not be had; a line of the first five numbers alone says
-/// nothing about any of them, so a person reading five zeroes has been told
-/// the pull was quiet rather than that it declined to write. Left off when
-/// they are zero, because the ordinary pull is the one nobody needs to read
-/// twice.
+/// The counts after the semicolon are items that have no file and will not
+/// get one on this pass (`folders.md` 20, 22, 27), named only when there are
+/// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
         "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
@@ -210,18 +227,13 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         line.push_str("; not written: ");
         line.push_str(&held.join(", "));
     }
-    // Named only when it happened. A file the person deleted and the folder
-    // wrote back is the one outcome of a pull they did not ask for, and a
-    // count they never see is the same as no count at all.
+    // A file the person deleted and the pull wrote back.
     if report.revived > 0 {
         line.push_str(&format!(
             "; {} written back over a pending delete",
             report.revived
         ));
     }
-    // Both about items that have left the slice, and both named only when
-    // there were any: a file taken away is one the person may go looking
-    // for, and one kept is an edit the folder is holding for them.
     let departed: Vec<String> = [
         (
             report.removed,
@@ -250,10 +262,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         report.missing,
         report.deleted,
         report.skipped,
-        // Each named only when it happened, because each is rare and a
-        // line of the other seven does not account for it.
         [
-            (report.parked, "moved off a contested name and back"),
             (
                 report.requeued,
                 "queued again because the item it was bound to is gone",
@@ -261,10 +270,6 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
             (
                 report.lost,
                 "bound to an item that is gone and unchanged since, so not sent",
-            ),
-            (
-                report.overwrote,
-                "sent over another device's content, which this one never read; the last writer wins and the other version stays in the item's history",
             ),
         ]
         .into_iter()

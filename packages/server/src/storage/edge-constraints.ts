@@ -5,6 +5,7 @@ import {
   satisfiesEdgeConstraint,
 } from "@withmarfa/shared";
 import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
+import { depthInsideFolder } from "../folder-path.js";
 import type { EdgeStore, ItemStore } from "./interface.js";
 
 /**
@@ -36,6 +37,54 @@ const CYCLE_RISK_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
  */
 const COLLECTION_EDGE_TYPE = "in-collection";
 
+const FOLDER_EDGE_TYPE = "in-folder";
+
+/** Whether a target in this state takes no new edge of this type. */
+export function closedToNewEdge(
+  edgeType: string,
+  targetState: string,
+): boolean {
+  return edgeType === FOLDER_EDGE_TYPE && targetState === "revoked";
+}
+
+function propertyRefusal(key: string, message: string): MarfaError {
+  return new MarfaError(ErrorCode.VALIDATION_ERROR, message, {
+    errors: [{ path: `properties.${key}`, message }],
+  });
+}
+
+/**
+ * Holds an edge's properties, as they would stand after the write, to what
+ * its type requires. Only `in-folder` requires anything: a `path` naming a
+ * file inside the folder, and nothing else.
+ */
+export function assertEdgeProperties(
+  edgeType: string,
+  properties: Record<string, unknown> | undefined,
+): void {
+  if (edgeType !== FOLDER_EDGE_TYPE) return;
+  const { path, ...rest } = properties ?? {};
+  const [undeclared] = Object.keys(rest);
+  if (undeclared !== undefined) {
+    throw propertyRefusal(
+      undeclared,
+      `Edge "${edgeType}" declares no property "${undeclared}"`,
+    );
+  }
+  if (typeof path !== "string" || path.length === 0 || path.length > 1024) {
+    throw propertyRefusal(
+      "path",
+      `Edge "${edgeType}" takes a "path" of 1 to 1024 characters`,
+    );
+  }
+  if ((depthInsideFolder(path) ?? 0) < 1) {
+    throw propertyRefusal(
+      "path",
+      `"${path}" is not a file inside the folder: write a path relative to its root, with "/" between names, that does not climb out of it`,
+    );
+  }
+}
+
 /**
  * A self-loop is the shortest cycle there is, so it answers `edge_cycle`
  * like any longer one: what the caller got wrong is the shape of the edge,
@@ -64,6 +113,7 @@ export interface EdgeProposal {
   source_id: string;
   target_id: string;
   edge_type: string;
+  properties?: Record<string, unknown>;
 }
 
 /**
@@ -78,6 +128,9 @@ export interface EdgeProposal {
  * 7. A self-loop is rejected on every edge type; a longer cycle on
  *    parent-of and supersedes, considering proposed edges as part of the
  *    graph. Both answer `edge_cycle`.
+ * 8. The properties are what the edge type requires, and an `in-folder`
+ *    edge does not target a revoked folder unless `replay` says an archive
+ *    recorded it.
  *
  * Throws `MarfaError` on the first failure encountered in input order, matching
  * the sequential-validation behavior the single-edge entry point exposed.
@@ -89,6 +142,7 @@ export async function assertEdgesCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   proposals: EdgeProposal[],
+  opts: { replay?: boolean } = {},
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
 
@@ -108,6 +162,7 @@ export async function assertEdgesCanBeCreated(
       );
     }
     assertNotSelfLoop(p.source_id, p.target_id, p.edge_type);
+    assertEdgeProperties(p.edge_type, p.properties);
     resolved.push({ p, schema });
   }
 
@@ -155,6 +210,17 @@ export async function assertEdgesCanBeCreated(
           edge_type: p.edge_type,
           target_type: target.type,
           allowed: schema.target_type_constraints,
+        },
+      );
+    }
+    if (closedToNewEdge(p.edge_type, target.state) && opts.replay !== true) {
+      throw new MarfaError(
+        ErrorCode.EDGE_CONSTRAINT_VIOLATION,
+        `Folder ${p.target_id} is revoked and takes no new placement`,
+        {
+          edge_type: p.edge_type,
+          target_id: p.target_id,
+          constraint: "revoked",
         },
       );
     }
@@ -367,19 +433,9 @@ export async function assertEdgesCanBeCreated(
 export async function assertEdgeCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
-  input: {
-    source_id: string;
-    target_id: string;
-    edge_type: string;
-  },
+  input: EdgeProposal,
 ): Promise<EdgeTypeSchema> {
-  const schemas = await assertEdgesCanBeCreated(edgeStore, itemStore, [
-    {
-      source_id: input.source_id,
-      target_id: input.target_id,
-      edge_type: input.edge_type,
-    },
-  ]);
+  const schemas = await assertEdgesCanBeCreated(edgeStore, itemStore, [input]);
   const [only] = schemas;
   if (!only) {
     throw new Error(

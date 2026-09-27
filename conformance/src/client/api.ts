@@ -248,6 +248,31 @@ export class MarfaClient {
     });
   }
 
+  async createFolder(
+    settings: Record<string, unknown>,
+  ): Promise<ApiResponse<{ item: MarfaItem }>> {
+    return this.request<{ item: MarfaItem }>("/folders", {
+      method: "POST",
+      body: settings,
+    });
+  }
+
+  async updateFolder(
+    id: string,
+    changes: Record<string, unknown> & { version: number },
+  ): Promise<ApiResponse<{ item: MarfaItem }>> {
+    return this.request<{ item: MarfaItem }>(`/folders/${id}`, {
+      method: "PATCH",
+      body: changes,
+    });
+  }
+
+  async revokeFolder(id: string): Promise<ApiResponse<{ item: MarfaItem }>> {
+    return this.request<{ item: MarfaItem }>(`/folders/${id}/revoke`, {
+      method: "POST",
+    });
+  }
+
   async restoreItem(id: string): Promise<ApiResponse<{ item: MarfaItem }>> {
     return this.request<{ item: MarfaItem }>(`/items/${id}/restore`, {
       method: "POST",

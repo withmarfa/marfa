@@ -5,6 +5,7 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackFolder,
   cleanup,
 } from "../../../utils/setup.js";
 import { createAlbum, createNote } from "../../../generators/items.js";
@@ -39,22 +40,29 @@ async function makeContainer(): Promise<string> {
   return r.data.item.id;
 }
 
+/** A `system.folder`, the only target `in-folder` takes. */
+async function makeFolder(): Promise<string> {
+  const r = await client.createFolder({ title: "edges-crud" });
+  expect(r.ok).toBe(true);
+  trackFolder(ctx, r.data.item.id);
+  return r.data.item.id;
+}
+
 /**
  * Every shipped edge type, with what each one's target has to be.
  *
- * Nine, and the list is written out rather than read off the registry
+ * Ten, and the list is written out rather than read off the registry
  * because nothing under `src/suites/` may import a workspace package. So it
  * is a copy, and `compliance/edge-types.test.ts` is what refuses to let it
- * fall behind: it holds the served set against the same nine.
+ * fall behind: it holds the served set against the same ten.
  *
- * A target per entry rather than one for all of them, because
- * `in-collection` constrains its target by role: it needs one declaring
- * `container` where every other type takes any item, so a loop over bare
- * names could not carry it.
+ * A target per entry, because two constrain theirs: `in-collection` needs
+ * one declaring the `container` role and `in-folder` a `system.folder`.
  */
 const CORE_EDGE_TYPES: readonly {
   id: string;
   target: () => Promise<string>;
+  properties?: Record<string, unknown>;
 }[] = [
   { id: "about", target: makeItem },
   { id: "parent-of", target: makeItem },
@@ -65,10 +73,11 @@ const CORE_EDGE_TYPES: readonly {
   { id: "supersedes", target: makeItem },
   { id: "references", target: makeItem },
   { id: "in-collection", target: makeContainer },
+  { id: "in-folder", target: makeFolder, properties: { path: "a.md" } },
 ];
 
 describe("edges CRUD", () => {
-  for (const { id: edgeType, target } of CORE_EDGE_TYPES) {
+  for (const { id: edgeType, target, properties } of CORE_EDGE_TYPES) {
     it(`creates a ${edgeType} edge and reads it back via listItemEdges`, async () => {
       const sourceId = await makeItem();
       const targetId = await target();
@@ -77,6 +86,7 @@ describe("edges CRUD", () => {
         source_id: sourceId,
         target_id: targetId,
         edge_type: edgeType,
+        ...(properties !== undefined && { properties }),
       });
       expect(created.status).toBe(201);
       trackEdge(ctx, created.data.edge.id);
@@ -87,7 +97,7 @@ describe("edges CRUD", () => {
       expect(created.data.edge.version).toBe(1);
       expect(typeof created.data.edge.created_at).toBe("string");
       expect(typeof created.data.edge.updated_at).toBe("string");
-      expect(created.data.edge.properties).toEqual({});
+      expect(created.data.edge.properties).toEqual(properties ?? {});
 
       const outbound = await client.listItemEdges(sourceId, {
         edge_type: edgeType,
