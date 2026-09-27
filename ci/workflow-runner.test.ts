@@ -12,12 +12,13 @@ const WORKFLOWS = resolve(
   "workflows",
 );
 
-const MAC_JOBS = new Set([
-  "ci.yml:core-checks",
-  "ci.yml:conformance",
-  "ci.yml:cli-scenarios",
-  "core.yml:core",
-  "release.yml:build",
+// Two queues, so the local pool never runs more than two jobs at once.
+const MAC_JOBS = new Map([
+  ["ci.yml:core-checks", "marfa-mac-build"],
+  ["ci.yml:conformance", "marfa-mac-suite"],
+  ["ci.yml:cli-scenarios", "marfa-mac-suite"],
+  ["core.yml:core", "marfa-mac-build"],
+  ["release.yml:build", "marfa-mac-build"],
 ]);
 
 interface Workflow {
@@ -51,9 +52,10 @@ describe("jobs use local macOS and Blacksmith, with hosted release publishing", 
           ? "ubuntu-latest"
           : "blacksmith-2vcpu-ubuntu-2404";
       expect(config["runs-on"], `${file}: ${job}`).toEqual(expected);
-      if (MAC_JOBS.has(`${file}:${job}`)) {
+      const queue = MAC_JOBS.get(`${file}:${job}`);
+      if (queue) {
         expect(config.concurrency, `${file}: ${job}`).toEqual({
-          group: "marfa-suite-shared-host",
+          group: queue,
           "cancel-in-progress": false,
           queue: "max",
         });
@@ -64,7 +66,7 @@ describe("jobs use local macOS and Blacksmith, with hosted release publishing", 
   });
 
   it("finds every macOS job named by the policy", () => {
-    for (const key of MAC_JOBS) {
+    for (const key of MAC_JOBS.keys()) {
       const [file = "", job = ""] = key.split(":");
       expect(
         jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],

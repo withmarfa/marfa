@@ -95,9 +95,10 @@ jobs:
     name: Core checks
     timeout-minutes: 30
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # Local jobs share machine resources and must not contend.
+    # The local pool runs two queues, so at most two jobs share the machine:
+    # Rust and Apple builds in this one, booted-server suites in the other.
     concurrency:
-      group: marfa-suite-shared-host
+      group: marfa-mac-build
       cancel-in-progress: false
       queue: max
     steps:
@@ -145,9 +146,10 @@ jobs:
     name: Conformance
     timeout-minutes: 60
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # Local jobs share machine resources and must not contend.
+    # The local pool runs two queues, so at most two jobs share the machine:
+    # booted-server suites in this one, Rust and Apple builds in the other.
     concurrency:
-      group: marfa-suite-shared-host
+      group: marfa-mac-suite
       cancel-in-progress: false
       queue: max
     steps:
@@ -250,9 +252,10 @@ jobs:
     name: CLI scenarios
     timeout-minutes: 60
     runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # Local jobs share machine resources and must not contend.
+    # The local pool runs two queues, so at most two jobs share the machine:
+    # booted-server suites in this one, Rust and Apple builds in the other.
     concurrency:
-      group: marfa-suite-shared-host
+      group: marfa-mac-suite
       cancel-in-progress: false
       queue: max
     steps:
