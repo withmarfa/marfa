@@ -1204,21 +1204,21 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
     Ok(blocked)
 }
 
-/// Drops an item the server purged, with every edge at either end: an edge
-/// to it would point at nothing anywhere.
+/// Drops an item the server purged, with its pin and every edge at either
+/// end: an edge to it would point at nothing anywhere.
 pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    remove_item(
+    let unpinned = unpin(conn, id)?;
+    let removed = remove_item(
         conn,
         id,
         "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
         &[],
-    )
+    )?;
+    Ok(removed || unpinned)
 }
 
-/// Drops an item that left the slice, with the edges it draws and none drawn
-/// to it: the copy holds an edge from an item it holds whatever its target
-/// (`device.md` 43), as hydration does. An edge of a type in `whole`
-/// stays, because the slice holds that type whichever end it holds.
+/// Drops an item that left the slice with the edges it draws, but those of a
+/// type in `whole`; edges drawn to it stay, as a hydration holds them (`device.md` 43).
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     let kept = vec!["?"; whole.len()].join(", ");
     let edges = if whole.is_empty() {
@@ -1961,8 +1961,10 @@ mod tests {
         .unwrap();
         upsert_edge(&conn, &wire_edge("e1", "n1", "n2", "references")).unwrap();
         upsert_edge(&conn, &wire_edge("e2", "n2", "n1", "references")).unwrap();
+        pin(&conn, "n1").unwrap();
         assert!(purge_item(&conn, "n1").unwrap());
         assert!(!purge_item(&conn, "n1").unwrap());
+        assert!(!pinned(&conn, "n1").unwrap());
         assert_eq!(count(&conn, "tags").unwrap(), 0);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
         assert_eq!(count(&conn, "edges").unwrap(), 0);
