@@ -209,7 +209,7 @@ export interface EdgeDraft {
 }
 
 /** Narrowing for a local search: the state axis, a type with its subtree,
- *  tags, a listing-grammar expression and a subtree, each read as the list
+ *  tags, a listing-grammar expression and `beneath`, each read as the list
  *  reads it. */
 export interface SearchFilters {
   state?: string;
