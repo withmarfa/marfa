@@ -50,6 +50,28 @@ export interface ClientOptions {
 
 export type MarfaClient = Client<paths>;
 
+/** RFC 6750's `b64token`: what may follow `Bearer ` in the header. */
+const BEARER = /^[A-Za-z0-9\-._~+/]+=*$/;
+
+/**
+ * Refuse a credential no bearer can carry, here rather than inside `fetch`,
+ * whose refusal quotes the whole header value and so puts the secret in an
+ * error an app may show or log. This message names where the fault is and
+ * never what the credential holds.
+ */
+function checkCredential(credential: string): void {
+  if (BEARER.test(credential)) return;
+  if (credential === "") {
+    throw new TypeError("credential is empty");
+  }
+  const at = credential.search(/[^A-Za-z0-9\-._~+/=]/);
+  throw new TypeError(
+    at === -1
+      ? "credential is not a bearer token: '=' may only end one, after at least one other character"
+      : `credential is not a bearer token: the character at index ${String(at)} is not one a bearer token may hold`,
+  );
+}
+
 /**
  * A typed client for one instance. Every answer is checked for the contract
  * version this client was generated for, and one that names another, or a
@@ -77,6 +99,9 @@ export function createClient(options: ClientOptions): MarfaClient {
     throw new TypeError(`baseUrl must be http or https, not ${base.protocol}`);
   }
   const baseUrl = base.href.replace(/\/+$/, "");
+  // Held, so a caller changing its options later sends nothing unchecked.
+  const credential = options.credential;
+  checkCredential(credential);
   // Normalized as a request's own URL is, and ending in a slash, so the
   // comparison below is between two spellings of the same thing and a host
   // that merely begins with this one is not under it.
@@ -104,7 +129,7 @@ export function createClient(options: ClientOptions): MarfaClient {
     // A redirect is refused, so the credential never leaves the URL it was
     // sent to.
     const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${options.credential}`);
+    headers.set("Authorization", `Bearer ${credential}`);
     return hold(
       await fetcher(new Request(request, { headers, redirect: "error" })),
     );
