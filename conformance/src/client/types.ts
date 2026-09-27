@@ -157,6 +157,7 @@ export interface ApiKeyRequest {
   edge_permissions?: Record<string, string>;
   extension_permissions?: Record<string, string>;
   metadata_permissions?: Record<string, string>;
+  profile_permissions?: Record<string, string>;
   /** The permissions the key holds; omitted takes the creator's when no
    *  map and no source is named either, and none when one is. */
   permissions?: readonly string[];
@@ -185,6 +186,7 @@ export interface ApiKeyResponse {
   edge_permissions?: Record<string, string>;
   extension_permissions?: Record<string, string>;
   metadata_permissions?: Record<string, string>;
+  profile_permissions?: Record<string, string>;
   permissions?: string[];
   default_tier?: "library" | "feed";
   is_operator?: boolean;

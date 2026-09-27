@@ -483,6 +483,23 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
     })
     .unwrap();
     assert_eq!(body(&unclaimed), &json!({ "sources": [] }));
+    let narrowed = keys::update_request(&keys::KeyUpdateArgs {
+        id: "k".into(),
+        no_permissions: true,
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(
+        body(&narrowed),
+        &json!({
+            "permissions": [],
+            "type_permissions": {},
+            "extension_permissions": {},
+            "edge_permissions": {},
+            "metadata_permissions": {},
+            "profile_permissions": {},
+        })
+    );
     assert_eq!(keys::revoke_request("k").method, Method::Delete);
     assert_eq!(keys::bootstrap_request().path(), "/keys");
 }
