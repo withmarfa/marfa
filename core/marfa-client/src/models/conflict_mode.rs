@@ -11,8 +11,8 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// ConflictMode : Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy`. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
-/// Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy`. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
+/// ConflictMode : Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of each edge the writer could have made that the edge type's cardinality lets a second item hold. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
+/// Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of each edge the writer could have made that the edge type's cardinality lets a second item hold. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum ConflictMode {
     #[serde(rename = "auto")]

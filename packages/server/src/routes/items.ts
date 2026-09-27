@@ -40,6 +40,7 @@ import {
   requireAuth,
   requirePermission,
   requireTypeAccess,
+  mayWriteEdge,
   requireResolvedRowWrite,
   itemProvenanceSource,
   requireDeclaredTypeMatches,
@@ -677,7 +678,10 @@ const updateItemRoute = createRoute({
           "write's transaction, by the type's merge policy: a " +
           "`last_writer_wins` field takes this write's value, a " +
           "`keep_both_copies` field leaves the server's value on the item " +
-          "and the losing value lands on a sibling tagged `conflicted-copy`. " +
+          "and the losing value lands on a sibling tagged `conflicted-copy` " +
+          "beside the original's tags, with a copy of each edge the writer " +
+          "could have made that the edge type's cardinality lets a second " +
+          "item hold. " +
           "`manual` and `callback` return the 409 envelope for the caller to " +
           "resolve. Omitted means `manual`.",
       ),
@@ -2555,6 +2559,8 @@ export function itemRoutes(storage: Storage) {
               ...(idempotencyKey !== null && {
                 idempotency_key: idempotencyKey,
               }),
+              may_copy_edge: (edgeType: string, sourceType: string) =>
+                mayWriteEdge(requireAuth(c), edgeType, sourceType),
               tier: hasTier ? body.tier : undefined,
               occurred_at: hasOccurredAt ? body.occurred_at : undefined,
               source_id: hasSourceId ? body.source_id : undefined,

@@ -181,7 +181,7 @@ pub struct TransitionItemParams {
 pub struct UpdateItemParams {
     /// Item id
     pub id: String,
-    /// Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy`. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
+    /// Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of each edge the writer could have made that the edge type's cardinality lets a second item hold. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
     pub conflict: Option<models::ConflictMode>,
     /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
     pub idempotency_key: Option<String>,

@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackItem,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import {
   detectSyncCapabilities,
@@ -126,6 +131,88 @@ describe("the server resolves a conflict", () => {
     expect(originalBack.data.data.map((e) => e.source_id)).toContain(
       successor.id,
     );
+  });
+
+  it("gives the conflicted copy no edge its writer could not have made, and none to a row in the bin", async () => {
+    requireRule(caps, "serverSideMerge");
+
+    // The writer may write notes and the edges below, and only read
+    // bookmarks: a bookmark's edge is one it could not have made itself.
+    const keyResp = await client.createKey({
+      label: "conflict-copy-narrow",
+      source: `${ctx.source}-narrow`,
+      permissions: [],
+      type_permissions: { "core.note": "write", "core.bookmark": "read" },
+      edge_permissions: { "parent-of": "write", about: "write" },
+    });
+    expect(keyResp.ok, JSON.stringify(keyResp.error)).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const make = async (type: string, title: string) => {
+      const r = await client.createItem({
+        type,
+        source: ctx.source,
+        properties:
+          type === "core.bookmark"
+            ? { title, url: "https://example.com/" }
+            : { title, body: `${title} body` },
+      });
+      expect(r.ok, JSON.stringify(r.error)).toBe(true);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item;
+    };
+    const original = await make("core.note", "narrow original");
+    const noteParent = await make("core.note", "note parent");
+    const bookmarkRow = await make("core.bookmark", "bookmark");
+    const binned = await make("core.note", "binned topic");
+    const link = async (
+      source_id: string,
+      target_id: string,
+      edge_type: string,
+    ) => {
+      const r = await client.createEdge({ source_id, target_id, edge_type });
+      expect(r.ok, edge_type).toBe(true);
+    };
+    await link(noteParent.id, original.id, "parent-of");
+    await link(bookmarkRow.id, original.id, "about");
+    await link(original.id, binned.id, "about");
+    expect((await client.deleteItem(binned.id)).ok).toBe(true);
+
+    const base = original.version;
+    expect(
+      (
+        await client.updateItem(original.id, {
+          properties: { body: "narrow body from the winner" },
+          version: base,
+        })
+      ).ok,
+    ).toBe(true);
+    const resolved = await narrow.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${original.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { body: "narrow body from the loser" },
+        version: base,
+      },
+    });
+    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+    await trackSourceScopedItems({ client, ctx });
+    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copy).toBeTruthy();
+
+    const back = await client.listItemBackrefs(copy!);
+    const out = await client.listItemEdges(copy!);
+    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
+    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
+    // The witness: an edge this writer could have made comes with the copy.
+    expect(inbound).toContain(`${noteParent.id}>parent-of`);
+    expect(inbound).not.toContain(`${bookmarkRow.id}>about`);
+    expect(outbound).not.toContain(`about>${binned.id}`);
   });
 
   it("keeps both copies in one write where the type says to", async () => {

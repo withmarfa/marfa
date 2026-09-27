@@ -194,7 +194,10 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  * type's cardinality: its place under the same parent, what it is about, but
  * not the original's children, each of which has one parent. A copy with no
  * edges and no tags sits outside every project and view the original was in,
- * which is where nobody looks for it.
+ * which is where nobody looks for it. Only edges the writer could have made
+ * itself are copied, and none whose other end is in the bin. Neither cycle-prone
+ * type can close a cycle through the copy: it takes an inbound `parent-of`
+ * and no outbound one, and no `supersedes` at all.
  */
 async function insertConflictedSibling(
   tx: SqliteTx,
@@ -204,9 +207,10 @@ async function insertConflictedSibling(
     row: { id: string; type: string; source: string | null; tier: string };
     now: string;
     properties: Record<string, unknown>;
+    mayCopyEdge?: (edgeType: string, sourceType: string) => boolean;
   },
 ): Promise<{ sibling: Item; edges: Edge[] } | null> {
-  const { siblingId, row, now, properties } = args;
+  const { siblingId, row, now, properties, mayCopyEdge } = args;
   const schemaVersion = getTypeSchema(row.type)?.version ?? 1;
   const inserted = await tx
     .insert(items)
@@ -257,8 +261,17 @@ async function insertConflictedSibling(
     .where(or(eq(edges.source_id, row.id), eq(edges.target_id, row.id)))
     .all();
   for (const edge of touching) {
-    const cardinality = getEdgeTypeSchema(edge.edge_type)?.cardinality;
     const outbound = edge.source_id === row.id;
+    const [other] = await tx
+      .select({ type: items.type, state: items.state })
+      .from(items)
+      .where(eq(items.id, outbound ? edge.target_id : edge.source_id))
+      .all();
+    // An end in the bin, or gone, is one the edge door would refuse.
+    if (other === undefined || other.state === "trashed") continue;
+    const sourceType = outbound ? row.type : other.type;
+    if (mayCopyEdge?.(edge.edge_type, sourceType) !== true) continue;
+    const cardinality = getEdgeTypeSchema(edge.edge_type)?.cardinality;
     // A second source for the same target is what `*-to-many` on the target's
     // side forbids nothing of; a second target for the same source likewise.
     const allowed = outbound
@@ -1105,6 +1118,7 @@ export class SqliteItemStore implements ItemStore {
           siblingId = conflictedSiblingIdFor(id, input.version, input);
           sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,
+            mayCopyEdge: input.may_copy_edge,
             row,
             now,
             properties: conflictedSiblingProperties({

@@ -569,6 +569,13 @@ export interface ConflictResolutionInput {
    * way to tell a retry from a second edit.
    */
   idempotency_key?: string;
+  /**
+   * Whether the writer may create an edge of this type from a row of this
+   * type, the two questions `POST /edges` asks. A keep-both sibling is given
+   * a copy only of the edges the writer could have made itself. Absent, it
+   * is given none.
+   */
+  may_copy_edge?: (edgeType: string, sourceType: string) => boolean;
 }
 
 /**

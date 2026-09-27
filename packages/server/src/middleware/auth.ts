@@ -523,6 +523,24 @@ export function mayWriteReserved(key: ApiKey, type: string): boolean {
 }
 
 /**
+ * Whether this credential may create an edge of `edgeType` from a row of
+ * `sourceType`: the two questions `POST /edges` asks, as a predicate, for a
+ * door that makes an edge on a writer's behalf and skips one the writer could
+ * not have made rather than refusing the whole write.
+ */
+export function mayWriteEdge(
+  key: ApiKey,
+  edgeType: string,
+  sourceType: string,
+): boolean {
+  return (
+    mayWriteReserved(key, sourceType) &&
+    resolveTypePermission(sourceType, key.type_permissions) === "write" &&
+    edgePermissionCovers(key.edge_permissions, edgeType, "write")
+  );
+}
+
+/**
  * Whether this credential may read this type.
  *
  * The decision `checkTypeAccess` throws over at `read`, as a question a
