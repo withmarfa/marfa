@@ -670,6 +670,9 @@ export interface PullReport {
 export interface PushReport {
   scan: ScanReport;
   drain: DrainReport;
+  /** One of the two: a catch-up from the copy's cursor, or a hydration where
+   *  the log had aged past it. */
+  catch_up: { caught_up: CatchUpReport | null; hydrated: HydrateReport | null };
   pull: PullReport;
 }
 

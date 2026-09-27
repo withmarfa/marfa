@@ -1,8 +1,9 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use marfa_core::{Folder, Server};
+use marfa_core::{CoreError, Folder, Server};
 use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::error::CliError;
@@ -36,15 +37,76 @@ pub fn watch(
     json: bool,
 ) -> Result<(), CliError> {
     let folder = Folder::open(dir, Some(server))?;
+    let stop = AtomicBool::new(false);
+    let (sender, wakes) = mpsc::channel::<Wake>();
+    std::thread::scope(|scope| {
+        // The server's side is held open beside the folder's, so another
+        // device's change reaches the copy as it happens and the next pass
+        // writes it out, where a folder that only ever pushed would hold what
+        // it had at its last hydration for good.
+        let server_wakes = sender.clone();
+        let follower = scope.spawn(|| follow(&folder, &stop, server_wakes));
+        let watched = watch_files(&folder, dir, sender, &wakes, stop_after, json);
+        stop.store(true, Ordering::SeqCst);
+        let followed = follower.join().map_err(|_| {
+            CliError::Watch("the follow of the server's changes ended in a fault".into())
+        })?;
+        watched.and(followed)
+    })
+}
+
+/// What wakes the watcher: the filesystem, or the server's side.
+enum Wake {
+    File(notify::Result<notify::Event>),
+    /// A change from the server reached the copy.
+    Server,
+    /// The follow ended for a reason no retry changes.
+    Ended(String),
+}
+
+/// Holds the server's stream open and applies what it carries, waking the
+/// watcher for each change. A cursor the log has aged past is met with a
+/// fresh hydration and the stream opened again (`device.md` 16); an answer
+/// no retry changes ends the watch.
+fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CliError> {
+    while !stop.load(Ordering::SeqCst) {
+        match folder.core().follow(stop, |_| {
+            let _ = wakes.send(Wake::Server);
+        }) {
+            Ok(_) => break,
+            Err(CoreError::CatchUpTooOld { .. }) => {
+                folder.hydrate()?;
+                let _ = wakes.send(Wake::Server);
+            }
+            Err(error) => {
+                let _ = wakes.send(Wake::Ended(error.to_string()));
+                return Err(error.into());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The filesystem side of a watch: a pass whenever the folder settles, and
+/// on every tick.
+fn watch_files(
+    folder: &Folder,
+    dir: &Path,
+    sender: mpsc::Sender<Wake>,
+    events: &mpsc::Receiver<Wake>,
+    stop_after: Option<Duration>,
+    json: bool,
+) -> Result<(), CliError> {
     // Resolved, because the filter below strips this prefix off the paths
     // the watcher reports and macOS reports them resolved: a folder under
     // `/var/folders/...` comes back as `/private/var/folders/...`, every
     // strip fails, every path reads as not dot-led, and the folder wakes
     // itself through its own writes under `.marfa` a few times a second.
     let dir = &std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let (sender, events) = mpsc::channel::<notify::Result<notify::Event>>();
-    let mut watcher = notify::recommended_watcher(sender)
-        .map_err(|error| CliError::Watch(format!("cannot watch: {error}")))?;
+    let mut watcher = notify::recommended_watcher(move |event| {
+        let _ = sender.send(Wake::File(event));
+    })
+    .map_err(|error| CliError::Watch(format!("cannot watch: {error}")))?;
     // Watching starts before the first pass, so a file that arrives during
     // that pass is seen by the watcher rather than falling between the two.
     watcher
@@ -64,7 +126,7 @@ pub fn watch(
             break;
         }
         match events.recv_timeout(TICK) {
-            Ok(Ok(event)) => {
+            Ok(Wake::File(Ok(event))) => {
                 // `Access` is a read, and a folder does not push a file
                 // because somebody opened it.
                 if matches!(event.kind, EventKind::Access(_)) {
@@ -79,7 +141,14 @@ pub fn watch(
                 }
                 quiet_since = Instant::now();
             }
-            Ok(Err(error)) => eprintln!("watch error: {error}"),
+            Ok(Wake::File(Err(error))) => eprintln!("watch error: {error}"),
+            // A change from elsewhere is written out on the pass below.
+            Ok(Wake::Server) => {}
+            Ok(Wake::Ended(reason)) => {
+                return Err(CliError::Watch(format!(
+                    "the server's changes stopped reaching this folder: {reason}"
+                )));
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -96,7 +165,7 @@ pub fn watch(
         if quiet_since.elapsed() < SETTLE {
             continue;
         }
-        step(&folder, json, &mut standing)?;
+        step(folder, json, &mut standing)?;
     }
     Ok(())
 }

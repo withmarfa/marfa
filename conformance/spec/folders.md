@@ -61,6 +61,10 @@ A folder is a device surface: a directory on a machine that holds a slice as fil
 
 31. **A save the server sets aside in a conflicted copy against this device's own earlier save stays in its file.** A save made while the folder's earlier save of the same file was waiting is made against that save, and where it goes on the earlier save's base (`queue-and-verdicts.md` 42) it can collide with it: the row keeps the earlier save's value and the newer one goes to a copy. The pull does not write the row's older save over the file holding the newest; the file is marked as holding bytes the row does not, read at the version the row is then at, and the next scan sends what it holds as an edit based on that version (13), which the server takes where nothing has moved since. Written over, the person's newest text would leave their file for a copy they never asked for. `device/folders.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
 
+## Keeping up with the server
+
+32. **A folder takes in what the server recorded since its copy's cursor, without a hydration.** `folders push` catches up after its drain and before its pull, and `folders watch` holds the event stream open beside its passes, so another device's change reaches the copy and the pass after it writes the change out. A cursor the log has aged past is met with a fresh hydration (`device.md` 16). A folder that only ever pushed and pulled would write out what it held at its last hydration for good, and every edit made anywhere else would wait for somebody to ask for a hydration. `device/folders.test.ts › takes another device's change at the next push, without a hydration`, `› takes another device's change while watching, without a hydration`.
+
 ## What the real server cannot be made to produce
 
 The list and the reason for each entry are in `device.md`; `device/fidelity.test.ts` checks every answer the real server can produce against the scripted server's.

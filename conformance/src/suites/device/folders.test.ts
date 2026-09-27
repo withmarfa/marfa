@@ -17,6 +17,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   answers,
   itemEvent,
+  liveReplay,
   refusal,
   replay,
   wireItem,
@@ -921,6 +922,94 @@ describe("files and items", () => {
       read(harness, "source.md").split("[[other]]"),
       "the person named the link again and the record was not lifted, so the edge stays unrendered for good",
     ).toHaveLength(2);
+  });
+
+  it("takes another device's change at the next push, without a hydration", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c1";
+    harness = await folderHarness("folder-push-catches-up", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "elsewhere", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: {
+                title: "elsewhere",
+                body: "changed on another device",
+              },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // The witness: the file holds what the hydration brought.
+    expect(read(harness, "elsewhere.md")).toContain("as it was");
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      read(harness, "elsewhere.md"),
+      "a push wrote the folder out from a copy that never heard of the change another device made",
+    ).toContain("changed on another device");
+  });
+
+  it("takes another device's change while watching, without a hydration", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c2";
+    harness = await folderHarness("folder-watch-follows", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "watched", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "watched", body: "changed while watching" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    const watching = harness.folder.watch();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(read(harness!, "watched.md")).toContain(
+            "changed while watching",
+          ),
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      await watching.stop();
+    }
   });
 
   it("makes an edge between two files that arrive together", async () => {
@@ -2130,9 +2219,12 @@ describe("identity", () => {
         .map((entry) => [entry.verdict, entry.reason]),
     ).toEqual([["refused", "version_conflict"]]);
 
-    // The witness that the copy did move on: the catch-up applied version 9.
-    const caught = await harness.folder.device().catchUp();
-    expect(caught.ok && caught.value.applied, JSON.stringify(caught)).toBe(1);
+    // The witness that the copy did move on: the push's own catch-up, after
+    // the drain, applied version 9.
+    expect(
+      pushed.value.catch_up.caught_up?.applied,
+      JSON.stringify(pushed.value.catch_up),
+    ).toBe(1);
     const holding = await harness.folder.device().get(id);
     expect(holding.ok && holding.value.version).toBe(9);
 

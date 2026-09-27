@@ -226,7 +226,7 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
 
 /// The edges an inline block could not carry, fetched before any write so no
 /// transaction waits on the network.
-fn fetch_overflow(
+pub(crate) fn fetch_overflow(
     http: &Http,
     item_id: &str,
     edge_type: &str,
@@ -253,7 +253,7 @@ fn fetch_overflow(
 /// a resume point from before its first page.
 fn read_head(http: &Http) -> Result<String> {
     for _ in 0..HEAD_ATTEMPTS {
-        let reader = http.open_events(None, &[], HEAD_READ_TIMEOUT)?;
+        let reader = http.open_events(None, HEAD_READ_TIMEOUT)?;
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
             match frames.next_frame() {

@@ -14,7 +14,7 @@ use crate::http::Http;
 use crate::model::{CatchUpReport, Tier};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{EventPayload, WireType};
+use crate::wire::{EventPayload, WireEdge, WireItem, WireType};
 use crate::{Core, Result};
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
@@ -23,7 +23,6 @@ const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 // the cursor, so the wait between the connect comment and the first event
 // has to outlast that budget.
 const HEAD_WAIT: Duration = Duration::from_secs(10);
-const TYPE_FILTER_LIMIT: usize = 10;
 
 /// How a follow paces itself. `PACE` is the one in use; the tests shorten
 /// it so a wait that doubles to thirty seconds can be watched doubling.
@@ -194,18 +193,13 @@ fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
 /// unwanted only when it next has a frame to hand on, so it keeps the
 /// connection, and nothing of the store, until the server's next keepalive
 /// or the stream's `bound`.
-fn open(
-    http: &Http,
-    cursor: &str,
-    slice: &Slice,
-    bound: Duration,
-) -> Result<Receiver<io::Result<Frame>>> {
-    let filter: &[String] = if slice.types.len() <= TYPE_FILTER_LIMIT {
-        &slice.types
-    } else {
-        &[]
-    };
-    let reader = http.open_events(Some(cursor), filter, bound)?;
+fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Result<Frame>>> {
+    // Every type the key reads, not the slice's alone: the server narrows a
+    // stream by the type a row has now, so one narrowed to the slice never
+    // carries the frame of a row retyped out of it, and the copy would hold
+    // that row as it was for good. Applying only what is in the slice is the
+    // copy's own work (`apply`).
+    let reader = http.open_events(Some(cursor), bound)?;
     let (sender, frames) = mpsc::sync_channel::<io::Result<Frame>>(256);
     thread::spawn(move || {
         let mut frames = Frames::new(BufReader::new(reader));
@@ -240,9 +234,15 @@ fn take(
     kind: &str,
     payload: &EventPayload,
 ) -> Result<Option<Change>> {
+    let brought = edges_of_entering_row(core, catalog, slice, kind, payload)?;
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     let applied = apply(&tx, catalog, slice, kind, payload)?;
+    if applied {
+        for edge in &brought {
+            store::upsert_edge(&tx, edge)?;
+        }
+    }
     // The cursor is the last id applied, never the highest seen: the
     // server delivers ids in order, so the two agree while every event is
     // applied, and where one is not, a high-water mark would step over it
@@ -283,7 +283,7 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = start(core)?;
     let mut catalog = adopt(core, &http.types()?)?;
-    let frames = open(http, &cursor, &slice, STREAM_HARD_BOUND)?;
+    let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
     // Read for once each, so a type the server will not describe costs one
     // read of the catalog rather than one for every event naming it. A
     // catch-up is one stream, so this lasts the call.
@@ -441,7 +441,7 @@ fn follow_paced(
             report.reconnects += 1;
         }
         asked = true;
-        let Some(reached) = reach(&http, &cursor, &slice, stop, pace.stop_poll) else {
+        let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
             break;
         };
         let (types, frames) = match reached {
@@ -532,25 +532,13 @@ type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
 /// Asks for the type catalog and the stream on a thread holding only the
 /// transport, and waits for the answer while watching `stop`. `None` when
 /// `stop` was set first.
-fn reach(
-    http: &Arc<Http>,
-    cursor: &str,
-    slice: &Slice,
-    stop: &AtomicBool,
-    poll: Duration,
-) -> Option<Reached> {
+fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
     let (sender, answer) = mpsc::sync_channel::<Reached>(1);
     let http = Arc::clone(http);
     let cursor = cursor.to_string();
-    let filter = slice.types.clone();
-    let tier = slice.tier;
     thread::spawn(move || {
-        let slice = Slice {
-            types: filter,
-            tier,
-        };
         let reached = http.types().and_then(|types| {
-            let frames = open(&http, &cursor, &slice, STREAM_HARD_BOUND)?;
+            let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
             Ok((types, frames))
         });
         let _ = sender.send(reached);
@@ -598,6 +586,58 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
     }
 }
 
+/// Whether a row belongs to the slice: one of its types, with the subtree,
+/// at its tier.
+fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
+    let tier = Tier::parse_wire(item.tier.as_deref())?;
+    Ok(tier == Some(slice.tier)
+        && slice
+            .types
+            .iter()
+            .any(|declared| catalog.matches(declared, &item.r#type)))
+}
+
+/// The edges a row coming into the slice draws, read before the event is
+/// applied so no transaction waits on the network.
+///
+/// A frame carries a row's fields and tags and never its edges, and the
+/// edge frames a row drew went by while the copy did not hold it (`apply`
+/// takes an edge only from a held row). A created row needs none: its edges
+/// are written after it and their frames follow. Any other row the copy does
+/// not hold but the slice now takes came in by a retype or a move of tier,
+/// and without this it would sit in the copy with none of its edges until a
+/// hydration. A read that fails ends the catch-up before this event, which
+/// is taken again next time.
+fn edges_of_entering_row(
+    core: &Core,
+    catalog: &Catalog,
+    slice: &Slice,
+    kind: &str,
+    payload: &EventPayload,
+) -> Result<Vec<WireEdge>> {
+    let Some(item) = &payload.item else {
+        return Ok(Vec::new());
+    };
+    if kind == "item.created" || !ITEM_CHANGES.contains(&kind) || !in_slice(catalog, slice, item)? {
+        return Ok(Vec::new());
+    }
+    if store::item_held(&*core.conn()?, &item.id)? {
+        return Ok(Vec::new());
+    }
+    let http = core.http()?;
+    let Some(read) = http.item_with_edges(&item.id)? else {
+        return Ok(Vec::new());
+    };
+    let mut edges = Vec::new();
+    for (edge_type, block) in read.item.edges.iter().flatten() {
+        edges.extend(block.data.iter().cloned());
+        edges.extend(crate::hydrate::fetch_overflow(
+            http, &item.id, edge_type, block,
+        )?);
+    }
+    Ok(edges)
+}
+
 fn apply(
     tx: &rusqlite::Connection,
     catalog: &Catalog,
@@ -639,13 +679,7 @@ fn apply(
             {
                 return Ok(false);
             }
-            let tier = Tier::parse_wire(item.tier.as_deref())?;
-            let in_slice = tier == Some(slice.tier)
-                && slice
-                    .types
-                    .iter()
-                    .any(|declared| catalog.matches(declared, &item.r#type));
-            if in_slice {
+            if in_slice(catalog, slice, item)? {
                 let tags = payload
                     .metadata
                     .as_ref()
