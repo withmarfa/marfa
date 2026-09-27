@@ -1563,7 +1563,23 @@ describe("catch-up keeps the copy to its slice", () => {
               },
             },
           },
-          { item: { id: "purged" } },
+          {
+            item: {
+              id: "purged",
+              edges: {
+                references: {
+                  data: [
+                    wireEdge({
+                      id: "away",
+                      source_id: "purged",
+                      target_id: "stays",
+                    }),
+                  ],
+                  next_cursor: null,
+                },
+              },
+            },
+          },
         ],
       },
     });
@@ -1581,6 +1597,11 @@ describe("catch-up keeps the copy to its slice", () => {
       before.ok ? before.value.map((edge) => edge.id) : [],
       "hydration did not hold the edge, so its absence below proves nothing",
     ).toEqual(["toward"]);
+    const drawnBefore = await device.edgesTo("stays");
+    expect(
+      drawnBefore.ok ? drawnBefore.value.map((edge) => edge.id) : [],
+      "hydration did not hold the purged row's own edge, so its absence below proves nothing",
+    ).toEqual(["away"]);
 
     expect((await device.catchUp()).ok).toBe(true);
 
@@ -1589,6 +1610,11 @@ describe("catch-up keeps the copy to its slice", () => {
     expect(
       after.ok ? after.value.map((edge) => edge.id) : undefined,
       "an edge to a purged row stayed, so the copy points at an item that exists nowhere",
+    ).toEqual([]);
+    const drawn = await device.edgesTo("stays");
+    expect(
+      drawn.ok ? drawn.value.map((edge) => edge.id) : undefined,
+      "an edge from a purged row stayed, so the copy holds an edge from an item that exists nowhere",
     ).toEqual([]);
   });
 

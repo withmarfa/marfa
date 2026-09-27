@@ -1200,14 +1200,16 @@ pub fn evict_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     remove_item(conn, id, "DELETE FROM edges WHERE source_id = ?1")
 }
 
+/// Whether the copy changed: a purge of an item already evicted still takes
+/// the edges held items drew to it.
 fn remove_item(conn: &Connection, id: &str, edges: &str) -> Result<bool, CoreError> {
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    conn.execute(edges, [id])?;
-    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0)
+    let edges = conn.execute(edges, [id])?;
+    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? + edges > 0)
 }
 
 pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
@@ -1925,6 +1927,9 @@ mod tests {
         assert_eq!(left, ["toward"]);
         assert!(edges_from(&conn, "n1").unwrap().is_empty());
         assert!(!item_held(&conn, "n1").unwrap());
+        // Purged after it left, the item still takes the edge drawn to it.
+        assert!(purge_item(&conn, "n1").unwrap());
+        assert!(edges_from(&conn, "n2").unwrap().is_empty());
     }
 
     #[test]
