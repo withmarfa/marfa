@@ -53,24 +53,23 @@ jobs:
   core:
     name: Core (Rust, bindings, live)
     timeout-minutes: 90
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    # Local jobs share machine resources and must not contend.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
       - uses: actions/checkout@v7
-      - name: Select the image's release Xcode
-        run: |
-          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-          xcodebuild -version
+      - name: Check Xcode
+        run: xcodebuild -version
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
           targets: aarch64-apple-darwin, aarch64-apple-ios, aarch64-apple-ios-sim
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            core
-            core/bindings/swift
-          key: ${{ github.job }}
 
       - uses: pnpm/action-setup@v6
         with:
@@ -78,7 +77,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
       # server-up.sh runs the server through tsx, which resolves
       # @withmarfa/shared through its dist.

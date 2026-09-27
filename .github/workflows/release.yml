@@ -58,7 +58,7 @@ env:
 jobs:
   require-green-ci:
     name: Require green CI
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
     permissions:
       contents: read
@@ -93,7 +93,12 @@ jobs:
   build:
     name: Build the artifacts
     needs: require-green-ci
-    runs-on: macos-26
+    runs-on: [self-hosted, macOS, ARM64, withmarfa]
+    # Local jobs share machine resources and must not contend.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     timeout-minutes: 60
     permissions:
       contents: read
@@ -201,12 +206,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            core
-            core/bindings/swift
-          key: ${{ github.job }}
 
       - uses: pnpm/action-setup@v6
         with:
@@ -214,7 +213,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          cache: pnpm
 
       # The stamp's `cargo update` runs offline, so it needs every crate the
       # lockfiles name already in the cargo cache. `--locked` refuses rather
