@@ -17,6 +17,7 @@ import {
   type HydrateReport,
   type Item,
   type ListFilters,
+  type PinReport,
   type Outcome,
   type QueuedWrite,
   type Refusal,
@@ -161,12 +162,12 @@ export class CliDevice implements DeviceUnderTest {
     ]);
   }
 
-  async pin(id: string): Promise<Outcome<unknown>> {
-    return this.json<unknown>(["pin", ...this.server(), id]);
+  async pin(id: string): Promise<Outcome<PinReport>> {
+    return this.json<PinReport>(["pin", ...this.server(), id]);
   }
 
-  async unpin(id: string): Promise<Outcome<unknown>> {
-    return this.json<unknown>(["unpin", id]);
+  async unpin(id: string): Promise<Outcome<PinReport>> {
+    return this.json<PinReport>(["unpin", id]);
   }
 
   async catchUp(): Promise<Outcome<CatchUpReport>> {

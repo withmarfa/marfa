@@ -488,7 +488,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Pin { id } => {
             let added = store.open_with_server(named)?.pin(&id)?;
             output::report(
-                &serde_json::json!({ "id": id, "pinned": true }),
+                &serde_json::json!({ "id": id, "pinned": true, "was_pinned": !added }),
                 json,
                 || {
                     if added {
@@ -502,7 +502,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
         DeviceCommand::Unpin { id } => {
             let removed = store.open(None)?.unpin(&id)?;
             output::report(
-                &serde_json::json!({ "id": id, "pinned": false }),
+                &serde_json::json!({ "id": id, "pinned": false, "was_pinned": removed }),
                 json,
                 || {
                     if removed {

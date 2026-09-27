@@ -89,6 +89,15 @@ export interface Status {
   edges: number;
 }
 
+/** What a pin or an unpin answers. */
+export interface PinReport {
+  id: string;
+  /** Whether the row is pinned now. */
+  pinned: boolean;
+  /** Whether it was pinned before this call. */
+  was_pinned: boolean;
+}
+
 export interface SearchHit {
   item: Item;
   score: number;
@@ -257,9 +266,9 @@ export interface DeviceUnderTest {
     options?: { edgeTypes?: string[] },
   ): Promise<Outcome<HydrateReport>>;
   /** Hold one row by id, whatever the slice says of it, read now. */
-  pin(id: string): Promise<Outcome<unknown>>;
+  pin(id: string): Promise<Outcome<PinReport>>;
   /** Stop holding a row by id; one outside the slice goes. */
-  unpin(id: string): Promise<Outcome<unknown>>;
+  unpin(id: string): Promise<Outcome<PinReport>>;
   catchUp(): Promise<Outcome<CatchUpReport>>;
   list(filters?: ListFilters): Promise<Outcome<Item[]>>;
   get(id: string): Promise<Outcome<Item>>;
