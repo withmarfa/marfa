@@ -328,7 +328,7 @@ pub(crate) fn hold_row(
     if !store::holds_newer(conn, Subject::Item, &row.item.id, row.item.version)? {
         let indexing = catalog.indexing(&row.item.r#type);
         store::upsert_item(conn, &row.item, Some(&row.metadata.tags), &indexing)?;
-        store::lay_waiting_writes_over(conn, &row.item.id, &indexing)?;
+        store::lay_waiting_writes_over(conn, &row.item.id, &|laid| catalog.indexing(laid))?;
     }
     for edge in edges {
         if !store::holds_newer(conn, Subject::Edge, &edge.id, edge.version)? {

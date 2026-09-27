@@ -1241,7 +1241,7 @@ fn settle(
                             || row.kind == WriteKind::UpdateItem
                                 && moves(&store::payload_of(&tx, &row.id)?));
                     if moved_out {
-                        store::evict_item(&tx, &parsed.item.id)?;
+                        store::evict_item(&tx, &parsed.item.id, &store::whole_edge_types(&tx)?)?;
                     } else if !newer {
                         store::upsert_item(&tx, &parsed.item, tags.as_deref(), &indexing)?;
                     }
@@ -1808,7 +1808,7 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
                     || row.kind == WriteKind::UpdateItem
                         && moves(&store::payload_of(&tx, &row.id)?));
             if let_go {
-                store::evict_item(&tx, &held.item.id)?;
+                store::evict_item(&tx, &held.item.id, &store::whole_edge_types(&tx)?)?;
                 tx.commit()?;
                 return Ok(());
             }

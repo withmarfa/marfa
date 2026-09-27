@@ -248,14 +248,16 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
 }
 
-/// Whether the copy's slice takes this row: one of its types, with the
-/// subtree, at its tier. A copy that has never hydrated holds no slice and
-/// takes nothing.
+/// Whether the copy keeps this row: pinned, or one of the slice's types,
+/// with the subtree, at its tier. A copy that has never hydrated keeps nothing.
 pub fn slice_holds(
     conn: &Connection,
     catalog: &crate::catalog::Catalog,
     item: &crate::wire::WireItem,
 ) -> Result<bool, CoreError> {
+    if pinned(conn, &item.id)? {
+        return Ok(true);
+    }
     let Some((types, tier)) = slice(conn)? else {
         return Ok(false);
     };

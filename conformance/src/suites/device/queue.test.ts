@@ -886,6 +886,51 @@ describe("what a drain sends and reports", () => {
     expect((await device.get(fileId)).ok).toBe(true);
   });
 
+  it("keeps a pinned row its own answered move takes out of the slice", async () => {
+    harness = await hydratedHarness("queue-retype-pinned", { rows: held() });
+    const { device, server } = harness;
+    server.answer(
+      "GET",
+      `/items/${HELD.id}`,
+      answers.updated(
+        wireItem({
+          id: HELD.id,
+          version: HELD.version,
+          properties: { title: "held", body: "held" },
+        }),
+      ),
+    );
+    expect((await device.pin(HELD.id)).ok).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    // The witness is `› lets a row go once its retype out of the slice is
+    // answered`: the same move unpinned leaves the copy.
+    const got = await device.get(HELD.id);
+    expect(
+      got.ok && [got.value.type, got.value.version],
+      "a pinned row left the copy for an answered move out of the slice",
+    ).toEqual(["core.bookmark", HELD.version + 1]);
+  });
+
   it("sends no retype naming the type the row already has", async () => {
     harness = await hydratedHarness("queue-retype-same", { rows: held() });
     expect(
