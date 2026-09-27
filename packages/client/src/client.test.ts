@@ -318,6 +318,19 @@ describe("where the credential goes", () => {
     }
   });
 
+  it("sends the credential it checked, whatever the options become", async () => {
+    const server = stubServer();
+    const options = {
+      baseUrl: "https://marfa.example",
+      credential: "marfa_k1_0f3a",
+      fetch: server.fetch,
+    };
+    const client = createClient(options);
+    options.credential = "marfa_k1_0f3a\nX-Injected: 1";
+    await client.GET("/edge-types");
+    expect(server.seen[0]?.authorization).toBe("Bearer marfa_k1_0f3a");
+  });
+
   it("sends a credential of the characters a bearer holds, as it was given", async () => {
     for (const credential of [
       "marfa_k1_0123456789abcdef",

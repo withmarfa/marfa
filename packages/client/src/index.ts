@@ -99,7 +99,9 @@ export function createClient(options: ClientOptions): MarfaClient {
     throw new TypeError(`baseUrl must be http or https, not ${base.protocol}`);
   }
   const baseUrl = base.href.replace(/\/+$/, "");
-  checkCredential(options.credential);
+  // Held, so a caller changing its options later sends nothing unchecked.
+  const credential = options.credential;
+  checkCredential(credential);
   // Normalized as a request's own URL is, and ending in a slash, so the
   // comparison below is between two spellings of the same thing and a host
   // that merely begins with this one is not under it.
@@ -127,7 +129,7 @@ export function createClient(options: ClientOptions): MarfaClient {
     // A redirect is refused, so the credential never leaves the URL it was
     // sent to.
     const headers = new Headers(request.headers);
-    headers.set("Authorization", `Bearer ${options.credential}`);
+    headers.set("Authorization", `Bearer ${credential}`);
     return hold(
       await fetcher(new Request(request, { headers, redirect: "error" })),
     );
