@@ -91,7 +91,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a trashed item
-         * @description Restores a trashed item to active. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.
+         * @description Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored`; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.
          */
         post: operations["restoreItem"];
         delete?: never;

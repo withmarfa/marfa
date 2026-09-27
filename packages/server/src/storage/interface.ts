@@ -660,7 +660,12 @@ export interface ItemStore {
     id: string,
     input: StoredUpdateItemInput,
   ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse>;
-  delete(id: string): Promise<void>;
+  /**
+   * Soft-deletes the row. `trashedWith` names the row whose trash took this
+   * one through a cascading edge, recorded only where this call moves the row
+   * into the bin, so a row already there stays its own trash's.
+   */
+  delete(id: string, trashedWith?: string): Promise<void>;
   purge(id: string): Promise<void>;
   /**
    * Hard-delete every id in `ids`. Bypasses the
@@ -673,6 +678,11 @@ export interface ItemStore {
    */
   bulkPurge(ids: string[]): Promise<number>;
   restore(id: string): Promise<Item>;
+  /**
+   * Restores every row still in the bin that `rootId`'s trash took with it,
+   * and answers them. Called after `rootId` itself has left the bin.
+   */
+  restoreTrashedWith(rootId: string): Promise<Item[]>;
   transition(id: string, state: ItemState): Promise<Item>;
   /**
    * How many items carry this exact type identifier.

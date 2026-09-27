@@ -85,6 +85,9 @@ async function runTransitionChunk({
   // Collected inside the transaction and published after it commits, so a
   // subscriber is never told about a row a rollback then took away.
   const moved: Item[] = [];
+  // Rows a restore out of the bin brought back because the trash that took
+  // them was undone, announced as the single restore door announces them.
+  const broughtBack: Item[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -98,6 +101,9 @@ async function runTransitionChunk({
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
         moved.push(await storage.items.transition(id, input.state));
+        if (input.state === "active") {
+          broughtBack.push(...(await storage.items.restoreTrashedWith(id)));
+        }
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
@@ -107,6 +113,13 @@ async function runTransitionChunk({
   for (const item of moved) {
     await publish({
       type: "state_changed",
+      item,
+      enableFanout: fansOutFor(input),
+    });
+  }
+  for (const item of broughtBack) {
+    await publish({
+      type: "restored",
       item,
       enableFanout: fansOutFor(input),
     });

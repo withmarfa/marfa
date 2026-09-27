@@ -109,6 +109,23 @@ export const metadata = sqliteTable("metadata", {
   extensions: text("extensions").notNull().default("{}"),
 });
 
+// Which rows a trash took with it through a cascading edge, so restoring
+// the row named brings them back and leaves alone a row trashed on its own.
+// A row leaves this table when it leaves the bin, by restore or transition,
+// and with either end when it is purged.
+export const trash_cascades = sqliteTable(
+  "trash_cascades",
+  {
+    item_id: text("item_id")
+      .primaryKey()
+      .references(() => items.id, { onDelete: "cascade" }),
+    trashed_with: text("trashed_with")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+  },
+  (table) => [index("idx_trash_cascades_with").on(table.trashed_with)],
+);
+
 export const edges = sqliteTable(
   "edges",
   {

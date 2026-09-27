@@ -1282,7 +1282,7 @@ pub fn remove_item_tag(
     }
 }
 
-/// Restores a trashed item to active. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.
+/// Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored`; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.
 pub fn restore_item(
     configuration: &configuration::Configuration,
     params: RestoreItemParams,

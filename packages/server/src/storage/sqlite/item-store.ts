@@ -84,7 +84,7 @@ import {
   versionConflict,
 } from "../conflict.js";
 import type { ItemFieldValues, SnapshotItemFields } from "../conflict.js";
-import { edges, items, metadata } from "./schema.js";
+import { edges, items, metadata, trash_cascades } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
@@ -1168,7 +1168,7 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string): Promise<void> {
+  async delete(id: string, trashedWith?: string): Promise<void> {
     const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -1201,6 +1201,16 @@ export class SqliteItemStore implements ItemStore {
         ...softDeleteClock(row.type, row.state, target, now),
       })
       .where(eq(items.id, id));
+    if (trashedWith !== undefined && target === "trashed") {
+      await this.db
+        .insert(trash_cascades)
+        .values({ item_id: id, trashed_with: trashedWith })
+        .onConflictDoUpdate({
+          target: trash_cascades.item_id,
+          set: { trashed_with: trashedWith },
+        })
+        .run();
+    }
 
     await this.searchStore.remove(id);
   }
@@ -1404,10 +1414,27 @@ export class SqliteItemStore implements ItemStore {
       })
       .where(eq(items.id, id))
       .run();
+    await this.db
+      .delete(trash_cascades)
+      .where(eq(trash_cascades.item_id, id))
+      .run();
 
     await this.searchStore.index(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
+  }
+
+  async restoreTrashedWith(rootId: string): Promise<Item[]> {
+    const taken = await this.db
+      .select({ item_id: trash_cascades.item_id })
+      .from(trash_cascades)
+      .where(eq(trash_cascades.trashed_with, rootId))
+      .all();
+    const restored: Item[] = [];
+    for (const { item_id } of taken) {
+      restored.push(await this.restore(item_id));
+    }
+    return restored;
   }
 
   async transition(id: string, state: ItemState): Promise<Item> {
@@ -1443,6 +1470,10 @@ export class SqliteItemStore implements ItemStore {
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
+      await this.db
+        .delete(trash_cascades)
+        .where(eq(trash_cascades.item_id, id))
+        .run();
       await this.searchStore.index(id, row.properties, row.type);
     }
 
