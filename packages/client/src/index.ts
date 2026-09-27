@@ -130,12 +130,18 @@ export function createClient(options: ClientOptions): MarfaClient {
     },
   };
   // openapi-fetch would JSON-encode bytes into the text of an object, and
-  // the server would store that text as the upload.
+  // the server would store that text as the upload. Every other body is
+  // left to it, with the headers its declaration omits but it reads to
+  // choose a form encoding over JSON.
+  const serialize = defaultBodySerializer as (
+    body: unknown,
+    headers?: Headers,
+  ) => unknown;
   const client = createFetchClient<paths>({
     baseUrl,
     fetch: send,
-    bodySerializer: (body: unknown) =>
-      isBytes(body) ? body : defaultBodySerializer(body),
+    bodySerializer: (body: unknown, headers?: Headers) =>
+      isBytes(body) ? body : serialize(body, headers),
   });
   client.use(gate);
   labelBytes(client);

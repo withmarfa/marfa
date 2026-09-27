@@ -402,6 +402,15 @@ describe("a body of bytes", () => {
     expect(sent?.contentType).toBe("application/json");
     expect(JSON.parse(new TextDecoder().decode(sent?.bytes))).toEqual(item);
   });
+
+  it("still form-encodes a body the caller labels as a form", async () => {
+    const server = recordingServer();
+    await make(server).POST("/items", {
+      body: { type: "task" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    });
+    expect(new TextDecoder().decode(server.sent[0]?.bytes)).toBe("type=task");
+  });
 });
 
 describe("pages", () => {
