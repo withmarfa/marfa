@@ -264,6 +264,55 @@ describe("type-scoped permissions", () => {
     expect(backrefs.error?.error.code).toBe("type_not_permitted");
   });
 
+  // `items.purge` opens the door and the type map says which rows it
+  // destroys, as the restore door beside it asks. A trashed row is still the
+  // key's type to answer for: destroying it is the one write that cannot be
+  // taken back.
+  it("a key that may only read a type cannot purge a trashed row of it", async () => {
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(bookmark.ok).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    expect((await client.deleteItem(note.data.item.id)).ok).toBe(true);
+    expect((await client.deleteItem(bookmark.data.item.id)).ok).toBe(true);
+
+    const keyResp = await client.createKey({
+      label: "purge-bookmark-read-only",
+      source: `${ctx.source}-purge-bookmark-read-only`,
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write", "core.bookmark": "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    // The restore door refuses this key the same row, which is the
+    // agreement the purge door is held to.
+    const restore = await scopedClient.restoreItem(bookmark.data.item.id);
+    expect(restore.status).toBe(403);
+    expect(restore.error?.error.code).toBe("type_not_permitted");
+
+    const purged = await scopedClient.purgeItem(bookmark.data.item.id);
+    expect(purged.status).toBe(403);
+    expect(purged.error?.error.code).toBe("type_not_permitted");
+
+    // Still there: a key that may write the type brings it back.
+    const restoredByOwner = await client.restoreItem(bookmark.data.item.id);
+    expect(restoredByOwner.status).toBe(200);
+
+    // The witness: the same key purges a trashed row of the type it may
+    // write, so the refusal above is the type map and not a closed door.
+    const purgedNote = await scopedClient.purgeItem(note.data.item.id);
+    expect(purgedNote.status).toBe(200);
+  });
+
   it("a key without items.purge cannot purge", async () => {
     const note = await client.createItem(createNote({ source: ctx.source }));
     expect(note.ok).toBe(true);

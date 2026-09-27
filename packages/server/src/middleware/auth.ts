@@ -583,6 +583,25 @@ export function checkTypeAccess(
     }
   }
 
+  checkTypePermission(key, type, level);
+}
+
+/**
+ * The credential's own type map, asked without the reserved-namespace fence
+ * `checkTypeAccess` puts in front of it.
+ *
+ * The purge door is the one caller that wants this half alone. A reserved
+ * row is soft-deleted by paths that do not ask the fence of it, the
+ * platform's own writes and a delete cascade among them, so asking it at
+ * purge would refuse every credential and leave the row unpurgeable. Which
+ * rows a credential may destroy is still its map's to say.
+ */
+export function checkTypePermission(
+  apiKey: ApiKey | undefined,
+  type: string,
+  level: "read" | "write",
+): void {
+  const key = checkAuth(apiKey);
   if (!mayReadType(key, type)) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
