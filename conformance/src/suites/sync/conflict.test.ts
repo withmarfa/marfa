@@ -71,6 +71,7 @@ describe("the server resolves a conflict", () => {
     const child = await make("child");
     const topic = await make("topic");
     const successor = await make("successor");
+    const older = await make("older");
     const link = async (
       source_id: string,
       target_id: string,
@@ -83,6 +84,7 @@ describe("the server resolves a conflict", () => {
     await link(original.id, child.id, "parent-of");
     await link(original.id, topic.id, "about");
     await link(successor.id, original.id, "supersedes");
+    await link(original.id, older.id, "supersedes");
 
     const base = original.version;
     expect(
@@ -126,9 +128,13 @@ describe("the server resolves a conflict", () => {
     // original still holds both.
     expect(outbound).not.toContain(`parent-of>${child.id}`);
     expect(inbound).not.toContain(`${successor.id}>supersedes`);
+    // Its own file writes the supersedes it draws, and the type's
+    // cardinality still keeps it off the copy.
+    expect(outbound).not.toContain(`supersedes>${older.id}`);
     const originalOut = await client.listItemEdges(original.id);
     const originalBack = await client.listItemBackrefs(original.id);
     expect(originalOut.data.data.map((e) => e.target_id)).toContain(child.id);
+    expect(originalOut.data.data.map((e) => e.target_id)).toContain(older.id);
     expect(originalBack.data.data.map((e) => e.source_id)).toContain(
       successor.id,
     );
