@@ -610,7 +610,7 @@ fn apply(
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
-            store::delete_item(tx, &item.id)
+            store::purge_item(tx, &item.id)
         }
         kind if ITEM_CHANGES.contains(&kind) => {
             let Some(item) = &payload.item else {
@@ -655,7 +655,7 @@ fn apply(
                 store::lay_waiting_writes_over(tx, &item.id, &indexing)?;
                 Ok(true)
             } else {
-                store::delete_item(tx, &item.id)
+                store::evict_item(tx, &item.id)
             }
         }
         "edge.created" | "edge.updated" => {
