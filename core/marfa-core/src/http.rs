@@ -254,9 +254,7 @@ impl Http {
         self.get_json(&["items", id, "edges"], &params)
     }
 
-    /// A page of every edge of `edge_type` the key reads, whichever ends the
-    /// copy holds. The listing leaves out a row the key cannot read, so a
-    /// page can be short or empty with a cursor still to follow.
+    /// A page of every edge of `edge_type` the key reads.
     pub fn edges_page(
         &self,
         edge_type: &str,

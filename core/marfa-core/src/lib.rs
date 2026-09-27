@@ -182,9 +182,7 @@ impl Core {
     }
 
     /// A hydration that also holds every edge of `edge_types` the key reads,
-    /// whichever ends the copy holds, and keeps holding them: a catch-up
-    /// applies one whatever its source and an eviction leaves it
-    /// (`device.md` 1, 14).
+    /// whichever ends the copy holds (`device.md` 1, 14).
     pub fn hydrate_with(
         &self,
         types: &[String],
@@ -198,17 +196,12 @@ impl Core {
         hydrate::hydrate(self, self.http()?, types, tier, edge_types)
     }
 
-    /// Holds the row `id` whatever the slice says of it, read now with the
-    /// edges it draws. A catch-up keeps it current and never evicts it, and
-    /// a hydration reads it again (`device.md` 1, 14). A row the server does
-    /// not hold is refused, unless the copy holds it, as it holds a create
-    /// still waiting. Answers whether it was not pinned already.
+    /// Holds `id` whatever the slice says of it (`device.md` 1), read now; one
+    /// neither the server nor the copy holds is refused. True if newly pinned.
     pub fn pin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let http = self.http()?;
-        // Pinned before the read, so an event a follow applies between the
-        // read and the write is kept rather than dropped for being outside
-        // the slice; the read never puts back an older row over it.
+        // Pinned before the read, so an event a follow applies meanwhile is kept.
         let added = {
             let conn = self.conn()?;
             store::refuse_unless_hydrated(&conn)?;
@@ -240,9 +233,8 @@ impl Core {
         }
     }
 
-    /// Stops holding `id` by id. A row the slice does not take goes, with the
-    /// edges it draws but those of a type held whole (`device.md` 14).
-    /// Answers whether it was pinned.
+    /// Stops holding `id` by id; a row the slice does not take goes. True if
+    /// it was pinned.
     pub fn unpin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;

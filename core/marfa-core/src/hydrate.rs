@@ -126,9 +126,7 @@ pub(crate) fn hydrate(
                 store::upsert_edge(&tx, edge)?;
             }
             tx.commit()?;
-            // Paged to `next_cursor: null` rather than to an empty page: the
-            // listing leaves out rows the key cannot read, so an empty page
-            // can still have more after it.
+            // Rows the key cannot read leave a page short or empty, not last.
             let Some(next) = page.next_cursor else {
                 break;
             };
@@ -280,9 +278,8 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     Ok(declared)
 }
 
-/// Edge types to hold whole, each named once. None is a slice like any other.
-/// A comma is refused rather than sent, because the listing reads one as a
-/// list of types.
+/// Edge types to hold whole, each named once. A comma is refused because the
+/// listing reads one as a list of types.
 fn declared_edge_types(edge_types: &[String]) -> Result<Vec<String>> {
     let mut declared: Vec<String> = Vec::new();
     for raw in edge_types {
@@ -303,9 +300,8 @@ fn declared_edge_types(edge_types: &[String]) -> Result<Vec<String>> {
     Ok(declared)
 }
 
-/// One row by id with every edge it draws, overflow included, read before
-/// any write so no transaction waits on the network. `None` where the server
-/// holds no such row.
+/// One row by id with every edge it draws, overflow included, read outside
+/// any transaction. `None` where the server holds no such row.
 pub(crate) fn read_with_edges(
     http: &Http,
     id: &str,
@@ -321,10 +317,8 @@ pub(crate) fn read_with_edges(
     Ok(Some((read, edges)))
 }
 
-/// Writes a row read by id, and the edges it draws, into the copy, and lays
-/// the writes still waiting on them back over them. A row the copy holds at
-/// a later version is left as it is: an event applied since the read is
-/// newer than the read.
+/// Writes a row read by id and its edges, waiting writes laid back over them;
+/// one held at a later version came from an event since the read, and stays.
 pub(crate) fn hold_row(
     conn: &rusqlite::Connection,
     catalog: &Catalog,

@@ -77,26 +77,8 @@ const ITEM_CHANGES: [&str; 6] = [
 /// image under one.
 type Unexplained = (String, Option<String>);
 
-/// What an item event names that the catalog cannot answer for, where the
-/// row could be in the slice or is `pinned`, and that it has not been read
-/// again for already: a type the catalog does not hold, or an image's data
-/// URI under a property it does not know as that type's thumbnail.
-///
-/// Either may mean the server's catalog changed after this one was read, and
-/// taking the event by this one would drop a row the slice holds through a
-/// parent it has not seen, or index an image's base64. Neither has to: a
-/// type the server will not describe stays unknown, and a property the type
-/// declares as text, an `icon` say, can hold an image as well as one the
-/// type has since made its thumbnail can. The catalog cannot tell those from
-/// a change until it is read again, so each costs one read a stream:
-/// `refreshed` holds what the stream has read again for, and an event naming
-/// only those is taken by the catalog as it is.
-///
-/// Only an image's data URI is looked for, because only a thumbnail changes
-/// what an entry leaves out, and a property its type does not declare is
-/// otherwise nothing unusual: the server takes one on any type its strict
-/// mode does not name. Every image is looked at rather than the first, so
-/// one already read again for does not hide another after it.
+/// What an event for a row the copy could hold names that the catalog may be
+/// stale about: an unknown type, or an image under a non-thumbnail property.
 fn unexplained(
     catalog: &Catalog,
     slice: &Slice,
@@ -182,8 +164,6 @@ fn start(core: &Core) -> Result<(Slice, String)> {
     Ok((Slice { types, tier, whole }, cursor))
 }
 
-/// Whether the row an event is about is pinned, held whatever the slice says
-/// of it.
 fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
     match &payload.item {
         Some(item) => store::pinned(&*core.conn()?, &item.id),
@@ -614,19 +594,8 @@ fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
             .any(|declared| catalog.matches(declared, &item.r#type)))
 }
 
-/// The edges a row coming into the slice, or pinned, draws, read before the
-/// event is applied so no transaction waits on the network.
-///
-/// A frame carries a row's fields and tags and never its edges, and the
-/// edge frames a row drew went by while the copy did not hold it (`apply`
-/// takes an edge from a held row, and from any other only of a type held
-/// whole). A created row needs none: its edges are written after it and
-/// their frames follow. Any other row the copy does not hold but the slice
-/// now takes came in by a retype or a move of tier, and one pinned is one
-/// the server did not hold when it was last read; without this either would
-/// sit in the copy with none of its edges until a hydration. A read that
-/// fails ends the catch-up before this event, which is taken again next
-/// time.
+/// Edges of a row the copy now takes but did not hold, read outside the
+/// transaction; a created row's need no read, since they follow as frames.
 fn edges_of_entering_row(
     core: &Core,
     catalog: &Catalog,

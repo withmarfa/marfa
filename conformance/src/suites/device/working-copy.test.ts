@@ -169,10 +169,8 @@ describe("the working copy holds one slice", () => {
   it("holds a named edge type whole, whichever end it holds", async () => {
     harness = await startHarness("edge-type-whole");
     const { server, device } = harness;
-    // Two projects the slice does not take, one beneath the other, and a
-    // ticket it does take beneath the second: a search for the tickets
-    // beneath the first needs both edges, and neither starts at a row the
-    // slice holds.
+    // Two projects outside the slice, one over the other, over a ticket in
+    // it: neither edge starts at a row the slice holds.
     scriptHydration(server, {
       head: "10",
       rows: { "core.note": [{ item: { id: "ticket" } }] },

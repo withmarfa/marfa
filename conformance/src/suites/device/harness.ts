@@ -163,11 +163,7 @@ export function scriptHydration(
   options: {
     head: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
-    /**
-     * What `GET /edges` lists, keyed by edge type, for a hydration that holds
-     * a type whole. Scripted only where named, and a type with no entry
-     * answers an empty page, as `rows` does.
-     */
+    /** What `GET /edges` lists, by edge type; scripted only where named. */
     edges?: Record<string, WireEdgeOptions[]>;
     /** The catalog every read of `/types` answers, the scripted one unless named. */
     catalog?: Answer;
