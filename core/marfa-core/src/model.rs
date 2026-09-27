@@ -348,6 +348,12 @@ pub struct Edit {
     /// version it read, so a key another item holds is refused rather
     /// than taken. Absent leaves the key alone.
     pub source_id: Option<String>,
+    /// The type to move the row to, sent as a retype: the server holds the
+    /// row's properties to the type it enters (`items.md` 22). Absent, or
+    /// the type the row already has, moves nothing.
+    pub r#type: Option<String>,
+    /// The tier to move the row to. Absent leaves it where it is.
+    pub tier: Option<Tier>,
 }
 
 impl Edit {
@@ -364,6 +370,15 @@ impl Edit {
         body.insert("version".into(), Value::from(base_version));
         if let Some(key) = &self.source_id {
             body.insert("source_id".into(), Value::String(key.clone()));
+        }
+        if let Some(r#type) = &self.r#type {
+            // A `type` alone is a check the server refuses on a mismatch;
+            // with `retype` it is a move.
+            body.insert("type".into(), Value::String(r#type.clone()));
+            body.insert("retype".into(), Value::Bool(true));
+        }
+        if let Some(tier) = self.tier {
+            body.insert("tier".into(), serde_json::to_value(tier)?);
         }
         Ok(serde_json::to_string(&Value::Object(body))?)
     }

@@ -1129,6 +1129,11 @@ fn queue_update(
             "an update to {id} carries no version; a write that names no version overwrites whatever it finds"
         )));
     };
+    if let Some(r#type) = edit.r#type.as_ref().filter(|r#type| !catalog.known(r#type)) {
+        return Err(CoreError::UnknownType {
+            message: format!("{type} is not a type this copy holds, so {id} cannot move to it"),
+        });
+    }
     // The version the caller read, against the row as it stands. A caller
     // editing a row the copy has since replaced is editing something they
     // have not seen, and sending it would be a write based on a version that
@@ -1170,6 +1175,12 @@ fn queue_update(
     // are: a refusal reconciles the row back.
     if let Some(source_id) = &edit.source_id {
         next.source_id = Some(source_id.clone());
+    }
+    if let Some(r#type) = &edit.r#type {
+        next.r#type = r#type.clone();
+    }
+    if let Some(tier) = edit.tier {
+        next.tier = Some(tier);
     }
     next.updated_at = store::now_iso();
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;
@@ -1312,6 +1323,7 @@ mod tests {
                 .clone(),
             base_version: Some(base),
             source_id: None,
+            ..Edit::default()
         };
         let held = queue_update(&conn, &catalog, "row", &edit(5), &[], Based::OnHeld).unwrap();
         let read: Value =

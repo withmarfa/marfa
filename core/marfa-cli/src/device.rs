@@ -388,6 +388,13 @@ pub struct UpdateArgs {
     /// than what came in since.
     #[arg(long)]
     pub as_read: bool,
+    /// The type to move the item to. The server holds its properties to the
+    /// type it enters.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub type_: Option<String>,
+    /// The tier to move the item to.
+    #[arg(long)]
+    pub tier: Option<Tier>,
 }
 
 #[derive(Debug, Args)]
@@ -592,6 +599,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                         properties: properties(&args.properties)?,
                         base_version: args.version,
                         source_id: args.source_id,
+                        r#type: args.type_,
+                        tier: args.tier.map(Into::into),
                     };
                     let queued = if args.as_read {
                         core.update_item_as_read(&args.id, &edit)?

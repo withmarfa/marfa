@@ -409,6 +409,88 @@ describe("what a drain sends and reports", () => {
     ).toBe("auto");
   });
 
+  it("sends a retype and a tier change as an edit, and holds the row to its answer", async () => {
+    harness = await hydratedHarness("queue-retype", {
+      rows: held(),
+      types: ["core.note", "core.bookmark"],
+    });
+    const edit = await harness.device.update(HELD.id, {
+      properties: { title: "now a bookmark" },
+      version: HELD.version,
+      type: "core.bookmark",
+      tier: "feed",
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    // The copy shows the move before it is sent, as it shows any edit.
+    const local = await harness.device.get(HELD.id);
+    expect(local.ok && local.value.type).toBe("core.bookmark");
+
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+            tier: "feed",
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const patch = harness.server.requests.find(
+      (request) => request.method === "PATCH",
+    );
+    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    // A type without `retype` is a check the server refuses on a mismatch,
+    // not a move, so the pair is what makes this a retype.
+    expect(body.type).toBe("core.bookmark");
+    expect(body.retype).toBe(true);
+    expect(body.tier).toBe("feed");
+    expect(body.version).toBe(HELD.version);
+  });
+
+  it("sends neither a retype nor a tier where the edit names neither", async () => {
+    // The witness for the case above: the fields are the edit's, not ones
+    // every update carries.
+    harness = await hydratedHarness("queue-no-retype", { rows: held() });
+    expect(
+      (
+        await harness.device.update(HELD.id, {
+          properties: { title: "still a note" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const patch = harness.server.requests.find(
+      (request) => request.method === "PATCH",
+    );
+    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    expect("type" in body || "retype" in body || "tier" in body).toBe(false);
+  });
+
+  it("refuses a retype to a type the catalog does not hold, before queueing it", async () => {
+    harness = await hydratedHarness("queue-retype-unknown", { rows: held() });
+    const edit = await harness.device.update(HELD.id, {
+      properties: {},
+      version: HELD.version,
+      type: "core.nothing-registered",
+    });
+    expect(edit.ok).toBe(false);
+    // The refusal is the catalog's, not the command line's: a binary that
+    // cannot send a retype refuses the flag instead, which is a different
+    // failure with the same `ok`.
+    expect(edit.ok ? undefined : edit.refusal.code).toBe("unknown_type");
+    const queue = await harness.device.queue();
+    expect(queue.ok && queue.value.length).toBe(0);
+  });
+
   it("reports a verdict for every write it sent", async () => {
     harness = await hydratedHarness("queue-report", { rows: held() });
     const created = await harness.device.create({

@@ -259,6 +259,49 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("matches a retype and a tier move sent as one update", async () => {
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { title: "fidelity retype", body: "created" },
+    });
+    expect(created.ok).toBe(true);
+    trackItem(ctx, created.data.item.id);
+    // The body the device sends (`queue.test.ts` asserts it goes out so).
+    const moved = await client.rawRequest<Record<string, unknown>>(
+      `/items/${created.data.item.id}?conflict=auto`,
+      {
+        method: "PATCH",
+        body: {
+          properties: { title: "fidelity retype" },
+          version: created.data.item.version,
+          type: "core.bookmark",
+          retype: true,
+          tier: "feed",
+        },
+      },
+    );
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    const item = (moved.data as { item: { type: string; tier: string } }).item;
+    expect(item.type).toBe("core.bookmark");
+    expect(item.tier).toBe("feed");
+    expectFidelity(
+      "a retype and a tier move",
+      { status: moved.status, body: moved.data },
+      answers.updated(
+        wireItem({
+          id: created.data.item.id,
+          version: 2,
+          type: "core.bookmark",
+          tier: "feed",
+          properties: { title: "fidelity retype", body: "created" },
+          source: ctx.source,
+        }),
+      ),
+      { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
+    );
+  });
+
   it("matches a create onto a natural key a row holds: named by id, and not", async () => {
     // What a device meets when a create it queued carries a key another
     // device's create already landed under (`queue-and-verdicts.md` 38).
