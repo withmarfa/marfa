@@ -192,16 +192,46 @@ describe("the instance from the terminal", () => {
         "list",
       ])
     ).data.find((key) => key.id === inert.id)!;
+    const families = (key: Record<string, unknown>) => [
+      key.permissions,
+      key.type_permissions,
+      key.edge_permissions,
+      key.metadata_permissions,
+      key.extension_permissions,
+      key.profile_permissions,
+    ];
     expect(
-      [
-        held.permissions,
-        held.type_permissions,
-        held.edge_permissions,
-        held.metadata_permissions,
-        held.extension_permissions,
-      ],
+      families(held),
       "a key minted with --no-permissions held something",
-    ).toEqual([[], {}, {}, {}, {}]);
+    ).toEqual([[], {}, {}, {}, {}, {}]);
+
+    // A key minted too wide is narrowed to nothing in place, rather than
+    // revoked and minted again.
+    const wide = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "scenario-wide",
+      "--source",
+      unique("cli-wide"),
+    ]);
+    trackKey(c.ctx, wide.id);
+    const wideHeld = async () =>
+      (
+        await c.cli.json<{ data: Array<Record<string, unknown>> }>([
+          "keys",
+          "list",
+        ])
+      ).data.find((key) => key.id === wide.id)!;
+    expect(
+      (await wideHeld()).permissions,
+      "a key minted naming nothing held no permission, so narrowing it below proves nothing",
+    ).not.toEqual([]);
+    await c.cli.json(["keys", "update", wide.id, "--no-permissions"]);
+    expect(
+      families(await wideHeld()),
+      "a key updated with --no-permissions still held something",
+    ).toEqual([[], {}, {}, {}, {}, {}]);
 
     await c.cli.json(["keys", "revoke", minted.id]);
     const revoked = await narrow.refused(["items", "list"]);

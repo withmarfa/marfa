@@ -63,6 +63,39 @@ describe("PATCH /keys/{id}", () => {
     expect(row?.default_tier).toBe("feed");
   });
 
+  it("takes every permission and map from a key named empty", async () => {
+    const key = await narrowKey("ku-emptied", ["audit.read"]);
+    // The witness: the key holds a permission and a map to lose.
+    expect(key.permissions).toEqual(["audit.read"]);
+    expect(key.type_permissions).toEqual({ "core.note": "read" });
+
+    const emptied = await client.updateKey(key.id, {
+      permissions: [],
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+    });
+    expect(emptied.ok).toBe(true);
+    await expectMatchesSchema("PATCH", "/keys/{id}", 200, emptied.data);
+
+    const listed = await client.listKeys();
+    expect(listed.ok).toBe(true);
+    const held = listed.data.data.find((k) => k.id === key.id);
+    expect(
+      [
+        held?.permissions,
+        held?.type_permissions,
+        held?.extension_permissions,
+        held?.edge_permissions,
+        held?.metadata_permissions,
+        held?.profile_permissions,
+      ],
+      "a key updated with every family empty still held something",
+    ).toEqual([[], {}, {}, {}, {}, {}]);
+  });
+
   it("refuses a change of source", async () => {
     const key = await narrowKey("ku-source");
     const r = await client.updateKey(key.id, { source: "somewhere-else" });

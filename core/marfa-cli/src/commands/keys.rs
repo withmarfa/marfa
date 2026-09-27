@@ -196,6 +196,26 @@ pub struct KeyUpdateArgs {
     /// The tier a write under the key lands at when it names none.
     #[arg(long)]
     pub default_tier: Option<Tier>,
+    /// Take every permission and every map from the key, so a key minted
+    /// too wide is narrowed in place.
+    #[arg(long, conflicts_with_all = ["permissions", "type_permissions", "extension_permissions", "edge_permissions", "metadata_permissions", "profile_permissions"])]
+    pub no_permissions: bool,
+}
+
+/// Every family named empty. A mint takes the creator's maps for a body
+/// naming none of them, whatever it names of the permissions, and an update
+/// changes only what it names.
+fn hold_nothing(body: &mut Map<String, Value>) {
+    body.insert("permissions".into(), json!([]));
+    for map in [
+        "type_permissions",
+        "extension_permissions",
+        "edge_permissions",
+        "metadata_permissions",
+        "profile_permissions",
+    ] {
+        body.insert(map.into(), json!({}));
+    }
 }
 
 /// The sources a key may name on a write besides its own. Named, they are
@@ -239,18 +259,7 @@ pub fn create_request(args: &KeyCreateArgs) -> Result<Request, CliError> {
     args.maps.apply(&mut body)?;
     args.claims.apply(&mut body);
     if args.no_permissions {
-        // Every family named empty: the door takes the creator's maps for a
-        // body naming none of them, whatever it names of the permissions.
-        body.insert("permissions".into(), json!([]));
-        for map in [
-            "type_permissions",
-            "extension_permissions",
-            "edge_permissions",
-            "metadata_permissions",
-            "profile_permissions",
-        ] {
-            body.insert(map.into(), json!({}));
-        }
+        hold_nothing(&mut body);
     }
     insert_opt(
         &mut body,
@@ -276,6 +285,9 @@ pub fn update_request(args: &KeyUpdateArgs) -> Result<Request, CliError> {
     insert_opt(&mut body, "label", args.label.clone());
     args.maps.apply(&mut body)?;
     args.claims.apply(&mut body);
+    if args.no_permissions {
+        hold_nothing(&mut body);
+    }
     insert_opt(
         &mut body,
         "default_tier",
