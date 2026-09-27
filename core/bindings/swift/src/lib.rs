@@ -129,6 +129,15 @@ pub struct HydrateReport {
     pub cursor: String,
 }
 
+/// What a pin or an unpin answers.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct PinReport {
+    /// Whether the row is pinned now.
+    pub pinned: bool,
+    /// Whether it was pinned before the call.
+    pub was_pinned: bool,
+}
+
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct CatchUpReport {
     pub applied: u64,
@@ -949,16 +958,21 @@ impl MarfaCore {
         })
     }
 
-    /// Holds one row by id whatever the slice says of it, read now. Answers
-    /// whether it was not pinned already.
-    pub fn pin(&self, id: String) -> Result<bool, MarfaError> {
-        Ok(self.inner.pin(&id)?)
+    /// Holds one row by id whatever the slice says of it, read now.
+    pub fn pin(&self, id: String) -> Result<PinReport, MarfaError> {
+        Ok(PinReport {
+            pinned: true,
+            was_pinned: self.inner.pin(&id)?,
+        })
     }
 
-    /// Stops holding a row by id; one the slice does not take goes. Answers
-    /// whether it was pinned.
-    pub fn unpin(&self, id: String) -> Result<bool, MarfaError> {
-        Ok(self.inner.unpin(&id)?)
+    /// Stops holding a row by id; one the slice does not take goes, unless
+    /// writes to it still wait.
+    pub fn unpin(&self, id: String) -> Result<PinReport, MarfaError> {
+        Ok(PinReport {
+            pinned: false,
+            was_pinned: self.inner.unpin(&id)?,
+        })
     }
 
     pub fn catch_up(&self) -> Result<CatchUpReport, MarfaError> {

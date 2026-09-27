@@ -131,6 +131,15 @@ pub struct HydrateReport {
     pub cursor: String,
 }
 
+/// What a pin or an unpin answers.
+#[napi(object)]
+pub struct PinReport {
+    /// Whether the row is pinned now.
+    pub pinned: bool,
+    /// Whether it was pinned before the call.
+    pub was_pinned: bool,
+}
+
 #[napi(object)]
 pub struct CatchUpReport {
     pub applied: i64,
@@ -717,14 +726,17 @@ pub struct Pin {
 #[napi]
 impl Task for Pin {
     type Output = bool;
-    type JsValue = bool;
+    type JsValue = PinReport;
 
     fn compute(&mut self) -> Result<Self::Output> {
         self.core.pin(&self.id).map_err(failure)
     }
 
-    fn resolve(&mut self, _: Env, pinned: Self::Output) -> Result<Self::JsValue> {
-        Ok(pinned)
+    fn resolve(&mut self, _: Env, was_pinned: Self::Output) -> Result<Self::JsValue> {
+        Ok(PinReport {
+            pinned: true,
+            was_pinned,
+        })
     }
 }
 
@@ -971,8 +983,7 @@ impl MarfaCore {
         })
     }
 
-    /// Holds one row by id whatever the slice says of it, read now. Resolves
-    /// whether it was not pinned already.
+    /// Holds one row by id whatever the slice says of it, read now.
     #[napi]
     pub fn pin(&self, id: String) -> AsyncTask<Pin> {
         AsyncTask::new(Pin {
@@ -981,11 +992,14 @@ impl MarfaCore {
         })
     }
 
-    /// Stops holding a row by id; one the slice does not take goes. Answers
-    /// whether it was pinned.
+    /// Stops holding a row by id; one the slice does not take goes, unless
+    /// writes to it still wait.
     #[napi]
-    pub fn unpin(&self, id: String) -> Result<bool> {
-        self.inner.unpin(&id).map_err(failure)
+    pub fn unpin(&self, id: String) -> Result<PinReport> {
+        Ok(PinReport {
+            pinned: false,
+            was_pinned: self.inner.unpin(&id).map_err(failure)?,
+        })
     }
 
     /// Applies every event since the stored cursor.
