@@ -72,6 +72,31 @@ describe("SqliteEventLogStore.cleanup", () => {
     expect(await retainedIds(s)).toEqual([2n, 3n, 4n]);
   });
 
+  it("holds back every row above one stamped ahead of the clock, until its stamp ages", async () => {
+    // A clock that ran ahead and was put back leaves such a row. Retiring
+    // around it would leave a hole above the oldest retained id, so the
+    // rows behind it wait.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-27T12:00:00.000Z"));
+    const s = await logAged([3 * HOUR, -1 * HOUR, 3 * HOUR, 3 * HOUR, 0]);
+    expect(await s.eventLog.cleanup(1)).toBe(1);
+    expect(await retainedIds(s)).toEqual([2n, 3n, 4n, 5n]);
+
+    vi.setSystemTime(new Date("2026-09-27T15:00:00.000Z"));
+    expect(await s.eventLog.cleanup(1)).toBe(3);
+    expect(await retainedIds(s)).toEqual([5n]);
+  });
+
+  it("retires past the same row once it is stamped behind the clock", async () => {
+    // The witness for the case above: the rows it held back are retired
+    // when nothing ahead of the clock stands in front of them.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-27T12:00:00.000Z"));
+    const s = await logAged([3 * HOUR, 3 * HOUR, 3 * HOUR, 3 * HOUR, 0]);
+    expect(await s.eventLog.cleanup(1)).toBe(4);
+    expect(await retainedIds(s)).toEqual([5n]);
+  });
+
   it("keeps the newest row when every row is older than the retention", async () => {
     // An empty log has no oldest id, so the stream could not tell a cursor
     // behind the retired rows that it missed them.
