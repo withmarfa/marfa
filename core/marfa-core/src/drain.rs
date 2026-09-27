@@ -1225,7 +1225,9 @@ fn settle(
                     // sit in the copy as the only row of its kind until a
                     // catch-up happened to replay the change. Only a move
                     // does: an edit to a row held outside the slice, an
-                    // attachment of a row in it, keeps it.
+                    // attachment of a row in it, keeps it. Nor does the
+                    // answer to a write queued behind a move put back a row
+                    // the move's own answer let go.
                     let newer = store::holds_newer(
                         &tx,
                         Subject::Item,
@@ -1233,9 +1235,11 @@ fn settle(
                         parsed.item.version,
                     )?;
                     let moved_out = !newer
-                        && row.kind == WriteKind::UpdateItem
-                        && moves(&store::payload_of(&tx, &row.id)?)
-                        && !store::slice_holds(&tx, &catalog, &parsed.item)?;
+                        && row.kind != WriteKind::CreateItem
+                        && !store::slice_holds(&tx, &catalog, &parsed.item)?
+                        && (!store::item_held(&tx, &parsed.item.id)?
+                            || row.kind == WriteKind::UpdateItem
+                                && moves(&store::payload_of(&tx, &row.id)?));
                     if moved_out {
                         store::evict_item(&tx, &parsed.item.id)?;
                     } else if !newer {

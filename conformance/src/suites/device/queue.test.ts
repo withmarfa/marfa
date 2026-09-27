@@ -772,6 +772,120 @@ describe("what a drain sends and reports", () => {
     );
   });
 
+  it("does not put back a row a move answered ahead let go, when an edit behind it is answered", async () => {
+    harness = await hydratedHarness("queue-retype-then-answered", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: {},
+          version: HELD.version,
+          type: "core.bookmark",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { title: "after" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            type: "core.bookmark",
+          }),
+        ),
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 2,
+            type: "core.bookmark",
+            properties: { title: "after", body: "held" },
+          }),
+        ),
+      ],
+    });
+    const report = await device.drain();
+    // The witness: both were answered.
+    expect(report.ok && report.value.verdicts.map((v) => v.verdict)).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    const listed = await device.list();
+    expect(listed.ok ? listed.value.map((item) => item.id) : []).not.toContain(
+      HELD.id,
+    );
+  });
+
+  it("sends no tier naming the tier the row already has, and keeps a row held outside the slice", async () => {
+    harness = await hydratedHarness("queue-same-tier-attachment", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const attached = await device.attach(
+      HELD.id,
+      fileOf("same-tier.pdf", "%PDF b\n"),
+    );
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    if (!attached.ok) return;
+    const fileId = attached.value[1]?.item_id ?? "";
+    acceptUploads(server);
+    let fileRow: {
+      id: string;
+      type: string;
+      properties: Record<string, unknown>;
+    } = { id: "", type: "", properties: {} };
+    scriptWrites(server, {
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as typeof fileRow;
+          fileRow = {
+            id: sent.id,
+            type: sent.type,
+            properties: sent.properties,
+          };
+          return answers.created(wireItem({ ...fileRow, version: 1 }));
+        },
+      ],
+      edges: [
+        (request) => writeAnswers.edge(JSON.parse(request.body) as never),
+      ],
+      update: [
+        () =>
+          answers.updated(
+            wireItem({
+              ...fileRow,
+              version: 2,
+              properties: { ...fileRow.properties, title: "renamed" },
+            }),
+          ),
+      ],
+    });
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      (
+        await device.update(fileId, {
+          properties: { title: "renamed" },
+          version: 1,
+          tier: "library",
+        })
+      ).ok,
+    ).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
+    const patch = server.requests.find((request) => request.method === "PATCH");
+    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    expect("tier" in body).toBe(false);
+    expect((await device.get(fileId)).ok).toBe(true);
+  });
+
   it("sends no retype naming the type the row already has", async () => {
     harness = await hydratedHarness("queue-retype-same", { rows: held() });
     expect(
