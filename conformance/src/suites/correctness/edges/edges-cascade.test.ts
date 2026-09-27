@@ -165,6 +165,53 @@ describe("edge cascade semantics", () => {
     expect((await client.getItem(kept)).status).toBe(200);
   });
 
+  it("restoring a row brings back what lay beneath it after the parent whose trash took them is purged", async () => {
+    const parent = await makeItem("g-parent");
+    const middle = await makeItem("g-middle");
+    const beneath = await makeItem("g-beneath");
+    for (const [source_id, target_id] of [
+      [parent, middle],
+      [middle, beneath],
+    ] as const) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.purgeItem(parent)).ok).toBe(true);
+
+    expect((await client.restoreItem(middle)).ok).toBe(true);
+    expect(
+      (await client.getItem(beneath)).status,
+      "the row beneath stayed in the bin once the trash that took it lost its parent",
+    ).toBe(200);
+  });
+
+  it("does not restore with a parent a child that left the bin and was trashed on its own since", async () => {
+    const parent = await makeItem("o-parent");
+    const child = await makeItem("o-child");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+    expect((await client.deleteItem(parent)).ok).toBe(true);
+    expect((await client.transitionItem(child, "active")).ok).toBe(true);
+    expect((await client.deleteItem(child)).ok).toBe(true);
+
+    expect((await client.restoreItem(parent)).ok).toBe(true);
+    expect(
+      (await client.getItem(child)).status,
+      "a child trashed on its own came back with the parent whose trash had once taken it",
+    ).toBe(404);
+  });
+
   it("restoring a child alone brings back only that child", async () => {
     const parent = await makeItem("c-parent");
     const child = await makeItem("c-child");

@@ -97,6 +97,9 @@ async function runTransitionChunk({
   // them was undone, announced as the single restore door announces them.
   const broughtBack: Item[] = [];
   const alreadyBack = brought ?? new Set<string>();
+  // Joined to the job's set only once this chunk's transaction commits: a
+  // chunk rolled back as a whole brought nothing back.
+  const backInChunk = new Set<string>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -109,7 +112,10 @@ async function runTransitionChunk({
         // reaching this loop can name a connection, and a refusal here
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
-        if (input.state === "active" && alreadyBack.has(id)) {
+        if (
+          input.state === "active" &&
+          (alreadyBack.has(id) || backInChunk.has(id))
+        ) {
           succeeded.push(id);
           continue;
         }
@@ -124,7 +130,7 @@ async function runTransitionChunk({
         moved.push(await storage.items.transition(id, input.state));
         for (const item of back) {
           broughtBack.push(item);
-          alreadyBack.add(item.id);
+          backInChunk.add(item.id);
         }
         succeeded.push(id);
       } catch (err) {
@@ -132,6 +138,7 @@ async function runTransitionChunk({
       }
     }
   });
+  for (const id of backInChunk) alreadyBack.add(id);
   for (const item of moved) {
     await publish({
       type: "state_changed",
