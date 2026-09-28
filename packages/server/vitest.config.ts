@@ -6,16 +6,7 @@ export default defineConfig({
     // abandoned by earlier runs; see src/test-global-setup.ts.
     globalSetup: ["./src/test-global-setup.ts"],
 
-    // 20s was "plenty for any test body + setup" on a quiet machine, and this
-    // one is not: it hosts the self-hosted runner pool, so a suite competes
-    // with whatever else the pool is running plus anything on the desktop.
-    // Tests here have failed on elapsed time rather than on an assertion,
-    // and a red this job produced that way has been read as noise and
-    // merged past. Every such test waits on a condition and reports it, so
-    // raising the ceiling cannot hide a defect — a test that never settles
-    // still fails, later. The cost of being wrong this way is a slower red;
-    // the other way it is a red that means nothing, which is worse, because it
-    // teaches everyone to wave the next one through.
+    // Allow condition-based integration tests to settle under shared CPU load.
     testTimeout: 60_000,
     hookTimeout: 120_000,
 

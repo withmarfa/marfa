@@ -47,17 +47,14 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
 
+permissions:
+  contents: read
+
 jobs:
   core:
     name: Core (Rust, bindings, live)
     timeout-minutes: 90
-    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # The local pool runs two queues, so at most two jobs share the machine:
-    # Rust and Apple builds in this one, booted-server suites in the other.
-    concurrency:
-      group: marfa-mac-build
-      cancel-in-progress: false
-      queue: max
+    runs-on: macos-26
     env:
       DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
@@ -65,11 +62,6 @@ jobs:
       - name: Check Xcode
         run: xcodebuild -version
 
-      # Homebrew rustup can be on PATH while its compiler proxies are not.
-      - name: Put Rust executables on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
