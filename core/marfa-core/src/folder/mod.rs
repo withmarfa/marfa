@@ -471,14 +471,20 @@ impl Folder {
                     .clone()
                     .or_else(|| fields::read(&read.front).err())
             });
-            let header = read.map(|read| read.front);
-            let id = header.as_ref().and_then(|header| {
-                header
+            // An unreadable file still names its item, so a move keeps it.
+            let id = match &read {
+                Some(read) if read.unreadable.is_some() => document::id_line(&text),
+                Some(read) => read
+                    .front
                     .get(ID_FIELD)
                     .and_then(Value::as_str)
-                    .map(str::to_string)
-            });
-            let line = header.as_ref().and_then(line_of);
+                    .map(str::to_string),
+                None => None,
+            };
+            let line = read
+                .as_ref()
+                .filter(|read| read.unreadable.is_none())
+                .and_then(|read| line_of(&read.front));
             files.push(Scanned {
                 key: identity::relative(&self.root, &path)?,
                 mark: identities.get(&path).map(|found| found.key()),
@@ -783,9 +789,8 @@ impl Folder {
         Ok(claims)
     }
 
-    /// Keeps a file whose frontmatter cannot be read bound where it is, with
-    /// nothing sent, so a pull leaves it and a rename keeps its item
-    /// (`folders.md` 10, 12).
+    /// Keeps an unreadable file bound where it now is, sending nothing, so a pull
+    /// leaves it and a move keeps its item (`folders.md` 10).
     fn hold_unreadable(&self, file: &Scanned, claim: Option<&Claim>, reason: &str) -> Result<()> {
         let Some(Claim {
             bound: Some(bound), ..
@@ -877,10 +882,8 @@ impl Folder {
         .then_some(file_type)
     }
 
-    /// Queues a file as a new item under an id the device mints, with no
-    /// natural key (`folders.md` 12), its frontmatter's blanks filled from the
-    /// defaults (`folders.md` 3). A file naming a type no document can be is
-    /// answered as flagged, and nothing is queued.
+    /// Queues a file as a new item under an id the device mints (`folders.md`
+    /// 12); one naming a type no document can be is flagged instead.
     fn queue_create(
         &self,
         file: &Scanned,
@@ -945,7 +948,7 @@ impl Folder {
                 declined: Vec::new(),
             });
         }
-        self.bind_scanned(file, &item_id, named, declined, None, None, None)?;
+        self.bind_scanned(file, &item_id, named, declined, None, BTreeMap::new(), None)?;
         Ok(None)
     }
 
@@ -975,7 +978,15 @@ impl Folder {
         let item_id = named_item(self.core.create_file_item(&file.path, &draft)?, &file.key)?;
         self.queue_default_edges(&item_id, settings)?;
         self.place(&item_id, &file.key, withheld)?;
-        self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), None, None, None)
+        self.bind_scanned(
+            file,
+            &item_id,
+            Vec::new(),
+            Vec::new(),
+            None,
+            BTreeMap::new(),
+            None,
+        )
     }
 
     /// The defaults' edges for a new item. A `parent-of` default names the
@@ -1000,10 +1011,8 @@ impl Folder {
         Ok(())
     }
 
-    /// Queues what a file holds as an edit of its item, and answers whether
-    /// anything went. `bound` is `None` for an id this folder has no file for.
-    /// A file carrying a version line is sent as its item's whole properties;
-    /// one without merges its lines over the item's (`folders.md` 7).
+    /// Queues what a file holds as an edit of its item, whole where it carries a
+    /// version line (`folders.md` 7); `bound` is `None` for a file not yet bound.
     fn queue_update(
         &self,
         item_id: &str,
@@ -1040,14 +1049,21 @@ impl Folder {
         let line = file
             .line
             .filter(|line| *line < held.version && edit_line.is_none_or(|spent| *line > spent));
-        let own = self.own_changes(&read.lines, whole, &held, bound, line);
-        // The body goes where the type the item will be keeps it.
-        let r#type = own.r#type.clone().unwrap_or(held.r#type.clone());
+        let (own, agreed) = own_changes(&read.lines, whole, &held, bound, file.line, line);
         let mut properties = read.properties;
-        properties.insert(
-            fields::body_field(catalog, &r#type).into(),
-            Value::String(document.body.clone()),
-        );
+        let body = Value::String(document.body.clone());
+        let into = fields::body_field(catalog, own.r#type.as_deref().unwrap_or(&held.r#type));
+        let from = fields::body_field(catalog, &held.r#type);
+        if into != from {
+            // A retype drops no text: the file's line for the new body field
+            // wins where it holds any, and the old body field keeps the body.
+            if properties.get(into).is_none_or(blank) {
+                properties.insert(into.into(), body.clone());
+            }
+            properties.insert(from.into(), body);
+        } else {
+            properties.insert(into.into(), body);
+        }
         if whole {
             // No file can carry these, so leaving them out is no clear.
             for (field, value) in &held.properties {
@@ -1090,9 +1106,8 @@ impl Folder {
             let only_own =
                 unchanged && own.r#type.is_none() && own.tier.is_none() && !own.is_empty();
             if !only_own {
-                // Bytes set aside in a conflicted copy against this device's
-                // own earlier save go on the version they were read at
-                // (`folders.md` 37).
+                // Bytes set aside in a conflicted copy against this device's own
+                // earlier save go on the version they were read at (`folders.md` 37).
                 let untaken =
                     bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
                 let read_at = untaken.or(line);
@@ -1132,58 +1147,12 @@ impl Folder {
                 declined: declined.clone(),
             });
         }
-        self.bind_scanned(file, item_id, named, declined, edit_line, bound, None)?;
-        Ok(!in_step)
-    }
-
-    /// What a file's own-field lines change, read against what they were
-    /// written from: the item as the pull wrote it at the file's version line
-    /// where that is older than the copy's, and as the copy holds it
-    /// otherwise. In a versioned file an absent `tags` line is no tags and an
-    /// absent `state` line is active; without a version line either leaves
-    /// the item's as it is.
-    fn own_changes(
-        &self,
-        lines: &fields::Lines,
-        whole: bool,
-        held: &Item,
-        bound: Option<&state::Bound>,
-        line: Option<i64>,
-    ) -> OwnChanges {
-        let base = line
-            .and_then(|line| bound.and_then(|bound| bound.bases.get(&line)).cloned())
-            .unwrap_or_else(|| fields::Own::of(held));
-        let now = fields::Own::of(held);
-        let mut changes = OwnChanges {
-            r#type: lines
-                .r#type
-                .clone()
-                .filter(|named| *named != base.r#type && *named != now.r#type),
-            tier: lines
-                .tier
-                .filter(|tier| Some(*tier) != base.tier && Some(*tier) != now.tier),
-            ..OwnChanges::default()
-        };
-        if let Some(tags) = lines.tags.clone().or_else(|| whole.then(Vec::new)) {
-            changes.added = tags
-                .iter()
-                .filter(|tag| !base.tags.contains(tag) && !now.tags.contains(tag))
-                .cloned()
-                .collect();
-            changes.removed = base
-                .tags
-                .iter()
-                .filter(|tag| !tags.contains(tag) && now.tags.contains(tag))
-                .cloned()
-                .collect();
+        let mut bases = bound.map(|bound| bound.bases.clone()).unwrap_or_default();
+        if let (Some(agreed), Some(at), Some(bound)) = (agreed, file.line, bound) {
+            bases = bound.with_agreed(at, agreed);
         }
-        let state = lines.state.or_else(|| whole.then_some(ItemState::Active));
-        changes.state = state.filter(|state| {
-            *state != base.state
-                && *state != now.state
-                && matches!(now.state, ItemState::Active | ItemState::Archived)
-        });
-        changes
+        self.bind_scanned(file, item_id, named, declined, edit_line, bases, None)?;
+        Ok(!in_step)
     }
 
     /// Binds a file whose bytes are held rather than sent, where it sits.
@@ -1199,7 +1168,8 @@ impl Folder {
             .map(|bound| bound.declined.clone())
             .unwrap_or_default();
         let edit_line = bound.and_then(|bound| bound.edit_line);
-        self.bind_scanned(file, item_id, links, declined, edit_line, bound, Some(held))
+        let bases = bound.map(|bound| bound.bases.clone()).unwrap_or_default();
+        self.bind_scanned(file, item_id, links, declined, edit_line, bases, Some(held))
     }
 
     /// New bytes are an upload and an update naming them; a move carries the
@@ -1249,14 +1219,13 @@ impl Folder {
             Vec::new(),
             Vec::new(),
             None,
-            Some(bound),
+            bound.bases.clone(),
             None,
         )?;
         Ok(queued)
     }
 
-    /// Binds a file as the scan read it, keeping what a pull recorded of the
-    /// versions it wrote the file from.
+    /// Binds a file as the scan read it.
     #[allow(clippy::too_many_arguments)]
     fn bind_scanned(
         &self,
@@ -1265,7 +1234,7 @@ impl Folder {
         links: Vec<String>,
         declined: Vec<String>,
         edit_line: Option<i64>,
-        was: Option<&state::Bound>,
+        bases: BTreeMap<i64, Vec<fields::Own>>,
         held: Option<String>,
     ) -> Result<()> {
         let conn = self.core.conn()?;
@@ -1281,7 +1250,7 @@ impl Folder {
                 declined,
                 edit_line,
                 held,
-                bases: was.map(|was| was.bases.clone()).unwrap_or_default(),
+                bases,
             },
         )
     }
@@ -1475,9 +1444,8 @@ impl Folder {
         })
     }
 
-    /// Holds the file of an item whose write from it the server refused, with
-    /// the server's reason, so the pull leaves the person's text as it is; an
-    /// edit of it answered after that lets it go (`folders.md` 9).
+    /// Holds the file of an item the server refused a write from, so the pull
+    /// leaves the person's text as it is (`folders.md` 9).
     fn hold_refused(&self, report: &crate::DrainReport) -> Result<()> {
         let queue = self.core.queue()?;
         for verdict in &report.verdicts {
@@ -1500,19 +1468,14 @@ impl Folder {
                         .and_then(|row| row.answer.as_deref())
                         .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
                         .and_then(|answer| answer["error"]["message"].as_str().map(str::to_string));
-                    Some(match message {
+                    match message {
                         Some(message) => format!("{}{code}: {message}", state::REFUSED),
                         None => format!("{}{code}", state::REFUSED),
-                    })
-                }
-                Some(crate::model::Verdict::Accepted | crate::model::Verdict::Merged)
-                    if verdict.kind == WriteKind::UpdateItem =>
-                {
-                    None
+                    }
                 }
                 _ => continue,
             };
-            state::hold_item(&*self.core.conn()?, item_id, reason.as_deref())?;
+            state::hold_item(&*self.core.conn()?, item_id, &reason)?;
         }
         Ok(())
     }
@@ -1767,9 +1730,15 @@ impl Folder {
         // What this file's own-field lines say at this version, for an old
         // buffer of it saved later.
         let bases = match &bound {
-            Some(bound) => bound.with_base(item.version, fields::Own::of(item)),
-            None => BTreeMap::from([(item.version, fields::Own::of(item))]),
+            Some(bound) => bound.with_written(item.version, fields::Own::of(item)),
+            None => BTreeMap::from([(item.version, vec![fields::Own::of(item)])]),
         };
+        // Its old buffer's edit shows over the copy as a merge until answered,
+        // so a line it took out would be written back (`queue-and-verdicts.md` 45).
+        if ours && crate::store::unread_whole_edit_waits(&*self.core.conn()?, &item.id)? {
+            report.unwritten += 1;
+            return Ok(false);
+        }
         let in_place = match &bound {
             Some(bound) if ours && bound.content_hash == hash => true,
             Some(bound) if changed(bound) => {
@@ -2050,9 +2019,8 @@ impl Folder {
         }
     }
 
-    /// An item as a file's bytes and its body's link targets, with its own
-    /// fields, the id and the version line where the file carries frontmatter
-    /// (`folders.md` 7, 12, 22). A property no file can carry is left out.
+    /// An item as a file's bytes and its body's link targets (`folders.md` 7,
+    /// 12, 22); a property no file can carry is left out.
     fn render(
         &self,
         item: &Item,
@@ -2139,6 +2107,75 @@ impl OwnChanges {
     }
 }
 
+/// What a file's own-field lines change, and what the file is agreed at, read
+/// against every way its version line was written (`folders.md` 7).
+fn own_changes(
+    lines: &fields::Lines,
+    whole: bool,
+    held: &Item,
+    bound: Option<&state::Bound>,
+    file_line: Option<i64>,
+    stale: Option<i64>,
+) -> (OwnChanges, Option<fields::Own>) {
+    let now = fields::Own::of(held);
+    let written = file_line.and_then(|line| bound.and_then(|bound| bound.bases.get(&line)));
+    // An old buffer from a write no longer remembered: none of its own lines
+    // can be told from another machine's change since.
+    if stale.is_some() && written.is_none() {
+        return (OwnChanges::default(), None);
+    }
+    let bases = written.cloned().unwrap_or_else(|| vec![now.clone()]);
+    let clears = whole && written.is_some();
+    let tags = lines.tags.clone().or_else(|| clears.then(Vec::new));
+    let state = lines.state.or_else(|| clears.then_some(ItemState::Active));
+    let mut changes = OwnChanges {
+        r#type: lines
+            .r#type
+            .clone()
+            .filter(|named| *named != now.r#type && bases.iter().all(|base| base.r#type != *named)),
+        tier: lines.tier.filter(|tier| {
+            Some(*tier) != now.tier && bases.iter().all(|base| base.tier != Some(*tier))
+        }),
+        state: state.filter(|state| {
+            *state != now.state
+                && matches!(now.state, ItemState::Active | ItemState::Archived)
+                && bases.iter().all(|base| base.state != *state)
+        }),
+        ..OwnChanges::default()
+    };
+    if let Some(tags) = &tags {
+        changes.added = tags
+            .iter()
+            .filter(|tag| {
+                !now.tags.contains(tag) && bases.iter().all(|base| !base.tags.contains(tag))
+            })
+            .cloned()
+            .collect();
+        changes.removed = now
+            .tags
+            .iter()
+            .filter(|tag| !tags.contains(tag) && bases.iter().all(|base| base.tags.contains(tag)))
+            .cloned()
+            .collect();
+    }
+    let agreed = written.map(|_| {
+        let mut tags = tags.unwrap_or_else(|| now.tags.clone());
+        tags.sort();
+        fields::Own {
+            r#type: lines.r#type.clone().unwrap_or(now.r#type.clone()),
+            tier: lines.tier.or(now.tier),
+            tags,
+            state: state.unwrap_or(now.state),
+        }
+    });
+    (changes, agreed)
+}
+
+/// Whether a frontmatter value holds nothing.
+fn blank(value: &Value) -> bool {
+    value.is_null() || value.as_str().is_some_and(|text| text.trim().is_empty())
+}
+
 /// Why a document cannot be of a type, where it cannot: one the copy does
 /// not hold, or a file type, whose items are bytes.
 fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
@@ -2204,8 +2241,8 @@ pub const LINK_EDGE: &str = "references";
 
 /// The version a file's line names, where it is one the server could have
 /// minted (`versions.md` 18).
-fn line_of(header: &Map<String, Value>) -> Option<i64> {
-    header
+fn line_of(front: &Map<String, Value>) -> Option<i64> {
+    front
         .get(VERSION_FIELD)
         .and_then(Value::as_i64)
         .filter(|line| *line > 0)

@@ -381,7 +381,7 @@ export class FolderDoor {
       version: before.version + 1,
     });
     return resolution === undefined
-      ? answers.updated(this.wire(id))
+      ? answers.updated(this.wire(id), before.tags ?? [])
       : answers.resolved(this.wire(id), resolution, sibling);
   }
 

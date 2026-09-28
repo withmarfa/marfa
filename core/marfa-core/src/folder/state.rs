@@ -33,24 +33,42 @@ pub struct Bound {
     /// Why the bytes at `content_hash` went unsent or were refused, where
     /// they were: a pull leaves such a file as it is (`folders.md` 9, 10).
     pub held: Option<String>,
-    /// The item's own fields at each version a pull wrote this file from, so
-    /// an edit from an old buffer sends only what the file itself changed.
-    pub bases: BTreeMap<i64, Own>,
+    /// The own fields this file was written or agreed with, by version line: a
+    /// tag or a state moves without a version step, so one line can mean several.
+    pub bases: BTreeMap<i64, Vec<Own>>,
 }
 
-/// How many written versions a binding remembers the own fields of.
+/// How many version lines, and writes at each, a binding remembers.
 const BASES_KEPT: usize = 8;
 
 impl Bound {
-    /// The bases with `own` recorded at `version`, the oldest let go.
-    pub fn with_base(&self, version: i64, own: Own) -> BTreeMap<i64, Own> {
+    /// The bases with a pull's write of `own` at `version` added.
+    pub fn with_written(&self, version: i64, own: Own) -> BTreeMap<i64, Vec<Own>> {
         let mut bases = self.bases.clone();
-        bases.insert(version, own);
-        while bases.len() > BASES_KEPT {
-            bases.pop_first();
+        let at = bases.entry(version).or_default();
+        if !at.contains(&own) {
+            at.push(own);
         }
-        bases
+        if at.len() > BASES_KEPT {
+            at.remove(0);
+        }
+        kept(bases)
     }
+
+    /// The bases with the scan's agreement at `version` replacing every
+    /// write before it there: the next save is made against this one.
+    pub fn with_agreed(&self, version: i64, own: Own) -> BTreeMap<i64, Vec<Own>> {
+        let mut bases = self.bases.clone();
+        bases.insert(version, vec![own]);
+        kept(bases)
+    }
+}
+
+fn kept(mut bases: BTreeMap<i64, Vec<Own>>) -> BTreeMap<i64, Vec<Own>> {
+    while bases.len() > BASES_KEPT {
+        bases.pop_first();
+    }
+    bases
 }
 
 /// What the folder last agreed with, for the bytes of a file. Equality is
@@ -191,19 +209,12 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
     })
 }
 
-/// Marks the file bound to an item as held for `reason`, or no longer held
-/// where `reason` is `None` and it was held for a refusal.
-pub fn hold_item(conn: &Connection, item_id: &str, reason: Option<&str>) -> Result<(), CoreError> {
-    match reason {
-        Some(reason) => conn.execute(
-            "UPDATE folder_files SET held = ?2 WHERE item_id = ?1",
-            params![item_id, reason],
-        )?,
-        None => conn.execute(
-            "UPDATE folder_files SET held = NULL WHERE item_id = ?1 AND held LIKE ?2",
-            params![item_id, format!("{REFUSED}%")],
-        )?,
-    };
+/// Marks the file bound to an item as held for `reason`.
+pub fn hold_item(conn: &Connection, item_id: &str, reason: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE folder_files SET held = ?2 WHERE item_id = ?1",
+        params![item_id, reason],
+    )?;
     Ok(())
 }
 

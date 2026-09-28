@@ -499,6 +499,46 @@ describe("what a drain sends and reports", () => {
     expect(body.properties).toEqual({ title: "held", body: "rewritten" });
   });
 
+  it("moves a whole edit onto each answer ahead of it, keeping what each landed", async () => {
+    harness = await hydratedHarness("queue-replace-moved-twice", {
+      rows: held(),
+    });
+    const edits = [
+      { properties: { title: "t" } },
+      { properties: { body: "b2" } },
+      { properties: { title: "t", body: "b2", notes: "n" }, replace: true },
+    ];
+    for (const edit of edits) {
+      const queued = await harness.device.update(HELD.id, {
+        ...edit,
+        version: HELD.version,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    }
+    const answer = (version: number, properties: Record<string, unknown>) =>
+      answers.updated(wireItem({ id: HELD.id, version, properties }));
+    scriptWrites(harness.server, {
+      update: [
+        answer(HELD.version + 1, { title: "t", body: "held" }),
+        answer(HELD.version + 2, { title: "t", body: "b2" }),
+        answer(HELD.version + 3, { title: "t", body: "b2", notes: "n" }),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const whole = harness.server.requests
+      .filter((request) => request.method === "PATCH")
+      .map((request) => JSON.parse(request.body) as Record<string, unknown>)
+      .at(-1);
+    expect(
+      whole,
+      "the whole edit, moved onto each answer in turn, put back what the edit ahead of it changed",
+    ).toMatchObject({
+      version: HELD.version + 2,
+      properties_mode: "replace",
+      properties: { title: "t", body: "b2", notes: "n" },
+    });
+  });
+
   it("lets a row go once its retype out of the slice is answered", async () => {
     harness = await hydratedHarness("queue-retype-out", { rows: held() });
     expect(

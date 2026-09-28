@@ -89,9 +89,8 @@ pub struct Read {
     pub properties: Map<String, Value>,
 }
 
-/// Splits frontmatter into the item's own fields and its properties. Lines
-/// naming the item, its version or an edge are neither. The reason where an
-/// own field holds what no item can.
+/// Splits frontmatter into the item's own fields and its properties, or says
+/// why an own field holds what no item can.
 pub fn read(front: &Map<String, Value>) -> Result<Read, String> {
     let mut read = Read::default();
     for (name, value) in front {

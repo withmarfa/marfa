@@ -109,6 +109,19 @@ pub fn read(text: &str) -> Document {
     }
 }
 
+/// The `marfa_id` line of frontmatter that does not parse, read as text.
+pub fn id_line(text: &str) -> Option<String> {
+    let mut lines = text.lines();
+    if lines.next()? != FENCE {
+        return None;
+    }
+    lines
+        .take_while(|line| line.trim_end() != FENCE)
+        .find_map(|line| line.strip_prefix("marfa_id:"))
+        .map(|id| id.trim().trim_matches(['"', '\'']).to_string())
+        .filter(|id| !id.is_empty())
+}
+
 /// Reads a file that carries no frontmatter: all of it is the body.
 pub fn read_body(text: &str) -> Document {
     Document {

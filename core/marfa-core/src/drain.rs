@@ -2261,10 +2261,8 @@ mod tests {
         );
     }
 
-    /// A whole-properties edit cannot drop what it carries unchanged, since a
-    /// dropped property is one it clears: it moves as the answer's properties
-    /// with its own changes laid over. The witnesses are a property the
-    /// answer added, kept, and one the edit left out, cleared.
+    /// A whole edit cannot drop what it carries unchanged, since that would
+    /// clear it: it moves as the answer with its own changes laid over.
     #[test]
     fn a_whole_edit_moves_as_the_answer_with_its_changes_laid_over() {
         let conn = store::open_in_memory().unwrap();

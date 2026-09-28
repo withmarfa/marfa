@@ -657,6 +657,20 @@ pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(!waiting_writes_for_item(conn, id)?.is_empty())
 }
 
+/// Whether a whole-properties edit said to be read earlier still waits on an
+/// item: the copy cannot show what it cleared.
+pub fn unread_whole_edit_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    for row in waiting_writes_for_item(conn, id)? {
+        if row.kind == WriteKind::UpdateItem
+            && read_of(conn, &row.id)?.is_none()
+            && replaces_properties(&serde_json::from_str(&payload_of(conn, &row.id)?)?)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The writes still waiting on one item, read through the index rather than
 /// by reading the whole queue, because this runs once per answer and once
 /// per event.
@@ -3227,6 +3241,9 @@ pub fn move_edit(
                 let mut moved = onto.clone();
                 lay_changes(&mut moved, properties, &read);
                 *properties = moved;
+                // Made against the answer now, so a later move reads its
+                // changes from there, not from what it first read.
+                record_read(conn, id, &serde_json::json!({ "properties": onto }))?;
             }
         }
         conn.execute(

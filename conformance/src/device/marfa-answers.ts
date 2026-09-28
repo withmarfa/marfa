@@ -226,7 +226,16 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
   }),
   wireType("core.file", { titleField: "title" }),
   wireType("core.file.image", { parent: "core.file", titleField: "title" }),
-  wireType("core.bookmark", { titleField: "title" }),
+  wireType("core.bookmark", {
+    titleField: "title",
+    bodyField: "body",
+    fields: {
+      url: { type: "string", format: "url" },
+      body: { type: "string" },
+      title: { type: "string" },
+      description: { type: "string" },
+    },
+  }),
 ];
 
 /**

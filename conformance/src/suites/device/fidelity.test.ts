@@ -952,8 +952,11 @@ describe("the scripted answers match the server's", () => {
         name,
         { status: real.status, body: real.ok ? real.data : real.error },
         scripted(),
-        { same, shape: ["item.id"] },
+        { same, shape: ["item.id", "conflict_resolution.conflicted_copy_id"] },
       );
+      const copy = at(real.data, "conflict_resolution.conflicted_copy_id");
+      if (typeof copy === "string") trackItem(ctx, copy);
+      return real.data;
     };
     const edit = (body: Parameters<FolderDoor["update"]>[1]) => ({
       path: `/items/${id}?conflict=auto`,
@@ -997,11 +1000,49 @@ describe("the scripted answers match the server's", () => {
       stale.scripted,
       whole,
     );
+    // Whole properties at a stale version leaving out a field another
+    // writer changed since: a clear that collides, resolved by the policy.
+    const resolved = [
+      ...whole,
+      "conflict_resolution.fields",
+      "conflict_resolution.strategy",
+    ];
+    for (const [field, value, version, keep] of [
+      ["title", "theirs", 4, { body: "b3" }],
+      ["body", "theirs body", 6, { language: "en" }],
+    ] as const) {
+      const theirs = edit({ properties: { [field]: value }, version });
+      await both(
+        `another writer's ${field}`,
+        theirs.path,
+        "PATCH",
+        theirs.body,
+        theirs.scripted,
+        whole,
+      );
+      const cleared = edit({
+        properties: keep,
+        properties_mode: "replace",
+        version,
+      });
+      const answered = await both(
+        `whole properties at a stale version clearing ${field}, which another writer changed`,
+        cleared.path,
+        "PATCH",
+        cleared.body,
+        cleared.scripted,
+        resolved,
+      );
+      expect(
+        at(answered, "conflict_resolution.fields"),
+        "the clear did not collide, so no resolution was compared",
+      ).toEqual([field]);
+    }
     const retype = edit({
       properties: {},
       type: "core.bookmark",
       retype: true,
-      version: 4,
+      version: 8,
     });
     await both(
       "a retype",
@@ -1792,7 +1833,7 @@ describe("the scripted answers match the server's", () => {
     );
     // A folder writes a file's body and name to the properties these name
     // (`folders.md` 7), so the ones the fixtures lean on are held here.
-    for (const id of ["core.event", "core.highlight"]) {
+    for (const id of ["core.event", "core.highlight", "core.bookmark"]) {
       expectFidelity(
         `the display hints of ${id}`,
         {

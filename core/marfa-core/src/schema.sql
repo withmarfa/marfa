@@ -285,13 +285,11 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The newest version line an edit of this device's has spent, 0 where its
   -- file carried none; null where no edit went (`folders.md` 22, 23).
   edit_line INTEGER,
-  -- Why the bytes at content_hash went unsent or were refused, where they
-  -- were: frontmatter that does not parse, or an edit the server refused. A
-  -- pull leaves such a file as the person wrote it (`folders.md` 9, 10).
+  -- Why the bytes at content_hash went unsent or were refused, so a pull
+  -- leaves the file as the person wrote it (`folders.md` 9, 10).
   held TEXT,
-  -- The item's own fields at each version a pull wrote the file from, as a
-  -- JSON object keyed by version: what an old buffer's own-field lines are
-  -- compared with, so it sends only what the person changed.
+  -- The own fields the file was written or agreed with, by version line, for
+  -- telling an old buffer's own-field lines from another machine's change.
   bases TEXT NOT NULL DEFAULT '{}',
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
