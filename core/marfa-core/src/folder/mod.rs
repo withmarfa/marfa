@@ -2389,11 +2389,12 @@ impl Folder {
                             refused.save >= save || !change.supersedes(&refused.change)
                         });
                     }
-                    Some(crate::model::Verdict::Dead) => {}
+                    // Kept with its line spent, since it may have landed;
+                    // released, it is answered here again (`folders.md` 23).
+                    Some(crate::model::Verdict::Dead) => continue,
                     _ => continue,
                 }
-                // A refused edit spends no line; a dead one may have landed, so
-                // its line stays spent (`folders.md` 23).
+                // A refused edit spends no line.
                 let spent = bound.writes.queued.remove(at).line;
                 if verdict.verdict != Some(crate::model::Verdict::Refused)
                     && let Some(line) = spent

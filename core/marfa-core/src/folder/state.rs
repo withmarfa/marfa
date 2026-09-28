@@ -28,9 +28,8 @@ pub struct Bound {
     /// The edges this file's lines named when last read or written: what tells
     /// a line taken out from an edge no pull has written yet (`folders.md` 11).
     pub lines: Vec<Line>,
-    /// The newest version line this device's answered edits have spent, a
-    /// refused one's aside; 0 where its file carried none, `None` where none
-    /// has. A waiting edit's line is its queued entry's until it is answered.
+    /// The newest line an answered, unrefused edit of this file spent, or a pull
+    /// wrote over a waiting write not its own; a waiting edit's is on its entry.
     pub edit_line: Option<i64>,
     /// Why this copy did not send the bytes at `content_hash`, where it did
     /// not: a pull leaves such a file as it is (`folders.md` 9, 10).
