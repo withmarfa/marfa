@@ -30,24 +30,27 @@ let linked: string;
 let other: string;
 /** A subtype of `linked`, which does not inherit its link. */
 let child: string;
+/** A type with the same fields as `linked`, naming no link. */
+let plain: string;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext("compliance", "links"));
   linked = `user.linked-${ctx.runId}`;
   other = `user.linked-other-${ctx.runId}`;
   child = `user.linked-child-${ctx.runId}`;
-  for (const [id, parent] of [
-    [linked, undefined],
-    [other, undefined],
+  plain = `user.linked-plain-${ctx.runId}`;
+  for (const [id, link] of [
+    [linked, "vendor_id"],
+    [other, "vendor_id"],
+    [plain, undefined],
   ] as const) {
     const registered = await client.registerType({
       id,
-      ...(parent === undefined ? {} : { parent }),
       fields: {
         vendor_id: { type: "string" },
         title: { type: "string" },
       },
-      link_field: "vendor_id",
+      ...(link !== undefined && { link_field: link }),
     });
     expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
   }
@@ -544,6 +547,34 @@ describe("a link is one row's", () => {
     );
   });
 
+  it("holds a retype from a type naming no link, and frees the link of a row retyped into one", async () => {
+    const value = v("plain-held");
+    const holder = await row({ vendor_id: value });
+    // The witness: a type naming no link holds the value beside it freely.
+    const outsider = await row({ vendor_id: value }, { type: plain });
+    expectTaken(
+      await client.updateItem(outsider.id, {
+        type: linked,
+        retype: true,
+        version: 1,
+      }),
+      holder.id,
+      value,
+    );
+    expect((await client.getItem(outsider.id)).data.item.type).toBe(plain);
+
+    const leaving = v("plain-leaving");
+    const leaver = await row({ vendor_id: leaving });
+    expectTaken(await create({ vendor_id: leaving }), leaver.id, leaving);
+    const moved = await client.updateItem(leaver.id, {
+      type: plain,
+      retype: true,
+      version: 1,
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    await row({ vendor_id: leaving });
+  });
+
   it("refuses a bulk entry a link another row holds, on both halves", async () => {
     const taken = v("bulk-held");
     const holder = await row({ vendor_id: taken });
@@ -867,6 +898,99 @@ describe("a purge's tombstones", () => {
     expect(held.data.tombstones).toEqual([]);
   });
 
+  it("removes a natural key's tombstone when an update gives a row the key", async () => {
+    const key = v("taken-key");
+    await purge((await row({ vendor_id: v("taken") }, { source_id: key })).id);
+    const byKey = { type: linked, source: ctx.source, source_ids: [key] };
+    // The witness: the purge left the key's tombstone.
+    expect((await client.lookupItems(byKey)).data.tombstones).toHaveLength(1);
+
+    const taker = await row(
+      { title: "takes the key" },
+      { type: plain, source_id: v("taken-before") },
+    );
+    const took = await client.updateItem(taker.id, {
+      source_id: key,
+      version: 1,
+    });
+    expect(took.ok, JSON.stringify(took.error)).toBe(true);
+    const found = await client.lookupItems(byKey);
+    expect(found.data.data.map((i) => i.id)).toEqual([taker.id]);
+    expect(found.data.tombstones).toEqual([]);
+  });
+
+  it("keeps each tombstone to its type, read and moved", async () => {
+    const both = v("per-type");
+    const theirsOnly = v("per-type-other");
+    const key = v("per-type-key");
+    await purge((await row({ vendor_id: both })).id);
+    await purge((await row({ vendor_id: both }, { type: other })).id);
+    await purge(
+      (await row({ vendor_id: theirsOnly }, { type: other, source_id: key }))
+        .id,
+    );
+    const byKey = { source: ctx.source, source_ids: [key] };
+    // The witness: each is read under the type the row was purged from.
+    const [theirs] = await tombstonesByLink([both], other);
+    expect(await tombstonesByLink([theirsOnly], other)).toHaveLength(1);
+    const [theirKey] = (await client.lookupItems({ type: other, ...byKey }))
+      .data.tombstones;
+    expect(theirKey?.key).toBe(key);
+
+    expect(await tombstonesByLink([theirsOnly])).toEqual([]);
+    expect(
+      (await client.lookupItems({ type: linked, ...byKey })).data.tombstones,
+    ).toEqual([]);
+
+    const later = new Date(
+      Date.parse(theirs?.purged_at ?? "") + 3_600_000,
+    ).toISOString();
+    const moved = await client.settleTombstones({
+      type: linked,
+      links: [both],
+      settled_at: later,
+    });
+    expect(moved.data.tombstones.map((t) => t.settled_at)).toEqual([later]);
+    const none = await client.settleTombstones({
+      type: linked,
+      ...byKey,
+      settled_at: later,
+    });
+    expect(none.data.tombstones).toEqual([]);
+    expect(await tombstonesByLink([both], other)).toEqual([theirs]);
+    expect(
+      (await client.lookupItems({ type: other, ...byKey })).data.tombstones,
+    ).toEqual([theirKey]);
+  });
+
+  it("keeps the link's tombstones through a type change that keeps the link", async () => {
+    const id = `user.linked-kept-${ctx.runId}`;
+    const fields = { vendor_id: { type: "string" } };
+    expect(
+      (
+        await client.registerType({
+          id,
+          fields,
+          link_field: "vendor_id",
+        } as never)
+      ).ok,
+    ).toBe(true);
+    const value = v("kept");
+    await purge((await row({ vendor_id: value }, { type: id })).id);
+    const [tombstone] = await tombstonesByLink([value], id);
+    expect(tombstone?.key).toBe(value);
+
+    const changed = await client.updateType(id, {
+      fields: { ...fields, note: { type: "string" } },
+      link_field: "vendor_id",
+      version: 2,
+    });
+    expect(changed.ok, JSON.stringify(changed.error)).toBe(true);
+    // The witness: the change landed.
+    expect((await client.getType(id)).data.fields.note).toBeDefined();
+    expect(await tombstonesByLink([value], id)).toEqual([tombstone]);
+  });
+
   it("takes a type's tombstones with it when the type is deleted", async () => {
     const id = `user.linked-gone-${ctx.runId}`;
     const schema = {
@@ -1015,6 +1139,13 @@ describe("POST /items/tombstones", () => {
     expect(byKey.data.tombstones).toEqual([
       { key, purged_at: tombstone?.purged_at, settled_at: at(4) },
     ]);
+    const earlierByKey = await client.settleTombstones({
+      type: linked,
+      source: ctx.source,
+      source_ids: [key],
+      settled_at: at(1),
+    });
+    expect(earlierByKey.data.tombstones[0]?.settled_at).toBe(at(4));
   });
 
   it("refuses to move a tombstone to a key that may only read the type", async () => {
@@ -1117,6 +1248,28 @@ describe("POST /items/tombstones", () => {
       settled_at: later,
     });
     expect(moved.data.tombstones[0]?.settled_at).toBe(later);
+  });
+
+  it("answers tombstones in the order named", async () => {
+    const first = v("order-1");
+    const second = v("order-2");
+    const third = v("order-3");
+    for (const value of [first, second, third]) {
+      await purge((await row({ vendor_id: value })).id);
+    }
+    const named = [second, v("order-none"), third, first];
+    const read = await tombstonesByLink(named);
+    expect(read.map((t) => t.key)).toEqual([second, third, first]);
+    const settled = await client.settleTombstones({
+      type: linked,
+      links: named,
+      settled_at: new Date(Date.now() + 3_600_000).toISOString(),
+    });
+    expect(settled.data.tombstones.map((t) => t.key)).toEqual([
+      second,
+      third,
+      first,
+    ]);
   });
 
   it("refuses a malformed tombstone request", async () => {
@@ -1237,6 +1390,29 @@ describe("POST /items/lookup", () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
+  });
+
+  it("answers by link only the rows of the type named", async () => {
+    const theirs = v("look-theirs");
+    const both = v("look-both");
+    const elsewhere = await row({ vendor_id: theirs }, { type: other });
+    const mine = await row({ vendor_id: both });
+    const alsoTheirs = await row({ vendor_id: both }, { type: other });
+    // The witness: the other type's lookup finds its rows by the same links.
+    const underOther = await client.lookupItems({
+      type: other,
+      links: [theirs, both],
+    });
+    expect(underOther.data.data.map((i) => i.id)).toEqual([
+      elsewhere.id,
+      alsoTheirs.id,
+    ]);
+
+    const found = await client.lookupItems({
+      type: linked,
+      links: [theirs, both],
+    });
+    expect(found.data.data.map((i) => i.id)).toEqual([mine.id]);
   });
 
   it("looks rows up by natural key whatever their type", async () => {
