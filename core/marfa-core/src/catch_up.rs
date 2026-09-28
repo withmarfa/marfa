@@ -1532,14 +1532,14 @@ mod tests {
                 ],
                 Then::Later {
                     keepalive: MS(50),
-                    after: MS(600),
+                    after: MS(2500),
                     frames: vec![stream_live(Some("14"))],
                 },
             )],
         );
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, MS(200)).unwrap();
+        let report = catch_up(&core, &http, MS(1000)).unwrap();
         assert!(report.reached_head);
         assert_eq!(report.cursor, "14");
     }
@@ -1564,14 +1564,14 @@ mod tests {
                 ],
                 Then::Later {
                     keepalive: Duration::from_secs(60),
-                    after: MS(600),
+                    after: MS(2500),
                     frames: vec![stream_live(Some("14"))],
                 },
             )],
         );
         let (_dir, core) = hydrated(&server);
         let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, MS(200)).unwrap();
+        let report = catch_up(&core, &http, MS(1000)).unwrap();
         assert!(!report.reached_head);
         assert_eq!(report.cursor, "11");
     }
