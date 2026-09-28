@@ -228,6 +228,8 @@ struct Standing {
     embeds: Vec<String>,
     registry: Option<String>,
     unsure: Vec<marfa_core::folder::Unsure>,
+    /// A large removal waiting, from the disk and from a pull.
+    paused: (usize, usize),
 }
 
 /// One pass: read the folder, send what it queued, write back what came in.
@@ -241,7 +243,9 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
     let happened = scanned.created
         + scanned.updated
         + scanned.renamed
-        + scanned.missing
+        // A paused removal's files are missing at every pass, and are said
+        // through `paused` when it changes.
+        + scanned.missing.saturating_sub(scanned.paused)
         + scanned.deleted
         + scanned.moved_away
         + scanned.requeued
@@ -257,6 +261,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         + usize::from(settings.sent)
         > 0;
     let now = Standing {
+        paused: (scanned.paused, pulled.paused),
         lost: scanned.lost,
         unreached: scanned.unreached,
         directories: crate::folders::directory_lines(&scanned.directories),

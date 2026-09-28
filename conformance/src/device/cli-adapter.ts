@@ -912,7 +912,9 @@ export class CliFolder {
   }
 
   /** Lets a paused large removal go. */
-  async confirm(): Promise<Outcome<{ deleted: number; removed: number }>> {
+  async confirm(): Promise<
+    Outcome<{ deleted: number; moved: number; removed: number }>
+  > {
     return this.run(["folders", "confirm", this.dir]);
   }
 

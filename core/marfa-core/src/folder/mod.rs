@@ -722,6 +722,18 @@ enum Arrival {
     Waits(String),
 }
 
+/// What became of a missing file let go.
+enum Missing {
+    /// Found in another folder on the machine, so its item stays.
+    Moved,
+    /// Not told yet, and looked for again at the next pass.
+    Unsure(String),
+    /// Found nowhere, and its item's delete queued.
+    Deleted,
+    /// Its row was already gone from the copy.
+    Gone,
+}
+
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
     /// too, so one rule decides identity (`folders.md` 18).
@@ -1404,57 +1416,66 @@ impl Folder {
             if !elapsed_past(&missing_since, &now, RENAME_GRACE) {
                 continue;
             }
-            // A row already gone is the one excuse; anything else the store
-            // says is an error, not a reason to skip the delete.
-            let (held, bound) = {
-                let conn = self.core.conn()?;
-                (
-                    crate::store::item_held(&conn, &item_id)?,
-                    state::bound_at(&conn, &path)?.filter(|bound| bound.item_id == item_id),
-                )
-            };
-            if held {
-                let look = match &bound {
-                    Some(bound) => peers.moved_to(bound, self.holds(&item_id, settings, &members)),
-                    None => Look::Nowhere,
-                };
-                match look {
-                    Look::Moved => report.moved_away += 1,
-                    // Held as a delete is while offline, until it can be told.
-                    Look::Unsure(reason) => {
-                        report.unsure.push(Unsure { path, reason });
-                        continue;
-                    }
-                    Look::Nowhere => {
-                        self.core.delete_item(&item_id)?;
-                        report.deleted += 1;
-                        report.trashed.push(path.clone());
-                    }
+            match self.let_go_missing(&path, &item_id, settings, peers, &members)? {
+                Missing::Moved => report.moved_away += 1,
+                Missing::Unsure(reason) => report.unsure.push(Unsure { path, reason }),
+                Missing::Deleted => {
+                    report.deleted += 1;
+                    report.trashed.push(path);
                 }
+                Missing::Gone => {}
             }
-            let conn = self.core.conn()?;
-            state::journal_clear(&conn, &path)?;
-            state::unbind(&conn, &path)?;
         }
         Ok(())
     }
 
-    /// Queues a journaled file's delete and lets its binding go; `false`
-    /// where the copy no longer holds the row.
-    fn send_delete(&self, path: &str, item_id: &str) -> Result<bool> {
+    /// Lets one missing file go: looked for in the other folders first, and
+    /// trashed only where it is in none (`folders.md` 43).
+    fn let_go_missing(
+        &self,
+        path: &str,
+        item_id: &str,
+        settings: &Settings,
+        peers: &Peers<'_>,
+        members: &OnceCell<HashSet<String>>,
+    ) -> Result<Missing> {
         // A row already gone is the one excuse; anything else the store
         // says is an error, not a reason to skip the delete.
-        let held = {
+        let (held, bound) = {
             let conn = self.core.conn()?;
-            crate::store::item_held(&conn, item_id)?
+            (
+                crate::store::item_held(&conn, item_id)?,
+                state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),
+            )
         };
-        if held {
-            self.core.delete_item(item_id)?;
-        }
+        let missing = if held {
+            let look = match &bound {
+                Some(bound) => peers.moved_to(bound, self.holds(item_id, settings, members)),
+                None => Look::Nowhere,
+            };
+            match look {
+                Look::Moved => Missing::Moved,
+                // Held as a delete is while offline, until it can be told.
+                Look::Unsure(reason) => return Ok(Missing::Unsure(reason)),
+                Look::Nowhere => {
+                    self.core.delete_item(item_id)?;
+                    Missing::Deleted
+                }
+            }
+        } else {
+            Missing::Gone
+        };
         let conn = self.core.conn()?;
         state::journal_clear(&conn, path)?;
         state::unbind(&conn, path)?;
-        Ok(held)
+        Ok(missing)
+    }
+
+    /// The other folders a missing file is looked for in, doubted where the
+    /// registry this folder listed itself in was gone.
+    fn peers(&self) -> Peers<'_> {
+        let (registry, lost) = self.register();
+        Peers::of(self, registry.filter(|_| lost))
     }
 
     /// Whether this path is one the folder pushes (`folders.md` 29, 36): a

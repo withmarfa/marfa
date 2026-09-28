@@ -159,8 +159,15 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             let confirmed = Folder::open(&dir, None)?.confirm()?;
             output::report(&confirmed, json, || {
                 format!(
-                    "{} delete(s) queued, sent at the next push; {} file(s) taken away",
-                    confirmed.deleted, confirmed.removed
+                    "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
+                    confirmed.deleted,
+                    confirmed.moved,
+                    confirmed.removed,
+                    confirmed
+                        .unsure
+                        .iter()
+                        .map(|file| format!("\n{}: not let go yet, {}", file.path, file.reason))
+                        .collect::<String>()
                 )
             })
         }

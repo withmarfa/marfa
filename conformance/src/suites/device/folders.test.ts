@@ -13843,6 +13843,48 @@ describe("folders on one Mac", () => {
     ).toBe(1);
     expect(swept.value.scan.trashed).toEqual(["Shared.md"]);
   });
+
+  it("looks for a paused removal's files in the other folders before confirming it", async () => {
+    const ids = [0, 1, 2, 3, 4, 5].map(
+      (n) => `01a00000-0000-7000-8000-0000000017${String(n).padStart(2, "0")}`,
+    );
+    const { a, b } = await onOneMac(
+      "confirm-looks",
+      {
+        search: { types: ["core.note"] },
+        removal_threshold: { files: 2, fraction: 0.25 },
+      },
+      { search: { types: ["core.bookmark"] } },
+      {
+        "core.note": ids.map((id, n) => ({
+          item: { id, properties: { title: `Note ${String(n)}`, body: "b\n" } },
+        })),
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    // Three moved to the other folder and one deleted: a large removal.
+    for (const n of [0, 1, 2]) {
+      renameSync(
+        join(a.dir, `Note ${String(n)}.md`),
+        join(b.dir, `Note ${String(n)}.md`),
+      );
+    }
+    rmSync(join(a.dir, "Note 3.md"));
+    const paused = await a.folder.push();
+    expect(paused.ok && paused.value.scan.paused).toBe(4);
+
+    const confirmed = await a.folder.confirm();
+    expect(confirmed.ok, JSON.stringify(confirmed)).toBe(true);
+    if (!confirmed.ok) return;
+    expect(
+      [confirmed.value.moved, confirmed.value.deleted],
+      "a confirmed removal trashed files another folder on the Mac now holds",
+    ).toEqual([3, 1]);
+    expect((await a.folder.push()).ok).toBe(true);
+    for (const n of [0, 1, 2]) expect(deletesOf(a.server, ids[n]!)).toBe(0);
+    // The witness: the file found nowhere is trashed by the same confirm.
+    expect(deletesOf(a.server, ids[3]!)).toBe(1);
+  });
 });
 
 describe("large removals, status and size", () => {
@@ -13912,6 +13954,26 @@ describe("large removals, status and size", () => {
     expect(said.ok && said.value).toContain(
       "a large removal waits: 3 delete(s) not sent",
     );
+  });
+
+  it("says a paused removal once while watching", async () => {
+    harness = await sixLessThree("folder-removal-watch", tight);
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("a large removal waits"),
+        { timeout: 20_000, interval: 100 },
+      );
+      // Passes enough for a line said at every one to show more than once.
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      watching.stdout.split("a large removal waits").length - 1,
+      `a watch said the same paused removal at every pass: ${watching.stdout}`,
+    ).toBe(1);
+    expect(deletes(harness)).toEqual([]);
   });
 
   it("follows the settings' removal threshold", async () => {
@@ -14002,6 +14064,27 @@ describe("large removals, status and size", () => {
       scanned.value.warnings.map((file) => [file.path, file.flag]),
       "a text near the server's limit went without a warning, or a small one was warned of",
     ).toEqual([["large.md", "size"]]);
+    const status = await harness.folder.status();
+    expect(status.ok).toBe(true);
+    if (!status.ok) return;
+    const warned = (path: string) =>
+      status.value.files.find((file) => file.path === path)?.warning;
+    expect(
+      warned("large.md"),
+      "the status did not name the text near the limit",
+    ).toMatch(/\d/);
+    expect(warned("small.md")).toBeUndefined();
+    // A push says it in words for the file its own scan takes.
+    put(
+      harness,
+      "later.md",
+      `---\ntitle: Later\n---\n${"y".repeat(960_000)}\n`,
+    );
+    const said = await harness.folder.pushText();
+    expect(
+      said.ok && said.value,
+      "a push did not say the warning in words",
+    ).toMatch(/later\.md: .*\d/);
   });
 
   it("reports each file's status", async () => {
@@ -14011,6 +14094,7 @@ describe("large removals, status and size", () => {
     expect((await harness.folder.push()).ok).toBe(true);
     put(harness, "queued.md", "---\ntitle: Queued\n---\nbody\n");
     put(harness, "broken.md", "---\ntitle: [unclosed\n---\nbody\n");
+    put(harness, "bogus.md", "---\ntitle: Bogus\ntier: bogus\n---\nbody\n");
     expect((await harness.folder.scan()).ok).toBe(true);
     const status = await harness.folder.status();
     expect(status.ok, JSON.stringify(status)).toBe(true);
@@ -14021,6 +14105,11 @@ describe("large removals, status and size", () => {
     expect(of("queued.md")?.status).toBe("waiting");
     expect(of("queued.md")?.waits).toContain("create");
     expect([of("broken.md")?.status, of("broken.md")?.flag]).toEqual([
+      "held",
+      "unreadable",
+    ]);
+    // Its YAML parses, but no item can hold that tier.
+    expect([of("bogus.md")?.status, of("bogus.md")?.flag]).toEqual([
       "held",
       "unreadable",
     ]);

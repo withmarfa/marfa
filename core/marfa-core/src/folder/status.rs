@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::edge_types::EdgeTypes;
 use super::{Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state};
 use crate::Result;
 use crate::catalog::Catalog;
@@ -89,7 +90,10 @@ impl Folder {
     /// a running watch answers it.
     pub fn status(&self) -> Result<StatusReport> {
         let settings = self.settings()?;
-        let catalog = Catalog::load(&*self.core.conn()?)?;
+        let (catalog, edge_types) = {
+            let conn = self.core.conn()?;
+            (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
+        };
         let lists = settings.lists()?;
         let walked = self.walked(&lists);
         let (snapshot, disk, pull, unmatched) = {
@@ -142,7 +146,12 @@ impl Folder {
                     &unmatched,
                     &waiting,
                 )?,
-                None => self.unbound_status(key, path, bytes.as_deref(), &settings, &catalog),
+                None => self.unbound_status(
+                    key,
+                    path,
+                    bytes.as_deref(),
+                    (&settings, &catalog, &edge_types),
+                ),
             };
             entry.warning = bytes
                 .as_deref()
@@ -260,8 +269,7 @@ impl Folder {
         key: &str,
         path: &Path,
         bytes: Option<&[u8]>,
-        settings: &super::Settings,
-        catalog: &Catalog,
+        (settings, catalog, edge_types): (&super::Settings, &Catalog, &EdgeTypes),
     ) -> FileStatus {
         let entry = FileStatus::new(key, None, "outside");
         if !is_document(path) && bytes.is_some_and(<[u8]>::is_empty) {
@@ -269,8 +277,11 @@ impl Folder {
         }
         // Held by the scan before anything binds it, so read as the scan reads.
         if super::carries_frontmatter(path)
-            && let Some(reason) = bytes
-                .and_then(|bytes| super::document::read(&String::from_utf8_lossy(bytes)).unreadable)
+            && let Some(reason) = bytes.and_then(|bytes| {
+                let read = super::document::read(&String::from_utf8_lossy(bytes));
+                read.unreadable
+                    .or_else(|| super::fields::read(&read.front, edge_types).err())
+            })
         {
             return FileStatus::new(key, None, "held").because("unreadable", reason);
         }

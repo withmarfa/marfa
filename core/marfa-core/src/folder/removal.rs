@@ -3,7 +3,9 @@
 
 use serde::Serialize;
 
-use super::{Departing, Folder, PullReport, state};
+use std::cell::OnceCell;
+
+use super::{Departing, Folder, Missing, PullReport, Unsure, state};
 use crate::Result;
 use crate::model::ItemState;
 
@@ -16,6 +18,11 @@ const PUT_BACK: &str = "put-back";
 pub struct Confirmed {
     /// Deletes queued for files gone from the disk, sent at the next push.
     pub deleted: usize,
+    /// Files gone from the disk that another folder on the machine now
+    /// holds, so nothing is trashed for them (`folders.md` 43).
+    pub moved: usize,
+    /// Files that cannot be told moved or gone yet, left to the next pass.
+    pub unsure: Vec<Unsure>,
     /// Files taken away whose items were trashed or left the search's
     /// states elsewhere.
     pub removed: usize,
@@ -48,13 +55,23 @@ impl Folder {
             )
         };
         let mut confirmed = Confirmed::default();
+        let peers = self.peers();
+        let members = OnceCell::new();
         for path in &disk {
             // A file put back since is not gone, whatever the pause recorded.
             if self.root.join(path).exists() {
                 continue;
             }
             if let Some((_, item_id, _)) = journaled.iter().find(|(at, _, _)| at == path) {
-                confirmed.deleted += usize::from(self.send_delete(path, item_id)?);
+                match self.let_go_missing(path, item_id, &settings, &peers, &members)? {
+                    Missing::Moved => confirmed.moved += 1,
+                    Missing::Unsure(reason) => confirmed.unsure.push(Unsure {
+                        path: path.clone(),
+                        reason,
+                    }),
+                    Missing::Deleted => confirmed.deleted += 1,
+                    Missing::Gone => {}
+                }
             }
         }
         let members = self.members(&settings)?;
