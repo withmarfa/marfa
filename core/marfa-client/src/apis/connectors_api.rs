@@ -765,7 +765,7 @@ pub fn delete_connector(
     }
 }
 
-/// The agreements of the rows named that have one, in the order named; at most 500 ids. A row whose type the key's type map does not read is left out. The connector's own key only.
+/// The agreements of the rows named that have one, each row once, in the order first named; at most 500 ids. A row whose type the key's type map does not read is left out. A top-level field the body does not declare is refused. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn find_connector_agreements(
     configuration: &configuration::Configuration,
     params: FindConnectorAgreementsParams,
@@ -853,7 +853,7 @@ pub fn get_connector(
     }
 }
 
-/// The state document of the registration's source, which a later key with the same source reads too. The connector's own key only.
+/// The state document of the registration's source, which a later key with the same source reads too. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn get_connector_state(
     configuration: &configuration::Configuration,
     params: GetConnectorStateParams,
@@ -979,7 +979,7 @@ pub fn heartbeat_connector(
     }
 }
 
-/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.
+/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn hold_connector(
     configuration: &configuration::Configuration,
     params: HoldConnectorParams,
@@ -1025,7 +1025,7 @@ pub fn hold_connector(
     }
 }
 
-/// The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. The connector's own key only.
+/// The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn list_connector_agreements(
     configuration: &configuration::Configuration,
     params: ListConnectorAgreementsParams,
@@ -1354,7 +1354,7 @@ pub fn register_connector(
     }
 }
 
-/// Releases the hold if `process` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. The connector's own key only.
+/// Releases the hold if `process` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn release_connector_hold(
     configuration: &configuration::Configuration,
     params: ReleaseConnectorHoldParams,
@@ -1400,7 +1400,7 @@ pub fn release_connector_hold(
     }
 }
 
-/// Replaces the state document of the registration's source whole. At most 512 KiB serialized. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
+/// Replaces the state document of the registration's source whole. At most 512 KiB serialized. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. A top-level field the body does not declare is refused. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn replace_connector_state(
     configuration: &configuration::Configuration,
     params: ReplaceConnectorStateParams,
@@ -1536,7 +1536,7 @@ pub fn retire_inbound_endpoint(
     }
 }
 
-/// Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
+/// Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it. The connector's own key only, and never the operator key, even on a registration of its own.
 pub fn write_connector_agreements(
     configuration: &configuration::Configuration,
     params: WriteConnectorAgreementsParams,
