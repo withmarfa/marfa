@@ -33,6 +33,12 @@ export const MAX_STATE_BYTES = 512 * 1024;
 export const MAX_RECORD_BYTES = 16 * 1024;
 export const MAX_AGREEMENTS_PER_REQUEST = 500;
 
+const CONNECTOR_KEY_ONLY =
+  "The connector's own key only, and never the operator key, even on a registration of its own.";
+
+const UNDECLARED_REFUSED =
+  "A top-level field the body does not declare is refused.";
+
 const FENCED =
   "Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it.";
 
@@ -77,6 +83,17 @@ const ConnectorAgreementSchema = z
     updated_at: z.string(),
   })
   .openapi("ConnectorAgreement");
+
+const HoldInputSchema = z.object({ process: ProcessSchema });
+
+const StateInputSchema = z.object({
+  process: ProcessSchema,
+  state: JsonObject,
+});
+
+const FindInputSchema = z.object({
+  item_ids: z.array(ItemId).min(1).max(MAX_AGREEMENTS_PER_REQUEST),
+});
 
 const AgreementsInputSchema = z.object({
   process: ProcessSchema,
@@ -142,14 +159,13 @@ const holdRoute = createRoute({
   path: "/{id}/hold",
   tags: ["Connectors"],
   summary: "Take or renew the hold on a registration",
-  description:
-    "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.",
+  description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers \`409 connector_held\` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
     body: {
       content: {
-        "application/json": { schema: z.object({ process: ProcessSchema }) },
+        "application/json": { schema: HoldInputSchema },
       },
     },
   },
@@ -181,8 +197,7 @@ const releaseHoldRoute = createRoute({
   path: "/{id}/hold",
   tags: ["Connectors"],
   summary: "Release the hold on a registration",
-  description:
-    "Releases the hold if `process` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. The connector's own key only.",
+  description: `Releases the hold if \`process\` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -204,8 +219,7 @@ const getStateRoute = createRoute({
   path: "/{id}/state",
   tags: ["Connectors"],
   summary: "Read what a connector keeps on the instance",
-  description:
-    "The state document of the registration's source, which a later key with the same source reads too. The connector's own key only.",
+  description: `The state document of the registration's source, which a later key with the same source reads too. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -223,15 +237,13 @@ const putStateRoute = createRoute({
   path: "/{id}/state",
   tags: ["Connectors"],
   summary: "Replace what a connector keeps on the instance",
-  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} The connector's own key only.`,
+  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
     body: {
       content: {
-        "application/json": {
-          schema: z.object({ process: ProcessSchema, state: JsonObject }),
-        },
+        "application/json": { schema: StateInputSchema },
       },
     },
   },
@@ -271,7 +283,7 @@ const writeAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "Write a connector's agreements about rows",
-  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} The connector's own key only.`,
+  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. ${UNDECLARED_REFUSED} A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -306,17 +318,13 @@ const findAgreementsRoute = createRoute({
   path: "/{id}/agreements/find",
   tags: ["Connectors"],
   summary: "Read a connector's agreements about named rows",
-  description: `The agreements of the rows named that have one, in the order named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. The connector's own key only.`,
+  description: `The agreements of the rows named that have one, each row once, in the order first named; at most ${String(MAX_AGREEMENTS_PER_REQUEST)} ids. A row whose type the key's type map does not read is left out. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
     body: {
       content: {
-        "application/json": {
-          schema: z.object({
-            item_ids: z.array(ItemId).min(1).max(MAX_AGREEMENTS_PER_REQUEST),
-          }),
-        },
+        "application/json": { schema: FindInputSchema },
       },
     },
   },
@@ -340,8 +348,7 @@ const listAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "List a connector's agreements",
-  description:
-    "The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. The connector's own key only.",
+  description: `The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -394,6 +401,20 @@ function held(expiresAt: string | null): MarfaError {
       );
 }
 
+/** The operator key registering itself does not make it a connector's key. */
+function requireConnectorKey(
+  ownerKeyId: string,
+  key: { id: string; is_operator?: boolean },
+): void {
+  if (key.is_operator === true) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "The operator key does not act as a connector",
+    );
+  }
+  requireOwnKey(ownerKeyId, key.id);
+}
+
 function serializedBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
@@ -405,7 +426,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(holdRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
+    refuseUnknownBodyKeys(await c.req.json(), HoldInputSchema);
     const { process } = c.req.valid("json");
     const hold = await storage.connectors.takeHold(
       connector.id,
@@ -425,7 +447,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(releaseHoldRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
     refuseUnknownQueryParams(c.req.raw.url, releaseHoldRoute.request.query);
     await storage.connectors.releaseHold(
       connector.id,
@@ -437,14 +459,15 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(getStateRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
     return c.json(await storage.connectorState.getState(connector.source), 200);
   });
 
   router.openapi(putStateRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
+    refuseUnknownBodyKeys(await c.req.json(), StateInputSchema);
     const { process, state } = c.req.valid("json");
     if (serializedBytes(state) > MAX_STATE_BYTES) {
       throw new MarfaError(
@@ -481,9 +504,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(writeAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
     const body = c.req.valid("json");
-    // Both lists are optional; a misspelled key answers a write of nothing.
     refuseUnknownBodyKeys(await c.req.json(), AgreementsInputSchema);
     const set = body.set ?? [];
     const clear = body.clear ?? [];
@@ -517,7 +539,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(findAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
+    refuseUnknownBodyKeys(await c.req.json(), FindInputSchema);
     const { item_ids } = c.req.valid("json");
     return c.json(
       {
@@ -534,7 +557,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(listAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireOwnKey(connector.key_id, key.id);
+    requireConnectorKey(connector.key_id, key);
     refuseUnknownQueryParams(c.req.raw.url, listAgreementsRoute.request.query);
     const { waiting, limit, cursor } = c.req.valid("query");
     return c.json(

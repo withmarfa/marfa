@@ -823,6 +823,75 @@ describe("what a connector keeps on the instance", () => {
     expect(read.data.data.map((r) => r.record)).toEqual([atCap]);
   });
 
+  it("refuses a top-level body field the hold, the state and the find doors do not declare", async () => {
+    const mine = await connector("undeclared");
+    const process = randomUUID();
+    const row = await note("undeclared");
+    const refusedFor = async (
+      method: "POST" | "PUT",
+      door: string,
+      body: Record<string, unknown>,
+      field: string,
+    ) => {
+      const refused = await mine.client.rawRequest<unknown>(
+        `/connectors/${mine.id}/${door}`,
+        { method, body },
+      );
+      expect(refused.status, door).toBe(400);
+      expect(refused.error?.error.code, door).toBe("validation_error");
+      expect(
+        refused.error?.error.details?.["unknown_body_fields"],
+        door,
+      ).toEqual([field]);
+    };
+
+    await refusedFor(
+      "POST",
+      "hold",
+      { process, window_ms: 3_600_000 },
+      "window_ms",
+    );
+    expect(
+      (await mine.client.getConnector(mine.id)).data.hold_expires_at,
+    ).toBeNull();
+    await holding(mine, process);
+
+    await refusedFor(
+      "PUT",
+      "state",
+      { process, state: { cursor: "merged" }, merge: true },
+      "merge",
+    );
+    expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
+      state: {},
+      updated_at: null,
+    });
+    expect(
+      (
+        await mine.client.replaceConnectorState(mine.id, {
+          process,
+          state: { cursor: "whole" },
+        })
+      ).status,
+    ).toBe(200);
+
+    expect(
+      (
+        await mine.client.writeConnectorAgreements(mine.id, {
+          process,
+          set: [{ item_id: row.id, waiting: true, record: {} }],
+        })
+      ).data.written,
+    ).toBe(1);
+    await refusedFor(
+      "POST",
+      "agreements/find",
+      { item_ids: [row.id], waiting: true },
+      "waiting",
+    );
+    expect(await found(mine, [row.id])).toEqual([row.id]);
+  });
+
   it("leaves a row the key no longer reads out of its reads and its clears", async () => {
     const source = `${ctx.source}-narrowed`;
     const minted = await client.createKey({
@@ -955,12 +1024,9 @@ describe("what a connector keeps on the instance", () => {
       ).data.data.map((r) => r.item_id),
     ).toEqual([x2.id, x3.id, x1.id]);
 
-    // Found in the order named.
-    expect(await found(mine, [settled.id, x3.id, x1.id])).toEqual([
-      settled.id,
-      x3.id,
-      x1.id,
-    ]);
+    expect(
+      await found(mine, [settled.id, x3.id, settled.id, x1.id, x3.id]),
+    ).toEqual([settled.id, x3.id, x1.id]);
 
     const unknown = await mine.client.rawRequest<unknown>(
       `/connectors/${mine.id}/agreements?state=waiting`,
@@ -1194,6 +1260,54 @@ describe("what a connector keeps on the instance", () => {
       cursor: "mine",
     });
     expect(await found(mine, [row.id])).toEqual([row.id]);
+  });
+
+  it("refuses the operator key on a registration of its own, but for the clear", async () => {
+    const operator = getOperatorClient();
+    const current = await operator.rawRequest<{ id: string }>("/keys/current");
+    expect(current.status).toBe(200);
+    const registered = await operator.registerConnector({
+      name: `${ctx.runId} operator`,
+    });
+    expect([200, 201]).toContain(registered.status);
+    const id = registered.data.id;
+    try {
+      // The witness: the registration is the operator key's own.
+      expect(registered.data.key_id).toBe(current.data.id);
+      const process = randomUUID();
+      const row = await note("operator");
+      for (const [door, res] of [
+        ["POST hold", await operator.holdConnector(id, process)],
+        ["DELETE hold", await operator.releaseConnectorHold(id, process)],
+        ["GET state", await operator.getConnectorState(id)],
+        [
+          "PUT state",
+          await operator.replaceConnectorState(id, {
+            process,
+            state: { cursor: "operator" },
+          }),
+        ],
+        [
+          "POST agreements",
+          await operator.writeConnectorAgreements(id, {
+            process,
+            set: [{ item_id: row.id, waiting: true, record: {} }],
+          }),
+        ],
+        [
+          "POST agreements/find",
+          await operator.findConnectorAgreements(id, [row.id]),
+        ],
+        ["GET agreements", await operator.listConnectorAgreements(id)],
+      ] as const) {
+        expect(res.status, door).toBe(403);
+        expect(res.error?.error.code, door).toBe("forbidden");
+      }
+      expect((await operator.getConnector(id)).data.hold_expires_at).toBeNull();
+      expect((await operator.clearConnectorState(id)).status).toBe(200);
+    } finally {
+      await operator.deleteConnector(id);
+    }
   });
 
   it("clears the state and the agreements for the own key or the operator, and audits it", async () => {

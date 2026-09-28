@@ -126,7 +126,7 @@ pub enum AgreementsCommand {
         #[command(flatten)]
         body: BodySource,
     },
-    /// The agreements of the rows named, in the order named.
+    /// The agreements of the rows named, each once, in the order first named.
     Find {
         /// The connector id.
         id: String,

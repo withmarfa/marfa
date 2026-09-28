@@ -149,7 +149,7 @@ Fixture paths are under `src/suites/`.
 | `PUT /connectors/{id}/state`            | covered | `compliance/connector-state.test.ts` | The connector's own key only; replaced whole, 512 KiB at most, only from the process holding the registration.                                                                 |
 | `DELETE /connectors/{id}/state`         | covered | `compliance/connector-state.test.ts` | The connector's own key or the operator's; the source's state and every agreement, through any of its registrations and unfenced, audited.                                     |
 | `POST /connectors/{id}/agreements`      | covered | `compliance/connector-state.test.ts` | The connector's own key only; 500 each way, 16 KiB a record, unreadable and unknown rows skipped, only from the process holding the registration.                              |
-| `POST /connectors/{id}/agreements/find` | covered | `compliance/connector-state.test.ts` | The connector's own key only; in the order named.                                                                                                                              |
+| `POST /connectors/{id}/agreements/find` | covered | `compliance/connector-state.test.ts` | The connector's own key only; each row once, in the order first named.                                                                                                         |
 | `GET /connectors/{id}/agreements`       | covered | `compliance/connector-state.test.ts` | The connector's own key only; the one written longest ago first, narrowed by `waiting`.                                                                                        |
 
 ## Inbound webhooks
