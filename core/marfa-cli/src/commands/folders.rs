@@ -31,10 +31,12 @@ pub struct SettingsArgs {
     /// `type`, `tier`, `properties`, `tags` and `edges`.
     #[arg(long, value_name = "JSON")]
     pub defaults: Option<String>,
-    /// A gitignore pattern for the paths the folder takes, repeatable.
+    /// A gitignore pattern for the paths the folder takes, repeatable; a
+    /// dot-led path only where a pattern names it, and never a secret.
     #[arg(long = "include", value_name = "PATTERN")]
     pub include: Vec<String>,
-    /// A gitignore pattern for the paths the folder leaves alone, repeatable.
+    /// A gitignore pattern for the paths the folder leaves alone,
+    /// repeatable; it wins over an include pattern.
     #[arg(long = "ignore", value_name = "PATTERN")]
     pub ignore: Vec<String>,
     /// Where a new item of a type made elsewhere first appears, as

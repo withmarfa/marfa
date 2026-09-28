@@ -146,6 +146,8 @@ fn watch_files(
     // What stood after the last pass that printed, so a standing condition
     // is said once rather than once a second.
     let mut standing: Option<Standing> = None;
+    // Read again after each pass, which is when the settings can change.
+    let mut lists = folder.settings().and_then(|settings| settings.lists()).ok();
     loop {
         if let Some(limit) = stop_after
             && started.elapsed() >= limit
@@ -159,14 +161,14 @@ fn watch_files(
                 if matches!(event.kind, EventKind::Access(_)) {
                     continue;
                 }
-                // Dot-led paths are never watched (`folders.md` 25, 26), but
-                // for the settings file; this stops a write under `.marfa`
-                // waking a pass.
-                if event
-                    .paths
-                    .iter()
-                    .all(|path| dot_led(dir, path) && !settings_file(dir, path))
-                {
+                // A dot-led path is watched only where the include list names
+                // it (`folders.md` 25), and `.marfa` only for the settings file
+                // (28); this stops a write under `.marfa` waking a pass.
+                if event.paths.iter().all(|path| {
+                    dot_led(dir, path)
+                        && !settings_file(dir, path)
+                        && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
+                }) {
                     continue;
                 }
                 quiet_since = Instant::now();
@@ -201,6 +203,7 @@ fn watch_files(
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }
+        lists = folder.settings().and_then(|settings| settings.lists()).ok();
     }
     Ok(())
 }
@@ -210,6 +213,8 @@ fn watch_files(
 #[derive(Debug, Clone, PartialEq)]
 struct Standing {
     lost: usize,
+    unreached: usize,
+    directories: Vec<String>,
     unwritten: usize,
     outside: usize,
     unsuited: usize,
@@ -253,6 +258,8 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         > 0;
     let now = Standing {
         lost: scanned.lost,
+        unreached: scanned.unreached,
+        directories: crate::folders::directory_lines(&scanned.directories),
         unwritten: pulled.unwritten,
         outside: pulled.outside,
         unsuited: pulled.unsuited,
@@ -279,6 +286,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
     let said: Vec<String> = crate::folders::trashed_lines(&scanned)
         .into_iter()
         .chain(crate::folders::uncarried_line(&now.uncarried))
+        .chain(now.directories.iter().cloned())
         .chain(crate::folders::flagged_lines(&now.flagged))
         .chain(now.embeds.iter().cloned())
         .collect();
@@ -313,11 +321,19 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
                 } else {
                     String::new()
                 },
-                if scanned.lost > 0 {
-                    format!(", {} bound to an item that is gone", scanned.lost)
-                } else {
-                    String::new()
-                },
+                [
+                    (scanned.lost > 0)
+                        .then(|| format!(", {} bound to an item that is gone", scanned.lost)),
+                    (scanned.unreached > 0).then(|| {
+                        format!(
+                            ", {} held where the walk did not reach them",
+                            scanned.unreached
+                        )
+                    }),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<String>(),
                 if pulled.unmatched > 0 {
                     format!(
                         ", {} whose item the search no longer matches",
@@ -344,11 +360,19 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
 }
 
 /// Whether a path is the folder's settings file, the one file under `.marfa`
-/// a watch watches, so a save of it is waited out as any file's is (`folders.md` 26).
+/// a watch watches, so a save of it is waited out as any file's is (`folders.md` 28).
 fn settings_file(root: &Path, path: &Path) -> bool {
     path == root
         .join(marfa_core::folder::STATE_DIR)
         .join(marfa_core::folder::SETTINGS_FILE)
+}
+
+/// Whether the folder's lists take the file at `path`.
+fn taken(lists: &marfa_core::folder::lists::Lists, root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root)
+        .ok()
+        .and_then(|relative| relative.to_str())
+        .is_some_and(|relative| lists.takes(relative))
 }
 
 /// Whether a path lies under a dot-led directory inside the folder.

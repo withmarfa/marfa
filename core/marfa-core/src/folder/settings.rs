@@ -140,6 +140,7 @@ impl Settings {
         if let Some(filter) = &self.search.filter {
             crate::filter::check(filter)?;
         }
+        self.lists()?;
         if let Some(tier) = self.defaults.tier
             && tier != self.tier()
         {
@@ -172,6 +173,12 @@ impl Settings {
                 .types
                 .iter()
                 .any(|declared| catalog.matches(declared, named))
+    }
+
+    /// What the folder takes: its include and ignore lists, beside the
+    /// built-in ones (`folders.md` 25).
+    pub fn lists(&self) -> Result<super::lists::Lists> {
+        super::lists::Lists::new(&self.include, &self.ignore)
     }
 
     /// The types the search holds, each with its subtree; empty is every
@@ -276,6 +283,7 @@ mod tests {
             assert!(read(json!({ "search": search })).is_err(), "{search}");
         }
         assert!(read(json!({ "defaults": { "colour": "red" } })).is_err());
+        assert!(read(json!({ "ignore": ["a{b"] })).is_err());
         let empty = Map::new();
         assert!(Settings::read("f", FOLDER_TYPE, "revoked", &empty).is_err());
         assert!(Settings::read("f", "core.note", "active", &empty).is_err());

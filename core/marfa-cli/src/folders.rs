@@ -305,6 +305,17 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
         .collect()
 }
 
+/// Each directory the walk did not enter, with why (`folders.md` 26).
+pub fn directory_lines(directories: &[marfa_core::folder::Flagged]) -> Vec<String> {
+    directories
+        .iter()
+        .map(|dir| match dir.path.as_str() {
+            "" => format!("the folder {}", dir.reason),
+            path => format!("{path} {}", dir.reason),
+        })
+        .collect()
+}
+
 /// Each embed the folder read nothing from, once, with why (`folders.md` 12).
 pub fn embed_lines<'a>(
     embeds: impl IntoIterator<Item = &'a marfa_core::folder::Flagged>,
@@ -348,7 +359,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 28, 30, 35), named only when there are
+/// get one on this pass (`folders.md` 30, 32, 37), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
@@ -457,6 +468,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
                 report.lost,
                 "bound to an item that is gone and unchanged since, so not sent",
             ),
+            (
+                report.unreached,
+                "bound but not reached, where the lists no longer take them or a package or an unreadable directory holds them, so held rather than deleted",
+            ),
         ]
         .into_iter()
         .filter(|(count, _)| *count > 0)
@@ -481,9 +496,12 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if behind > 0 {
         line.push_str(&format!("; {behind} behind: own-field lines not sent"));
     }
-    for embed in embed_lines(&report.embeds) {
+    for said in directory_lines(&report.directories)
+        .into_iter()
+        .chain(embed_lines(&report.embeds))
+    {
         line.push('\n');
-        line.push_str(&embed);
+        line.push_str(&said);
     }
     for said in trashed_lines(report) {
         line.push('\n');
@@ -493,7 +511,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
 }
 
 /// What a scan's look in the other folders on this machine came to, in
-/// words (`folders.md` 39, 41).
+/// words (`folders.md` 41, 43).
 pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!("this folder stands alone, since the folder registry cannot be read: {why}")

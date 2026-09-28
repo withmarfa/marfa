@@ -375,7 +375,7 @@ export interface FolderHarness {
   settings: FolderRow;
   /** What the hydration served, so a scripted write door knows those rows. */
   rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
-  /** The folder registry of the machine it is on (`folders.md` 39). */
+  /** The folder registry of the machine it is on (`folders.md` 41). */
   registry: string;
   stop: () => Promise<void>;
 }

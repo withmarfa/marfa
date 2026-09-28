@@ -13,6 +13,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8072,6 +8073,29 @@ describe("identity", () => {
     expect(read(harness, "fenced.txt")).toBe(text);
   });
 
+  it("reads a .txt file whatever the case of its extension", async () => {
+    harness = await folderHarness("folder-txt-case", {
+      settings: {
+        search: { types: ["core.note", "core.file"] },
+        defaults: { type: "core.note" },
+      },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    put(harness, "LOUD.TXT", "said loudly\n");
+    // The control: the same text under a lowercase extension.
+    put(harness, "quiet.txt", "said quietly\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const sent = sentCreates(harness);
+    expect(
+      sent.map((create) => create.type),
+      "a .TXT file was sent as a file item's bytes rather than a document, so its edits never reach its text",
+    ).toEqual(["core.note", "core.note"]);
+    expect(
+      sent.map((create) => (create.properties as Record<string, unknown>).body),
+    ).toEqual(expect.arrayContaining(["said loudly\n", "said quietly\n"]));
+  });
+
   it("reads no id from a file naming the folder's own settings", async () => {
     harness = await folderHarness("folder-id-of-settings");
     scriptFolderWrites(harness);
@@ -10827,7 +10851,7 @@ describe("writing", () => {
   });
 });
 
-describe("what a folder does not watch", () => {
+describe("what a folder takes", () => {
   it("excludes a dot-led directory at any depth", async () => {
     harness = await folderHarness("folder-dot-led");
     scriptFolderWrites(harness);
@@ -10841,6 +10865,349 @@ describe("what a folder does not watch", () => {
       sentTitles(harness).sort(),
       "a dot-led directory was pushed, and at depth is where it matters: an editor's own state, a version control directory, a cache — none of them is the person's content",
     ).toEqual(["Deep kept", "Kept"]);
+  });
+
+  it("takes only what its include list names", async () => {
+    harness = await folderHarness("folder-include", {
+      settings: {
+        search: { types: ["core.note"] },
+        include: ["Notes/", "Other/kept.md"],
+      },
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-000000017001",
+              properties: { title: "Elsewhere", body: "made elsewhere\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    put(harness, "Notes/inside.md", "---\ntitle: Inside\n---\nbody\n");
+    put(harness, "Notes/deep/deeper.md", "---\ntitle: Deeper\n---\nbody\n");
+    put(harness, "Other/kept.md", "---\ntitle: Kept\n---\nbody\n");
+    put(harness, "Other/left.md", "---\ntitle: Left\n---\nbody\n");
+    put(harness, "root.md", "---\ntitle: Root\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentTitles(harness).sort(),
+      "the folder took a file its include list does not name, or left out one it does, so the list decides nothing",
+    ).toEqual(["Deeper", "Inside", "Kept"]);
+    // The pull half: an item whose file would land where the list takes
+    // nothing is not written, and is counted rather than dropped silently.
+    expect(
+      existsSync(join(harness.dir, "Elsewhere.md")),
+      "the pull wrote a file where the include list takes nothing, so the next scan reads it as gone and deletes its item",
+    ).toBe(false);
+    expect(pushed.value.pull?.outside).toBe(1);
+  });
+
+  it("never takes a secret whatever its lists say", async () => {
+    harness = await folderHarness("folder-secrets", {
+      settings: {
+        search: { types: ["core.note", "core.file"] },
+        defaults: { type: "core.note" },
+        include: [".env", "*.pem", "keys/", "ssh/", "*.md"],
+        ignore: ["!.env", "!*.pem"],
+      },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    put(harness, ".env", "TOKEN=hunter2-env\n");
+    put(harness, "keys/server.pem", "hunter2-pem\n");
+    put(harness, "keys/Deploy.KEY", "hunter2-key\n");
+    put(harness, "keys/credentials", "hunter2-credentials\n");
+    put(harness, "ssh/id_ed25519", "hunter2-ssh\n");
+    // The controls: the include list reaches these, so it is the secrets
+    // alone that are refused.
+    writeFileSync(
+      join(harness.dir, "keys", "diagram.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 7]),
+    );
+    put(harness, "keys/readme.md", "---\ntitle: Readme\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTitles(harness).sort(),
+      "a secret an include line names was taken, or the controls beside it were not",
+    ).toEqual(["Readme", "diagram.png"]);
+    expect(
+      harness.server.requests.filter((request) =>
+        request.body.includes("hunter2"),
+      ),
+      "a secret's bytes reached the server, where every machine and key that reads the folder can have them",
+    ).toEqual([]);
+  });
+
+  it("ignores what its ignore list names", async () => {
+    harness = await folderHarness("folder-ignore", {
+      events: [liveReplay("1", [])],
+    });
+    scriptFolderWrites(harness);
+    put(harness, "gone.md", "---\ntitle: Gone\n---\nbody\n");
+    put(harness, "drafts/draft.md", "---\ntitle: Draft\n---\nbody\n");
+    put(harness, "kept.md", "---\ntitle: Kept\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const draft = idIn(harness, "drafts/draft.md");
+    expect(draft).toBeDefined();
+
+    const sent = scriptFolderChanges(harness);
+    writeFileSync(
+      settingsFile(harness),
+      readFileSync(settingsFile(harness), "utf8") + "ignore:\n  - drafts/\n",
+    );
+    writeFileSync(
+      join(harness.dir, "drafts", "draft.md"),
+      read(harness, "drafts/draft.md") + "edited while ignored\n",
+    );
+    put(harness, "drafts/new.md", "---\ntitle: New draft\n---\nbody\n");
+    // The witness: a file taken away in the same scan is journaled, so a
+    // count of none below is the ignore list, not a scan that journals
+    // nothing.
+    rmSync(join(harness.dir, "gone.md"));
+    const updates = sentUpdates(harness).length;
+    const ignoring = await harness.folder.push();
+    expect(ignoring.ok, JSON.stringify(ignoring)).toBe(true);
+    if (!ignoring.ok) return;
+    expect(sent).toEqual([{ version: 1, ignore: ["drafts/"] }]);
+    expect(
+      sentTitles(harness),
+      "a new file in a directory the ignore list names was sent",
+    ).not.toContain("New draft");
+    expect(
+      sentUpdates(harness).slice(updates),
+      "an edit of a file the ignore list names was sent",
+    ).toEqual([]);
+    expect(
+      [ignoring.value.scan.missing, ignoring.value.scan.unreached],
+      "a file the list stopped taking was journaled as deleted, so a new ignore line trashes every item it covers",
+    ).toEqual([1, 1]);
+    expect(
+      ignoring.value.pull?.outside,
+      "the pull wrote into a directory the ignore list names, or said nothing of the item it did not write",
+    ).toBe(1);
+    expect(read(harness, "drafts/draft.md")).toContain("edited while ignored");
+
+    // Taken again, the file is its item's, and the edit made meanwhile goes.
+    writeFileSync(
+      settingsFile(harness),
+      readFileSync(settingsFile(harness), "utf8").replace(
+        /ignore:\n(\s*- .*\n)+/,
+        "ignore: []\n",
+      ),
+    );
+    const taken = await harness.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.value.scan.unreached).toBe(0);
+    expect(sentUpdates(harness).map((update) => update.id)).toContain(draft);
+    expect(sentTitles(harness)).toContain("New draft");
+    expect(idIn(harness, "drafts/draft.md")).toBe(draft);
+  });
+
+  it("reaches a dot-led path its include list names", async () => {
+    harness = await folderHarness("folder-include-dot-led", {
+      settings: {
+        search: { types: ["core.note"] },
+        include: [".notes/", "*.md"],
+      },
+    });
+    scriptFolderWrites(harness);
+    put(harness, ".notes/idea.md", "---\ntitle: Idea\n---\nbody\n");
+    put(harness, ".notes/deep/more.md", "---\ntitle: More\n---\nbody\n");
+    // `*.md` names this file too, and names no dot-led name on its way.
+    put(harness, ".cache/stale.md", "---\ntitle: Stale\n---\nbody\n");
+    put(harness, "plain.md", "---\ntitle: Plain\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      sentTitles(harness).sort(),
+      "a dot-led directory an include line names was not walked, or one no line names was",
+    ).toEqual(["Idea", "More", "Plain"]);
+    expect(
+      idIn(harness, ".notes/idea.md"),
+      "the pull did not write the id back into a file under a dot-led directory the list takes",
+    ).toBeDefined();
+    const again = await harness.folder.push();
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(
+      again.ok && [again.value.scan.created, again.value.scan.missing],
+      "a file the pull wrote under the dot-led directory was read back as new or gone",
+    ).toEqual([0, 0]);
+  });
+
+  it("does not walk into a package", async () => {
+    harness = await folderHarness("folder-package", {
+      settings: {
+        search: { types: ["core.note"] },
+        first_placement: { "core.note": "Deck.key" },
+      },
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-000000017011",
+              properties: { title: "Placed", body: "made elsewhere\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    put(harness, "Deck.key/Data/slide.md", "---\ntitle: Slide\n---\nbody\n");
+    put(
+      harness,
+      "Tool.APP/Contents/readme.md",
+      "---\ntitle: Tool\n---\nbody\n",
+    );
+    put(harness, "Thing.mystery/inner.md", "---\ntitle: Marked\n---\nbody\n");
+    // The Finder's bundle bit: a package by the system's word, not its name.
+    const info = Buffer.alloc(32);
+    info[8] = 0x20;
+    execFileSync("xattr", [
+      "-wx",
+      "com.apple.FinderInfo",
+      info.toString("hex"),
+      join(harness.dir, "Thing.mystery"),
+    ]);
+    put(harness, "notes/note.md", "---\ntitle: Note\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentTitles(harness),
+      "a file inside a package was sent as a note, so a presentation or an app reaches the server piece by piece",
+    ).toEqual(["Note"]);
+    expect(
+      pushed.value.scan.directories.map((dir) => [dir.path, dir.flag]).sort(),
+      "a package the folder did not walk into was not reported, so its files are missing without a word",
+    ).toEqual([
+      ["Deck.key", "package"],
+      ["Thing.mystery", "package"],
+      ["Tool.APP", "package"],
+    ]);
+    expect(
+      existsSync(join(harness.dir, "Deck.key", "Placed.md")),
+      "the pull wrote a file inside a package",
+    ).toBe(false);
+    expect(pushed.value.pull?.outside).toBe(1);
+  });
+
+  it("holds the files of a directory it cannot read, and goes on with the rest", async () => {
+    let changed: Record<string, unknown> = {};
+    harness = await folderHarness("folder-unreadable-dir", {
+      events: [
+        liveReplay("1", []),
+        (): Answer =>
+          liveReplay("2", [itemEvent("2", "item.updated", changed)]),
+        liveReplay("2", []),
+      ],
+    });
+    scriptFolderWrites(harness);
+    put(harness, "locked/inner.txt", "inner text\n");
+    put(harness, "gone.md", "---\ntitle: Gone\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const inner = sentCreates(harness).find(
+      (create) =>
+        (create.properties as Record<string, unknown>).body === "inner text\n",
+    );
+    expect(inner).toBeDefined();
+    // Changed elsewhere, so the pull tries to write a file it cannot reach.
+    changed = wireItem({
+      id: String(inner?.id),
+      version: 2,
+      properties: {
+        ...(inner?.properties as Record<string, unknown>),
+        body: "changed elsewhere\n",
+      },
+    });
+    const locked = join(harness.dir, "locked");
+    chmodSync(locked, 0o000);
+    try {
+      // The witness: a file taken away in the same scan is journaled.
+      rmSync(join(harness.dir, "gone.md"));
+      put(harness, "after.md", "---\ntitle: After\n---\nbody\n");
+      const pushed = await harness.folder.push();
+      expect(
+        pushed.ok,
+        `one directory the walk could not read stopped the scan of every other: ${JSON.stringify(pushed)}`,
+      ).toBe(true);
+      if (!pushed.ok) return;
+      expect(sentTitles(harness)).toContain("After");
+      expect(
+        pushed.value.scan.directories.map((dir) => [dir.path, dir.flag]),
+      ).toEqual([["locked", "unreadable"]]);
+      expect(
+        [pushed.value.scan.missing, pushed.value.scan.unreached],
+        "a file in a directory the walk could not read was journaled as deleted, and its item goes to the bin",
+      ).toEqual([1, 1]);
+      expect(pushed.value.pull?.unwritten).toBe(1);
+    } finally {
+      chmodSync(locked, 0o755);
+    }
+    const readable = await harness.folder.scan();
+    expect(readable.ok, JSON.stringify(readable)).toBe(true);
+    if (!readable.ok) return;
+    expect(
+      [readable.value.unreached, readable.value.created],
+      "the file lost its binding when the pull could not write it, and came back as a second item",
+    ).toEqual([0, 0]);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(read(harness, "locked/inner.txt")).toBe("changed elsewhere\n");
+  });
+
+  it("treats names differing only in case or Unicode form as one", async () => {
+    const composed = "R\u00e9sum\u00e9";
+    const decomposed = "Re\u0301sume\u0301";
+    const cafe = "01a00000-0000-7000-8000-000000017025";
+    const pairs = [
+      ["01a00000-0000-7000-8000-000000017021", "Plan"],
+      ["01a00000-0000-7000-8000-000000017022", "plan"],
+      ["01a00000-0000-7000-8000-000000017023", composed],
+      ["01a00000-0000-7000-8000-000000017024", decomposed],
+    ];
+    harness = await folderHarness("folder-one-name", {
+      rows: {
+        "core.note": [...pairs, [cafe, "Caf\u00e9"]].map(([id, title]) => ({
+          item: { id, properties: { title, body: `${title}\n` } },
+        })),
+      },
+    });
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    const files = readdirSync(harness.dir).filter((name) =>
+      name.endsWith(".md"),
+    );
+    for (const [id, title] of pairs) {
+      expect(
+        files.filter((name) => idIn(harness!, name) === id),
+        `${title} has no file of its own: two names differing only in case or form were given as two paths, and one disk holds them as one file`,
+      ).toHaveLength(1);
+    }
+    expect([pulled.value.beside, pulled.value.unwritten]).toEqual([2, 0]);
+
+    // A line and a link typed in another case and form name the item all
+    // the same.
+    put(
+      harness,
+      "Link.md",
+      '---\ntitle: Link\nabout: "[[CAFE\u0301]]"\n---\nsee [[CAFE\u0301]]\n',
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.flagged).toEqual([]);
+    const link = idIn(harness, "Link.md");
+    expect(sentEdgeWrites(harness).sort()).toEqual([
+      `create ${link} about ${cafe}`,
+      `create ${link} references ${cafe}`,
+    ]);
   });
 
   it("keeps its own state in .marfa and never pushes it", async () => {
@@ -11403,7 +11770,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders.md` 36).
+    // again (`folders.md` 38).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();

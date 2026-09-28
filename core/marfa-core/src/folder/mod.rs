@@ -11,6 +11,8 @@ mod embeds;
 pub mod fields;
 pub mod identity;
 mod lines;
+pub mod lists;
+mod names;
 mod placement;
 pub mod registry;
 pub mod settings;
@@ -35,6 +37,7 @@ use elsewhere::{Look, Peers};
 use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{EdgeWork, Names, Resolver};
+use lists::{Lists, in_package, is_package};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 pub use registry::{REGISTRY_ENV, Registered, Registry};
@@ -42,7 +45,7 @@ pub use registry::{REGISTRY_ENV, Registered, Registry};
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
 
-/// Where a folder keeps what is its own (`folders.md` 26).
+/// Where a folder keeps what is its own (`folders.md` 28).
 pub const STATE_DIR: &str = ".marfa";
 
 /// How long a missing file is journaled before it becomes a delete
@@ -51,7 +54,7 @@ pub const STATE_DIR: &str = ".marfa";
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
 /// The folder's settings written out, the one file under `.marfa/` a folder
-/// reads and watches (`folders.md` 1, 26).
+/// reads and watches (`folders.md` 1, 28).
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
 /// A record of settings kept on this machine alone, which a folder refuses
@@ -84,30 +87,37 @@ pub struct ScanReport {
     /// Journaled files whose grace ran out, now queued as deletes.
     pub deleted: usize,
     /// The paths of those, each found in no folder on this machine
-    /// (`folders.md` 41).
+    /// (`folders.md` 43).
     pub trashed: Vec<String>,
     /// Journaled files found in another folder here, so not trashed
-    /// (`folders.md` 41).
+    /// (`folders.md` 43).
     pub moved_away: usize,
     /// Journaled files held, since the other folders could not all be read
-    /// (`folders.md` 41).
+    /// (`folders.md` 43).
     pub unsure: Vec<Unsure>,
     /// Why the registry could not be read, where it could not
-    /// (`folders.md` 39).
+    /// (`folders.md` 41).
     pub registry: Option<String>,
     /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
     /// Files bound to a row the copy lost, queued again as new items because
-    /// they changed or moved (`folders.md` 36); counted in `created` too.
+    /// they changed or moved (`folders.md` 38); counted in `created` too.
     pub requeued: usize,
     /// Files bound to a row the copy no longer holds and unchanged since, so
-    /// nothing is sent for them (`folders.md` 36).
+    /// nothing is sent for them (`folders.md` 38).
     pub lost: usize,
     /// Files this scan read and holds rather than sends (`folders.md` 9, 10).
     pub flagged: Vec<Flagged>,
     /// Embeds in the files this scan read that name no file it sends
     /// (`folders.md` 12).
     pub embeds: Vec<Flagged>,
+    /// Bound files the walk did not reach, because the lists no longer take
+    /// them, a package holds them or their directory could not be read:
+    /// held, and never journaled (`folders.md` 25, 26).
+    pub unreached: usize,
+    /// Directories the walk did not enter, `package` or `unreadable`
+    /// (`folders.md` 26).
+    pub directories: Vec<Flagged>,
 }
 
 /// A missing file not trashed yet, and why.
@@ -123,7 +133,8 @@ pub struct Flagged {
     pub path: String,
     /// `unreadable`, `refused`, or `edges` for lines that change nothing
     /// (`folders.md` 9, 10, 11); `embed` for an embed read as nothing (12);
-    /// `waiting` for a moved file whose item cannot be read yet (40).
+    /// `waiting` for a moved file whose item cannot be read yet (42); `name`
+    /// for a name another file here holds in another case or form (27).
     pub flag: &'static str,
     pub reason: String,
 }
@@ -224,7 +235,7 @@ impl Folder {
                 CoreError::Store(format!("cannot remove {}: {error}", old.display()))
             })?;
         }
-        // Unlisted, its moves would read as deletes to the others (`folders.md` 39).
+        // Unlisted, its moves would read as deletes to the others (`folders.md` 41).
         if let Some(registry) = Registry::located() {
             let store = elsewhere::store_id(&added.core)?;
             registry.add(&added.root, folder, Some(&store))?;
@@ -272,7 +283,7 @@ impl Folder {
     }
 
     /// Takes a folder whose directory is gone off this machine's registry,
-    /// answering whether it was listed (`folders.md` 39).
+    /// answering whether it was listed (`folders.md` 41).
     pub fn forget(dir: impl AsRef<Path>) -> Result<bool> {
         match Registry::located() {
             Some(registry) => registry.unregister(dir.as_ref()),
@@ -305,7 +316,7 @@ impl Folder {
     }
 
     /// Unregisters the folder and removes `.marfa/`, leaving its files
-    /// (`folders.md` 39); refused while it is held or writes wait.
+    /// (`folders.md` 41); refused while it is held or writes wait.
     pub fn remove(self) -> Result<()> {
         if self.core.handle() != crate::Handle::Writer {
             return Err(CoreError::Invalid(format!(
@@ -477,13 +488,19 @@ impl Folder {
         }
     }
 
-    /// Every file the folder watches, in a stable order. Dot-led directories
-    /// are excluded at any depth, `.marfa/` with them (`folders.md` 25, 26).
-    pub fn files(&self) -> Result<Vec<PathBuf>> {
-        let mut found = Vec::new();
-        walk(&self.root, &mut found)?;
-        found.sort();
-        Ok(found)
+    /// Every file the folder takes, in a stable order, and the directories
+    /// it did not enter (`folders.md` 25, 26).
+    fn walked(&self, lists: &Lists) -> Walked {
+        let mut walked = Walked::default();
+        walk(&self.root, &self.root, lists, &mut walked);
+        walked.files.sort();
+        walked
+    }
+
+    /// Whether a pull writes a file at `path`: plainly inside the folder,
+    /// where the lists take it and no package holds it.
+    fn writes_at(&self, lists: &Lists, path: &str) -> bool {
+        plainly_inside(&self.root, path) && lists.takes(path) && !in_package(&self.root, path)
     }
 }
 
@@ -506,41 +523,108 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
     whole
 }
 
-/// Walks a directory, skipping anything dot-led at any depth and any folder
-/// inside it, whose files are that folder's.
-fn walk(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
+/// What a walk found.
+#[derive(Default)]
+struct Walked {
+    files: Vec<PathBuf>,
+    /// Packages, and directories it could not read.
+    directories: Vec<Flagged>,
+}
+
+impl Walked {
+    /// Whether a path inside the folder lies in a directory the walk did not
+    /// enter.
+    fn passed_over(&self, relative: &str) -> bool {
+        self.directories.iter().any(|dir| {
+            dir.path.is_empty()
+                || relative
+                    .strip_prefix(&dir.path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
+    fn unreadable(&mut self, root: &Path, dir: &Path, error: &std::io::Error) {
+        self.directories.push(Flagged {
+            path: identity::relative(root, dir).unwrap_or_default(),
+            flag: "unreadable",
+            reason: format!("cannot be read ({error}), so the files bound in it are held"),
+        });
+    }
+}
+
+/// Walks a directory, entering only what the lists let it (`folders.md` 25)
+/// and no package (26). A directory it cannot read is reported and passed
+/// over, so one does not stop the scan of every other.
+fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         // Gone mid-walk: the scan that follows will not find its files either.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(CoreError::Store(format!(
-                "cannot read {}: {error}",
-                dir.display()
-            )));
-        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => return walked.unreadable(root, dir, &error),
     };
     for entry in entries {
-        let entry = entry
-            .map_err(|error| CoreError::Store(format!("cannot read {}: {error}", dir.display())))?;
-        if entry.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => return walked.unreadable(root, dir, &error),
+        };
         let path = entry.path();
+        let Ok(relative) = identity::relative(root, &path) else {
+            continue;
+        };
         let Ok(metadata) = std::fs::symlink_metadata(&path) else {
             continue;
         };
         // A symlink is neither: following one would give two paths one
         // identity on purpose.
         if metadata.is_dir() {
-            if !path.join(STATE_DIR).is_dir() {
-                walk(&path, into)?;
+            // A folder inside is that folder's, its files never this one's.
+            if !lists.enters(&relative) || path.join(STATE_DIR).is_dir() {
+                continue;
             }
-        } else if metadata.is_file() {
-            into.push(path);
+            if is_package(&path) {
+                walked.directories.push(Flagged {
+                    path: relative,
+                    flag: "package",
+                    reason: "is a package, which macOS opens as one thing, so the folder does not walk into it".into(),
+                });
+            } else {
+                walk(root, &path, lists, walked);
+            }
+        } else if metadata.is_file() && lists.takes(&relative) {
+            walked.files.push(path);
         }
     }
-    Ok(())
+}
+
+/// The files a scan reads, one for each name: of files whose names differ
+/// only in case or Unicode form, the one bound at its path, else the
+/// first in path order; every other is held and flagged (`folders.md` 27).
+fn one_per_name(
+    paths: &[PathBuf],
+    keys: Vec<String>,
+    snapshot: &[state::Bound],
+    report: &mut ScanReport,
+) -> (Vec<PathBuf>, Vec<String>) {
+    let bound: HashSet<&str> = snapshot.iter().map(|row| row.path.as_str()).collect();
+    let holders = names::holders(&keys, |key| bound.contains(key));
+    let mut kept = (Vec::new(), Vec::new());
+    for (at, (path, key)) in paths.iter().zip(&keys).enumerate() {
+        let held = holders[at];
+        if held == at {
+            kept.0.push(path.clone());
+            kept.1.push(key.clone());
+        } else {
+            report.flagged.push(Flagged {
+                path: key.clone(),
+                flag: "name",
+                reason: format!(
+                    "differs from {} only in case or Unicode form, which a folder reads as one name, so it is held until one of them is renamed",
+                    keys[held]
+                ),
+            });
+        }
+    }
+    kept
 }
 
 /// A file the scan read.
@@ -583,7 +667,7 @@ struct Claim {
 /// The files a scan leaves waiting, by their place in it, with why.
 type Waiting = HashMap<usize, String>;
 
-/// Copy or move, across the folders on this machine (`folders.md` 40).
+/// Copy or move, across the folders on this machine (`folders.md` 42).
 enum Arrival {
     /// The item its id names, where the copy holds it.
     Here,
@@ -609,11 +693,22 @@ impl Folder {
             let conn = self.core.conn()?;
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
-        let paths = self.files()?;
-        let keys = paths
+        let lists = settings.lists()?;
+        let walked = self.walked(&lists);
+        report.directories = walked.directories.clone();
+        let snapshot = {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+        };
+        let found = walked
+            .files
             .iter()
             .map(|path| identity::relative(&self.root, path))
             .collect::<Result<Vec<String>>>()?;
+        // Every file the walk found, whether or not it is pushed: leaving one
+        // out journals it missing and deletes the item bound to it.
+        let seen: HashSet<String> = found.iter().cloned().collect();
+        let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
         // Markdown files first, so a file only an embed names is sent too
         // (`folders.md` 12).
         let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
@@ -642,10 +737,6 @@ impl Folder {
             }
             early.insert(path.clone(), bytes);
         }
-        let snapshot = {
-            let conn = self.core.conn()?;
-            state::every_bound(&conn)?
-        };
         // A file already a file item is read whatever the search says, so one
         // no longer embedded, or moved, is followed rather than journaled.
         let files_bound: Vec<&state::Bound> = snapshot
@@ -664,9 +755,6 @@ impl Folder {
                     .and_then(|metadata| identity::of(&metadata))
                     .is_some_and(|found| bound_marks.contains(found.key().as_str()))
         };
-        // Every file the walk found, whether or not it is pushed: leaving one
-        // out journals it missing and deletes the item bound to it.
-        let seen: HashSet<String> = keys.iter().cloned().collect();
         let mut held: Vec<PathBuf> = Vec::new();
         for (path, key) in paths.iter().zip(&keys) {
             if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)
@@ -690,7 +778,7 @@ impl Folder {
                     Err(_) => continue,
                 },
             };
-            // No blob the server holds is empty (`folders.md` 34).
+            // No blob the server holds is empty (`folders.md` 36).
             if bytes.is_empty() && !is_document(&path) {
                 report.skipped += 1;
                 continue;
@@ -766,7 +854,7 @@ impl Folder {
                 continue;
             }
             // A binding to a row the copy no longer holds binds nothing
-            // (`folders.md` 36).
+            // (`folders.md` 38).
             let claim = match claim {
                 Some(Claim {
                     item_id,
@@ -880,7 +968,7 @@ impl Folder {
         }
 
         // Every file is bound now, so a link or a line naming one that
-        // arrived in the same scan resolves (`folders.md` 31).
+        // arrived in the same scan resolves (`folders.md` 33).
         let mut resolver = Resolver::new(self, &catalog);
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
@@ -954,6 +1042,16 @@ impl Folder {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
                 }
+                continue;
+            }
+            // Not reached is not gone: the item of a file the lists stopped
+            // taking, or one the walk could not read, is not trashed.
+            if !lists.takes(&row.path) || walked.passed_over(&row.path) {
+                if journaled.contains(&row.path) {
+                    let conn = self.core.conn()?;
+                    state::journal_clear(&conn, &row.path)?;
+                }
+                report.unreached += 1;
                 continue;
             }
             let conn = self.core.conn()?;
@@ -1096,7 +1194,7 @@ impl Folder {
             }
         }
         // A file that cannot carry an id, moved here from another folder on
-        // this machine, is the item that folder bound it to (`folders.md` 41).
+        // this machine, is the item that folder bound it to (`folders.md` 43).
         for (at, file) in files.iter().enumerate() {
             if claims[at].is_some()
                 || waiting.contains_key(&at)
@@ -1136,7 +1234,7 @@ impl Folder {
     }
 
     /// Copy or move, for a file carrying an id this folder has no file of
-    /// (`folders.md` 40).
+    /// (`folders.md` 42).
     fn arrival(
         &self,
         id: &str,
@@ -1227,7 +1325,7 @@ impl Folder {
     }
 
     /// Sends the deletes whose grace has run out, save for a file found in
-    /// another folder on this machine (`folders.md` 41).
+    /// another folder on this machine (`folders.md` 43).
     fn sweep_journal(
         &self,
         settings: &Settings,
@@ -1279,14 +1377,14 @@ impl Folder {
         Ok(())
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 27, 34): a
+    /// Whether this path is one the folder pushes (`folders.md` 29, 36): a
     /// document, or a file whose type the search holds.
     fn pushes(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> bool {
         is_document(path) || self.file_type_of(path, settings, catalog).is_some()
     }
 
     /// The type a file that is not a document becomes, where the search
-    /// holds it (`folders.md` 34).
+    /// holds it (`folders.md` 36).
     fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
         let file_type = bytes_type(path, catalog)?;
         let types = settings.types();
@@ -1392,7 +1490,7 @@ impl Folder {
     }
 
     /// A file that is not a document, as a file item: its bytes' upload, and
-    /// the create waiting on it (`folders.md` 34). Its type is its bytes', so
+    /// the create waiting on it (`folders.md` 36). Its type is its bytes', so
     /// of the defaults it takes the tier, the tags and the edges.
     fn queue_create_file(
         &self,
@@ -1489,7 +1587,7 @@ impl Folder {
         let read = fields::read(&document.front, edge_types).unwrap_or_default();
         let mut edit_line = bound.and_then(|bound| bound.edit_line);
         // Bytes set aside in a conflicted copy against this device's own
-        // earlier save go on the version they were read at (`folders.md` 37).
+        // earlier save go on the version they were read at (`folders.md` 39).
         let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
         // The file's last bytes showed the item as the server last answered
         // it, but for their line: a version step no file shows, or its own edit.
@@ -1668,7 +1766,7 @@ impl Folder {
     }
 
     /// New bytes are an upload and an update naming them; a move carries the
-    /// new name as the title where the old name was it (`folders.md` 34).
+    /// new name as the title where the old name was it (`folders.md` 36).
     fn queue_update_file(
         &self,
         bound: &state::Bound,
@@ -1744,18 +1842,24 @@ impl Folder {
         )
     }
 
-    /// The item a link names: an id the copy holds, or a file in this folder.
+    /// The item a link names: an id the copy holds, or a file in this
+    /// folder, its path compared as names are (`folders.md` 27).
     fn resolve_link(&self, target: &str) -> Result<Option<String>> {
         if self.core.get(target)?.is_some() {
             return Ok(Some(target.to_string()));
         }
         let conn = self.core.conn()?;
-        for candidate in [target.to_string(), format!("{target}.md")] {
-            if let Some(bound) = state::bound_at(&conn, &candidate)? {
+        let candidates = [target.to_string(), format!("{target}.md")];
+        for candidate in &candidates {
+            if let Some(bound) = state::bound_at(&conn, candidate)? {
                 return Ok(Some(bound.item_id));
             }
         }
-        Ok(None)
+        let wanted: Vec<String> = candidates.iter().map(|name| names::folded(name)).collect();
+        Ok(state::bound_paths(&conn)?
+            .into_iter()
+            .find(|(path, _)| wanted.contains(&names::folded(path)))
+            .map(|(_, item_id)| item_id))
     }
 }
 
@@ -2122,6 +2226,7 @@ impl Folder {
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
         let settings = self.settings()?;
+        let lists = settings.lists()?;
         let mut members = self.members(&settings)?;
         let items = self.core.list(
             &crate::model::ListFilters {
@@ -2153,7 +2258,7 @@ impl Folder {
         }
         // A bound file whose item left the search, but not by state or the
         // bin, is kept current as a member's is and flagged; it never gets a
-        // new file (`folders.md` 33).
+        // new file (`folders.md` 35).
         let outside: Vec<String> = bound_items
             .into_iter()
             .filter(|id| !members.contains(id))
@@ -2191,7 +2296,7 @@ impl Folder {
                     hosts.push((item, path));
                 }
             }
-            self.embedded(&hosts, &catalog)?
+            self.embedded(&hosts, &catalog, &lists)?
         };
         report.embeds = embedded.reports;
         let missing: Vec<String> = embedded
@@ -2244,7 +2349,7 @@ impl Folder {
                 continue;
             }
             // Gone from the disk it is the scan's to journal; written back,
-            // a file another folder took in would return (`folders.md` 42).
+            // a file another folder took in would return (`folders.md` 44).
             if *unmatched
                 && bound
                     .as_ref()
@@ -2253,7 +2358,7 @@ impl Folder {
                 continue;
             }
             // Moved to another folder here and not yet taken there, written
-            // anew it would make the moved file read as a copy (`folders.md` 40).
+            // anew it would make the moved file read as a copy (`folders.md` 42).
             if bound.is_none() && peers.arriving(&item.id) {
                 report.elsewhere += 1;
                 continue;
@@ -2279,7 +2384,13 @@ impl Folder {
                         &catalog,
                     )
                 })
-                .filter(|want| plainly_inside(&self.root, want))
+                // A name its file already has in another case or form is that
+                // file's, which keeps its own name (`folders.md` 27).
+                .map(|want| match &bound {
+                    Some(bound) if names::same(&bound.path, &want) => bound.path.clone(),
+                    _ => want,
+                })
+                .filter(|want| self.writes_at(&lists, want))
             else {
                 report.outside += 1;
                 continue;
@@ -2305,21 +2416,27 @@ impl Folder {
         // Ranked by what the server holds, so every machine gives a shared
         // path to the same item; stable, so the listing orders the rest.
         placing.sort_by(|a, b| a.rank.cmp(&b.rank));
-        let wanted: HashSet<String> = placing.iter().map(|entry| entry.want.clone()).collect();
+        // Compared as a folder compares names, so two items never get paths
+        // one disk holds as one file (`folders.md` 27).
+        let wanted: HashSet<String> = placing
+            .iter()
+            .map(|entry| names::folded(&entry.want))
+            .collect();
         let mut taken: HashSet<String> = HashSet::new();
         for entry in &mut placing {
-            if taken.contains(&entry.want) {
+            if taken.contains(&names::folded(&entry.want)) {
                 let own = entry.bound.as_ref().map(|bound| bound.path.as_str());
                 let free = |candidate: &str| {
-                    !taken.contains(candidate)
-                        && plainly_inside(&self.root, candidate)
+                    let name = names::folded(candidate);
+                    !taken.contains(&name)
+                        && self.writes_at(&lists, candidate)
                         && (own == Some(candidate)
-                            || !wanted.contains(candidate) && !self.root.join(candidate).exists())
+                            || !wanted.contains(&name) && !self.root.join(candidate).exists())
                 };
                 entry.want = beside(&entry.want, |candidate| !free(candidate));
                 report.beside += 1;
             }
-            taken.insert(entry.want.clone());
+            taken.insert(names::folded(&entry.want));
         }
         // Paths whose file moves away in this pass: an item wanting one waits
         // until it has.
@@ -2331,7 +2448,7 @@ impl Folder {
                     .as_ref()
                     .filter(|bound| bound.path != entry.want)
             })
-            .map(|bound| bound.path.clone())
+            .map(|bound| names::folded(&bound.path))
             .collect();
         let mut waiting = Vec::new();
         let rendering = Rendering {
@@ -2347,7 +2464,7 @@ impl Folder {
         for entry in waiting {
             self.write_placed(&entry, &rendering, &withheld, None, &mut report)?;
         }
-        self.remove_departed(&members, &settings, &mut report)?;
+        self.remove_departed(&members, &settings, &lists, &mut report)?;
         report.flagged = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -2456,7 +2573,7 @@ impl Folder {
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
 
         // The bytes on the disk, not the mapping's memory of them: a file
-        // changed since the scan read it is the person's (`folders.md` 30).
+        // changed since the scan read it is the person's (`folders.md` 32).
         let changed = |bound: &state::Bound| {
             std::fs::read(self.root.join(&bound.path))
                 .is_ok_and(|found| state::hash(&found) != bound.content_hash)
@@ -2480,12 +2597,12 @@ impl Folder {
             _ => false,
         };
         // Something at the destination that is not this item's own file
-        // (`folders.md` 30), unless it is byte for byte this item's render.
+        // (`folders.md` 32), unless it is byte for byte this item's render.
         let occupied = !in_place && !ours && path.exists();
         let rebound =
             occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
         if occupied && !rebound {
-            if leaving.is_some_and(|leaving| leaving.contains(&want)) {
+            if leaving.is_some_and(|leaving| leaving.contains(&names::folded(&want))) {
                 return Ok(true);
             }
             report.unwritten += 1;
@@ -2553,7 +2670,13 @@ impl Folder {
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| std::fs::write(&path, &bytes));
         if written.is_err() {
-            state::unbind(&*self.core.conn()?, &want)?;
+            // A file of its own here keeps the binding it had, or a scan that
+            // can reach it again would make it a new item.
+            let conn = self.core.conn()?;
+            match bound.as_ref().filter(|bound| bound.path == want) {
+                Some(bound) => state::bind(&conn, bound)?,
+                None => state::unbind(&conn, &want)?,
+            }
             report.unwritten += 1;
             return Ok(false);
         }
@@ -2598,7 +2721,7 @@ impl Folder {
     }
 
     /// Moves in a file another folder let go of, bound before it lands
-    /// (`folders.md` 20, 42). Answers whether it did.
+    /// (`folders.md` 20, 44). Answers whether it did.
     fn take_in(
         &self,
         item: &Item,
@@ -2654,7 +2777,7 @@ impl Folder {
     }
 
     /// Removes this folder's own bytes of an item another folder holds with
-    /// a file, trashing nothing (`folders.md` 42). Answers whether it did.
+    /// a file, trashing nothing (`folders.md` 44). Answers whether it did.
     fn let_go(&self, item_id: &str, peers: &Peers<'_>, report: &mut PullReport) -> Result<bool> {
         let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
             return Ok(false);
@@ -2708,7 +2831,7 @@ impl Folder {
         Ok(members)
     }
 
-    /// A file whose item the search no longer matches (`folders.md` 33). One
+    /// A file whose item the search no longer matches (`folders.md` 35). One
     /// that left by state or was trashed is taken away where its bytes are the
     /// folder's own, and nothing is journaled; any other stays, flagged
     /// `unmatched`.
@@ -2716,6 +2839,7 @@ impl Folder {
         &self,
         members: &HashSet<String>,
         settings: &Settings,
+        lists: &Lists,
         report: &mut PullReport,
     ) -> Result<()> {
         let bound = {
@@ -2723,14 +2847,15 @@ impl Folder {
             state::every_bound(&conn)?
         };
         for row in bound {
-            if members.contains(&row.item_id) {
+            // A file the lists no longer take is neither read nor written.
+            if members.contains(&row.item_id) || !self.writes_at(lists, &row.path) {
                 continue;
             }
             let held = {
                 let conn = self.core.conn()?;
                 crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
             };
-            // A row the copy lost is the scan's to report (`folders.md` 36).
+            // A row the copy lost is the scan's to report (`folders.md` 38).
             let Some(item) = held else {
                 continue;
             };
@@ -3208,7 +3333,7 @@ struct Placing<'a> {
     want: String,
     rank: placement::Rank,
     /// A file another folder on this machine let go of, to take in rather
-    /// than write anew (`folders.md` 42).
+    /// than write anew (`folders.md` 44).
     taken: Option<(PathBuf, state::Bound)>,
 }
 
@@ -3226,7 +3351,7 @@ fn carries_frontmatter(path: &Path) -> bool {
 }
 
 /// Whether a file is a document, which a folder reads as an item's fields
-/// rather than sending as bytes (`folders.md` 27).
+/// rather than sending as bytes (`folders.md` 29).
 fn is_document(path: &Path) -> bool {
     carries_frontmatter(path) || extension_of(path).as_deref() == Some("txt")
 }
@@ -3289,7 +3414,7 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// File items whose bytes could not be had (`folders.md` 35).
+    /// File items whose bytes could not be had (`folders.md` 37).
     pub absent: usize,
     /// Files the pull would not write over: one the person changed since
     /// the folder last wrote it, and one at a path the mapping does not hold.
@@ -3297,7 +3422,8 @@ pub struct PullReport {
     /// Journal rows cleared by writing the file back, a person's own delete
     /// inside its grace among them.
     pub revived: usize,
-    /// Items whose file would land outside the folder (`folders.md` 28).
+    /// Items whose file would land outside the folder, where its lists do
+    /// not take it or in a package (`folders.md` 25, 26, 30).
     pub outside: usize,
     /// Items whose placement another item holds, written at a free path
     /// beside it, which becomes their placement (`folders.md` 19).
@@ -3312,20 +3438,20 @@ pub struct PullReport {
     /// where the file is (`folders.md` 19).
     pub placed: usize,
     /// Files of items that left by state or were trashed, taken away
-    /// (`folders.md` 33).
+    /// (`folders.md` 35).
     pub removed: usize,
     /// The same, kept because the person changed them.
     pub kept: usize,
     /// Files whose item the search no longer matches for any other reason,
-    /// left where they are (`folders.md` 33).
+    /// left where they are (`folders.md` 35).
     pub unmatched: usize,
-    /// Files taken in from another folder (`folders.md` 42).
+    /// Files taken in from another folder (`folders.md` 44).
     pub taken: usize,
     /// Items not written because their file sits unbound in another folder
-    /// (`folders.md` 41).
+    /// (`folders.md` 43).
     pub elsewhere: usize,
     /// Files removed because another folder holds their item with a file
-    /// (`folders.md` 42).
+    /// (`folders.md` 44).
     pub let_go: usize,
     /// The settings file, rewritten where the settings moved on (`folders.md`
     /// 1).
@@ -3342,7 +3468,7 @@ pub struct PullReport {
 }
 
 /// Whether every component of a path is a plain name inside the folder, with
-/// no symlink on the way (`folders.md` 28). A guard, not a boundary: the write
+/// no symlink on the way (`folders.md` 30). A guard, not a boundary: the write
 /// resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();

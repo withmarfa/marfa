@@ -86,7 +86,7 @@ export interface CliDeviceOptions {
   reader?: boolean;
   /**
    * The folder registry the binary reads, standing in for one machine's
-   * (`folders.md` 39); the run's own where unnamed.
+   * (`folders.md` 41); the run's own where unnamed.
    */
   registry?: string;
   /**
@@ -698,22 +698,22 @@ export interface ScanReport {
   missing: number;
   deleted: number;
   /** The paths of those, each found in no folder on the machine
-   *  (`folders.md` 41). */
+   *  (`folders.md` 43). */
   trashed: string[];
   /** Journaled files held, since the other folders could not all be read
-   *  (`folders.md` 41). */
+   *  (`folders.md` 43). */
   unsure: Array<{ path: string; reason: string }>;
   /** Why the registry could not be read, where it could not. */
   registry: string | null;
   /** Journaled files found in another folder on the machine, so nothing was
-   *  trashed (`folders.md` 41). */
+   *  trashed (`folders.md` 43). */
   moved_away: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 36). Counted in `created` too. */
+   *  or moved (`folders.md` 38). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 36). */
+   *  sent (`folders.md` 38). */
   lost: number;
   /** Files this scan read and holds rather than sends (`folders.md` 9, 10,
    *  11). */
@@ -721,14 +721,30 @@ export interface ScanReport {
   /** Embeds in the files this scan read that name no file it sends
    *  (`folders.md` 12), each flagged `embed`. */
   embeds: FlaggedFile[];
+  /** Bound files the walk did not reach, held rather than journaled
+   *  (`folders.md` 25, 26). */
+  unreached: number;
+  /** Directories the walk did not enter, each flagged `package` or
+   *  `unreadable` (`folders.md` 26). */
+  directories: FlaggedFile[];
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
- *  lines that change nothing (`folders.md` 11), and `embed` for an embed
- *  read as nothing (`folders.md` 12). */
+ *  lines that change nothing (`folders.md` 11), `embed` for an embed read
+ *  as nothing (`folders.md` 12), and `name` for a name another file holds
+ *  in another case or form (`folders.md` 27). A directory the walk did not
+ *  enter is `package` or `unreadable` (`folders.md` 26). */
 export interface FlaggedFile {
   path: string;
-  flag: "unreadable" | "refused" | "behind" | "edges" | "embed" | "waiting";
+  flag:
+    | "unreadable"
+    | "refused"
+    | "behind"
+    | "edges"
+    | "embed"
+    | "waiting"
+    | "name"
+    | "package";
   reason: string;
 }
 
@@ -753,23 +769,23 @@ export interface PullReport {
   unplaced: number;
   outside: number;
   /** Files of items trashed or out of the search's states, taken away
-   *  (`folders.md` 33). */
+   *  (`folders.md` 35). */
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
   /** Files whose item the search no longer matches otherwise, left where
-   *  they are (`folders.md` 33). */
+   *  they are (`folders.md` 35). */
   unmatched: number;
   /** Files another folder on the machine let go of, taken in here
-   *  (`folders.md` 42). */
+   *  (`folders.md` 44). */
   taken: number;
   /** Items whose file was moved to another folder on the machine that has
-   *  not taken it yet, so none is written here (`folders.md` 41). */
+   *  not taken it yet, so none is written here (`folders.md` 43). */
   elsewhere: number;
   /** Files of items another folder on the machine holds with a file of its
-   *  own, taken away with nothing trashed (`folders.md` 42). */
+   *  own, taken away with nothing trashed (`folders.md` 44). */
   let_go: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 35). */
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 37). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */
   settings: SettingsFileReport;
@@ -833,7 +849,7 @@ export class CliFolder {
       binary: string;
       url: string;
       key: string;
-      /** The registry of the machine this folder is on (`folders.md` 39). */
+      /** The registry of the machine this folder is on (`folders.md` 41). */
       registry?: string;
       /** A home whose own registry the binary finds, in place of either. */
       home?: string;
@@ -944,7 +960,7 @@ export class CliFolder {
   }
 }
 
-/** A folder a machine's registry lists (`folders.md` 39). */
+/** A folder a machine's registry lists (`folders.md` 41). */
 export interface RegisteredFolder {
   dir: string;
   folder: string;
