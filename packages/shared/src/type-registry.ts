@@ -712,7 +712,13 @@ export function declaredDescendantsOutsideNamespace(rootId: string): string[] {
     // Only types that declare a parent can reach the root by any route other
     // than their name, so the walk is skipped for the overwhelming majority.
     if (!schema.parent) continue;
-    if (isSubtypeOf(schema.id, rootId)) out.push(schema.id);
+    try {
+      if (isSubtypeOf(schema.id, rootId)) out.push(schema.id);
+    } catch {
+      // A cyclic or excessive chain is not a known descendant of anything;
+      // the caller (e.g. the enrichment sweep) must not fail over one
+      // broken type while resolving every other one's membership.
+    }
   }
   return out;
 }

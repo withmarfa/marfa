@@ -1,9 +1,6 @@
 /**
- * A connector's file types inherit from a shipped file type under their own
- * name, so the sweep has to take a file by its parent, not by its name.
- *
- * Enrichment is off on the run's server, so this boots its own. OCR stays off:
- * the size comes from the image's header and the text from plain bytes.
+ * A connector's file type inherits a shipped one's ancestry under its own
+ * name, so this boots its own server: enrichment is off on the shared one.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { readFileSync } from "node:fs";

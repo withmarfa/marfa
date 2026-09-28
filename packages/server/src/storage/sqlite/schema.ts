@@ -84,18 +84,9 @@ export const items = sqliteTable(
     index("idx_items_starts_at")
       .on(table.starts_at)
       .where(sql`starts_at IS NOT NULL`),
-    // Serves the enrichment candidate query, which runs on a timer forever
-    // and must cost nothing once a corpus is extracted. Partial: only items
-    // with a blob are ever candidates, ordered as the query reads them: by
-    // when the file arrived, because a queue position any write can move is
-    // not a record of how long anything has waited. The candidate query
-    // inlines these constants as literals — SQLite only uses a partial index
-    // when the query provably implies its predicate, and a bound parameter
-    // can never be proven.
-    //
-    // No type in the predicate: which types are files is the registry's
-    // answer, a registration changes it, and a list fixed here could not.
-    index("idx_items_enrichment_candidates")
+    // No type in the predicate — that's the registry's answer — and renamed
+    // apart from its stale twin so `IF NOT EXISTS` gives an old database it too.
+    index("idx_items_enrichment_queue")
       .on(table.created_at)
       .where(
         sql`state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL`,
@@ -903,7 +894,7 @@ export const auth_passkey = sqliteTable(
 // than in item properties so bookkeeping writes never mint version
 // snapshots or fan out item events. The candidate query anti-joins this
 // table by its PK and drives off `items` via the partial
-// idx_items_enrichment_candidates index, the items side being what the
+// idx_items_enrichment_queue index, the items side being what the
 // query needs indexed. A `blob_ref` change
 // or an `extractor_version` bump re-admits the item; `attempts` bounds
 // retries of failing blobs. Hard-deleting the item deletes the row.

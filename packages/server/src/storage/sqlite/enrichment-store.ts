@@ -40,7 +40,7 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
             sql`${items.type} LIKE 'core.file.%'`,
             ...(inherited.length > 0 ? [inArray(items.type, inherited)] : []),
           ),
-          // Literals, textually identical to idx_items_enrichment_candidates'
+          // Literals, textually identical to idx_items_enrichment_queue's
           // predicate: SQLite uses a partial index only when the query
           // provably implies its predicate, and a bound parameter never does.
           sql`${items.state} <> 'trashed'`,
