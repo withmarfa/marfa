@@ -348,7 +348,7 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
   "PUT /items/:id/metadata": "metadata layer, not the item's properties",
   "PATCH /items/:id/metadata": "metadata layer, not the item's properties",
   "PUT /items/:id/extensions/:namespace":
-    "extension layer, gated by extension_permissions",
+    "extension layer, gated by the row's type and extension_permissions",
   "POST /items/:id/transition":
     "lifecycle state axis, not the item's properties",
   "POST /items/:id/restore": "lifecycle state axis, not the item's properties",
