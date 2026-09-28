@@ -623,7 +623,7 @@ impl Core {
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         let tx = conn.transaction()?;
-        let queued = queue_edge(&tx, draft)?;
+        let queued = queue_edge(&tx, draft, &[])?;
         tx.commit()?;
         Ok(queued)
     }
@@ -684,42 +684,23 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
-        let Some(held) = store::edge_by_id(&conn, id)? else {
-            return Err(CoreError::NotFound {
-                code: "edge_not_found".into(),
-                message: format!("{id} is not an edge this copy holds"),
-            });
-        };
-        let depends_on = store::untaken_create_for_edge(&conn, id)?;
-        // **The type travels with the write.** Reconciling a refused delete
-        // means reading the server's edges for this source, and that read is
-        // by type — but the local row is gone by then, because a delete
-        // empties the copy at queue time. The one moment the type is knowable
-        // is this one, before the delete.
-        //
-        // It rides in the payload, which is the body the drain sends, so the
-        // field does go out on a `DELETE /edges/{id}` that declares no body.
-        // The door ignores it. A field the device needs and the door does not
-        // read is the cost of keeping it beside the write rather than in a
-        // column of its own.
-        let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
+        let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
-        store::delete_edge(&tx, id)?;
-        let queued = store::enqueue(
-            &tx,
-            &store::NewWrite {
-                kind: WriteKind::DeleteEdge,
-                item_id: Some(&held.source_id),
-                target_id: Some(&held.target_id),
-                edge_id: Some(id),
-                namespace: None,
-                tag: None,
-                blob: None,
-                base_version: None,
-                payload: &payload,
-                depends_on: &depends_on,
-            },
-        )?;
+        let queued = queue_edge_delete(&tx, &held)?;
+        tx.commit()?;
+        Ok(queued)
+    }
+
+    /// Queues `old`'s delete and `draft`'s create waiting on it: sent first,
+    /// the create would be refused as a second edge at a one-edge end.
+    pub fn replace_edge(&self, old: &str, draft: &EdgeDraft) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        let mut conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        let held = held_edge(&conn, old)?;
+        let tx = conn.transaction()?;
+        let deleted = queue_edge_delete(&tx, &held)?;
+        let queued = queue_edge(&tx, draft, std::slice::from_ref(&deleted.id))?;
         tx.commit()?;
         Ok(queued)
     }
@@ -994,6 +975,7 @@ impl Core {
                     edge_type: "attached-to".into(),
                     ..Default::default()
                 },
+                &[],
             )?;
             Ok(Attached {
                 upload: upload.clone(),
@@ -1357,13 +1339,13 @@ fn queue_update(
 /// It waits for both of its endpoints' creates (`queue-and-verdicts.md` 4):
 /// an edge naming a row whose create has not landed is an edge the server
 /// has nowhere to put, and either end can be the one that has not.
-fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
+fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
     let id = draft
         .id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let payload = draft.payload(&id)?;
-    let mut depends_on: Vec<String> = Vec::new();
+    let mut depends_on: Vec<String> = after.to_vec();
     for endpoint in [&draft.source_id, &draft.target_id] {
         for id in store::untaken_creates_for_item(tx, endpoint)? {
             if !depends_on.contains(&id) {
@@ -1379,6 +1361,39 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
             item_id: Some(&draft.source_id),
             target_id: Some(&draft.target_id),
             edge_id: Some(&id),
+            namespace: None,
+            tag: None,
+            blob: None,
+            base_version: None,
+            payload: &payload,
+            depends_on: &depends_on,
+        },
+    )
+}
+
+/// The edge the copy holds under `id`, or the refusal naming it.
+fn held_edge(conn: &Connection, id: &str) -> Result<model::Edge> {
+    store::edge_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
+        code: "edge_not_found".into(),
+        message: format!("{id} is not an edge this copy holds"),
+    })
+}
+
+/// An edge's delete, queued in the caller's transaction and dropped from the
+/// copy.
+fn queue_edge_delete(tx: &Connection, held: &model::Edge) -> Result<QueuedWrite> {
+    let depends_on = store::untaken_create_for_edge(tx, &held.id)?;
+    // A refused delete is reconciled by reading edges by type, and the row
+    // is gone from the copy by then.
+    let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
+    store::delete_edge(tx, &held.id)?;
+    store::enqueue(
+        tx,
+        &store::NewWrite {
+            kind: WriteKind::DeleteEdge,
+            item_id: Some(&held.source_id),
+            target_id: Some(&held.target_id),
+            edge_id: Some(&held.id),
             namespace: None,
             tag: None,
             blob: None,
@@ -1963,6 +1978,10 @@ mod tests {
                 reader.update_edge("x", &EdgeEdit::default()).unwrap_err(),
             ),
             ("delete_edge", reader.delete_edge("x").unwrap_err()),
+            (
+                "replace_edge",
+                reader.replace_edge("x", &EdgeDraft::default()).unwrap_err(),
+            ),
             ("add_tag", reader.add_tag("x", "t").unwrap_err()),
             ("remove_tag", reader.remove_tag("x", "t").unwrap_err()),
             (
@@ -2068,7 +2087,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            30,
+            31,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

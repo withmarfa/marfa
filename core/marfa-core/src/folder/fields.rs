@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::edge_types::EdgeTypes;
 use crate::catalog::Catalog;
 use crate::model::{Item, ItemState, Tier};
 
@@ -27,29 +28,13 @@ pub const BODY_FIELD: &str = "body";
 /// The property a file's name is carried in where its type names none.
 pub const TITLE_FIELD: &str = "title";
 
-/// The shipped edge types and their reverse names, which a file writes as
-/// edges rather than properties.
-const EDGE_NAMES: &[&str] = &[
-    "about",
-    "attached-to",
-    "has-attachment",
-    "authored-by",
-    "derived-from",
-    "in-collection",
-    "in-folder",
-    "in-thread",
-    "parent-of",
-    "child-of",
-    "references",
-    "supersedes",
-];
-
-/// Whether a frontmatter line of this name is anything but a property.
-pub fn reserved(name: &str) -> bool {
+/// Whether a frontmatter line of this name is anything but a property: a
+/// line naming the item, its version, one of its own fields, or an edge.
+pub fn reserved(name: &str, edge_types: &EdgeTypes) -> bool {
     matches!(
         name,
         ID_FIELD | VERSION_FIELD | TYPE_FIELD | TIER_FIELD | TAGS_FIELD | STATE_FIELD
-    ) || EDGE_NAMES.contains(&name)
+    ) || edge_types.is_name(name)
 }
 
 /// The item's own fields, as a file shows them.
@@ -144,8 +129,9 @@ pub struct Read {
 }
 
 /// Splits frontmatter into the item's own fields and its properties, or says
-/// why an own field holds what no item can.
-pub fn read(front: &Map<String, Value>) -> Result<Read, String> {
+/// why an own field holds what no item can. Lines naming the item, its
+/// version or an edge are neither.
+pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, String> {
     let mut read = Read::default();
     for (name, value) in front {
         match name.as_str() {
@@ -178,7 +164,7 @@ pub fn read(front: &Map<String, Value>) -> Result<Read, String> {
                     }
                 });
             }
-            name if reserved(name) => {}
+            name if reserved(name, edge_types) => {}
             _ => {
                 read.properties.insert(name.clone(), value.clone());
             }
@@ -256,14 +242,18 @@ pub struct Uncarried {
 }
 
 /// Every such property among the types a folder holds, sorted.
-pub fn uncarried(catalog: &Catalog, holds: impl Fn(&str) -> bool) -> Vec<Uncarried> {
+pub fn uncarried(
+    catalog: &Catalog,
+    edge_types: &EdgeTypes,
+    holds: impl Fn(&str) -> bool,
+) -> Vec<Uncarried> {
     let mut found: Vec<Uncarried> = catalog
         .declared()
         .filter(|(r#type, _)| !r#type.starts_with("system.") && holds(r#type))
         .flat_map(|(r#type, fields)| {
             fields
                 .iter()
-                .filter(|property| reserved(property))
+                .filter(|property| reserved(property, edge_types))
                 .map(move |property| Uncarried {
                     r#type: r#type.to_string(),
                     property: property.clone(),
@@ -280,6 +270,26 @@ mod tests {
 
     use super::*;
 
+    /// `cites` as a publisher registers it, which a file reads as an edge
+    /// because the server lists it.
+    fn edge_types() -> EdgeTypes {
+        use super::super::edge_types::{EdgeType, End};
+        EdgeTypes::of(vec![
+            EdgeType {
+                id: "parent-of".into(),
+                reverse_name: Some("child-of".into()),
+                written_at: End::Target,
+                cardinality: "one-to-many".into(),
+            },
+            EdgeType {
+                id: "cites".into(),
+                reverse_name: Some("cited-by".into()),
+                written_at: End::Source,
+                cardinality: "many-to-many".into(),
+            },
+        ])
+    }
+
     fn front(value: Value) -> Map<String, Value> {
         let Value::Object(map) = value else {
             unreachable!()
@@ -289,17 +299,22 @@ mod tests {
 
     #[test]
     fn own_fields_are_read_apart_from_properties() {
-        let read = read(&front(json!({
-            "title": "A",
-            "type": "core.task",
-            "tier": "feed",
-            "tags": ["b", "a", "b"],
-            "state": "archived",
-            "marfa_id": "x",
-            "marfa_version": 3,
-            "child-of": "[[P]]",
-            "status": "open",
-        })))
+        let read = read(
+            &front(json!({
+                "title": "A",
+                "type": "core.task",
+                "tier": "feed",
+                "tags": ["b", "a", "b"],
+                "state": "archived",
+                "marfa_id": "x",
+                "marfa_version": 3,
+                "child-of": "[[P]]",
+                "cites": "[[Q]]",
+                "cited-by": "[[R]]",
+                "status": "open",
+            })),
+            &edge_types(),
+        )
         .unwrap();
         assert_eq!(read.lines.r#type.as_deref(), Some("core.task"));
         assert_eq!(read.lines.tier, Some(Tier::Feed));
@@ -311,14 +326,14 @@ mod tests {
             "a line naming the item, its version, an own field or an edge was read as a property"
         );
         assert_eq!(
-            super::read(&front(json!({ "tags": "solo" })))
+            super::read(&front(json!({ "tags": "solo" })), &edge_types())
                 .unwrap()
                 .lines
                 .tags,
             Some(vec!["solo".into()])
         );
         assert_eq!(
-            super::read(&front(json!({ "tags": "x, y" })))
+            super::read(&front(json!({ "tags": "x, y" })), &edge_types())
                 .unwrap()
                 .lines
                 .tags,
@@ -336,7 +351,7 @@ mod tests {
             json!({ "tags": [1] }),
             json!({ "state": "trashed" }),
         ] {
-            assert!(read(&front(bad.clone())).is_err(), "{bad}");
+            assert!(read(&front(bad.clone()), &edge_types()).is_err(), "{bad}");
         }
     }
 }

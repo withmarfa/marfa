@@ -20,6 +20,8 @@ import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   answers,
+  edgeTypeCatalog,
+  refusal,
   edgesPage,
   headRead,
   itemsPage,
@@ -168,6 +170,10 @@ export function scriptHydration(
     edges?: Record<string, WireEdgeOptions[]>;
     /** The catalog every read of `/types` answers, the scripted one unless named. */
     catalog?: Answer;
+    /** What `GET /edge-types` answers, the shipped types unless named. */
+    edgeTypes?: Responder;
+    /** A folder's name lookup answered otherwise, where this answers. */
+    lookup?: (text: string) => Answer | undefined;
   },
 ): void {
   const rows = options.rows ?? {};
@@ -182,6 +188,7 @@ export function scriptHydration(
       );
     });
   }
+  server.answer("GET", "/edge-types", options.edgeTypes ?? edgeTypeCatalog());
   server.answer("GET", "/events", headRead(options.head));
   server.answer("GET", "/types", options.catalog ?? typeCatalog());
   server.answer("GET", "/items", (request) => {
@@ -200,14 +207,67 @@ export function scriptHydration(
     // hydration sends, so anything else narrows the same way the server's
     // listing does.
     const asked = request.query.get("state") ?? "active";
-    const visible =
+    const inState =
       asked === "any"
         ? forType
         : forType.filter((row) => (row.item.state ?? "active") === asked);
+    const filter = request.query.get("filter");
+    if (filter === null) {
+      return itemsPage(
+        inState.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
+      );
+    }
+    const contains = containsFilter(filter);
+    if ("kind" in contains) return contains;
+    const standIn = options.lookup?.(contains.text);
+    if (standIn !== undefined) return standIn;
+    const visible = inState.filter((row) => {
+      const value = wireItem(row.item).properties as Record<string, unknown>;
+      const held = value[contains.field];
+      return (
+        typeof held === "string" &&
+        asciiLower(held).includes(asciiLower(contains.text))
+      );
+    });
     return itemsPage(
       visible.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
   });
+}
+
+/** ASCII letters lowercased and nothing else, as the server's `contains`. */
+function asciiLower(text: string): string {
+  return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
+
+/** A name lookup's filter read as the server's grammar reads it, where only
+ *  `\"` escapes, so a string ending in a backslash never closes. */
+function containsFilter(
+  filter: string,
+): { field: string; text: string } | Answer {
+  const head = /^properties\.([A-Za-z0-9_]+) contains "/.exec(filter);
+  if (head === null) {
+    return refusal(400, "validation_error", `no scripted filter: ${filter}`);
+  }
+  let text = "";
+  let at = head[0].length;
+  while (at < filter.length && filter[at] !== '"') {
+    if (filter[at] === "\\" && filter[at + 1] === '"') {
+      text += '"';
+      at += 2;
+    } else {
+      text += filter[at];
+      at += 1;
+    }
+  }
+  if (at >= filter.length) {
+    return refusal(
+      400,
+      "validation_error",
+      `Unterminated string starting at position ${String(head[0].length - 1)}`,
+    );
+  }
+  return { field: head[1] ?? "", text };
 }
 
 /**
@@ -379,6 +439,10 @@ export async function folderHarness(
     hydrate?: boolean;
     /** The type catalog the server serves, the scripted one unless named. */
     catalog?: Answer;
+    /** What `GET /edge-types` answers, the shipped types unless named. */
+    edgeTypes?: Responder;
+    /** A name lookup answered otherwise, where this answers. */
+    lookup?: (text: string) => Answer | undefined;
     /**
      * Event-stream answers for the catch-ups after the hydration.
      *
@@ -424,8 +488,11 @@ export async function folderHarness(
     scriptHydration(server, {
       head: options.head ?? "1",
       rows: options.rows,
-      edges: options.edges,
+      // A folder holds whole every edge type a file may write at its target.
+      edges: options.edges ?? {},
       catalog: options.catalog,
+      edgeTypes: options.edgeTypes,
+      lookup: options.lookup,
     });
     server.answer(
       "GET",

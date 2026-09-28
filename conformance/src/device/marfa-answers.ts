@@ -279,6 +279,44 @@ export function typeCatalog(): Answer {
   };
 }
 
+/** The shipped edge types as `GET /edge-types` lists them, which
+ *  `fidelity.test.ts` holds to the real listing. */
+export const SCRIPTED_EDGE_TYPES: ReadonlyArray<{
+  id: string;
+  cardinality: string;
+  reverse_name?: string;
+  written_at: "source" | "target";
+}> = [
+  { id: "about", cardinality: "many-to-many", written_at: "source" },
+  {
+    id: "attached-to",
+    cardinality: "many-to-many",
+    reverse_name: "has-attachment",
+    written_at: "source",
+  },
+  { id: "authored-by", cardinality: "many-to-many", written_at: "source" },
+  { id: "derived-from", cardinality: "many-to-many", written_at: "source" },
+  { id: "in-collection", cardinality: "many-to-many", written_at: "source" },
+  { id: "in-folder", cardinality: "many-to-many", written_at: "source" },
+  { id: "in-thread", cardinality: "many-to-one", written_at: "source" },
+  {
+    id: "parent-of",
+    cardinality: "one-to-many",
+    reverse_name: "child-of",
+    written_at: "target",
+  },
+  { id: "references", cardinality: "many-to-many", written_at: "source" },
+  { id: "supersedes", cardinality: "one-to-one", written_at: "source" },
+];
+
+export function edgeTypeCatalog(): Answer {
+  return {
+    kind: "json",
+    status: 200,
+    body: { data: [...SCRIPTED_EDGE_TYPES], next_cursor: null },
+  };
+}
+
 export function refusal(
   status: number,
   code: string,
@@ -548,6 +586,15 @@ export const answers = {
       "edge_constraint_violation",
       `Edge "${edge.edge_type}" already exists between these items`,
       { ...edge, constraint: "duplicate" },
+    ),
+  /** A second edge at an end its type holds one at, a second parent say
+   *  (`edges.md` 14). */
+  edgeCardinality: (edge: { target_id: string; edge_type: string }): Answer =>
+    refusal(
+      400,
+      "edge_constraint_violation",
+      `Edge "${edge.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
+      { ...edge, constraint: "cardinality" },
     ),
   /** `GET /keys/current`: the key the request bears, its edge grants as
    *  named. */

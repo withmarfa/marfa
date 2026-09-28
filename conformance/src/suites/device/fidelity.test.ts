@@ -18,6 +18,7 @@ import {
   replay,
   scriptedType,
   snapshotType,
+  SCRIPTED_EDGE_TYPES,
   wireEdge,
   wireItem,
   wireType,
@@ -1766,6 +1767,159 @@ describe("the scripted answers match the server's", () => {
           "error.details.edge_type",
         ],
         shape: ["error.message"],
+      },
+    );
+  });
+
+  it("matches the edge types a folder reads its frontmatter lines by", async () => {
+    const listed = await client.rawRequest("/edge-types");
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    const served = (
+      listed.data as {
+        data: Array<Record<string, unknown>>;
+        next_cursor: unknown;
+      }
+    ).data;
+    expect((listed.data as { next_cursor: unknown }).next_cursor).toBeNull();
+    for (const scripted of SCRIPTED_EDGE_TYPES) {
+      const real = served.find((row) => row.id === scripted.id);
+      expect(
+        real,
+        `the server lists no ${scripted.id}, which the scripted catalog serves`,
+      ).toBeDefined();
+      expect(
+        {
+          cardinality: real?.cardinality,
+          reverse_name: real?.reverse_name,
+          written_at: real?.written_at,
+        },
+        `the scripted ${scripted.id} and the server's disagree on what a folder reads a line by`,
+      ).toEqual({
+        cardinality: scripted.cardinality,
+        reverse_name: scripted.reverse_name,
+        written_at: scripted.written_at,
+      });
+    }
+  });
+
+  it("matches the name lookup a folder asks the server for a typed name", async () => {
+    const name = `Lookup ${uuidv7()}`;
+    const kept = await note({ title: name, body: "kept" });
+    const shouting = await note({ title: name.toUpperCase(), body: "loud" });
+    const archived = await client.rawRequest(
+      `/items/${shouting.id}/transition`,
+      { method: "POST", body: { state: "archived" } },
+    );
+    expect(archived.ok, JSON.stringify(archived.error)).toBe(true);
+    const lookup = await client.rawRequest(
+      `/items?filter=${encodeURIComponent(`properties.title contains "${name.toLowerCase()}"`)}&state=any&include=metadata&limit=200`,
+    );
+    expect(lookup.ok, JSON.stringify(lookup.error)).toBe(true);
+    const ids = (lookup.data as { data: Array<{ item: { id: string } }> }).data
+      .map((row) => row.item.id)
+      .sort();
+    expect(
+      ids,
+      "the lookup did not answer every item under the name whatever its case and state, so a folder would read one of two as the only one",
+    ).toEqual([kept.id, shouting.id].sort());
+    expectFidelity(
+      "the name lookup",
+      { status: lookup.status, body: lookup.data },
+      itemsPage([{ item: wireItem({ id: kept.id }) }]),
+      {
+        same: ["next_cursor", "data.0.metadata.tags"],
+        shape: [
+          "data.0.item.id",
+          "data.0.item.type",
+          "data.0.item.properties",
+          "data.0.item.state",
+          "data.0.item.tier",
+          "data.0.item.version",
+          "data.0.item.schema_version",
+          "data.0.item.source",
+          "data.0.item.source_id",
+          "data.0.item.occurred_at",
+          "data.0.item.created_at",
+          "data.0.item.updated_at",
+        ],
+        // A listing that names no include hydrates no edges.
+        absent: ["data.0.item.edges"],
+      },
+    );
+
+    // The grammar escapes only a quote, so a closing backslash never closes.
+    const unclosed = await client.rawRequest(
+      `/items?filter=${encodeURIComponent('properties.title contains "Back\\"')}&state=any`,
+    );
+    expect(unclosed.status).toBe(400);
+    expect(at(unclosed.error, "error.code")).toBe("validation_error");
+  });
+
+  it("matches the refusal of a second parent, and takes the new one once the old edge is gone", async () => {
+    const first = await note({ title: "first parent", body: "first" });
+    const second = await note({ title: "second parent", body: "second" });
+    const child = await note({ title: "moving child", body: "child" });
+    const parent = (source: string) =>
+      client.rawRequest("/edges", {
+        method: "POST",
+        body: {
+          source_id: source,
+          target_id: child.id,
+          edge_type: "parent-of",
+        },
+      });
+    const held = await parent(first.id);
+    expect(held.ok, JSON.stringify(held.error)).toBe(true);
+    const again = await parent(second.id);
+    expect(
+      again.status,
+      "a second parent was taken, so there is no refusal to compare",
+    ).toBe(400);
+    expectFidelity(
+      "a second parent",
+      { status: again.status, body: again.error },
+      answers.edgeCardinality({ target_id: child.id, edge_type: "parent-of" }),
+      {
+        same: [
+          "error.code",
+          "error.details.constraint",
+          "error.details.target_id",
+          "error.details.edge_type",
+        ],
+        shape: ["error.message"],
+      },
+    );
+
+    // The old edge's delete, and then the new one: what a folder sends.
+    const gone = await client.rawRequest(
+      `/edges/${String(at(held.data, "edge.id"))}`,
+      { method: "DELETE" },
+    );
+    expect(gone.ok, JSON.stringify(gone.error)).toBe(true);
+    const moved = await parent(second.id);
+    expect(moved.status, JSON.stringify(moved.error)).toBe(201);
+    expectFidelity(
+      "the new parent",
+      { status: moved.status, body: moved.data },
+      writeAnswers.edge({
+        id: String(at(moved.data, "edge.id")),
+        source_id: second.id,
+        target_id: child.id,
+        edge_type: "parent-of",
+      }),
+      {
+        same: [
+          "edge.source_id",
+          "edge.target_id",
+          "edge.edge_type",
+          "edge.version",
+        ],
+        shape: [
+          "edge.id",
+          "edge.properties",
+          "edge.created_at",
+          "edge.updated_at",
+        ],
       },
     );
   });

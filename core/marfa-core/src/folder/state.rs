@@ -3,6 +3,7 @@
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
+use super::edge_types::End;
 use super::fields::OwnBase;
 use crate::error::CoreError;
 use crate::model::ItemState;
@@ -24,9 +25,9 @@ pub struct Bound {
     /// The item ids the links in those bytes named, as the folder last read
     /// or wrote them. Empty where the file named none.
     pub links: Vec<String>,
-    /// The targets whose rendered link the person took out, for an edge the
-    /// folder keeps (`folders.md` 33). A pull renders no link for them.
-    pub declined: Vec<String>,
+    /// The edges this file's lines named when last read or written: what tells
+    /// a line taken out from an edge no pull has written yet (`folders.md` 11).
+    pub lines: Vec<Line>,
     /// The newest version line an edit of this device's has spent, 0 where
     /// its file carried none; `None` where no edit went.
     pub edit_line: Option<i64>,
@@ -72,6 +73,11 @@ pub enum Change {
     AddTag(String),
     RemoveTag(String),
     State(ItemState),
+    /// An edge a line made (`shown`) or took out.
+    Edge {
+        line: Line,
+        shown: bool,
+    },
 }
 
 impl Change {
@@ -83,9 +89,19 @@ impl Change {
                 Change::AddTag(tag) | Change::RemoveTag(tag),
                 Change::AddTag(was) | Change::RemoveTag(was),
             ) => tag == was,
+            (Change::Edge { line, .. }, Change::Edge { line: was, .. }) => line == was,
             _ => false,
         }
     }
+}
+
+/// One edge a frontmatter line names: its type, the end the file is, and
+/// the item at the other end.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub struct Line {
+    pub edge_type: String,
+    pub end: End,
+    pub other: String,
 }
 
 /// What the folder last agreed with, for the bytes of a file. Equality is
@@ -101,7 +117,7 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 /// A content hash no bytes have, for a save set aside in a conflicted copy
-/// against this device's own (`folders.md` 37): the file reads as changed,
+/// against this device's own (`folders.md` 36): the file reads as changed,
 /// and its next edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
@@ -122,7 +138,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
     conn.execute(
-        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, writes, seen_at)
+        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, seen_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT (path) DO UPDATE SET
            item_id = excluded.item_id,
@@ -130,7 +146,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
            content_hash = excluded.content_hash,
            written_hash = excluded.written_hash,
            links = excluded.links,
-           declined_links = excluded.declined_links,
+           edge_lines = excluded.edge_lines,
            edit_line = excluded.edit_line,
            held = excluded.held,
            own = excluded.own,
@@ -143,7 +159,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
             bound.content_hash,
             bound.written_hash,
             serde_json::to_string(&bound.links).unwrap_or_else(|_| "[]".into()),
-            serde_json::to_string(&bound.declined).unwrap_or_else(|_| "[]".into()),
+            serde_json::to_string(&bound.lines).unwrap_or_else(|_| "[]".into()),
             bound.edit_line,
             bound.held,
             bound
@@ -155,7 +171,7 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
         ],
     )?;
     if let Some(before) = before {
-        unpin_if_unbound(conn, &before.item_id)?;
+        unpin_if_unheld(conn, &before.item_id)?;
     }
     Ok(())
 }
@@ -164,24 +180,110 @@ pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
     let before = bound_at(conn, path)?;
     conn.execute("DELETE FROM folder_files WHERE path = ?1", [path])?;
     if let Some(before) = before {
-        unpin_if_unbound(conn, &before.item_id)?;
+        unpin_if_unheld(conn, &before.item_id)?;
     }
     Ok(())
 }
 
-/// The row stays held until a catch-up or hydration lets it go, as any
-/// unpinned row outside the slice does (`device.md` 1).
-fn unpin_if_unbound(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
-    if bound_to_item(conn, item_id)?.is_none() {
-        crate::store::unpin(conn, item_id)?;
+/// A binding lets its pin go unless a line still holds the row, which then
+/// holds the pin as its own (`folders.md` 11).
+pub fn unpin_if_unheld(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    if bound_to_item(conn, item_id)?.is_some() {
+        return Ok(());
+    }
+    match crate::store::meta_get(conn, &format!("{EDGE_END}{item_id}"))? {
+        Some(_) => crate::store::meta_set(conn, &format!("{EDGE_END}{item_id}"), MADE),
+        None => crate::store::unpin(conn, item_id).map(|_| ()),
+    }
+}
+
+/// One `meta` row per edge end a line holds, so a bind asks for one by key;
+/// `MADE` where the folder made the pin, which only then is its to let go.
+const EDGE_END: &str = "folder_edge_end:";
+const MADE: &str = "made";
+
+/// A replacement whose create the drain has not settled, keyed by that
+/// create's queue id, so a pass that ends first leaves it to the next.
+const REPLACED: &str = "folder_replaced:";
+
+/// Every `meta` key under `prefix`, with its value, by a range the key's
+/// index answers.
+fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreError> {
+    let above = format!("{}{}", &prefix[..prefix.len() - 1], ';');
+    let mut statement =
+        conn.prepare("SELECT key, value FROM meta WHERE key >= ?1 AND key < ?2 ORDER BY key")?;
+    let rows = statement.query_map(params![prefix, above], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    let mut found = Vec::new();
+    for row in rows {
+        let (key, value): (String, String) = row?;
+        found.push((key[prefix.len()..].to_string(), value));
+    }
+    Ok(found)
+}
+
+/// The edge ends lines hold, each with whether the folder made its pin.
+pub fn edge_ends(conn: &Connection) -> Result<Vec<(String, bool)>, CoreError> {
+    Ok(under(conn, EDGE_END)?
+        .into_iter()
+        .map(|(id, made)| (id, made == MADE))
+        .collect())
+}
+
+pub fn hold_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), CoreError> {
+    crate::store::meta_set(
+        conn,
+        &format!("{EDGE_END}{id}"),
+        if made { MADE } else { "" },
+    )
+}
+
+/// Lets a line's hold go, and the pin with it where the folder made it and
+/// no binding holds it.
+pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{EDGE_END}{id}"))?;
+    if made && bound_to_item(conn, id)?.is_none() {
+        crate::store::unpin(conn, id)?;
     }
     Ok(())
+}
+
+/// The edge a replacement took away, to put back if its successor is refused.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Replaced {
+    pub source_id: String,
+    pub target_id: String,
+    pub edge_type: String,
+    pub properties: serde_json::Map<String, serde_json::Value>,
+    /// The successor's ends, to tell from the copy what became of a
+    /// replacement whose queue rows were cleared.
+    pub new_source_id: String,
+    pub new_target_id: String,
+}
+
+pub fn record_replaced(conn: &Connection, create: &str, old: &Replaced) -> Result<(), CoreError> {
+    crate::store::meta_set(
+        conn,
+        &format!("{REPLACED}{create}"),
+        &serde_json::to_string(old)?,
+    )
+}
+
+pub fn replaced(conn: &Connection) -> Result<Vec<(String, Replaced)>, CoreError> {
+    let mut found = Vec::new();
+    for (create, json) in under(conn, REPLACED)? {
+        found.push((create, serde_json::from_str(&json)?));
+    }
+    Ok(found)
+}
+
+pub fn settle_replaced(conn: &Connection, create: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{REPLACED}{create}"))
 }
 
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, writes FROM folder_files WHERE path = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files WHERE path = ?1",
             [path],
             read_bound,
         )
@@ -191,7 +293,7 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, writes FROM folder_files WHERE item_id = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files WHERE item_id = ?1",
             [item_id],
             read_bound,
         )
@@ -200,7 +302,7 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
 
 pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     let mut statement = conn.prepare(
-        "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, writes FROM folder_files ORDER BY path",
+        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files ORDER BY path",
     )?;
     let rows = statement.query_map([], read_bound)?;
     let mut bound = Vec::new();
@@ -212,17 +314,16 @@ pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
 
 fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
     let links: String = row.get(5)?;
-    let declined: String = row.get(6)?;
+    let lines: String = row.get(6)?;
     Ok(Bound {
         path: row.get(0)?,
         item_id: row.get(1)?,
         identity: row.get(2)?,
         content_hash: row.get(3)?,
         written_hash: row.get(4)?,
-        // Unreadable, it names no links, so no edge is removed for it; and
-        // declines none, so the pull renders every link.
+        // Unreadable, it names no links or lines, so no edge is removed for it.
         links: serde_json::from_str(&links).unwrap_or_default(),
-        declined: serde_json::from_str(&declined).unwrap_or_default(),
+        lines: serde_json::from_str(&lines).unwrap_or_default(),
         edit_line: row.get(7)?,
         held: row.get(8)?,
         // Unreadable, it remembers nothing written, and no own line is sent.
@@ -233,10 +334,12 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
     })
 }
 
-/// How a held file's reason begins, for bytes the server or the core refused
-/// and for frontmatter that did not parse.
+/// How a held file's reason begins; a line `EDGES_WAITING` on the server is
+/// asked again at each scan that can reach it.
 pub const REFUSED: &str = "refused: ";
 pub const UNREADABLE: &str = "unreadable: ";
+pub const EDGES: &str = "edges: ";
+pub const EDGES_WAITING: &str = "edges, waiting: ";
 
 /// Records a file as missing, if it is not already. The moment is the first
 /// sighting, so a folder scanning every second still reaches the grace.
@@ -266,4 +369,41 @@ pub fn journaled(conn: &Connection) -> Result<Vec<(String, String, String)>, Cor
         journaled.push(row?);
     }
     Ok(journaled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bound(path: &str, item_id: &str) -> Bound {
+        Bound {
+            path: path.into(),
+            item_id: item_id.into(),
+            identity: None,
+            content_hash: "h".into(),
+            written_hash: None,
+            links: Vec::new(),
+            lines: Vec::new(),
+            edit_line: None,
+            held: None,
+            own: None,
+            writes: Writes::default(),
+        }
+    }
+
+    /// A row a file is bound to and a line names stays pinned when the
+    /// binding goes, and goes once neither holds it.
+    #[test]
+    fn a_pin_is_held_while_a_binding_or_a_line_holds_it() {
+        let conn = crate::store::open_in_memory().unwrap();
+        bind(&conn, &bound("target.md", "target")).unwrap();
+        hold_edge_end(&conn, "target", false).unwrap();
+        unbind(&conn, "target.md").unwrap();
+        assert!(
+            crate::store::pinned(&conn, "target").unwrap(),
+            "the binding took the pin a line still holds"
+        );
+        release_edge_end(&conn, "target", true).unwrap();
+        assert!(!crate::store::pinned(&conn, "target").unwrap());
+    }
 }
