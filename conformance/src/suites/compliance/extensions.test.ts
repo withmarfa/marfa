@@ -279,4 +279,86 @@ describe("metadata extensions", () => {
       200,
     );
   });
+
+  it("refuses a replace and a delete to a key that may read the item's type and not write it", async () => {
+    const ns = "read-only-type";
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const noteId = note.data.item.id;
+    expect((await client.setItemExtension(noteId, ns, { kept: 1 })).ok).toBe(
+      true,
+    );
+
+    // Write on the namespace, read on the type: only the type can refuse.
+    const keyResp = await client.createKey({
+      label: "extensions-note-reader",
+      source: `${ctx.source}-extensions-note-reader`,
+      permissions: [],
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { [ns]: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const reader = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    // The witness: the read doors admit the key on this row.
+    const read = await reader.getItemExtension(noteId, ns);
+    expect(read.status).toBe(200);
+    expect(read.data.data).toEqual({ kept: 1 });
+    expect((await reader.listItemExtensions(noteId)).status).toBe(200);
+
+    for (const r of [
+      await reader.setItemExtension(noteId, ns, { kept: 2 }),
+      await reader.deleteItemExtension(noteId, ns),
+    ]) {
+      expect(r.status).toBe(403);
+      expect(r.error?.error.code).toBe("type_not_permitted");
+    }
+    const after = await client.getItemExtension(noteId, ns);
+    expect(after.data.data).toEqual({ kept: 1 });
+  });
+
+  it("refuses a folder's extensions to a key holding write on system.folder, as the item doors refuse the folder", async () => {
+    const ns = "folder-writer";
+    const keyResp = await client.createKey({
+      label: "extensions-folder-writer",
+      source: `${ctx.source}-extensions-folder-writer`,
+      permissions: [],
+      type_permissions: { "system.folder": "write" },
+      extension_permissions: { [ns]: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const folderWriter = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    // The witness: the key writes the folder through the folder door.
+    const folder = await folderWriter.createFolder({
+      title: "extension fence",
+    });
+    expect(folder.status).toBe(201);
+    trackFolder(ctx, folder.data.item.id);
+    const folderId = folder.data.item.id;
+    expect((await folderWriter.getItemExtension(folderId, ns)).status).toBe(
+      200,
+    );
+
+    for (const r of [
+      await folderWriter.setItemExtension(folderId, ns, { a: 1 }),
+      await folderWriter.deleteItemExtension(folderId, ns),
+    ]) {
+      expect(r.status).toBe(403);
+      expect(r.error?.error.code).toBe("type_not_permitted");
+    }
+    const after = await client.getItem(folderId);
+    expect(after.data.item.updated_at).toBe(folder.data.item.updated_at);
+    const held = await client.listItemExtensions(folderId);
+    expect(held.data.extensions).not.toHaveProperty(ns);
+  });
 });

@@ -1,13 +1,12 @@
 /**
  * Extension routes — namespaced metadata on items.
  *
- * Namespace ownership: a key can always write to the namespace matching its
- * label (e.g. a key with label "noter" can write to the "noter" namespace).
- * This coupling is intentional — the key label IS the namespace identity.
- * Additional access can be granted via extension_permissions on the key.
+ * Every door first asks the key's type map for the item's type, at `read` or
+ * `write` as the item doors do, and nothing about the namespace skips it.
  *
- * The namespace is the second of two gates. Every door first asks the key's
- * type map for the item's type, at `read` or `write` as the item doors do.
+ * The namespace is the second gate. A key's label names a namespace it holds
+ * write on (a key labeled "noter" writes "noter"), because the label is the
+ * namespace's identity; `extension_permissions` grants any other.
  *
  * **Reserved namespaces (core, marfa, system) are closed to every
  * credential.** What writes them is the platform's own machinery, through
