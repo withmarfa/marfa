@@ -31,29 +31,13 @@ function linkTaken(
   type: string,
   field: string,
   value: string,
-  holder: string | undefined,
+  holder: string,
 ): MarfaError {
   return new MarfaError(
     ErrorCode.LINK_TAKEN,
     `Another item of type "${type}" already holds "${value}" in its link, "${field}"`,
-    {
-      type,
-      field,
-      value,
-      ...(holder !== undefined && { existing_id: holder }),
-    },
+    { type, field, value, existing_id: holder },
   );
-}
-
-function isLinkViolation(err: unknown): boolean {
-  for (let layer = err; layer != null && typeof layer === "object";) {
-    const message = (layer as { message?: unknown }).message;
-    if (typeof message === "string" && message.includes("item_links.")) {
-      return true;
-    }
-    layer = (layer as { cause?: unknown }).cause;
-  }
-  return false;
 }
 
 /** Holds a row's entry to its type and properties after a write; the
@@ -91,25 +75,13 @@ export async function syncLink(
     .from(item_links)
     .where(and(eq(item_links.type, row.type), eq(item_links.value, link.value)))
     .all();
-  if (holder && holder.item_id !== row.id) {
+  if (holder) {
     throw linkTaken(row.type, link.field, link.value, holder.item_id);
   }
-  try {
-    await db
-      .insert(item_links)
-      .values({ type: row.type, value: link.value, item_id: row.id })
-      .run();
-  } catch (err) {
-    if (!isLinkViolation(err)) throw err;
-    const [raced] = await db
-      .select({ item_id: item_links.item_id })
-      .from(item_links)
-      .where(
-        and(eq(item_links.type, row.type), eq(item_links.value, link.value)),
-      )
-      .all();
-    throw linkTaken(row.type, link.field, link.value, raced?.item_id);
-  }
+  await db
+    .insert(item_links)
+    .values({ type: row.type, value: link.value, item_id: row.id })
+    .run();
   await db
     .delete(link_tombstones)
     .where(
