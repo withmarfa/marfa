@@ -105,6 +105,16 @@ async function found(mine: Connector, ids: string[]): Promise<string[]> {
   return res.data.data.map((row) => row.item_id);
 }
 
+/** Every state and agreement write needs the writing process to hold. */
+async function holding(
+  mine: Connector,
+  process: string = randomUUID(),
+): Promise<string> {
+  const held = await mine.client.holdConnector(mine.id, process);
+  expect(held.status).toBe(200);
+  return process;
+}
+
 describe("the hold", () => {
   it("takes and renews the hold for one process, and shows it on the registration", async () => {
     const mine = await connector("hold-take");
@@ -287,7 +297,7 @@ describe("the hold on an instance that names its window", () => {
 
   async function registered(
     label: string,
-  ): Promise<{ own: MarfaClient; id: string }> {
+  ): Promise<{ own: MarfaClient; id: string; row: string }> {
     if (server === undefined) throw new Error("no server");
     const minter = new MarfaClient({
       baseUrl: server.apiUrl,
@@ -305,14 +315,50 @@ describe("the hold on an instance that names its window", () => {
     });
     const registration = await own.registerConnector({ name: label });
     expect(registration.status).toBe(201);
-    return { own, id: registration.data.id };
+    const created = await minter.createItem(createNote());
+    expect(created.ok, JSON.stringify(created.error)).toBe(true);
+    return { own, id: registration.data.id, row: created.data.item.id };
   }
 
   const lapse = (hold: { expires_at: string }) =>
     sleep(Date.parse(hold.expires_at) - Date.now() + 250);
 
-  it("lets another process take a hold that lapsed, and takes a write from any process once it has", async () => {
-    const { own, id } = await registered("lapse");
+  /** Both fenced writes from `process`, answered in turn. */
+  async function write(
+    { own, id, row }: { own: MarfaClient; id: string; row: string },
+    process: string,
+    cursor: string,
+  ) {
+    return [
+      await own.replaceConnectorState(id, { process, state: { cursor } }),
+      await own.writeConnectorAgreements(id, {
+        process,
+        set: [{ item_id: row, waiting: true, record: { cursor } }],
+      }),
+    ] as const;
+  }
+
+  /** The state and the one agreement as a process re-reading would. */
+  async function kept({
+    own,
+    id,
+    row,
+  }: {
+    own: MarfaClient;
+    id: string;
+    row: string;
+  }) {
+    return {
+      state: (await own.getConnectorState(id)).data.state,
+      records: (await own.findConnectorAgreements(id, [row])).data.data.map(
+        (r) => r.record,
+      ),
+    };
+  }
+
+  it("lets another process take a hold that lapsed, and takes its writes once it holds it", async () => {
+    const reg = await registered("lapse");
+    const { own, id } = reg;
     const first = randomUUID();
     const second = randomUUID();
 
@@ -325,26 +371,85 @@ describe("the hold on an instance that names its window", () => {
     const live = await own.holdConnector(id, second);
     expect(live.status).toBe(409);
     expect(live.error?.error.code).toBe("connector_held");
-    const fenced = await own.replaceConnectorState(id, {
-      process: second,
-      state: { cursor: "early" },
-    });
-    expect(fenced.status).toBe(409);
+    for (const fenced of await write(reg, second, "early")) {
+      expect(fenced.status).toBe(409);
+      expect(fenced.error?.error.details?.["expires_at"]).toBe(
+        taken.data.expires_at,
+      );
+    }
 
     await lapse(taken.data);
     expect((await own.getConnector(id)).data.hold_expires_at).toBeNull();
-    const written = await own.replaceConnectorState(id, {
-      process: second,
-      state: { cursor: "after" },
-    });
-    expect(written.status).toBe(200);
+    for (const unheld of await write(reg, second, "unheld")) {
+      expect(unheld.status).toBe(409);
+      expect(unheld.error?.error.code).toBe("connector_held");
+      expect(unheld.error?.error.details?.["expires_at"]).toBeUndefined();
+    }
+    expect(await kept(reg)).toEqual({ state: {}, records: [] });
+
     const retaken = await own.holdConnector(id, second);
     expect(retaken.status).toBe(200);
+    for (const written of await write(reg, second, "after")) {
+      expect(written.status).toBe(200);
+    }
+    expect(await kept(reg)).toEqual({
+      state: { cursor: "after" },
+      records: [{ cursor: "after" }],
+    });
     const displaced = await own.holdConnector(id, first);
     expect(displaced.status).toBe(409);
     expect(displaced.error?.error.details?.["expires_at"]).toBe(
       retaken.data.expires_at,
     );
+  });
+
+  it("refuses a write from a process whose hold lapsed, whether its successor released the hold or let it lapse", async () => {
+    const reg = await registered("stale");
+    const { own, id } = reg;
+    const first = randomUUID();
+    const second = randomUUID();
+
+    const taken = await own.holdConnector(id, first);
+    expect(taken.status).toBe(200);
+    for (const written of await write(reg, first, "first")) {
+      expect(written.status).toBe(200);
+    }
+    await lapse(taken.data);
+    const successor = await own.holdConnector(id, second);
+    expect(successor.status).toBe(200);
+    for (const written of await write(reg, second, "second")) {
+      expect(written.status).toBe(200);
+    }
+    const theirs = {
+      state: { cursor: "second" },
+      records: [{ cursor: "second" }],
+    };
+    expect(await kept(reg)).toEqual(theirs);
+    // The witness for the `expires_at` absent below.
+    for (const stale of await write(reg, first, "stale")) {
+      expect(stale.status).toBe(409);
+      expect(stale.error?.error.details?.["expires_at"]).toBe(
+        successor.data.expires_at,
+      );
+    }
+
+    expect((await own.releaseConnectorHold(id, second)).status).toBe(200);
+    for (const stale of await write(reg, first, "stale")) {
+      expect(stale.status).toBe(409);
+      expect(stale.error?.error.code).toBe("connector_held");
+      expect(stale.error?.error.details?.["expires_at"]).toBeUndefined();
+    }
+    expect(await kept(reg)).toEqual(theirs);
+
+    const again = await own.holdConnector(id, second);
+    expect(again.status).toBe(200);
+    await lapse(again.data);
+    for (const stale of await write(reg, first, "stale")) {
+      expect(stale.status).toBe(409);
+      expect(stale.error?.error.code).toBe("connector_held");
+      expect(stale.error?.error.details?.["expires_at"]).toBeUndefined();
+    }
+    expect(await kept(reg)).toEqual(theirs);
   });
 
   it("tells a process whose hold lapsed that it did not renew it", async () => {
@@ -388,7 +493,7 @@ describe("the hold on an instance that names its window", () => {
 describe("what a connector keeps on the instance", () => {
   it("reads an empty state, and replaces it whole", async () => {
     const mine = await connector("state-replace");
-    const process = randomUUID();
+    const process = await holding(mine);
     const empty = await mine.client.getConnectorState(mine.id);
     expect(empty.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}/state", 200, empty.data);
@@ -442,7 +547,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("refuses a state over its cap and takes one at it", async () => {
     const mine = await connector("state-cap");
-    const process = randomUUID();
+    const process = await holding(mine);
     const atCap = { s: "x".repeat(STATE_CAP - 8) };
     expect(JSON.stringify(atCap)).toHaveLength(STATE_CAP);
     const over = { s: "x".repeat(STATE_CAP - 7) };
@@ -483,7 +588,7 @@ describe("what a connector keeps on the instance", () => {
       new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
       "agreements",
     );
-    const process = randomUUID();
+    const process = await holding(mine);
 
     const kept = await note();
     const waiting = await note();
@@ -578,7 +683,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("refuses a batch over its caps and writes nothing", async () => {
     const mine = await connector("agreement-caps");
-    const process = randomUUID();
+    const process = await holding(mine);
     const row = await note();
     const second = await note();
     const atCap = { r: "x".repeat(RECORD_CAP - 8) };
@@ -732,7 +837,7 @@ describe("what a connector keeps on the instance", () => {
       new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
       "narrowed",
     );
-    const process = randomUUID();
+    const process = await holding(mine);
     const kept = await note("kept");
     const task = await client.createItem(createTask({ source: ctx.source }));
     expect(task.ok).toBe(true);
@@ -779,7 +884,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("finds agreements by row and lists the waiting ones a page at a time", async () => {
     const mine = await connector("agreement-list");
-    const process = randomUUID();
+    const process = await holding(mine);
     const [x1, x2, x3, settled] = [
       await note("x1"),
       await note("x2"),
@@ -878,7 +983,7 @@ describe("what a connector keeps on the instance", () => {
     signal,
   }) => {
     const mine = await connector("agreement-quiet");
-    const process = randomUUID();
+    const process = await holding(mine);
     const row = await note("quiet");
     const aboutRow = (data: unknown) =>
       JSON.stringify(data ?? null).includes(row.id);
@@ -926,7 +1031,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("goes with a purged row", async () => {
     const mine = await connector("agreement-purge");
-    const process = randomUUID();
+    const process = await holding(mine);
     const row = await note("purged");
     const written = await mine.client.writeConnectorAgreements(mine.id, {
       process,
@@ -948,6 +1053,30 @@ describe("what a connector keeps on the instance", () => {
     const holder = randomUUID();
     const intruder = randomUUID();
     const row = await note("fenced");
+    const unheld = async () => {
+      for (const res of [
+        await mine.client.replaceConnectorState(mine.id, {
+          process: intruder,
+          state: { cursor: "unheld" },
+        }),
+        await mine.client.writeConnectorAgreements(mine.id, {
+          process: intruder,
+          set: [{ item_id: row.id, waiting: true, record: { etag: "u" } }],
+        }),
+      ]) {
+        expect(res.status).toBe(409);
+        expect(res.error?.error.code).toBe("connector_held");
+        expect(res.error?.error.details?.["expires_at"]).toBeUndefined();
+      }
+    };
+
+    await unheld();
+    expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
+      state: {},
+      updated_at: null,
+    });
+    expect(await found(mine, [row.id])).toEqual([]);
+
     const held = await mine.client.holdConnector(mine.id, holder);
     expect(held.status).toBe(200);
 
@@ -987,15 +1116,11 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(await found(mine, [row.id])).toEqual([]);
 
-    // The holder writes.
-    expect(
-      (
-        await mine.client.replaceConnectorState(mine.id, {
-          process: holder,
-          state: { cursor: "holder" },
-        })
-      ).status,
-    ).toBe(200);
+    const written = await mine.client.replaceConnectorState(mine.id, {
+      process: holder,
+      state: { cursor: "holder" },
+    });
+    expect(written.status).toBe(200);
     expect(
       (
         await mine.client.writeConnectorAgreements(mine.id, {
@@ -1005,28 +1130,21 @@ describe("what a connector keeps on the instance", () => {
       ).data.written,
     ).toBe(1);
 
-    // With the hold released, nothing fences the other process.
     expect(
       (await mine.client.releaseConnectorHold(mine.id, holder)).status,
     ).toBe(200);
-    const free = await mine.client.replaceConnectorState(mine.id, {
-      process: intruder,
-      state: { cursor: "free" },
-    });
-    expect(free.status).toBe(200);
+    await unheld();
+    expect((await mine.client.getConnectorState(mine.id)).data).toEqual(
+      written.data,
+    );
     expect(
-      (
-        await mine.client.writeConnectorAgreements(mine.id, {
-          process: intruder,
-          clear: [row.id],
-        })
-      ).data.cleared,
-    ).toBe(1);
+      (await mine.client.findConnectorAgreements(mine.id, [row.id])).data.data,
+    ).toMatchObject([{ record: { etag: "h" } }]);
   });
 
   it("keeps state and agreements to the connector's own key", async () => {
     const mine = await connector("own-only");
-    const process = randomUUID();
+    const process = await holding(mine);
     const row = await note("own");
     expect(
       (
@@ -1080,7 +1198,7 @@ describe("what a connector keeps on the instance", () => {
 
   it("clears the state and the agreements for the own key or the operator, and audits it", async () => {
     const mine = await connector("clear");
-    const process = randomUUID();
+    const process = await holding(mine);
     const rows = [await note("c1"), await note("c2")];
     const seed = async () => {
       expect(
@@ -1169,7 +1287,8 @@ describe("what a connector keeps on the instance", () => {
     const a = await connector("apart-a");
     const b = await connector("apart-b");
     expect(a.source).not.toBe(b.source);
-    const process = randomUUID();
+    const process = await holding(a);
+    await holding(b, process);
     const row = await note("shared");
     for (const mine of [a, b]) {
       const written = await mine.client.writeConnectorAgreements(mine.id, {
@@ -1231,6 +1350,7 @@ describe("what a connector keeps on the instance", () => {
       await mintUnder(source, "first"),
       "predecessor",
     );
+    await holding(first, process);
     const state = await first.client.replaceConnectorState(first.id, {
       process,
       state: { cursor: "handed on" },
@@ -1308,6 +1428,7 @@ describe("what a connector keeps on the instance", () => {
     const row = await note("left behind");
 
     const gone = await register(await mintUnder(source, "gone"), "removed");
+    await holding(gone, process);
     expect(
       (
         await gone.client.replaceConnectorState(gone.id, {

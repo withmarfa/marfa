@@ -30,8 +30,8 @@ function toAgreement(row: AgreementRow): ConnectorAgreement {
   };
 }
 
-/** Read inside the write's own transaction, so no hold is taken between. */
-async function heldByAnother(
+/** Read inside the write's own transaction, so no hold changes between. */
+async function unheld(
   tx: SqliteTxContext,
   fence: { connectorId: string; process: string },
   now: string,
@@ -41,11 +41,9 @@ async function heldByAnother(
     .from(connectorHolds)
     .where(eq(connectorHolds.connector_id, fence.connectorId))
     .get();
-  return hold !== undefined &&
-    hold.process !== fence.process &&
-    hold.expires_at > now
-    ? { expires_at: hold.expires_at }
-    : null;
+  const live = hold !== undefined && hold.expires_at > now;
+  if (live && hold.process === fence.process) return null;
+  return { expires_at: live ? hold.expires_at : null };
 }
 
 export class SqliteConnectorStateStore implements ConnectorStateStore {
@@ -76,8 +74,8 @@ export class SqliteConnectorStateStore implements ConnectorStateStore {
   > {
     return this.db.transaction(async (tx) => {
       const now = new Date().toISOString();
-      const held = await heldByAnother(tx, fence, now);
-      if (held !== null) return held;
+      const refused = await unheld(tx, fence, now);
+      if (refused !== null) return refused;
       const serialized = JSON.stringify(state);
       await tx
         .insert(connectorStates)
@@ -109,8 +107,8 @@ export class SqliteConnectorStateStore implements ConnectorStateStore {
     const named = [...batch.set.map((entry) => entry.item_id), ...batch.clear];
     return this.db.transaction(async (tx) => {
       const now = new Date().toISOString();
-      const held = await heldByAnother(tx, fence, now);
-      if (held !== null) return held;
+      const refused = await unheld(tx, fence, now);
+      if (refused !== null) return refused;
 
       // Every state: a trashed row is a stored row.
       const types = new Map<string, string>();

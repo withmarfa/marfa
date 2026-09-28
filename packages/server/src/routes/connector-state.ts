@@ -33,6 +33,9 @@ export const MAX_STATE_BYTES = 512 * 1024;
 export const MAX_RECORD_BYTES = 16 * 1024;
 export const MAX_AGREEMENTS_PER_REQUEST = 500;
 
+const FENCED =
+  "Taken only from the `process` holding a live hold on the registration; from any other this answers `409 connector_held` and writes nothing, naming the other process's `expires_at` in `details` when one holds it.";
+
 const ProcessSchema = z
   .string()
   .min(1)
@@ -117,7 +120,19 @@ const heldResponse = {
       },
     },
     description:
-      "Another process holds the registration until `details.expires_at`; nothing was written",
+      "Another process holds the registration until `details.expires_at`; the hold did not move",
+  },
+};
+
+const fencedResponse = {
+  409: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["connector_held"]),
+      },
+    },
+    description:
+      "`process` does not hold the registration: another process does, until `details.expires_at`, or no live hold does and `details` names no `expires_at`. Nothing was written",
   },
 };
 
@@ -128,7 +143,7 @@ const holdRoute = createRoute({
   tags: ["Connectors"],
   summary: "Take or renew the hold on a registration",
   description:
-    "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.",
+    "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -208,7 +223,7 @@ const putStateRoute = createRoute({
   path: "/{id}/state",
   tags: ["Connectors"],
   summary: "Replace what a connector keeps on the instance",
-  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. While another process holds the registration this answers \`409 connector_held\` and writes nothing. The connector's own key only.`,
+  description: `Replaces the state document of the registration's source whole. At most ${String(MAX_STATE_BYTES / 1024)} KiB serialized. ${FENCED} The connector's own key only.`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -227,7 +242,7 @@ const putStateRoute = createRoute({
     },
     ...bodyRefusal,
     ...ownKeyResponses,
-    ...heldResponse,
+    ...fencedResponse,
   },
 });
 
@@ -256,7 +271,7 @@ const writeAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "Write a connector's agreements about rows",
-  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. While another process holds the registration this answers \`409 connector_held\` and writes nothing. The connector's own key only.`,
+  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. ${FENCED} The connector's own key only.`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -281,7 +296,7 @@ const writeAgreementsRoute = createRoute({
     },
     ...bodyRefusal,
     ...ownKeyResponses,
-    ...heldResponse,
+    ...fencedResponse,
   },
 });
 
@@ -366,12 +381,17 @@ const listAgreementsRoute = createRoute({
   },
 });
 
-function held(expiresAt: string): MarfaError {
-  return new MarfaError(
-    ErrorCode.CONNECTOR_HELD,
-    `Another process holds this connector until ${expiresAt}`,
-    { expires_at: expiresAt },
-  );
+function held(expiresAt: string | null): MarfaError {
+  return expiresAt === null
+    ? new MarfaError(
+        ErrorCode.CONNECTOR_HELD,
+        "This process does not hold this connector; take its hold before writing",
+      )
+    : new MarfaError(
+        ErrorCode.CONNECTOR_HELD,
+        `Another process holds this connector until ${expiresAt}`,
+        { expires_at: expiresAt },
+      );
 }
 
 function serializedBytes(value: unknown): number {

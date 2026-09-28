@@ -45,6 +45,15 @@ async function connector(): Promise<{ key: string; connector: Connector }> {
   return { key, connector: await json<Connector>(registered) };
 }
 
+/** Every state and agreement write needs the writing process to hold. */
+async function hold(key: string, id: string, process = "p"): Promise<void> {
+  const res = await request(ctx.app, "POST", `/connectors/${id}/hold`, {
+    key,
+    body: { process },
+  });
+  expect(res.status).toBe(200);
+}
+
 async function note(): Promise<{
   id: string;
   updated_at: string;
@@ -136,6 +145,7 @@ describe("the hold", () => {
 describe("what a connector keeps", () => {
   it("stays with the source when the registration goes, and a purge takes a row's agreements", async () => {
     const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
     const row = await note();
     expect(
       (
@@ -198,6 +208,7 @@ describe("what a connector keeps", () => {
 
   it("writes an agreement without an event of any kind, a version or a touch to the row", async () => {
     const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
     const row = await note();
     const controller = new AbortController();
     const frames: LiveFrame[] = [];
@@ -252,6 +263,7 @@ describe("what a connector keeps", () => {
 
   it("takes an agreements batch past the request cap, under the bulk one", async () => {
     const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
     const record = { r: "x".repeat(15 * 1024) };
     const body = {
       process: "p",
@@ -290,16 +302,17 @@ describe("what a connector keeps", () => {
 });
 
 describe("who reaches these doors", () => {
+  // The release goes last, so the writes before it are the holder's.
   const doors = (id: string) =>
     [
       ["POST", `/connectors/${id}/hold`, { process: "p" }],
-      ["DELETE", `/connectors/${id}/hold?process=p`, undefined],
       ["GET", `/connectors/${id}/state`, undefined],
       ["PUT", `/connectors/${id}/state`, { process: "p", state: {} }],
       ["DELETE", `/connectors/${id}/state`, undefined],
       ["POST", `/connectors/${id}/agreements`, { process: "p" }],
       ["POST", `/connectors/${id}/agreements/find`, { item_ids: ["x"] }],
       ["GET", `/connectors/${id}/agreements`, undefined],
+      ["DELETE", `/connectors/${id}/hold?process=p`, undefined],
     ] as const;
 
   it("refuses an app's session token on every one, where the same token reads the registration", async () => {

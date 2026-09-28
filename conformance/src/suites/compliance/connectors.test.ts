@@ -140,9 +140,6 @@ describe("registration", () => {
     );
     expect((await client.listConnectorRuns(real.data.id)).status).toBe(200);
     expect((await client.holdConnector(real.data.id, "p")).status).toBe(200);
-    expect((await client.releaseConnectorHold(real.data.id, "p")).status).toBe(
-      200,
-    );
     expect((await client.getConnectorState(real.data.id)).status).toBe(200);
     expect((await client.listConnectorAgreements(real.data.id)).status).toBe(
       200,
@@ -162,6 +159,9 @@ describe("registration", () => {
         })
       ).status,
     ).toBe(200);
+    expect((await client.releaseConnectorHold(real.data.id, "p")).status).toBe(
+      200,
+    );
     expect((await client.clearConnectorState(real.data.id)).status).toBe(200);
 
     const unknown = "01a0c000-0000-7000-8000-000000000000";

@@ -2807,9 +2807,10 @@ export interface ConnectorAgreement {
   updated_at: string;
 }
 
-/** Why a fenced write wrote nothing: another process holds the registration. */
+/** A fenced write from a process without a live hold; `expires_at` names
+ *  another process's live hold, and is null when none is live. */
 export interface ConnectorHeld {
-  expires_at: string;
+  expires_at: string | null;
 }
 
 /** What a connector keeps on the instance, keyed by the registration source. */
@@ -2818,7 +2819,6 @@ export interface ConnectorStateStore {
   getState(
     source: string,
   ): Promise<{ state: Record<string, unknown>; updated_at: string | null }>;
-  /** Replace the document, unless another process holds the registration. */
   putState(
     fence: { connectorId: string; process: string },
     source: string,
@@ -2826,8 +2826,7 @@ export interface ConnectorStateStore {
   ): Promise<
     { state: Record<string, unknown>; updated_at: string } | ConnectorHeld
   >;
-  /** Skips an id naming no stored row or a type `readable` refuses; writes
-   *  nothing while another process holds the registration. */
+  /** Skips an id naming no stored row or a type `readable` refuses. */
   writeAgreements(
     fence: { connectorId: string; process: string },
     source: string,

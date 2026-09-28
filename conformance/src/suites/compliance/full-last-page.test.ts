@@ -255,6 +255,7 @@ const seeds: Record<string, () => Promise<Read>> = {
     );
     if (!connectors.includes(connector.id)) connectors.push(connector.id);
     const rows = await notes(LIMIT, "agreement");
+    answered(await client.holdConnector(connector.id, "full-last-page"));
     answered(
       await client.writeConnectorAgreements(connector.id, {
         process: "full-last-page",

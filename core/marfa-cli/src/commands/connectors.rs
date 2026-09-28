@@ -59,8 +59,8 @@ pub enum ConnectorsCommand {
         #[command(subcommand)]
         command: DeliveriesCommand,
     },
-    /// Take or renew the hold on the registration for one process, so no
-    /// other process acts while it is live. Its own key only.
+    /// Take or renew the hold for one process, which alone may then write
+    /// the state and the agreements. Its own key only.
     Hold {
         /// The connector id.
         id: String,
@@ -100,8 +100,7 @@ pub enum StateCommand {
     Put {
         /// The connector id.
         id: String,
-        /// The process writing, which must hold the registration if any
-        /// process does.
+        /// The process writing, which must hold the registration.
         #[arg(long)]
         process: String,
         #[command(flatten)]
@@ -121,8 +120,7 @@ pub enum AgreementsCommand {
     Write {
         /// The connector id.
         id: String,
-        /// The process writing, which must hold the registration if any
-        /// process does.
+        /// The process writing, which must hold the registration.
         #[arg(long)]
         process: String,
         #[command(flatten)]
