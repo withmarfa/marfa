@@ -6,11 +6,13 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 - American English in code, comments and commits. Scoped Conventional Commits (`refactor(server):`, `feat(core):`). Feature branches and pull requests. Never push `main`. A session merges its own pull request once every required check is green and any appropriate review is complete: squash, branch deleted, in stack order.
 - One clone of this repository per machine. Parallel work happens in worktrees made by the agent's own worktree mechanism, never in a second clone or a sibling folder.
-- This repository is being made public while development continues; visibility is not a release milestone. All CI uses standard GitHub-hosted runners: macOS for Apple builds and Keychain tests, Ubuntu for portable jobs and publishing. Never route public repository jobs to personal runners or paid third-party runners. `ci/workflow-runner.test.ts` enforces the runner selection.
+- This repository is public while development continues; visibility is not a release milestone. All CI uses standard GitHub-hosted runners: macOS for Apple builds and Keychain tests, Ubuntu for portable jobs and publishing. Never route public repository jobs to personal runners or paid third-party runners. `ci/workflow-runner.test.ts` enforces the runner selection.
 - SQLite is the only database. Removed means gone: no shims, no aliases, no migration paths, no compatibility flags.
 - The server's behavior is the specification. The docs site is not a source of truth, and no docs connector is used in a session even if one is offered.
 - No personal details of any machine or person in this repository: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value.
 - No time estimates anywhere.
+
+- Independent pull requests and hosted jobs may run concurrently. Do not delay pushes or verification to ration a personal runner pool. Keep dependency order for stacked changes and cancel superseded PR runs.
 
 ## Versions
 

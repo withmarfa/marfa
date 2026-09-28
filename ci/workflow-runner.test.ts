@@ -54,13 +54,14 @@ describe("jobs use standard GitHub-hosted runners", () => {
   });
 
   it.each(["ci.yml", "core.yml"])(
-    "%s cancels a branch's superseded run and keeps one waiting run on main",
+    "%s cancels a branch's superseded run and preserves every main commit",
     (file) => {
       const { concurrency } = parse(
         readFileSync(join(WORKFLOWS, file), "utf8"),
       ) as { concurrency?: unknown };
       expect(concurrency).toEqual({
-        group: "${{ github.workflow }}-${{ github.ref }}",
+        group:
+          "${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}",
         "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}",
       });
     },
