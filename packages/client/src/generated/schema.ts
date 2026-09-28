@@ -869,7 +869,7 @@ export interface paths {
         post?: never;
         /**
          * Remove a registration and its runs
-         * @description Removes the registration and every run it reported. The connector's own key or the operator key; another key is refused `403 forbidden`.
+         * @description Removes the registration, every run it reported, and its inbound webhook endpoints with every delivery they stored. The connector's own key or the operator key; another key is refused `403 forbidden`.
          */
         delete: operations["deleteConnector"];
         options?: never;
@@ -915,6 +915,110 @@ export interface paths {
          * @description Records one run: `succeeded` or `failed`, when it started and finished, and a summary or an error. The connector's own key only. The server keeps the last hundred runs per connector and drops the oldest beyond that.
          */
         post: operations["reportConnectorRun"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{id}/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a connector's inbound webhook endpoints
+         * @description Newest first, retired ones included, each address redacted. The connector's own key or the operator key.
+         */
+        get: operations["listInboundEndpoints"];
+        put?: never;
+        /**
+         * Make an inbound webhook endpoint
+         * @description Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints, and one more is refused `409 conflict`.
+         */
+        post: operations["createInboundEndpoint"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{id}/endpoints/{endpoint_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Retire an inbound webhook endpoint
+         * @description Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
+         */
+        delete: operations["retireInboundEndpoint"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{id}/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a connector's inbound deliveries
+         * @description Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.
+         */
+        get: operations["listInboundDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{id}/deliveries/{delivery_id}/body": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read an inbound delivery's body
+         * @description The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.
+         */
+        get: operations["getInboundDeliveryBody"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{id}/deliveries/handled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark inbound deliveries handled
+         * @description Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. An id that is not this connector's refuses the whole request and marks nothing. The connector's own key only.
+         */
+        post: operations["markInboundDeliveriesHandled"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2385,6 +2489,69 @@ export interface components {
             data: components["schemas"]["ConnectorRun"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
             next_cursor: string | null;
+        };
+        InboundEndpoint: {
+            id: string;
+            connector_id: string;
+            label: string | null;
+            /** @description Lowercased. A delivery repeating this header's value is marked a repeat of the first that carried it. */
+            duplicate_header: string | null;
+            /** @description The address, under the instance's own: in full only in the answer that made it, redacted to its last four characters after. */
+            path: string;
+            created_at: string;
+            retired_at: string | null;
+        };
+        InboundEndpointPage: {
+            data: components["schemas"]["InboundEndpoint"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            next_cursor: string | null;
+        };
+        ConnectorNotFoundOrEndpointNotFoundRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "connector_not_found" | "endpoint_not_found";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        InboundDeliveryPage: {
+            data: components["schemas"]["InboundDelivery"][];
+            /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
+            next_cursor: string | null;
+        };
+        InboundDelivery: {
+            id: string;
+            endpoint_id: string;
+            received_at: string;
+            method: string;
+            query: string;
+            /** @description `[name, value]` pairs in the order and case they arrived. */
+            headers: [
+                string,
+                string
+            ][];
+            size: number;
+            sha256: string;
+            duplicate_of: {
+                id: string;
+                /** @enum {string|null} */
+                outcome: "processed" | "duplicate" | "rejected" | null;
+            } | null;
+            handled_at: string | null;
+            /** @enum {string|null} */
+            outcome: "processed" | "duplicate" | "rejected" | null;
+        };
+        ConnectorNotFoundOrDeliveryNotFoundRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "connector_not_found" | "delivery_not_found";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         /** @description Which items the folder holds. */
         FolderSearch: {
@@ -10173,6 +10340,757 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    listInboundEndpoints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The endpoints */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboundEndpointPage"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Another key's registration */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description No such connector */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    createInboundEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    label?: string;
+                    /** @description A header whose value names a delivery, such as `X-GitHub-Delivery`: a delivery repeating a value is marked as a repeat, never dropped. */
+                    duplicate_header?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The endpoint, its address in full */
+            201: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboundEndpoint"];
+                };
+            };
+            /** @description An invalid body or query */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Another key's registration */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description No such connector */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description The registration holds as many live endpoints as it may */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictRefusal"];
+                };
+            };
+            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    retireInboundEndpoint: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                id: string;
+                /** @description An endpoint's `id`. */
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The endpoint, retired */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboundEndpoint"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Another key's registration */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description No such connector, or no such endpoint on it */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundOrEndpointNotFoundRefusal"];
+                };
+            };
+            /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    listInboundDeliveries: {
+        parameters: {
+            query?: {
+                /** @description Which deliveries: not yet handled, handled, or both. */
+                state?: "pending" | "handled" | "any";
+                /** @description Only the deliveries this endpoint received. */
+                endpoint_id?: string;
+                /** @description How many deliveries, oldest first: at most 200, 50 unless given. */
+                limit?: number;
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The deliveries */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InboundDeliveryPage"];
+                };
+            };
+            /** @description An invalid body or query */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Another key's registration */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description No such connector */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    getInboundDeliveryBody: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                id: string;
+                /** @description A delivery's `id`. */
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The body */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Another key's registration */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description No such connector, or no such delivery on it */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundOrDeliveryNotFoundRefusal"];
+                };
+            };
+            /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    markInboundDeliveriesHandled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A connector's `id`, as `GET /connectors` lists it. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    ids: string[];
+                    /** @enum {string} */
+                    outcome: "processed" | "duplicate" | "rejected";
+                };
+            };
+        };
+        responses: {
+            /** @description The deliveries, marked */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: components["schemas"]["InboundDelivery"][];
+                    };
+                };
+            };
+            /** @description An invalid body or query */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Another key's registration */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description No such connector, or a delivery it does not hold */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorNotFoundOrDeliveryNotFoundRefusal"];
                 };
             };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */

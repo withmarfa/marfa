@@ -33,13 +33,17 @@ type Page = { data: { id?: string }[]; next_cursor: string | null };
 type Read = (page: { limit: number; cursor?: string }) => Promise<Page>;
 
 let client: MarfaClient;
+let apiUrl: string;
 let ctx: TestContext;
 let receiver: Receiver;
 const extra: TestContext[] = [];
 const connectors: string[] = [];
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("compliance", "full-last-page"));
+  ({ ctx, client, apiUrl } = await createTestContext(
+    "compliance",
+    "full-last-page",
+  ));
   receiver = await startReceiver();
 });
 
@@ -227,6 +231,23 @@ const seeds: Record<string, () => Promise<Read>> = {
     return async (page) =>
       answered(await client.listConnectorRuns(connector.id, page)) as Page;
   },
+  "GET /connectors/{id}/deliveries": async () => {
+    // The same key's registration as the runs seed's: one per key.
+    const connector = answered(
+      await client.registerConnector({ name: `full-last-page ${ctx.runId}` }),
+    );
+    if (!connectors.includes(connector.id)) connectors.push(connector.id);
+    const endpoint = answered(await client.createInboundEndpoint(connector.id));
+    for (let i = 0; i < LIMIT; i++) {
+      const sent = await fetch(`${apiUrl}${endpoint.path}`, {
+        method: "POST",
+        body: `delivery ${String(i)}`,
+      });
+      expect(sent.status).toBe(202);
+    }
+    return async (page) =>
+      answered(await client.listInboundDeliveries(connector.id, page)) as Page;
+  },
 };
 
 describe("a full last page answers a null cursor", () => {
@@ -240,7 +261,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(8);
+    expect(cursorDoors).toHaveLength(9);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 

@@ -420,6 +420,9 @@ export const WEBHOOK_DELIVERIES_CURSOR_KEY = cursorSortKey(
  *  listing sorts by, so the key is spelled here rather than built. */
 export const CONNECTOR_RUNS_CURSOR_KEY: CursorSortKey =
   "connector-runs:reported_at:desc";
+/** A connector's deliveries are a queue, read oldest first. */
+export const INBOUND_DELIVERIES_CURSOR_KEY: CursorSortKey =
+  "inbound-deliveries:received_at:asc";
 /** Search ranks by relevance rather than by a column, so its cursor carries
  *  the position in the ranking and names the ranking as its key. */
 export const SEARCH_CURSOR_KEY: CursorSortKey = "search:relevance:desc";
@@ -2774,6 +2777,108 @@ export interface ConnectorStore {
   ): Promise<PaginatedResult<ConnectorRun>>;
 }
 
+/** An address a sender posts to, belonging to one connector registration. */
+export interface InboundEndpoint {
+  id: string;
+  connector_id: string;
+  label: string | null;
+  duplicate_header: string | null;
+  token_last4: string;
+  created_at: string;
+  retired_at: string | null;
+}
+
+export type InboundOutcome = "processed" | "duplicate" | "rejected";
+
+/** A delivery as its connector reads it, without the body. */
+export interface InboundDelivery {
+  id: string;
+  endpoint_id: string;
+  received_at: string;
+  method: string;
+  query: string;
+  headers: [string, string][];
+  size: number;
+  sha256: string;
+  /** The earliest retained delivery on the same endpoint whose duplicate
+   *  header carried the same value, and how it was handled. */
+  duplicate_of: { id: string; outcome: InboundOutcome | null } | null;
+  handled_at: string | null;
+  outcome: InboundOutcome | null;
+}
+
+/** What the receiving door needs to know about the endpoint an address
+ *  names. */
+export interface InboundTarget {
+  endpoint_id: string;
+  connector_id: string;
+  duplicate_header: string | null;
+}
+
+export interface InboundStore {
+  /** A new endpoint, or `"limit"` when the registration already holds
+   *  `maxLive` live ones. */
+  createEndpoint(
+    input: {
+      connectorId: string;
+      tokenHash: string;
+      tokenLast4: string;
+      label: string | null;
+      duplicateHeader: string | null;
+    },
+    maxLive: number,
+  ): Promise<InboundEndpoint | "limit">;
+  /** A registration's endpoints, retired ones included, newest first. */
+  listEndpoints(connectorId: string): Promise<InboundEndpoint[]>;
+  /** Retire the endpoint, answering it and whether this call retired it;
+   *  one already retired answers as it stands. Null when the registration
+   *  has no such one. */
+  retireEndpoint(
+    connectorId: string,
+    endpointId: string,
+  ): Promise<{ endpoint: InboundEndpoint; retired: boolean } | null>;
+  /** The live endpoint behind an address, while its registration's key is
+   *  unrevoked; null otherwise. */
+  target(tokenHash: string): Promise<InboundTarget | null>;
+  /** How many deliveries the registration has not handled, and their
+   *  bytes. */
+  backlog(connectorId: string): Promise<{ count: number; bytes: number }>;
+  /** Store a delivery and its body together; answers its id. */
+  receive(input: {
+    endpointId: string;
+    connectorId: string;
+    method: string;
+    query: string;
+    headers: [string, string][];
+    body: Buffer;
+    dedupeKey: string | null;
+  }): Promise<string>;
+  /** A registration's deliveries, oldest first, one page at a time. */
+  listDeliveries(
+    connectorId: string,
+    filter: { state: "pending" | "handled" | "any"; endpointId?: string },
+    page: { limit: number; cursor?: string },
+  ): Promise<PaginatedResult<InboundDelivery>>;
+  /** A delivery's body as it arrived; null when the registration has no
+   *  such delivery. */
+  body(connectorId: string, deliveryId: string): Promise<Buffer | null>;
+  /** Mark deliveries handled, the first mark standing, and answer them in
+   *  the order named. Null, with nothing marked, when any id is not the
+   *  registration's. */
+  markHandled(
+    connectorId: string,
+    ids: string[],
+    outcome: InboundOutcome,
+  ): Promise<InboundDelivery[] | null>;
+  /** Remove handled deliveries past one retention and unhandled ones past
+   *  the other, keeping a kind whose retention is zero or less. Answers how
+   *  many went. */
+  cleanup(retention: {
+    handledDays: number;
+    pendingDays: number;
+  }): Promise<number>;
+}
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
   items: ItemStore;
   metadata: MetadataStore;
@@ -2825,6 +2930,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   housekeeping: HousekeepingStore;
   /** The registrations behind `/connectors`, and the runs they report. */
   connectors: ConnectorStore;
+  inbound: InboundStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;
 }

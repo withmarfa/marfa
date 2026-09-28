@@ -86,6 +86,12 @@ const FEATURE_DOORS: {
     body: {},
   },
   { feature: "connectors", path: "/connectors" },
+  // The address door answers an unknown address exactly as an unserved
+  // path, so the feature is probed at the doors that make addresses.
+  {
+    feature: "inbound_webhooks",
+    path: "/connectors/00000000-0000-7000-8000-000000000000/endpoints",
+  },
 ];
 
 describe("the instance", () => {
@@ -142,21 +148,6 @@ describe("the instance", () => {
         res.status === 404 && res.error?.error.code === "not_found";
       expect(unmatched, `${door.feature} (${door.path})`).toBe(false);
     }
-  });
-
-  it("advertises no inbound webhook feature, and serves no inbound door", async () => {
-    // Both halves are asserted, because adding the advertisement and adding
-    // the door are separate regressions and either alone puts the root into
-    // contradiction with what it serves.
-    const r = await client.root();
-    expect(r.ok).toBe(true);
-    expect(r.data.features).not.toContain("inbound-webhooks");
-    const door = await client.rawRequest(
-      "/webhooks/inbound/00000000-0000-7000-8000-000000000000",
-      { method: "POST", body: {} },
-    );
-    expect(door.status).toBe(404);
-    expect(door.error?.error.code).toBe("not_found");
   });
 
   it("names every advertised feature in one convention", async () => {

@@ -1,7 +1,10 @@
+use std::io::{self, Write};
+use std::path::PathBuf;
+
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
-use super::insert_opt;
+use super::{PageArgs, insert_opt};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -45,6 +48,118 @@ pub enum ConnectorsCommand {
         /// How many at most.
         #[arg(long)]
         limit: Option<u32>,
+    },
+    /// The addresses a sender posts inbound webhooks to.
+    Endpoints {
+        #[command(subcommand)]
+        command: EndpointsCommand,
+    },
+    /// What arrived at a connector's endpoints. Its own key only.
+    Deliveries {
+        #[command(subcommand)]
+        command: DeliveriesCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EndpointsCommand {
+    /// Make an endpoint. Its address is shown in full this once. The
+    /// connector's own key, or the operator key.
+    Create {
+        /// The connector id.
+        id: String,
+        /// What the endpoint is for.
+        #[arg(long)]
+        label: Option<String>,
+        /// A header whose value names a delivery, such as
+        /// X-GitHub-Delivery, so a repeat is marked as one.
+        #[arg(long, value_name = "HEADER")]
+        duplicate_header: Option<String>,
+    },
+    /// A connector's endpoints, newest first, each address redacted.
+    List {
+        /// The connector id.
+        id: String,
+    },
+    /// Retire an endpoint: its address stops answering.
+    Retire {
+        /// The connector id.
+        id: String,
+        /// The endpoint id.
+        endpoint: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DeliveryState {
+    Pending,
+    Handled,
+    Any,
+}
+
+impl DeliveryState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeliveryState::Pending => "pending",
+            DeliveryState::Handled => "handled",
+            DeliveryState::Any => "any",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DeliveryOutcome {
+    Processed,
+    Duplicate,
+    Rejected,
+}
+
+impl DeliveryOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeliveryOutcome::Processed => "processed",
+            DeliveryOutcome::Duplicate => "duplicate",
+            DeliveryOutcome::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DeliveriesCommand {
+    /// A connector's deliveries, oldest first, the unhandled ones unless
+    /// --state says otherwise.
+    List {
+        /// The connector id.
+        id: String,
+        /// Which deliveries: not yet handled, handled, or both.
+        #[arg(long, value_enum)]
+        state: Option<DeliveryState>,
+        /// Only what this endpoint received.
+        #[arg(long, value_name = "ENDPOINT")]
+        endpoint: Option<String>,
+        #[command(flatten)]
+        page: PageArgs,
+    },
+    /// A delivery's body, byte for byte.
+    Body {
+        /// The connector id.
+        id: String,
+        /// The delivery id.
+        delivery: String,
+        /// Where to write the bytes. Omitted, they go to stdout.
+        #[arg(long, value_name = "PATH")]
+        output: Option<PathBuf>,
+    },
+    /// Mark deliveries handled. The first mark stands.
+    Handle {
+        /// The connector id.
+        id: String,
+        /// The delivery ids.
+        #[arg(required = true)]
+        deliveries: Vec<String>,
+        /// What the connector made of them.
+        #[arg(long, value_enum)]
+        outcome: DeliveryOutcome,
     },
 }
 
@@ -106,17 +221,139 @@ pub fn runs_request(id: &str, limit: Option<u32>) -> Request {
         .query_opt("limit", limit.map(|limit| limit.to_string()))
 }
 
+pub fn endpoint_create_request(
+    id: &str,
+    label: Option<&str>,
+    duplicate_header: Option<&str>,
+) -> Request {
+    let mut body = Map::new();
+    insert_opt(&mut body, "label", label.map(str::to_string));
+    insert_opt(
+        &mut body,
+        "duplicate_header",
+        duplicate_header.map(str::to_string),
+    );
+    Request::post(&["connectors", id, "endpoints"]).json(Value::Object(body))
+}
+
+pub fn deliveries_request(
+    id: &str,
+    state: Option<DeliveryState>,
+    endpoint: Option<&str>,
+    page: &PageArgs,
+) -> Request {
+    Request::get(&["connectors", id, "deliveries"])
+        .query_opt("state", state.map(DeliveryState::as_str))
+        .query_opt("endpoint_id", endpoint)
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
+}
+
+pub fn delivery_body_request(id: &str, delivery: &str) -> Request {
+    Request::get(&["connectors", id, "deliveries", delivery, "body"]).streamed()
+}
+
+pub fn handle_request(id: &str, deliveries: &[String], outcome: DeliveryOutcome) -> Request {
+    Request::post(&["connectors", id, "deliveries", "handled"])
+        .json(json!({ "ids": deliveries, "outcome": outcome.as_str() }))
+}
+
+fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    match command {
+        EndpointsCommand::Create {
+            id,
+            label,
+            duplicate_header,
+        } => {
+            let mut made = remote.json(&endpoint_create_request(
+                &id,
+                label.as_deref(),
+                duplicate_header.as_deref(),
+            ))?;
+            // The one answer that carries the address: joined to the
+            // instance this command reached, for pasting into a sender.
+            if let Some(path) = made.get("path").and_then(Value::as_str) {
+                let url = format!("{}{path}", remote.url().trim_end_matches('/'));
+                if let Some(object) = made.as_object_mut() {
+                    object.insert("url".into(), Value::String(url));
+                }
+            }
+            out.value(&made)
+        }
+        EndpointsCommand::List { id } => {
+            out.value(&remote.json(&Request::get(&["connectors", &id, "endpoints"]))?)
+        }
+        EndpointsCommand::Retire { id, endpoint } => {
+            out.value(&remote.json(&Request::delete(&[
+                "connectors",
+                &id,
+                "endpoints",
+                &endpoint,
+            ]))?)
+        }
+    }
+}
+
+fn deliveries(command: DeliveriesCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    match command {
+        DeliveriesCommand::List {
+            id,
+            state,
+            endpoint,
+            page,
+        } => {
+            out.value(&remote.json(&deliveries_request(&id, state, endpoint.as_deref(), &page))?)
+        }
+        DeliveriesCommand::Body {
+            id,
+            delivery,
+            output,
+        } => {
+            let (_, mut reader) = remote.stream(&delivery_body_request(&id, &delivery))?;
+            let written = match &output {
+                Some(path) => {
+                    let mut file = std::fs::File::create(path).map_err(|error| {
+                        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
+                    })?;
+                    io::copy(&mut reader, &mut file)?
+                }
+                None => {
+                    let mut stdout = io::stdout().lock();
+                    let written = io::copy(&mut reader, &mut stdout)?;
+                    stdout.flush()?;
+                    written
+                }
+            };
+            // Bytes to stdout are the answer; a report there would corrupt it.
+            if let Some(path) = output {
+                out.report(
+                    &json!({ "delivery": delivery, "path": path, "size_bytes": written }),
+                    || format!("{written} byte(s) into {}", path.display()),
+                )?;
+            }
+            Ok(())
+        }
+        DeliveriesCommand::Handle {
+            id,
+            deliveries,
+            outcome,
+        } => out.value(&remote.json(&handle_request(&id, &deliveries, outcome))?),
+    }
+}
+
 pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    let request = match &command {
+    let request = match command {
+        ConnectorsCommand::Endpoints { command } => return endpoints(command, remote, out),
+        ConnectorsCommand::Deliveries { command } => return deliveries(command, remote, out),
         ConnectorsCommand::Register { name, description } => {
-            register_request(name, description.as_deref())
+            register_request(&name, description.as_deref())
         }
         ConnectorsCommand::List => Request::get(&["connectors"]),
-        ConnectorsCommand::Get { id } => Request::get(&["connectors", id]),
-        ConnectorsCommand::Delete { id } => Request::delete(&["connectors", id]),
-        ConnectorsCommand::Heartbeat { id } => Request::post(&["connectors", id, "heartbeat"]),
-        ConnectorsCommand::Report(args) => report_request(args),
-        ConnectorsCommand::Runs { id, limit } => runs_request(id, *limit),
+        ConnectorsCommand::Get { id } => Request::get(&["connectors", &id]),
+        ConnectorsCommand::Delete { id } => Request::delete(&["connectors", &id]),
+        ConnectorsCommand::Heartbeat { id } => Request::post(&["connectors", &id, "heartbeat"]),
+        ConnectorsCommand::Report(args) => report_request(&args),
+        ConnectorsCommand::Runs { id, limit } => runs_request(&id, limit),
     };
     out.value(&remote.json(&request)?)
 }

@@ -186,6 +186,8 @@ const OPEN_DOORS: Record<string, string> = {
   "POST /auth/*": "the same catch-all",
   "GET /blobs/:hash/fetch":
     "the target of an instance-served blob link, gated by the signature in its query rather than a bearer",
+  "POST /inbound/:token":
+    "where a sender posts an inbound webhook delivery, gated by the unguessable address rather than a bearer",
 };
 
 /**

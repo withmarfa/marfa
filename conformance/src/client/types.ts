@@ -281,6 +281,32 @@ export interface ConnectorRow {
   last_run: ConnectorRun | null;
 }
 
+export interface InboundEndpointRow {
+  id: string;
+  connector_id: string;
+  label: string | null;
+  duplicate_header: string | null;
+  path: string;
+  created_at: string;
+  retired_at: string | null;
+}
+
+export type InboundOutcome = "processed" | "duplicate" | "rejected";
+
+export interface InboundDeliveryRow {
+  id: string;
+  endpoint_id: string;
+  received_at: string;
+  method: string;
+  query: string;
+  headers: [string, string][];
+  size: number;
+  sha256: string;
+  duplicate_of: { id: string; outcome: InboundOutcome | null } | null;
+  handled_at: string | null;
+  outcome: InboundOutcome | null;
+}
+
 export interface ErrorResponse {
   error: {
     code: string;

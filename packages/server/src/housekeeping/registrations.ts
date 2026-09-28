@@ -1,5 +1,6 @@
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import type { AppConfig } from "../config.js";
+import { DEFAULT_INBOUND_LIMITS } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import type { Housekeeping } from "./scheduler.js";
@@ -233,6 +234,19 @@ export function registerHousekeepingJobs(
     intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
     firstRunDelayMs: 20_000,
     run: async () => ({ deleted: await rateLimitCleaner.runOnce() }),
+  });
+
+  const inbound = config.inbound ?? DEFAULT_INBOUND_LIMITS;
+  housekeeping.register({
+    name: "inbound-delivery-cleanup",
+    intervalMs: 3_600_000,
+    firstRunDelayMs: 30_000,
+    run: async () => ({
+      deleted: await storage.inbound.cleanup({
+        handledDays: inbound.handledRetentionDays,
+        pendingDays: inbound.pendingRetentionDays,
+      }),
+    }),
   });
 
   // Reap grantless DCR clients so unauthenticated registration doesn't grow

@@ -5,6 +5,7 @@ import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import { notifyError } from "./error-notifier.js";
+import { loggablePath } from "../inbound/address.js";
 import { renderHttpErrorPage, prefersHtml } from "../routes/http-error-page.js";
 
 /**
@@ -175,7 +176,7 @@ export function createErrorHandler(config: {
     log("error", "Unhandled error", {
       request_id: c.get("requestId"),
       method: c.req.method,
-      path: c.req.path,
+      path: loggablePath(c.req.path),
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
@@ -195,7 +196,7 @@ export function createErrorHandler(config: {
           timestamp: new Date().toISOString(),
           request_id: c.get("requestId"),
           error: err instanceof Error ? err.message : String(err),
-          path: c.req.path,
+          path: loggablePath(c.req.path),
           method: c.req.method,
         },
         config.errorWebhookTimeoutMs,

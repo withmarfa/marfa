@@ -83,6 +83,10 @@ src/models/conflict_refusal.rs
 src/models/conflict_refusal_error.rs
 src/models/conflict_snapshot.rs
 src/models/connector.rs
+src/models/connector_not_found_or_delivery_not_found_refusal.rs
+src/models/connector_not_found_or_delivery_not_found_refusal_error.rs
+src/models/connector_not_found_or_endpoint_not_found_refusal.rs
+src/models/connector_not_found_or_endpoint_not_found_refusal_error.rs
 src/models/connector_not_found_refusal.rs
 src/models/connector_not_found_refusal_error.rs
 src/models/connector_page.rs
@@ -97,6 +101,7 @@ src/models/create_edge_409_response.rs
 src/models/create_edge_request.rs
 src/models/create_edge_type_201_response.rs
 src/models/create_folder_request.rs
+src/models/create_inbound_endpoint_request.rs
 src/models/create_item_409_response.rs
 src/models/create_item_request.rs
 src/models/create_key_request.rs
@@ -161,6 +166,11 @@ src/models/idempotency_key_in_flight_refusal.rs
 src/models/idempotency_key_in_flight_refusal_error.rs
 src/models/idempotency_key_reused_or_idempotency_result_not_retained_refusal.rs
 src/models/idempotency_key_reused_or_idempotency_result_not_retained_refusal_error.rs
+src/models/inbound_delivery.rs
+src/models/inbound_delivery_duplicate_of.rs
+src/models/inbound_delivery_page.rs
+src/models/inbound_endpoint.rs
+src/models/inbound_endpoint_page.rs
 src/models/inheritance_violation_or_invalid_schema_or_missing_required_field_or_property_shadows_field_or_validation_error_refusal.rs
 src/models/inheritance_violation_or_invalid_schema_or_missing_required_field_or_property_shadows_field_or_validation_error_refusal_error.rs
 src/models/inheritance_violation_or_invalid_schema_or_validation_error_refusal.rs
@@ -193,6 +203,8 @@ src/models/item_state.rs
 src/models/item_version_conflict.rs
 src/models/item_with_metadata.rs
 src/models/key_response.rs
+src/models/mark_inbound_deliveries_handled_200_response.rs
+src/models/mark_inbound_deliveries_handled_request.rs
 src/models/merge_item_metadata_request.rs
 src/models/merge_policy.rs
 src/models/merge_strategy.rs

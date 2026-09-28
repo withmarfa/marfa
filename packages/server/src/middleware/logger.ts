@@ -6,6 +6,7 @@ import type { AnyValue, AnyValueMap } from "@opentelemetry/api-logs";
 import type { Context } from "hono";
 import type { AppEnv } from "./auth.js";
 import { toOpenApiPath } from "../openapi-path.js";
+import { loggablePath } from "../inbound/address.js";
 
 // ---------------------------------------------------------------------------
 // Structured log entry
@@ -570,7 +571,7 @@ export function loggerMiddleware() {
       timestamp: new Date().toISOString(),
       request_id: requestId,
       method: c.req.method,
-      path: c.req.path,
+      path: loggablePath(c.req.path),
       ...(route === undefined ? {} : { route }),
       status: c.res.status,
       duration_ms: Math.round(duration * 100) / 100,

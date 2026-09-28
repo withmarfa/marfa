@@ -200,8 +200,8 @@ function siblingsOf(components: Iterable<string>): {
 }
 
 describe("the page envelope in the document", () => {
-  it("is answered by twenty-one doors", () => {
-    expect(pages.size).toBe(21);
+  it("is answered by twenty-three doors", () => {
+    expect(pages.size).toBe(23);
   });
 
   it("answers data and next_cursor, required, and only declared siblings, on every door", () => {

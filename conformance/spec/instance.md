@@ -9,7 +9,7 @@ What one deployment says about itself. The credential chapters state what a key 
 
 ## What it advertises
 
-3. The root's `features` array names a surface this deployment serves, and every entry has a route: a request at the door each one names is answered by something other than `404 not_found`, which is what the server gives a path it does not serve. `inbound-webhooks` is absent from the array and its door answers `404 not_found`, so both halves of an advertisement that was withdrawn are held. Entries are lower_snake_case. `compliance/instance.test.ts › serves a route for every feature it advertises`, `› advertises no inbound webhook feature, and serves no inbound door`, `› names every advertised feature in one convention`.
+3. The root's `features` array names a surface this deployment serves, and every entry has a route: a request at the door each one names is answered by something other than `404 not_found`, which is what the server gives a path it does not serve. Entries are lower_snake_case. `compliance/instance.test.ts › serves a route for every feature it advertises`, `› names every advertised feature in one convention`.
 
 **That the value is minted once and survives a restart is not stated here, because nothing over HTTP can see it.** Both halves — a mint that answers the same value to every caller of a fresh database, and a value that a reopen of the same database returns — are properties of the server's own storage, asserted in `packages/server/src/storage/instance-id.test.ts`. A fixture run against an already-booted server reads whatever that server holds and cannot tell a durable id from one minted at the start of the run.
 

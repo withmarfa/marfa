@@ -713,6 +713,57 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
 }
 
 #[test]
+fn a_connector_makes_endpoints_and_reads_and_marks_its_deliveries() {
+    let made = connectors::endpoint_create_request("c1", Some("github"), Some("X-GitHub-Delivery"));
+    assert_eq!(made.method, Method::Post);
+    assert_eq!(made.path(), "/connectors/c1/endpoints");
+    assert_eq!(
+        made.body,
+        Body::Json(json!({ "label": "github", "duplicate_header": "X-GitHub-Delivery" }))
+    );
+    assert_eq!(
+        connectors::endpoint_create_request("c1", None, None).body,
+        Body::Json(json!({})),
+        "absent fields are absent, not null"
+    );
+
+    let listed = connectors::deliveries_request(
+        "c1",
+        Some(connectors::DeliveryState::Any),
+        Some("e1"),
+        &PageArgs {
+            limit: Some(10),
+            cursor: Some("next".into()),
+        },
+    );
+    assert_eq!(listed.path(), "/connectors/c1/deliveries");
+    assert_eq!(query(&listed, "state").as_deref(), Some("any"));
+    assert_eq!(query(&listed, "endpoint_id").as_deref(), Some("e1"));
+    assert_eq!(query(&listed, "limit").as_deref(), Some("10"));
+    assert_eq!(query(&listed, "cursor").as_deref(), Some("next"));
+    let bare = connectors::deliveries_request("c1", None, None, &PageArgs::default());
+    assert_eq!(query(&bare, "state"), None);
+    assert_eq!(query(&bare, "cursor"), None);
+
+    assert_eq!(
+        connectors::delivery_body_request("c1", "d1").path(),
+        "/connectors/c1/deliveries/d1/body"
+    );
+
+    let handled = connectors::handle_request(
+        "c1",
+        &["d1".into(), "d2".into()],
+        connectors::DeliveryOutcome::Duplicate,
+    );
+    assert_eq!(handled.method, Method::Post);
+    assert_eq!(handled.path(), "/connectors/c1/deliveries/handled");
+    assert_eq!(
+        handled.body,
+        Body::Json(json!({ "ids": ["d1", "d2"], "outcome": "duplicate" }))
+    );
+}
+
+#[test]
 fn restore_posts_the_archive_under_its_own_type() {
     let request = restore::request(&restore::RestoreArgs {
         file: PathBuf::from("/nowhere/archive.tar.gz"),

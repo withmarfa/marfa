@@ -7,18 +7,21 @@
  * doors carry up to 5000 rows in one body,
  * so they take the larger bulk cap; the per-request cap would refuse a
  * legitimate batch, and the doors still bound the row count and the per-field
- * sizes themselves.
+ * sizes themselves. The inbound webhook door caps a body itself, after it
+ * knows the address names an endpoint, so an unknown address is refused
+ * before a byte is read.
  *
  * The one statement of it: `app.ts` mounts the guard from it and the
  * document declares `413` from it, so the two cannot disagree about a door.
  * The path may be spelled either way, `/blobs/:hash` or `/blobs/{hash}`.
  */
-export type BodyCap = "none" | "bulk" | "request";
+export type BodyCap = "none" | "bulk" | "request" | "inbound";
 
 export function bodyCapFor(path: string): BodyCap {
   if (path.startsWith("/blobs") || path === "/admin/restore-archive") {
     return "none";
   }
+  if (path.startsWith("/inbound/")) return "inbound";
   if (path.startsWith("/items/bulk") || path.startsWith("/edges/bulk")) {
     return "bulk";
   }
