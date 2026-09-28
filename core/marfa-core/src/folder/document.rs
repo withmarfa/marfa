@@ -71,6 +71,12 @@ fn frontmatter(text: &str) -> Front<'_> {
         Ok(documents) => documents,
         Err(error) => return Front::Unreadable(error.to_string()),
     };
+    // A merge key would arrive as a property named `<<`, not as what it merges.
+    if documents.iter().any(merges) {
+        return Front::Unreadable(
+            "it uses a YAML merge key, `<<`, which a folder does not expand".into(),
+        );
+    }
     let mut fields = Map::new();
     match documents.first() {
         // An empty fence pair is frontmatter with nothing in it.
@@ -81,7 +87,7 @@ fn frontmatter(text: &str) -> Front<'_> {
                     return Front::Unreadable(format!("a key that is not text: {key:?}"));
                 };
                 let Some(value) = from_yaml(value) else {
-                    return Front::Unreadable(format!("{key} holds an alias or a bad value"));
+                    return Front::Unreadable(format!("{key} holds a value no item can"));
                 };
                 fields.insert(key.to_string(), value);
             }
@@ -202,9 +208,20 @@ fn from_yaml(value: &Yaml) -> Option<Value> {
             Value::Object(map)
         }
         Yaml::Null => Value::Null,
-        // Would arrive holding other than what the file says.
+        // The loader resolves every alias, so neither arrives from a document.
         Yaml::Alias(_) | Yaml::BadValue => return None,
     })
+}
+
+/// Whether a YAML value holds a merge key at any depth.
+fn merges(value: &Yaml) -> bool {
+    match value {
+        Yaml::Hash(hash) => hash
+            .iter()
+            .any(|(key, value)| key.as_str() == Some("<<") || merges(value)),
+        Yaml::Array(items) => items.iter().any(merges),
+        _ => false,
+    }
 }
 
 /// An item's property as a YAML value.
@@ -352,6 +369,7 @@ mod tests {
             "---\ntitle: fine\n  bad: indent\n---\nbody\n",
             "---\nnested:\n  1: not text\n---\nbody\n",
             "---\n1: one\n---\nbody\n",
+            "---\nbase: &b {x: 1}\nmerged:\n  <<: *b\n  y: 2\n---\nbody\n",
         ] {
             let document = read(text);
             assert!(

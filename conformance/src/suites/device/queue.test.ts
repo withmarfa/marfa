@@ -499,6 +499,71 @@ describe("what a drain sends and reports", () => {
     expect(body.properties).toEqual({ title: "held", body: "rewritten" });
   });
 
+  it("keeps a whole edit's clear showing through a catch-up, and lays one said to be read earlier over as a merge", async () => {
+    harness = await startHarness("queue-replace-catch-up");
+    const { server, device } = harness;
+    const row = (version: number, properties: Record<string, unknown>) =>
+      wireItem({ id: HELD.id, version, properties });
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: HELD.id,
+              version: HELD.version,
+              properties: { title: "held", body: "held", notes: "to clear" },
+            },
+          },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        itemEvent(
+          "11",
+          "item.updated",
+          row(HELD.version + 1, {
+            title: "held",
+            body: "held",
+            notes: "to clear",
+            extra: "theirs",
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const whole = await device.update(HELD.id, {
+      properties: { title: "held", body: "rewritten" },
+      version: HELD.version,
+      replace: true,
+    });
+    expect(whole.ok, JSON.stringify(whole)).toBe(true);
+    expect((await device.catchUp()).ok).toBe(true);
+    const caught = await device.get(HELD.id);
+    expect(
+      caught.ok && caught.value.properties,
+      "a catch-up put back the property a waiting whole edit clears, or hid the one another device added",
+    ).toEqual({ title: "held", body: "rewritten", extra: "theirs" });
+
+    // One said to be read at the version before records nothing it read, so
+    // it cannot show what it clears.
+    const read = await device.update(HELD.id, {
+      properties: { title: "read earlier" },
+      version: HELD.version,
+      asRead: true,
+      replace: true,
+    });
+    expect(read.ok, JSON.stringify(read)).toBe(true);
+    const shown = await device.get(HELD.id);
+    expect(
+      shown.ok && shown.value.properties,
+      "an edit said to be read earlier cleared, in the copy, properties it never read",
+    ).toEqual({ title: "read earlier", body: "rewritten", extra: "theirs" });
+  });
+
   it("moves a whole edit onto each answer ahead of it, keeping what each landed", async () => {
     harness = await hydratedHarness("queue-replace-moved-twice", {
       rows: held(),

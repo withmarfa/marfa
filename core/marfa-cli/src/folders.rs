@@ -244,6 +244,7 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                 "{} is held, not sent: its frontmatter cannot be read ({})",
                 file.path, file.reason
             ),
+            "behind" => format!("{}: {}", file.path, file.reason),
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
                 file.path, file.reason

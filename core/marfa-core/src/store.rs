@@ -38,7 +38,7 @@ const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("7", "b0e4c59d5dbd0471"),
     ("8", "662310c80f2c6871"),
     ("9", "23d541400ea60681"),
-    ("10", "fad987aebd37b3f6"),
+    ("10", "9480e180dbbee952"),
 ];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
@@ -655,20 +655,6 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
 /// Whether any write to an item is still waiting.
 pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(!waiting_writes_for_item(conn, id)?.is_empty())
-}
-
-/// Whether a whole-properties edit said to be read earlier still waits on an
-/// item: the copy cannot show what it cleared.
-pub fn unread_whole_edit_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    for row in waiting_writes_for_item(conn, id)? {
-        if row.kind == WriteKind::UpdateItem
-            && read_of(conn, &row.id)?.is_none()
-            && replaces_properties(&serde_json::from_str(&payload_of(conn, &row.id)?)?)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The writes still waiting on one item, read through the index rather than

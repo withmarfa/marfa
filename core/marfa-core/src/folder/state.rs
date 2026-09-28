@@ -1,10 +1,8 @@
 //! The mapping and the journal: what the folder remembers between runs.
 
-use std::collections::BTreeMap;
-
 use rusqlite::{Connection, OptionalExtension, params};
 
-use super::fields::Own;
+use super::fields::OwnBase;
 use crate::error::CoreError;
 use crate::store::now_iso;
 
@@ -33,42 +31,12 @@ pub struct Bound {
     /// Why the bytes at `content_hash` went unsent or were refused, where
     /// they were: a pull leaves such a file as it is (`folders.md` 9, 10).
     pub held: Option<String>,
-    /// The own fields this file was written or agreed with, by version line: a
-    /// tag or a state moves without a version step, so one line can mean several.
-    pub bases: BTreeMap<i64, Vec<Own>>,
-}
-
-/// How many version lines, and writes at each, a binding remembers.
-const BASES_KEPT: usize = 8;
-
-impl Bound {
-    /// The bases with a pull's write of `own` at `version` added.
-    pub fn with_written(&self, version: i64, own: Own) -> BTreeMap<i64, Vec<Own>> {
-        let mut bases = self.bases.clone();
-        let at = bases.entry(version).or_default();
-        if !at.contains(&own) {
-            at.push(own);
-        }
-        if at.len() > BASES_KEPT {
-            at.remove(0);
-        }
-        kept(bases)
-    }
-
-    /// The bases with the scan's agreement at `version` replacing every
-    /// write before it there: the next save is made against this one.
-    pub fn with_agreed(&self, version: i64, own: Own) -> BTreeMap<i64, Vec<Own>> {
-        let mut bases = self.bases.clone();
-        bases.insert(version, vec![own]);
-        kept(bases)
-    }
-}
-
-fn kept(mut bases: BTreeMap<i64, Vec<Own>>) -> BTreeMap<i64, Vec<Own>> {
-    while bases.len() > BASES_KEPT {
-        bases.pop_first();
-    }
-    bases
+    /// The own fields the folder last wrote or read in this file, and what
+    /// another machine moved at that version line without a version step.
+    pub own: Option<OwnBase>,
+    /// The queue ids of the writes these bytes made, so a refusal of an
+    /// earlier save's write holds nothing (`folders.md` 9).
+    pub queued: Vec<String>,
 }
 
 /// What the folder last agreed with, for the bytes of a file. Equality is
@@ -105,8 +73,8 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
     conn.execute(
-        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, bases, seen_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+        "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, queued, seen_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT (path) DO UPDATE SET
            item_id = excluded.item_id,
            identity = excluded.identity,
@@ -116,7 +84,8 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
            declined_links = excluded.declined_links,
            edit_line = excluded.edit_line,
            held = excluded.held,
-           bases = excluded.bases,
+           own = excluded.own,
+           queued = excluded.queued,
            seen_at = excluded.seen_at",
         params![
             bound.path,
@@ -128,7 +97,11 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
             serde_json::to_string(&bound.declined).unwrap_or_else(|_| "[]".into()),
             bound.edit_line,
             bound.held,
-            serde_json::to_string(&bound.bases).unwrap_or_else(|_| "{}".into()),
+            bound
+                .own
+                .as_ref()
+                .and_then(|own| serde_json::to_string(own).ok()),
+            serde_json::to_string(&bound.queued).unwrap_or_else(|_| "[]".into()),
             now_iso()
         ],
     )?;
@@ -159,7 +132,7 @@ fn unpin_if_unbound(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, bases FROM folder_files WHERE path = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, queued FROM folder_files WHERE path = ?1",
             [path],
             read_bound,
         )
@@ -169,7 +142,7 @@ pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreErro
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, bases FROM folder_files WHERE item_id = ?1",
+            "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, queued FROM folder_files WHERE item_id = ?1",
             [item_id],
             read_bound,
         )
@@ -178,7 +151,7 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
 
 pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     let mut statement = conn.prepare(
-        "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, bases FROM folder_files ORDER BY path",
+        "SELECT path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, held, own, queued FROM folder_files ORDER BY path",
     )?;
     let rows = statement.query_map([], read_bound)?;
     let mut bound = Vec::new();
@@ -203,18 +176,25 @@ fn read_bound(row: &rusqlite::Row<'_>) -> rusqlite::Result<Bound> {
         declined: serde_json::from_str(&declined).unwrap_or_default(),
         edit_line: row.get(7)?,
         held: row.get(8)?,
-        // Unreadable, it remembers no base, and an edit is read against the
-        // item as the copy holds it.
-        bases: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+        // Unreadable, it remembers nothing written, and no own line is sent.
+        own: row
+            .get::<_, Option<String>>(9)?
+            .and_then(|own| serde_json::from_str(&own).ok()),
+        queued: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
     })
 }
 
-/// Marks the file bound to an item as held for `reason`.
-pub fn hold_item(conn: &Connection, item_id: &str, reason: &str) -> Result<(), CoreError> {
-    conn.execute(
-        "UPDATE folder_files SET held = ?2 WHERE item_id = ?1",
-        params![item_id, reason],
-    )?;
+/// Holds the file whose bytes queued `write`, for `reason`, and spends no
+/// line on it: a refused edit landed nothing the file could be current with.
+pub fn hold_for(conn: &Connection, write: &str, reason: &str) -> Result<(), CoreError> {
+    for bound in every_bound(conn)? {
+        if bound.queued.iter().any(|queued| queued == write) {
+            conn.execute(
+                "UPDATE folder_files SET held = ?2, edit_line = NULL WHERE path = ?1",
+                params![bound.path, reason],
+            )?;
+        }
+    }
     Ok(())
 }
 

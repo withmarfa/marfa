@@ -1984,6 +1984,25 @@ describe("files and items", () => {
     ).toEqual(own);
   });
 
+  it("treats a fence pair holding a list or one line as a body", async () => {
+    harness = await folderHarness("folder-fence-list");
+    scriptFolderWrites(harness);
+    const texts = [
+      "---\n- just\n- a list\n---\nbody\n",
+      "---\nA heading\n---\nbody\n",
+    ];
+    put(harness, "list.md", texts[0]!);
+    put(harness, "line.md", texts[1]!);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentCreates(harness)
+        .map((sent) => (sent.properties as Record<string, unknown>).body)
+        .sort(),
+      "a list or a line between rules was read as frontmatter, or held",
+    ).toEqual([...texts].sort());
+  });
+
   it("treats a body opening with a horizontal rule as a body", async () => {
     harness = await folderHarness("folder-rule");
     scriptFolderWrites(harness);
@@ -2357,7 +2376,8 @@ describe("files and items", () => {
       );
     };
     takeOut();
-    expect((await harness.folder.scan()).ok).toBe(true);
+    const took = await harness.folder.scan();
+    expect(took.ok).toBe(true);
     expect((await device.drain()).ok).toBe(true);
 
     // The edge stays (`folders.md` 28), and the link does not come back. The
@@ -2373,10 +2393,12 @@ describe("files and items", () => {
     const queued = await device.queue();
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
+    // Taking out a rendered link changes nothing the item holds, so the scan
+    // reads the file and sends nothing (`folders.md` 7).
     expect(
-      queued.value.filter((row) => row.kind === "update_item").length,
-      "the removal was never queued, so the queue below is not a queue this scan wrote to",
-    ).toBeGreaterThan(0);
+      took.ok && took.value.unchanged + took.value.updated,
+      "the scan never read the files, so the queue below says nothing of them",
+    ).toBe(3);
     expect(
       withoutPlacements(harness, queued.value).filter(
         (row) => row.kind === "delete_edge",
@@ -3280,6 +3302,7 @@ describe("what frontmatter says", () => {
   it("flags a refused retype and keeps the file", async () => {
     const id = "01a00000-0000-7000-8000-000000001401";
     const tagged = "01a00000-0000-7000-8000-000000001402";
+    const shelving = "01a00000-0000-7000-8000-000000001403";
     harness = await folderHarness("folder-retype-refused", {
       settings: { search: { types: ["core.note", "core.bookmark"] } },
       rows: {
@@ -3287,6 +3310,12 @@ describe("what frontmatter says", () => {
           { item: { id, properties: { title: "Link", body: "a page\n" } } },
           {
             item: { id: tagged, properties: { title: "Tagged", body: "t\n" } },
+          },
+          {
+            item: {
+              id: shelving,
+              properties: { title: "Shelving", body: "s\n" },
+            },
           },
         ],
       },
@@ -3310,6 +3339,8 @@ describe("what frontmatter says", () => {
             "This credential may not write core.bookmark",
           )
         : update(...args)) as FolderDoor["update"];
+    door!.transition = () =>
+      refusal(400, "invalid_transition", "Not from here");
     expect((await harness.folder.pull()).ok).toBe(true);
     const retyped = read(harness, "Link.md")
       .replace("type: core.note", "type: core.bookmark")
@@ -3321,6 +3352,11 @@ describe("what frontmatter says", () => {
       "tier: library\ntags:\n  - secret\n",
     );
     writeFileSync(join(harness.dir, "Tagged.md"), tagging);
+    const shelved = read(harness, "Shelving.md").replace(
+      "tier: library\n",
+      "tier: library\nstate: archived\n",
+    );
+    writeFileSync(join(harness.dir, "Shelving.md"), shelved);
 
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -3341,11 +3377,14 @@ describe("what frontmatter says", () => {
       expect.objectContaining({
         path: "Link.md",
         flag: "refused",
-        reason: expect.stringContaining("type_not_permitted") as unknown,
+        reason:
+          "type_not_permitted: This credential may not write core.bookmark",
       }),
+      expect.objectContaining({ path: "Shelving.md", flag: "refused" }),
       expect.objectContaining({ path: "Tagged.md", flag: "refused" }),
     ]);
     expect(read(harness, "Tagged.md")).toBe(tagging);
+    expect(read(harness, "Shelving.md")).toBe(shelved);
 
     // Not sent again while the file stays as it is.
     const again = await harness.folder.push();
@@ -3374,6 +3413,12 @@ describe("what frontmatter says", () => {
     writeFileSync(join(harness.dir, "Held.md"), broken);
     put(harness, "New.md", "---\ntitle: New\n  bad: indent\n---\nbody\n");
     put(harness, "Tier.md", "---\ntitle: Tier\ntier: attic\n---\nbody\n");
+    put(
+      harness,
+      "Merged.md",
+      "---\nbase: &b {x: 1}\nmerged:\n  <<: *b\n---\nbody\n",
+    );
+    put(harness, "Keyed.md", "---\n1: one\n---\nbody\n");
 
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -3386,6 +3431,8 @@ describe("what frontmatter says", () => {
       pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
     ).toEqual([
       ["Held.md", "unreadable"],
+      ["Keyed.md", "unreadable"],
+      ["Merged.md", "unreadable"],
       ["New.md", "unreadable"],
       ["Tier.md", "unreadable"],
     ]);
@@ -3422,9 +3469,17 @@ describe("what frontmatter says", () => {
     const mended = await harness.folder.push();
     expect(mended.ok, JSON.stringify(mended)).toBe(true);
     expect(rows.get(id)?.properties.body).toBe("edited\n");
+    expect(
+      mended.ok && mended.value.pull?.flagged,
+      "a mended file stayed flagged",
+    ).toEqual([]);
+    expect(
+      read(harness, "Moved.md"),
+      "the pull did not write the mended file again",
+    ).toMatch(/^marfa_version: 2$/m);
   });
 
-  it("sends only what an old buffer's own lines changed, not what another machine changed since", async () => {
+  it("sends no own-field change from an old buffer, and flags the lines it would have changed", async () => {
     const id = "01a00000-0000-7000-8000-000000001431";
     const moved = {
       id,
@@ -3472,6 +3527,12 @@ describe("what frontmatter says", () => {
     put(harness, "Link.md", held.replace("as read", "my edit"));
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+      "the old buffer's own-field lines went unsent without a word",
+    ).toEqual([["Link.md", "behind"]]);
+    expect(pushed.value.scan.flagged[0]?.reason).toMatch(/type, tags/);
     const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
     expect(
       edit?.body.version,
@@ -3651,64 +3712,16 @@ describe("what frontmatter says", () => {
       "the old buffer brought back an item another machine archived",
     ).toEqual([]);
     expect(door!.rows.get(id)?.properties.body).toBe("my edit\n");
-  });
-
-  it("moves nothing from an old buffer older than every write it remembers", async () => {
-    const id = "01a00000-0000-7000-8000-000000001461";
-    const edges = new EdgeDoor();
-    harness = await folderHarness("folder-old-buffer-forgotten", {
-      settings: { search: { types: ["core.note", "core.bookmark"] } },
-      rows: {
-        "core.note": [
-          { item: { id, properties: { title: "Old", body: "as read\n" } } },
-        ],
-      },
-      events: [edges.stream()],
-    });
-    let door: FolderDoor | undefined;
-    scriptFolderWrites(harness, {
-      edges,
-      door: (made) => {
-        door = made;
-      },
-    });
-    expect((await harness.folder.pull()).ok).toBe(true);
-    const held = read(harness, "Old.md");
-    edges.logItem(
-      "item.updated",
-      door!.update(id, {
-        properties: {},
-        type: "core.bookmark",
-        retype: true,
-        version: 1,
-      }),
-    );
-    expect((await harness.folder.push()).ok).toBe(true);
-    // Eight more versions written, past what the folder remembers of the first.
-    for (let version = 2; version < 10; version += 1) {
-      edges.logItem(
-        "item.updated",
-        door!.update(id, { properties: { notes: `n${version}` }, version }),
-      );
-      expect((await harness.folder.push()).ok).toBe(true);
-    }
-    expect(read(harness, "Old.md")).toMatch(/^marfa_version: 10$/m);
-
-    put(harness, "Old.md", held.replace("as read", "my edit"));
-    const pushed = await harness.folder.push();
-    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
-    expect(edit?.body.version, "the old buffer's edit was not sent").toBe(1);
     expect(
-      edit?.body.retype,
-      "a buffer older than every write remembered moved the item back to the type it showed",
-    ).toBeUndefined();
-    expect(door!.rows.get(id)?.type).toBe("core.bookmark");
+      pushed.ok && pushed.value.scan.flagged.map((file) => file.reason),
+      "the old buffer's own-field lines went unsent without a word",
+    ).toEqual([expect.stringMatching(/tag b, state not sent/)]);
   });
 
   it("keeps both body fields' text when a retype moves the body to another", async () => {
     const bookmark = "01a00000-0000-7000-8000-000000001471";
     const event = "01a00000-0000-7000-8000-000000001472";
+    const plain = "01a00000-0000-7000-8000-000000001473";
     harness = await folderHarness("folder-retype-body-fields", {
       settings: {
         search: { types: ["core.note", "core.bookmark", "core.event"] },
@@ -3740,6 +3753,11 @@ describe("what frontmatter says", () => {
             },
           },
         ],
+        "core.note": [
+          {
+            item: { id: plain, properties: { title: "Plain", body: "text\n" } },
+          },
+        ],
       },
     });
     const rows = scriptFolderWrites(harness);
@@ -3747,6 +3765,7 @@ describe("what frontmatter says", () => {
     for (const [name, from, to] of [
       ["Mark.md", "core.bookmark", "core.event"],
       ["Meet.md", "core.event", "core.note"],
+      ["Plain.md", "core.note", "core.event"],
     ]) {
       writeFileSync(
         join(harness.dir, name),
@@ -3775,11 +3794,17 @@ describe("what frontmatter says", () => {
       description: "the details\n",
       body: "an old note",
     });
+    expect(
+      rows.get(plain)?.properties,
+      "with no line of its own, the new body field did not take the body",
+    ).toEqual({ title: "Plain", body: "text\n", description: "text\n" });
   });
 
   it("reads a file the folder never wrote own lines into as leaving them as they are", async () => {
     const id = "01a00000-0000-7000-8000-000000001481";
+    const named = "01a00000-0000-7000-8000-000000001482";
     harness = await folderHarness("folder-own-lines-unwritten", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
           {
@@ -3790,6 +3815,7 @@ describe("what frontmatter says", () => {
             },
             tags: ["a"],
           },
+          { item: { id: named, properties: { title: "Named", body: "n\n" } } },
         ],
       },
     });
@@ -3801,6 +3827,12 @@ describe("what frontmatter says", () => {
       "Older.md",
       `---\ntitle: Older\nmarfa_id: ${id}\nmarfa_version: 1\n---\nedited\n`,
     );
+    // One that names its own fields sends them, as a current file does.
+    put(
+      harness,
+      "Named.md",
+      `---\ntype: core.bookmark\ntags: [fresh]\ntitle: Named\nmarfa_id: ${named}\nmarfa_version: 1\n---\nn\n`,
+    );
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
@@ -3810,7 +3842,359 @@ describe("what frontmatter says", () => {
     expect(
       [sentTags(harness), sentTransitions(harness)],
       "lines the file never carried took the item's tags away or brought it back from the archive",
+    ).toEqual([[`add ${named} fresh`], []]);
+    expect(
+      sentUpdates(harness).find((sent) => sent.id === named)?.body.retype,
+      "a current file's type line, never written by this folder, did not retype",
+    ).toBe(true);
+  });
+
+  it("reads own-field lines in each form a file can hold them", async () => {
+    const shelved = "01a00000-0000-7000-8000-0000000014d1";
+    const trashing = "01a00000-0000-7000-8000-0000000014d2";
+    harness = await folderHarness("folder-own-forms", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: shelved,
+              state: "archived",
+              properties: { title: "Shelved", body: "s\n" },
+            },
+          },
+          {
+            item: { id: trashing, properties: { title: "Trash", body: "t\n" } },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    put(harness, "One.md", "---\ntags: solo\n---\nbody\n");
+    put(harness, "Commas.md", "---\ntags: x, y\n---\nbody\n");
+    put(harness, "None.md", "---\ntags:\n---\nbody\n");
+    for (const [name, line] of [
+      ["Shape.md", "tags: {a: 1}"],
+      ["Number.md", "tags: [1]"],
+      ["Untyped.md", "type:"],
+    ]) {
+      put(harness, name!, `---\n${line}\n---\nbody\n`);
+    }
+    writeFileSync(
+      join(harness.dir, "Shelved.md"),
+      read(harness, "Shelved.md").replace("state: archived", "state:"),
+    );
+    writeFileSync(
+      join(harness.dir, "Trash.md"),
+      read(harness, "Trash.md").replace(
+        "tier: library\n",
+        "tier: library\nstate: trashed\n",
+      ),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    const byTitle = new Map(
+      sentCreates(harness).map((sent) => [
+        String((sent.properties as Record<string, unknown>).title),
+        String(sent.id),
+      ]),
+    );
+    expect(
+      sentTags(harness).sort(),
+      "a tags line of one tag, of tags separated by commas, or empty was misread",
+    ).toEqual(
+      [
+        `add ${byTitle.get("One")} solo`,
+        `add ${byTitle.get("Commas")} x`,
+        `add ${byTitle.get("Commas")} y`,
+      ].sort(),
+    );
+    expect(
+      sentTransitions(harness),
+      "an empty state line did not bring the item back to active, or a trashed state line moved the item",
+    ).toEqual([`${shelved} active`]);
+    expect(
+      harness.server.requests.filter((request) =>
+        request.pathname.endsWith("/restore"),
+      ),
+      "a state line naming the bin restored or trashed something",
+    ).toEqual([]);
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]).sort(),
+    ).toEqual(
+      [
+        ["Number.md", "unreadable"],
+        ["Shape.md", "unreadable"],
+        ["Trash.md", "unreadable"],
+        ["Untyped.md", "unreadable"],
+      ].sort(),
+    );
+  });
+
+  it("sends nothing for a save that only reformats the frontmatter", async () => {
+    const id = "01a00000-0000-7000-8000-0000000014e1";
+    harness = await folderHarness("folder-reformat", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "T", body: "b\n", status: "s" } },
+            tags: ["a"],
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const lines = read(harness, "T.md").split("\n");
+    const end = lines.indexOf("---", 1);
+    const front = lines.slice(1, end);
+    const own = (line: string) => /^(type|tier|tags|  - )/.test(line);
+    writeFileSync(
+      join(harness.dir, "T.md"),
+      [
+        "---",
+        ...front
+          .filter((line) => !own(line))
+          .map((line) => line.replace("title: T", 'title: "T"')),
+        ...front.filter(own),
+        ...lines.slice(end),
+      ].join("\n"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      [sentUpdates(harness), sentTags(harness)],
+      "a save that only moved and quoted lines sent an edit",
     ).toEqual([[], []]);
+  });
+
+  it("sends a tag the person adds and then takes out again at one version", async () => {
+    const id = "01a00000-0000-7000-8000-0000000014f1";
+    harness = await folderHarness("folder-tag-add-remove", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "T", body: "b\n" } },
+            tags: ["a"],
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const written = read(harness, "T.md");
+    writeFileSync(
+      join(harness.dir, "T.md"),
+      written.replace("  - a\n", "  - a\n  - x\n"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    writeFileSync(join(harness.dir, "T.md"), written);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTags(harness),
+      "the person's own tag, added and taken out at one version, was not taken out",
+    ).toEqual([`add ${id} x`, `remove ${id} x`]);
+    expect(pushed.ok && pushed.value.scan.flagged).toEqual([]);
+  });
+
+  it("does not re-archive from a buffer written before a restore elsewhere", async () => {
+    const id = "01a00000-0000-7000-8000-000000001501";
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-restore-elsewhere", {
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "T", body: "as read\n" } } },
+        ],
+      },
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const oldest = read(harness, "T.md");
+    edges.logItem("item.state_changed", door!.transition(id, "archived"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    const archivedBuffer = read(harness, "T.md");
+    expect(archivedBuffer).toMatch(/^state: archived$/m);
+    edges.logItem("item.state_changed", door!.transition(id, "active"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    // A buffer of each write saved over the file, one after the other.
+    put(harness, "T.md", oldest.replace("as read", "edit one"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "T.md", archivedBuffer.replace("as read", "edit two"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTransitions(harness),
+      "a buffer written before the restore archived the item again",
+    ).toEqual([]);
+    expect(door!.rows.get(id)?.state).toBe("active");
+    expect(
+      pushed.ok && pushed.value.scan.flagged.map((file) => file.flag),
+    ).toEqual(["behind"]);
+  });
+
+  it("sends no tag change from an old buffer however many tag writes came at one version", async () => {
+    const id = "01a00000-0000-7000-8000-000000001511";
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-many-tag-writes", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "T", body: "as read\n" } },
+            tags: ["a"],
+          },
+        ],
+      },
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "T.md");
+    const tags = ["a"];
+    for (let n = 1; n <= 9; n += 1) {
+      tags.push(`c${n}`);
+      const row = door!.rows.get(id)!;
+      door!.rows.set(id, { ...row, tags: [...tags] });
+      edges.logItem(
+        "metadata.changed",
+        answers.updated(door!.wire(id), [...tags]),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    put(harness, "T.md", held.replace("as read", "my edit"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTags(harness),
+      "an old buffer took away tags another machine added at its version",
+    ).toEqual([]);
+    expect(door!.rows.get(id)?.tags).toEqual(tags);
+  });
+
+  it("reads a quoted version line as the version, and a removed one as no version", async () => {
+    const quoted = "01a00000-0000-7000-8000-000000001521";
+    const removed = "01a00000-0000-7000-8000-000000001522";
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-quoted-version", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      rows: {
+        "core.note": [
+          {
+            item: { id: quoted, properties: { title: "Q", body: "as read\n" } },
+          },
+          {
+            item: {
+              id: removed,
+              properties: { title: "R", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const buffers = {
+      "Q.md": read(harness, "Q.md").replace(
+        /^marfa_version: (\d+)$/m,
+        'marfa_version: "$1"',
+      ),
+      "R.md": read(harness, "R.md").replace(/^marfa_version: \d+\n/m, ""),
+    };
+    for (const id of [quoted, removed]) {
+      edges.logItem(
+        "item.updated",
+        door!.update(id, {
+          properties: {},
+          type: "core.bookmark",
+          retype: true,
+          version: 1,
+        }),
+      );
+    }
+    expect((await harness.folder.push()).ok).toBe(true);
+    for (const [name, text] of Object.entries(buffers)) {
+      put(harness, name, text.replace("as read", "my edit"));
+    }
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentUpdates(harness).filter((sent) => sent.body.retype === true),
+      "an old buffer whose version line was quoted or taken out moved the item back to the type it showed",
+    ).toEqual([]);
+    expect([rows.get(quoted)?.type, rows.get(removed)?.type]).toEqual([
+      "core.bookmark",
+      "core.bookmark",
+    ]);
+    expect(
+      sentUpdates(harness).find((sent) => sent.id === quoted)?.body.version,
+      "a quoted version line was not read as the version the edit was based on",
+    ).toBe(1);
+  });
+
+  it("lets a file go once a later save lands after a refused one", async () => {
+    const id = "01a00000-0000-7000-8000-000000001531";
+    harness = await folderHarness("folder-refused-then-landed", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "T", body: "as read\n" } } },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    const update = door!.update.bind(door!);
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) =>
+      args[1].retype === true && args[1].type === "core.bookmark"
+        ? refusal(403, "type_not_permitted", "no bookmarks")
+        : update(...args)) as FolderDoor["update"];
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const written = read(harness, "T.md");
+    put(
+      harness,
+      "T.md",
+      written.replace("type: core.note", "type: core.bookmark"),
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    put(harness, "T.md", written.replace("as read", "my edit"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      pushed.ok && pushed.value.drain.verdicts.map((entry) => entry.verdict),
+      "the first save was not refused, so nothing here is held",
+    ).toContain("refused");
+    expect(
+      pushed.ok && pushed.value.pull?.flagged,
+      "the file stayed held for a save its person had already replaced",
+    ).toEqual([]);
+    expect(door!.rows.get(id)?.properties.body).toBe("my edit\n");
+    expect(read(harness, "T.md")).toMatch(/^marfa_version: 2$/m);
   });
 
   it("keeps an unreadable file's item when it moves with no identity", async () => {
@@ -6523,8 +6907,8 @@ describe("writing", () => {
       sentUpdates(harness!).map(
         (update) => update.body.properties_mode ?? "merge",
       ),
-      "an edit sent again over a thinned version still went whole, clearing whatever another machine added since",
-    ).toEqual(["replace", "replace", "merge", "merge"]);
+      "an edit from a file behind the copy went whole, clearing whatever another machine added since",
+    ).toEqual(["merge", "merge", "merge", "merge"]);
     // Not merged against what the file was read from, so the title it
     // carries went over the other machine's.
     expect(rows.get(id)?.properties).toEqual({
@@ -6546,44 +6930,80 @@ describe("writing", () => {
     expect(rows.get(id)?.properties.body).toBe("my edit, again\n");
   });
 
-  it("leaves a file whose old buffer's edit still waits as written", async () => {
+  it("merges a file behind the copy, clearing nothing its lines left out", async () => {
     const id = "01a00000-0000-7000-8000-000000001491";
-    const { door, held } = await heldWhileRetitled(
-      "folder-old-buffer-waits",
-      id,
-      { status: "draft" },
+    const { door, held } = await heldWhileRetitled("folder-behind-merges", id, {
+      status: "draft",
+    });
+    put(
+      harness!,
+      "Note.md",
+      held.replace("status: draft\n", "").replace("as read", "my edit"),
     );
-    const update = door.update.bind(door);
-    let failing = true;
-    door.update = ((...args: Parameters<FolderDoor["update"]>) =>
-      failing
-        ? refusal(503, "service_unavailable", "later")
-        : update(...args)) as FolderDoor["update"];
-    const edited = held
-      .replace("status: draft\n", "")
-      .replace("as read", "my edit");
-    put(harness!, "Note.md", edited);
     const pushed = await harness!.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    // The edit waits, shown over the copy as a merge, so the copy still
-    // holds the property whose line was taken out.
-    const local = await harness!.folder.device().get(id);
-    expect(local.ok && local.value.properties).toMatchObject({
-      status: "draft",
-      body: "my edit\n",
-    });
+    const [edit] = sentUpdates(harness!).filter((sent) => sent.id === id);
     expect(
-      read(harness!, "Note.md"),
-      "the pull wrote a line the person took out back into their file",
-    ).toBe(edited);
-
-    failing = false;
-    expect((await harness!.folder.push()).ok).toBe(true);
+      [edit?.body.version, edit?.body.properties_mode],
+      "a file behind the copy went whole, so a line it never showed another machine's change of was cleared",
+    ).toEqual([1, undefined]);
     expect(door.rows.get(id)?.properties).toEqual({
       title: "Retitled",
       body: "my edit\n",
+      status: "draft",
     });
-    expect(read(harness!, "Note.md")).not.toMatch(/^status:/m);
+    expect(read(harness!, "Note.md")).toMatch(/^status: draft$/m);
+  });
+
+  it("sends a save after a refused edit as behind, keeping what another machine added", async () => {
+    const id = "01a00000-0000-7000-8000-000000001492";
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-refused-then-behind", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "T", body: "as read\n" } } },
+        ],
+      },
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    const update = door!.update.bind(door!);
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) =>
+      args[1].retype === true
+        ? refusal(403, "type_not_permitted", "no bookmarks")
+        : update(...args)) as FolderDoor["update"];
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const retyped = read(harness, "T.md").replace(
+      "type: core.note",
+      "type: core.bookmark",
+    );
+    writeFileSync(join(harness.dir, "T.md"), retyped);
+    expect((await harness.folder.push()).ok).toBe(true);
+    // Another machine adds a property this file never showed.
+    edges.logItem(
+      "item.updated",
+      update(id, { properties: { extra: "theirs" }, version: 1 }),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    writeFileSync(
+      join(harness.dir, "T.md"),
+      retyped
+        .replace("type: core.bookmark", "type: core.note")
+        .replace("as read", "my edit"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      door!.rows.get(id)?.properties,
+      "the save after the refusal went whole on a version the file never saw, clearing another machine's property",
+    ).toEqual({ title: "T", body: "my edit\n", extra: "theirs" });
   });
 
   it("says in words that an edit went over a thinned version", async () => {

@@ -680,7 +680,7 @@ export interface ScanReport {
 /** A file the folder holds rather than sends, and why. */
 export interface FlaggedFile {
   path: string;
-  flag: "unreadable" | "refused";
+  flag: "unreadable" | "refused" | "behind";
   reason: string;
 }
 

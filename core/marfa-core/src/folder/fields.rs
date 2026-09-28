@@ -1,6 +1,8 @@
 //! What a file's frontmatter lines mean (`folders.md` 7): the item's own
 //! fields, the lines that name it, edges, and every other line a property.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -50,7 +52,7 @@ pub fn reserved(name: &str) -> bool {
     ) || EDGE_NAMES.contains(&name)
 }
 
-/// The item's own fields, as the folder last agreed them with a file.
+/// The item's own fields, as a file shows them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Own {
     pub r#type: String,
@@ -68,6 +70,58 @@ impl Own {
             tier: item.tier,
             tags,
             state: item.state,
+        }
+    }
+}
+
+/// What the folder last wrote or read of a file's own fields, at its version line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnBase {
+    pub line: i64,
+    pub agreed: Own,
+    /// Values another machine moved away from at this line, which an old buffer
+    /// may still show and a person's change cannot be told from.
+    #[serde(default)]
+    pub moved: Moved,
+}
+
+/// Tags and states an old buffer at one version line may still show.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Moved {
+    pub tags_added: BTreeSet<String>,
+    pub tags_removed: BTreeSet<String>,
+    pub states: Vec<ItemState>,
+}
+
+impl OwnBase {
+    /// A pull's write of `own` at `line`: what moved since the last agreement
+    /// at that line is another machine's, since this folder agrees its own on reading.
+    pub fn written(was: Option<&OwnBase>, line: i64, own: Own) -> OwnBase {
+        let mut moved = Moved::default();
+        if let Some(was) = was.filter(|was| was.line == line) {
+            moved = was.moved.clone();
+            let before = &was.agreed;
+            moved.tags_added.extend(
+                own.tags
+                    .iter()
+                    .filter(|tag| !before.tags.contains(tag))
+                    .cloned(),
+            );
+            moved.tags_removed.extend(
+                before
+                    .tags
+                    .iter()
+                    .filter(|tag| !own.tags.contains(tag))
+                    .cloned(),
+            );
+            if before.state != own.state && !moved.states.contains(&before.state) {
+                moved.states.push(before.state);
+            }
+        }
+        OwnBase {
+            line,
+            agreed: own,
+            moved,
         }
     }
 }
@@ -133,12 +187,20 @@ pub fn read(front: &Map<String, Value>) -> Result<Read, String> {
     Ok(read)
 }
 
-/// A `tags` line: a list of tags, one tag, or nothing.
+/// A `tags` line: a list of tags, tags separated by commas, or nothing.
 fn tags_of(value: &Value) -> Result<Vec<String>, String> {
+    let split: Vec<Value>;
     let named: Vec<&Value> = match value {
         Value::Null => Vec::new(),
         Value::Array(tags) => tags.iter().collect(),
-        tag @ Value::String(_) => vec![tag],
+        // Obsidian's older style, `tags: a, b`.
+        Value::String(tags) => {
+            split = tags
+                .split(',')
+                .map(|tag| Value::String(tag.to_string()))
+                .collect();
+            split.iter().collect()
+        }
         other => return Err(format!("{TAGS_FIELD} is a list of tags, not {other}")),
     };
     let mut tags = Vec::new();
@@ -254,6 +316,13 @@ mod tests {
                 .lines
                 .tags,
             Some(vec!["solo".into()])
+        );
+        assert_eq!(
+            super::read(&front(json!({ "tags": "x, y" })))
+                .unwrap()
+                .lines
+                .tags,
+            Some(vec!["x".into(), "y".into()])
         );
     }
 

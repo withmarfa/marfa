@@ -288,9 +288,11 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- Why the bytes at content_hash went unsent or were refused, so a pull
   -- leaves the file as the person wrote it (`folders.md` 9, 10).
   held TEXT,
-  -- The own fields the file was written or agreed with, by version line, for
-  -- telling an old buffer's own-field lines from another machine's change.
-  bases TEXT NOT NULL DEFAULT '{}',
+  -- The own fields the folder last wrote or read in the file, as JSON, and
+  -- what another machine moved at that version line without a version step.
+  own TEXT,
+  -- The queue ids of the writes these bytes made, as a JSON array.
+  queued TEXT NOT NULL DEFAULT '[]',
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
