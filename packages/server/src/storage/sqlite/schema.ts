@@ -85,17 +85,20 @@ export const items = sqliteTable(
       .on(table.starts_at)
       .where(sql`starts_at IS NOT NULL`),
     // Serves the enrichment candidate query, which runs on a timer forever
-    // and must cost nothing once a corpus is extracted. Partial: only file
-    // items with a blob are ever candidates, ordered as the query reads
-    // them: by when the file arrived, because a queue position any write can
-    // move is not a record of how long anything has waited. The candidate
-    // query inlines these constants as literals — SQLite only uses a partial
-    // index when the query provably implies its predicate, and a bound
-    // parameter can never be proven.
+    // and must cost nothing once a corpus is extracted. Partial: only items
+    // with a blob are ever candidates, ordered as the query reads them: by
+    // when the file arrived, because a queue position any write can move is
+    // not a record of how long anything has waited. The candidate query
+    // inlines these constants as literals — SQLite only uses a partial index
+    // when the query provably implies its predicate, and a bound parameter
+    // can never be proven.
+    //
+    // No type in the predicate: which types are files is the registry's
+    // answer, a registration changes it, and a list fixed here could not.
     index("idx_items_enrichment_candidates")
       .on(table.created_at)
       .where(
-        sql`(type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL`,
+        sql`state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL`,
       ),
   ],
 );
