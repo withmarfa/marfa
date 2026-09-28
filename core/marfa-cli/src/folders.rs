@@ -29,7 +29,8 @@ pub enum FoldersCommand {
     /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
     List,
     /// Take a folder off this machine: its own state under `.marfa` goes,
-    /// and its files stay as plain files. Refused while writes wait.
+    /// and its files stay as plain files. Refused while writes wait. A
+    /// folder whose directory is gone is taken off the list.
     Remove {
         /// The folder.
         dir: PathBuf,
@@ -122,7 +123,10 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Remove { dir } => {
-            Folder::open(&dir, None)?.remove()?;
+            // A folder whose directory is gone is only taken off the list.
+            if dir.join(marfa_core::folder::STATE_DIR).exists() || !Folder::forget(&dir)? {
+                Folder::open(&dir, None)?.remove()?;
+            }
             output::report(
                 &serde_json::json!({ "dir": dir, "removed": true }),
                 json,
@@ -489,7 +493,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
 }
 
 /// What a scan's look in the other folders on this machine came to, in
-/// words (`folders.md` 38, 40).
+/// words (`folders.md` 39, 41).
 pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!("this folder stands alone, since the folder registry cannot be read: {why}")

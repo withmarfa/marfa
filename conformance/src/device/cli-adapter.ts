@@ -86,7 +86,7 @@ export interface CliDeviceOptions {
   reader?: boolean;
   /**
    * The folder registry the binary reads, standing in for one machine's
-   * (`folders.md` 38); the run's own where unnamed.
+   * (`folders.md` 39); the run's own where unnamed.
    */
   registry?: string;
   /**
@@ -691,15 +691,15 @@ export interface ScanReport {
   missing: number;
   deleted: number;
   /** The paths of those, each found in no folder on the machine
-   *  (`folders.md` 40). */
+   *  (`folders.md` 41). */
   trashed: string[];
   /** Journaled files held, since the other folders could not all be read
-   *  (`folders.md` 40). */
+   *  (`folders.md` 41). */
   unsure: Array<{ path: string; reason: string }>;
   /** Why the registry could not be read, where it could not. */
   registry: string | null;
   /** Journaled files found in another folder on the machine, so nothing was
-   *  trashed (`folders.md` 40). */
+   *  trashed (`folders.md` 41). */
   moved_away: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
@@ -754,13 +754,13 @@ export interface PullReport {
    *  they are (`folders.md` 33). */
   unmatched: number;
   /** Files another folder on the machine let go of, taken in here
-   *  (`folders.md` 41). */
+   *  (`folders.md` 42). */
   taken: number;
   /** Items whose file was moved to another folder on the machine that has
-   *  not taken it yet, so none is written here (`folders.md` 40). */
+   *  not taken it yet, so none is written here (`folders.md` 41). */
   elsewhere: number;
   /** Files of items another folder on the machine holds with a file of its
-   *  own, taken away with nothing trashed (`folders.md` 41). */
+   *  own, taken away with nothing trashed (`folders.md` 42). */
   let_go: number;
   /** File items whose bytes could not be had, so no file was written (`folders.md` 35). */
   absent: number;
@@ -826,7 +826,7 @@ export class CliFolder {
       binary: string;
       url: string;
       key: string;
-      /** The registry of the machine this folder is on (`folders.md` 38). */
+      /** The registry of the machine this folder is on (`folders.md` 39). */
       registry?: string;
       /** A home whose own registry the binary finds, in place of either. */
       home?: string;
@@ -937,7 +937,7 @@ export class CliFolder {
   }
 }
 
-/** A folder a machine's registry lists (`folders.md` 38). */
+/** A folder a machine's registry lists (`folders.md` 39). */
 export interface RegisteredFolder {
   dir: string;
   folder: string;

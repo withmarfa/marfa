@@ -1,4 +1,4 @@
-//! The folders on this machine, listed in one file of its own (`folders.md` 38).
+//! The folders on this machine, listed in one file of its own (`folders.md` 39).
 
 use std::fs::File;
 use std::io::Write;
@@ -23,10 +23,10 @@ pub struct Registered {
     pub dir: PathBuf,
     /// The `system.folder` it follows.
     pub folder: String,
-    /// The device the directory was on, so a folder on a volume not mounted
-    /// now is kept rather than dropped.
+    /// The folder's own store, so a folder listing itself under a new
+    /// directory takes the place of its old entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub device: Option<u64>,
+    pub store: Option<String>,
 }
 
 #[derive(Default, Serialize, Deserialize)]
@@ -85,13 +85,13 @@ impl Registry {
 
     /// Lists a folder again where the registry lost it or the directory
     /// moved. A registry that cannot be read is left as it is.
-    pub fn register(&self, dir: &Path, folder: &str) -> Result<()> {
-        self.list(dir, folder, Unreadable::Refuse)
+    pub fn register(&self, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
+        self.list(dir, folder, store, Unreadable::Refuse)
     }
 
     /// Lists a folder being added, refusing one nested with another; an
     /// unreadable registry is written afresh.
-    pub fn add(&self, dir: &Path, folder: &str) -> Result<()> {
+    pub fn add(&self, dir: &Path, folder: &str, store: Option<&str>) -> Result<()> {
         let dir = resolved(dir);
         if let Ok(listed) = self.folders()
             && let Some(other) = listed.iter().find(|entry| {
@@ -104,25 +104,29 @@ impl Registry {
                 other.dir.display()
             )));
         }
-        self.list(&dir, folder, Unreadable::Replace)
+        self.list(&dir, folder, store, Unreadable::Replace)
     }
 
-    fn list(&self, dir: &Path, folder: &str, unreadable: Unreadable) -> Result<()> {
-        let dir = resolved(dir);
-        let device = device_of(&dir);
+    fn list(
+        &self,
+        dir: &Path,
+        folder: &str,
+        store: Option<&str>,
+        unreadable: Unreadable,
+    ) -> Result<()> {
+        let entry = Registered {
+            dir: resolved(dir),
+            folder: folder.to_string(),
+            store: store.map(str::to_string),
+        };
         self.change(unreadable, |listed| {
-            if listed
-                .iter()
-                .any(|entry| entry.dir == dir && entry.folder == folder && entry.device == device)
-            {
+            if listed.contains(&entry) {
                 return false;
             }
-            listed.retain(|entry| entry.dir != dir);
-            listed.push(Registered {
-                dir: dir.clone(),
-                folder: folder.to_string(),
-                device,
+            listed.retain(|other| {
+                other.dir != entry.dir && (entry.store.is_none() || other.store != entry.store)
             });
+            listed.push(entry.clone());
             true
         })
         .map(|_| ())
@@ -180,7 +184,9 @@ impl Registry {
                 continue;
             }
             entry.dir = resolved(&entry.dir);
-            tidied.retain(|kept| kept.dir != entry.dir);
+            tidied.retain(|kept| {
+                kept.dir != entry.dir && (entry.store.is_none() || kept.store != entry.store)
+            });
             tidied.push(entry);
         }
         let changed =
@@ -215,39 +221,28 @@ impl Registry {
     }
 }
 
-/// A directory as the registry names it: resolved, so two spellings of one
-/// directory are one folder.
+/// A directory as the registry names it: resolved as far as it exists, so
+/// two spellings of one directory are one folder, missing or not.
 pub fn resolved(dir: &Path) -> PathBuf {
-    std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf())
+    for base in dir.ancestors() {
+        if let Ok(found) = std::fs::canonicalize(base) {
+            return match dir.strip_prefix(base) {
+                Ok(rest) if !rest.as_os_str().is_empty() => found.join(rest),
+                _ => found,
+            };
+        }
+    }
+    dir.to_path_buf()
 }
 
-/// Whether a listed folder is gone: its directory holds no folder, or is
-/// missing from a volume that is mounted.
-fn gone(entry: &Registered) -> bool {
-    if entry.dir.join(STATE_DIR).join("core.sqlite").is_file() {
-        return false;
-    }
-    if entry.dir.exists() {
-        return true;
-    }
-    let Some(nearest) = entry.dir.ancestors().skip(1).find(|at| at.exists()) else {
-        return false;
-    };
-    match entry.device {
-        Some(device) => device_of(nearest) == Some(device),
-        None => entry.dir.parent() == Some(nearest),
-    }
-}
-
-#[cfg(unix)]
-fn device_of(path: &Path) -> Option<u64> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path).ok().map(|metadata| metadata.dev())
-}
-
-#[cfg(not(unix))]
-fn device_of(_path: &Path) -> Option<u64> {
-    None
+/// Whether a listed folder is gone: its directory reads, and holds no
+/// folder. One missing or unreadable is kept, since it cannot be told from
+/// one renamed, unmounted or shut for now.
+pub(super) fn gone(entry: &Registered) -> bool {
+    matches!(
+        std::fs::metadata(entry.dir.join(STATE_DIR).join("core.sqlite")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    ) && std::fs::read_dir(&entry.dir).is_ok()
 }
 
 #[cfg(test)]
@@ -262,14 +257,14 @@ mod tests {
     }
 
     #[test]
-    fn lists_each_folder_once_and_drops_one_whose_directory_is_gone() {
+    fn lists_each_folder_once_and_drops_one_that_no_longer_holds_a_folder() {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::at(root.path().join("registry").join(FILE_NAME));
         let one = folder_at(root.path(), "one");
         let two = folder_at(root.path(), "two");
-        registry.add(&one, "f1").unwrap();
-        registry.register(&one, "f1").unwrap();
-        registry.add(&two, "f2").unwrap();
+        registry.add(&one, "f1", None).unwrap();
+        registry.register(&one, "f1", None).unwrap();
+        registry.add(&two, "f2", None).unwrap();
         let listed = registry.folders().unwrap();
         assert_eq!(
             listed
@@ -279,12 +274,12 @@ mod tests {
             ["f1", "f2"]
         );
 
-        std::fs::remove_dir_all(&two).unwrap();
+        std::fs::remove_dir_all(two.join(STATE_DIR)).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
         let written = std::fs::read_to_string(registry.path()).unwrap();
         assert!(
             !written.contains("f2"),
-            "a folder whose directory is gone stayed in the file: {written}"
+            "a folder no longer there stayed in the file: {written}"
         );
 
         assert!(registry.unregister(&one).unwrap());
@@ -297,39 +292,31 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::at(root.path().join(FILE_NAME));
         let one = folder_at(root.path(), "one");
-        registry.add(&one, "f1").unwrap();
-        registry.add(&one, "f9").unwrap();
+        registry.add(&one, "f1", None).unwrap();
+        registry.add(&one, "f9", None).unwrap();
         let listed = registry.folders().unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].folder, "f9");
     }
 
     #[test]
-    fn keeps_a_folder_whose_volume_is_not_mounted_and_drops_one_deleted_with_its_tree() {
+    fn keeps_a_folder_it_cannot_reach_and_drops_one_that_holds_no_folder() {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::at(root.path().join(FILE_NAME));
-        let here = device_of(root.path()).unwrap();
-        let entry = |dir: PathBuf, device: u64| Registered {
+        let entry = |dir: PathBuf| Registered {
             dir,
             folder: "f".into(),
-            device: Some(device),
+            store: None,
         };
+        let emptied = root.path().join("emptied");
+        std::fs::create_dir_all(&emptied).unwrap();
         let listing = Listing {
-            folders: vec![
-                // Missing with its parent, on another device: a volume not
-                // mounted now.
-                entry(
-                    root.path().join("volume").join("notes"),
-                    here.wrapping_add(1),
-                ),
-                // Missing with its parent, on this device: deleted.
-                entry(root.path().join("tree").join("notes"), here),
-            ],
+            folders: vec![entry(root.path().join("renamed")), entry(emptied)],
         };
         std::fs::write(registry.path(), serde_json::to_vec(&listing).unwrap()).unwrap();
         let listed = registry.folders().unwrap();
         assert_eq!(listed.len(), 1, "{listed:?}");
-        assert!(listed[0].dir.ends_with("volume/notes"));
+        assert!(listed[0].dir.ends_with("renamed"));
     }
 
     #[test]
@@ -339,8 +326,8 @@ mod tests {
         let real = folder_at(root.path(), "real");
         let link = root.path().join("link");
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        registry.add(&real, "f").unwrap();
-        registry.register(&link, "f").unwrap();
+        registry.add(&real, "f", None).unwrap();
+        registry.register(&link, "f", None).unwrap();
         // An entry written under the link's name reads as the same folder.
         let raw = std::fs::read_to_string(registry.path()).unwrap();
         let stored = resolved(&real).display().to_string();
@@ -349,7 +336,7 @@ mod tests {
             raw.replace(&stored, &link.display().to_string()),
         )
         .unwrap();
-        registry.register(&real, "f").unwrap();
+        registry.register(&real, "f", None).unwrap();
         let listed = registry.folders().unwrap();
         assert_eq!(listed.len(), 1, "{listed:?}");
         assert_eq!(listed[0].dir, resolved(&real));
@@ -360,14 +347,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::at(root.path().join(FILE_NAME));
         let outer = folder_at(root.path(), "outer");
-        registry.add(&outer, "f1").unwrap();
+        registry.add(&outer, "f1", None).unwrap();
         let inner = folder_at(&outer, "inner");
-        assert!(registry.add(&inner, "f2").is_err());
+        assert!(registry.add(&inner, "f2", None).is_err());
         let above = root.path().join("above");
         std::fs::create_dir_all(&above).unwrap();
         let held = folder_at(&above, "held");
-        registry.add(&held, "f3").unwrap();
-        assert!(registry.add(&above, "f4").is_err());
+        registry.add(&held, "f3", None).unwrap();
+        assert!(registry.add(&above, "f4", None).is_err());
         assert_eq!(registry.folders().unwrap().len(), 2);
     }
 
@@ -378,9 +365,9 @@ mod tests {
         let one = folder_at(root.path(), "one");
         std::fs::write(registry.path(), b"").unwrap();
         assert!(registry.folders().is_err());
-        assert!(registry.register(&one, "f1").is_err());
+        assert!(registry.register(&one, "f1", None).is_err());
         assert_eq!(std::fs::read(registry.path()).unwrap(), b"");
-        registry.add(&one, "f1").unwrap();
+        registry.add(&one, "f1", None).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
     }
 }
