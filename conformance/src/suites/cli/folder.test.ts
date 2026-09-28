@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { cleanup, trackItem } from "../../utils/setup.js";
+import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 
@@ -49,15 +49,18 @@ describe("a folder round trip", () => {
     ]);
     trackItem(c.ctx, seed.item.id);
 
-    await c.cli.json([
+    // The settings are a `system.folder` on the server; this machine keeps
+    // only which one the directory follows.
+    const settings = await c.cli.json<ItemEnvelope>([
       "folders",
-      "add",
-      dir,
-      "--types",
-      "core.note",
-      "--default-type",
-      "core.note",
+      "create",
+      "--title",
+      unique("cli-folder"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
     ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json(["folders", "add", dir, "--folder", settings.item.id]);
     const hydrated = await c.cli.json<{ items: number }>([
       "folders",
       "hydrate",
@@ -152,5 +155,42 @@ describe("a folder round trip", () => {
     >(["device", "--db", store, "queue"]);
     const create = queue.find((row) => row.kind === "create_item");
     expect(create?.verdict).toBe("accepted");
+
+    // A change to the settings from anywhere reaches the folder's copy
+    // through its stream, and the next new file takes it.
+    await c.cli.json([
+      "folders",
+      "change",
+      settings.item.id,
+      "--version",
+      String(settings.item.version),
+      "--defaults",
+      JSON.stringify({ tags: ["from-elsewhere"] }),
+    ]);
+    await c.cli.json(["folders", "push", dir]);
+    const held = await c.cli.json<{ properties: Record<string, unknown> }>([
+      "device",
+      "--db",
+      store,
+      "items",
+      "get",
+      settings.item.id,
+    ]);
+    expect(held.properties.defaults).toEqual({ tags: ["from-elsewhere"] });
+    writeFileSync(
+      join(dir, "second.md"),
+      `---\ntitle: ${unique("cli-folder-second")}\n---\nA second note.\n`,
+    );
+    await c.cli.json(["folders", "push", dir]);
+    const after = await c.cli.json<
+      Array<{ kind: string; tag: string | null; item_id: string | null }>
+    >(["device", "--db", store, "queue"]);
+    const second = after.find(
+      (row) => row.kind === "create_item" && row.item_id !== minted,
+    )?.item_id;
+    if (second) trackItem(c.ctx, second);
+    expect(
+      after.filter((row) => row.kind === "add_tag").map((row) => row.tag),
+    ).toEqual(["from-elsewhere"]);
   });
 });

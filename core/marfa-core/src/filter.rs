@@ -33,7 +33,7 @@ const SYSTEM_FIELDS: [&str; 10] = [
 
 /// The edge type `beneath` walks: an edge's source is the parent and its
 /// target the child.
-const PARENT_OF: &str = "parent-of";
+pub(crate) const PARENT_OF: &str = "parent-of";
 
 /// Narrows a local read by a listing-grammar expression and by `beneath`,
 /// each one clause ANDed with the rest, as the server ANDs its `filter` with
@@ -62,6 +62,11 @@ pub(crate) fn narrow(
         values.push(Value::String(root.to_string()));
     }
     Ok(())
+}
+
+/// Refuses, before any read, what `narrow` would refuse for this expression.
+pub(crate) fn check(filter: &str) -> Result<()> {
+    parse(filter)?.clause(&mut Vec::new()).map(|_| ())
 }
 
 #[derive(Debug, Clone, PartialEq)]

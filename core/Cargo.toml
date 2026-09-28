@@ -32,7 +32,7 @@ thiserror = "2"
 # has not shipped in over a year; this one is current. It parses to its own
 # value type rather than through serde, and the conversion to an item's
 # properties is written out in `folder/document.rs` on purpose: "nothing a
-# file carries is dropped on the way in" (`folders.md` 5) is a rule about
+# file carries is dropped on the way in" (`folders.md` 7) is a rule about
 # exactly that conversion, so it is visible and tested here rather than
 # being a derive nobody reads.
 yaml-rust2 = "0.13"

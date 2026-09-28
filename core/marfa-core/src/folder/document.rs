@@ -119,7 +119,7 @@ pub fn write(properties: &Map<String, Value>) -> Result<String, CoreError> {
 }
 
 /// A YAML value as an item's property. `None` where it cannot be carried as
-/// it is, which makes the whole file a body (`folders.md` 5).
+/// it is, which makes the whole file a body (`folders.md` 7).
 fn from_yaml(value: &Yaml) -> Option<Value> {
     Some(match value {
         Yaml::Real(text) => match text.parse::<f64>() {
@@ -227,7 +227,7 @@ mod tests {
         assert_eq!(body_of(&document), "The body.\n");
     }
 
-    /// Each opens as frontmatter does and is not frontmatter (`folders.md` 6).
+    /// Each opens as frontmatter does and is not frontmatter (`folders.md` 8).
     #[test]
     fn a_body_that_opens_with_a_horizontal_rule_is_a_body() {
         let cases = [

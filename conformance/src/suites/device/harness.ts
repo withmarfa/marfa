@@ -9,15 +9,17 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { v7 as uuidv7 } from "uuid";
 import {
   CliDevice,
   CliFolder,
   newStore,
-  type FolderSlice,
+  type FolderSettings,
 } from "../../device/cli-adapter.js";
 import type { Answer, Responder } from "../../device/scripted-server.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
+  answers,
   edgesPage,
   headRead,
   itemsPage,
@@ -183,8 +185,14 @@ export function scriptHydration(
   server.answer("GET", "/events", headRead(options.head));
   server.answer("GET", "/types", options.catalog ?? typeCatalog());
   server.answer("GET", "/items", (request) => {
-    const type = request.query.get("type") ?? "";
-    const forType = rows[type] ?? [];
+    const type = request.query.get("type");
+    // No type is every type the key reads, which leaves `system.*` out.
+    const forType =
+      type === null
+        ? Object.values(rows)
+            .flat()
+            .filter((row) => !(row.item.type ?? "").startsWith("system."))
+        : (rows[type] ?? []);
     // The state parameter is honored rather than ignored, because a
     // scripted server more generous than the real one lets a device that
     // stopped asking for every state stay green while a real copy silently
@@ -302,9 +310,44 @@ export interface FolderHarness {
   server: ScriptedServer;
   folder: CliFolder;
   dir: string;
+  /** The `system.folder` this folder follows, as the server holds it: a
+   *  fixture changes it to stand for another device changing the settings. */
+  settings: FolderRow;
   /** What the hydration served, so a scripted write door knows those rows. */
   rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
   stop: () => Promise<void>;
+}
+
+/** A `system.folder` the scripted server holds. */
+export interface FolderRow {
+  id: string;
+  version: number;
+  settings: FolderSettings;
+}
+
+/** The row a `system.folder` read answers, as the server holds it. */
+export function folderItem(row: FolderRow): Record<string, unknown> {
+  return wireItem({
+    id: row.id,
+    type: "system.folder",
+    version: row.version,
+    properties: { title: "folder", ...row.settings },
+  });
+}
+
+/**
+ * Serves a `system.folder` by id, as its current settings. Scripted before
+ * any fixture's own read door, so the first-matching route is this one.
+ */
+export function scriptFolderRow(
+  server: ScriptedServer,
+  settings: FolderSettings,
+): FolderRow {
+  const row: FolderRow = { id: uuidv7(), version: 1, settings };
+  server.answer("GET", `/items/${row.id}`, () =>
+    answers.updated(folderItem(row)),
+  );
+  return row;
 }
 
 /**
@@ -316,7 +359,10 @@ export interface FolderHarness {
 export async function folderHarness(
   label: string,
   options: {
-    slice?: FolderSlice;
+    /** The settings its `system.folder` holds; a folder of notes unless named. */
+    settings?: FolderSettings;
+    /** What `GET /edges` lists, by edge type, for a search holding one whole. */
+    edges?: Record<string, WireEdgeOptions[]>;
     /**
      * Another harness's server, for two folders on one server, and the key
      * this folder's machine holds.
@@ -348,10 +394,10 @@ export async function folderHarness(
     url: server.url,
     key: options.sharing?.key ?? KEY,
   });
-  const slice: FolderSlice = options.slice ?? {
-    types: ["core.note"],
-    defaultType: "core.note",
-  };
+  const settings = scriptFolderRow(
+    server,
+    options.settings ?? { search: { types: ["core.note"] } },
+  );
   const stop = async (): Promise<void> => {
     const unscripted = [...server.unmatchedRequests];
     // A shared server is its owner's to stop.
@@ -362,7 +408,7 @@ export async function folderHarness(
       );
     }
   };
-  const added = await folder.add(slice);
+  const added = await folder.add(settings.id);
   if (!added.ok) {
     await stop();
     throw new Error(
@@ -372,7 +418,11 @@ export async function folderHarness(
   // A shared server's doors are its owner's; a second folder hydrates from
   // what the owner scripted, and sees the rows the owner's fixture adds.
   if (options.sharing === undefined) {
-    scriptHydration(server, { head: options.head ?? "1", rows: options.rows });
+    scriptHydration(server, {
+      head: options.head ?? "1",
+      rows: options.rows,
+      edges: options.edges,
+    });
   }
   if (options.events !== undefined) {
     server.answer("GET", "/events", ...options.events);
@@ -386,7 +436,14 @@ export async function folderHarness(
       );
     }
   }
-  return { server, folder, dir, rows: options.rows ?? {}, stop };
+  return {
+    server,
+    folder,
+    dir,
+    settings,
+    rows: options.rows ?? {},
+    stop,
+  };
 }
 
 /** The name a blob's bytes go by: `sha256:` and the hex of their digest. */

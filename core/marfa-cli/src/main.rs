@@ -564,27 +564,34 @@ mod tests {
                 command: FoldersCommand::Scan { .. }
             }
         ));
-        let add = [
-            "marfa",
-            "folders",
-            "add",
-            "notes",
-            "--types",
-            "core.note,core.file",
-            "--tag",
-            "inbox",
-        ];
+        let add = ["marfa", "folders", "add", "notes", "--folder", "f1"];
         assert!(
             Cli::try_parse_from(add.iter().copied().chain(["--source", "notes"])).is_err(),
-            "a folder names no source (`folders.md` 8)"
+            "a folder names no source (`folders.md` 10)"
+        );
+        // A folder's settings are its `system.folder`'s, never flags here
+        // (`folders.md` 1).
+        for flag in [
+            ["--types", "core.note"],
+            ["--tier", "library"],
+            ["--default-type", "core.note"],
+            ["--defaults", "{}"],
+            ["--tag", "inbox"],
+        ] {
+            assert!(
+                Cli::try_parse_from(add.iter().copied().chain(flag)).is_err(),
+                "`folders add` took {}",
+                flag[0]
+            );
+        }
+        assert!(
+            Cli::try_parse_from(&add[..4]).is_err(),
+            "`--folder` is required"
         );
         match Cli::try_parse_from(add).unwrap().command {
             Command::Folders {
-                command: FoldersCommand::Add { types, tags, .. },
-            } => {
-                assert_eq!(types, vec!["core.note", "core.file"]);
-                assert_eq!(tags, vec!["inbox"]);
-            }
+                command: FoldersCommand::Add { folder, .. },
+            } => assert_eq!(folder, "f1"),
             other => panic!("`folders add` parsed as {other:?}"),
         }
     }

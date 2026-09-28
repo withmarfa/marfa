@@ -1,4 +1,4 @@
-//! A directory on a machine that holds a slice as files.
+//! A directory on a machine that holds, as files, what its search matches.
 //!
 //! A folder is a device like any other (`device.md`, `queue-and-verdicts.md`)
 //! with a filesystem as its face. What is here is the translation between a
@@ -6,6 +6,7 @@
 
 pub mod document;
 pub mod identity;
+pub mod settings;
 pub mod state;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -17,55 +18,35 @@ use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::model::{BlockedReason, Draft, Edit, Item, Tier, WriteKind};
+use crate::model::{BlockedReason, Draft, Edit, Item, WriteKind};
 use crate::{Core, Result, Server};
 
-/// Where a folder keeps what is its own (`folders.md` 20).
+pub use settings::{FOLDER_TYPE, Settings};
+
+/// Where a folder keeps what is its own (`folders.md` 22).
 pub const STATE_DIR: &str = ".marfa";
 
 /// How long a missing file is journaled before it becomes a delete
-/// (`folders.md` 15): the window in which the other half of a rename can
+/// (`folders.md` 17): the window in which the other half of a rename can
 /// arrive.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
-/// What a folder is a view on, and what a new file becomes (`folders.md` 1).
+/// The file under `.marfa/` that names the `system.folder` this directory
+/// is bound to, which is all of a folder's settings this machine keeps
+/// (`folders.md` 1).
+const RECORD: &str = "folder.json";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Slice {
-    /// The types this folder holds. A file of any other type is not pushed
-    /// and an item of any other type does not become a file.
-    pub types: Vec<String>,
-    pub tier: Tier,
-    /// What a new file becomes when nothing in it says.
-    pub default_type: String,
-    /// Properties the type requires that a file cannot carry.
-    #[serde(default)]
-    pub defaults: Map<String, Value>,
-    /// Tags every item in this folder carries.
-    #[serde(default)]
-    pub tags: Vec<String>,
+#[serde(deny_unknown_fields)]
+struct Record {
+    folder: String,
 }
 
-impl Slice {
-    fn check(&self) -> Result<()> {
-        if self.types.is_empty() {
-            return Err(CoreError::Invalid(
-                "a folder with no types is a view on nothing; name at least one".into(),
-            ));
-        }
-        if !self.types.iter().any(|held| held == &self.default_type) {
-            return Err(CoreError::Invalid(format!(
-                "this folder makes a new file a {} and does not hold that type, so every file it created would fall outside its own slice",
-                self.default_type
-            )));
-        }
-        Ok(())
-    }
-}
-
-/// A directory, its slice, and the device underneath it.
+/// A directory, the `system.folder` it is bound to, and the device
+/// underneath it.
 pub struct Folder {
     root: PathBuf,
-    slice: Slice,
+    folder: String,
     core: Core,
 }
 
@@ -84,51 +65,62 @@ pub struct ScanReport {
     pub missing: usize,
     /// Journaled files whose grace ran out, now queued as deletes.
     pub deleted: usize,
-    /// Files outside the folder's slice, left alone.
+    /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
     /// Files bound to a row the copy lost, queued again as new items because
-    /// they changed or moved (`folders.md` 30); counted in `created` too.
+    /// they changed or moved (`folders.md` 33); counted in `created` too.
     pub requeued: usize,
     /// Files bound to a row the copy no longer holds and unchanged since, so
-    /// nothing is sent for them (`folders.md` 30).
+    /// nothing is sent for them (`folders.md` 33).
     pub lost: usize,
 }
 
 impl Folder {
-    /// Writes a folder's slice into a directory and opens it. The directory
-    /// need not exist (`folders.md` 3).
-    pub fn add(root: impl AsRef<Path>, slice: Slice, server: Option<Server>) -> Result<Folder> {
-        slice.check()?;
+    /// Binds a directory to the `system.folder` whose settings it follows,
+    /// read from the server now. The directory need not exist
+    /// (`folders.md` 5).
+    pub fn add(root: impl AsRef<Path>, folder: &str, server: Option<Server>) -> Result<Folder> {
+        let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
+        if let Ok(bound) = read_record(&root)
+            && bound != folder
+        {
+            return Err(CoreError::Invalid(format!(
+                "{} already follows the folder {bound}; a directory follows one",
+                root.display()
+            )));
+        }
         let state = root.join(STATE_DIR);
         std::fs::create_dir_all(&state).map_err(|error| {
             CoreError::Store(format!("cannot make {}: {error}", state.display()))
         })?;
-        let json = serde_json::to_string_pretty(&slice)?;
-        std::fs::write(state.join("folder.json"), json).map_err(|error| {
-            CoreError::Store(format!("cannot write this folder's slice: {error}"))
+        let core = Core::open(state.join("core.sqlite"), Some(server))?;
+        let added = Folder {
+            root,
+            folder: folder.to_string(),
+            core,
+        };
+        added.settings_on_server()?;
+        let json = serde_json::to_string_pretty(&Record {
+            folder: folder.to_string(),
         })?;
-        Folder::open(root, server)
+        std::fs::write(state.join(RECORD), json).map_err(|error| {
+            CoreError::Store(format!("cannot write which folder this is: {error}"))
+        })?;
+        Ok(added)
     }
 
     /// Opens a directory somebody has already made a folder.
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
-        let config = root.join(STATE_DIR).join("folder.json");
-        let text = std::fs::read_to_string(&config).map_err(|error| {
-            CoreError::Invalid(format!(
-                "{} is not a folder ({error}); `folders add` makes one",
-                root.display()
-            ))
-        })?;
-        let slice = serde_json::from_str::<Slice>(&text)?;
-        slice.check()?;
+        let folder = read_record(&root)?;
         let core = Core::open(root.join(STATE_DIR).join("core.sqlite"), server)?;
-        Ok(Folder { root, slice, core })
+        Ok(Folder { root, folder, core })
     }
 
-    pub fn slice(&self) -> &Slice {
-        &self.slice
+    /// The id of the `system.folder` this directory follows.
+    pub fn folder_id(&self) -> &str {
+        &self.folder
     }
 
     pub fn core(&self) -> &Core {
@@ -139,24 +131,104 @@ impl Folder {
         &self.root
     }
 
-    /// Pulls the slice this folder is a view on.
+    /// The settings every pass reads: the folder's row in the copy, pinned
+    /// so catch-up keeps it current (`folders.md` 1).
+    pub fn settings(&self) -> Result<Settings> {
+        match self.core.get(&self.folder)? {
+            Some(item) => Settings::of(&item),
+            None => Err(CoreError::Invalid(format!(
+                "this folder's copy does not hold its settings, the {FOLDER_TYPE} {}; hydrate it again with a key holding `{FOLDER_TYPE}:read`",
+                self.folder
+            ))),
+        }
+    }
+
+    /// The settings as the server holds them now.
+    fn settings_on_server(&self) -> Result<Settings> {
+        let read = crate::hydrate::read_with_edges(self.core.http()?, &self.folder).map_err(
+            |error| match error {
+                CoreError::Forbidden { code, .. } if code == "type_not_permitted" => {
+                    CoreError::Forbidden {
+                        code,
+                        message: format!(
+                            "this key cannot read {FOLDER_TYPE}, so the folder cannot follow its settings: it needs `{FOLDER_TYPE}:read`"
+                        ),
+                    }
+                }
+                other => other,
+            },
+        )?;
+        let Some((row, _)) = read else {
+            return Err(CoreError::NotFound {
+                code: "item_not_found".into(),
+                message: format!(
+                    "the server holds no folder {}; `folders create` makes one",
+                    self.folder
+                ),
+            });
+        };
+        Settings::read(
+            &row.item.id,
+            &row.item.r#type,
+            &row.item.state,
+            &row.item.properties,
+        )
+    }
+
+    /// Hydrates the slice the folder's search needs, with its settings
+    /// pinned so every hydration and catch-up keeps them.
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
-        self.core.hydrate(&self.slice.types, self.slice.tier)
+        let settings = self.settings_on_server()?;
+        self.core.lock.refuse_unless_writer()?;
+        crate::store::pin(&*self.core.conn()?, &self.folder)?;
+        self.core.hydrate_every_type_or(
+            settings.types(),
+            settings.tier(),
+            &settings.whole_edge_types(),
+        )
     }
 
     /// Hydrates where the copy cannot answer: never hydrated, cut short, or
-    /// its cursor aged out (`device.md` 4). `None` where it can.
+    /// its cursor aged out (`device.md` 4); or where the settings now ask
+    /// for another slice. `None` where it can.
     pub fn resume(&self) -> Result<Option<crate::model::HydrateReport>> {
-        if crate::store::hydrated(&*self.core.conn()?)? {
+        if crate::store::hydrated(&*self.core.conn()?)? && !self.slice_moved()? {
             return Ok(None);
         }
         self.hydrate().map(Some)
+    }
+
+    /// Whether the settings ask for a slice other than the one the copy
+    /// holds. Settings the copy cannot read count as moved, so the
+    /// hydration that follows says why.
+    fn slice_moved(&self) -> Result<bool> {
+        let Ok(settings) = self.settings() else {
+            return Ok(true);
+        };
+        let conn = self.core.conn()?;
+        let Some((types, tier)) = crate::store::slice(&conn)? else {
+            return Ok(true);
+        };
+        let held: HashSet<&str> = types.iter().map(String::as_str).collect();
+        let asked: HashSet<&str> = if settings.types().is_empty() {
+            HashSet::from([crate::store::EVERY_TYPE])
+        } else {
+            settings.types().iter().map(|name| name.trim()).collect()
+        };
+        let whole: HashSet<String> = crate::store::whole_edge_types(&conn)?.into_iter().collect();
+        let wanted: HashSet<String> = settings.whole_edge_types().into_iter().collect();
+        Ok(held != asked || tier != settings.tier() || whole != wanted)
     }
 
     /// Takes in what the server has recorded since the copy's cursor, or
     /// hydrates again where the log has aged past it (`device.md` 16).
     pub fn catch_up(&self) -> Result<CaughtUp> {
         match self.core.catch_up() {
+            // Settings changed elsewhere can ask for another slice.
+            Ok(report) if self.slice_moved()? => Ok(CaughtUp {
+                caught_up: Some(report),
+                hydrated: Some(self.hydrate()?),
+            }),
             Ok(report) => Ok(CaughtUp {
                 caught_up: Some(report),
                 hydrated: None,
@@ -170,7 +242,7 @@ impl Folder {
     }
 
     /// Every file the folder watches, in a stable order. Dot-led directories
-    /// are excluded at any depth, `.marfa/` with them (`folders.md` 19, 20).
+    /// are excluded at any depth, `.marfa/` with them (`folders.md` 21, 22).
     pub fn files(&self) -> Result<Vec<PathBuf>> {
         let mut found = Vec::new();
         walk(&self.root, &mut found)?;
@@ -221,7 +293,7 @@ struct Scanned {
     text: String,
     hash: String,
     /// Device, inode and birth time, where the filesystem gave a usable
-    /// three (`folders.md` 12).
+    /// three (`folders.md` 14).
     mark: Option<String>,
     born: Option<u128>,
     /// The `marfa_id` a Markdown file's frontmatter carries.
@@ -250,9 +322,10 @@ struct Claim {
 
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
-    /// too, so one rule decides identity (`folders.md` 13).
+    /// too, so one rule decides identity (`folders.md` 15).
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
+        let settings = self.settings()?;
         let catalog = {
             let conn = self.core.conn()?;
             Catalog::load(&conn)?
@@ -264,7 +337,7 @@ impl Folder {
         let mut held: Vec<PathBuf> = Vec::new();
         for path in &paths {
             seen.insert(identity::relative(&self.root, path)?);
-            if self.pushes(path, &catalog) {
+            if self.pushes(path, &settings, &catalog) {
                 held.push(path.clone());
             } else {
                 report.skipped += 1;
@@ -280,7 +353,7 @@ impl Folder {
             let Ok(bytes) = std::fs::read(&path) else {
                 continue;
             };
-            // No blob the server holds is empty (`folders.md` 28).
+            // No blob the server holds is empty (`folders.md` 31).
             if bytes.is_empty() && !is_document(&path) {
                 report.skipped += 1;
                 continue;
@@ -316,7 +389,7 @@ impl Folder {
 
         for (file, claim) in files.iter().zip(claims) {
             // A binding to a row the copy no longer holds binds nothing
-            // (`folders.md` 30).
+            // (`folders.md` 33).
             let claim = match claim {
                 Some(Claim {
                     item_id,
@@ -335,7 +408,7 @@ impl Folder {
             };
             match claim {
                 None => {
-                    self.queue_create(file, &catalog, &mut unresolved)?;
+                    self.queue_create(file, &settings, &catalog, &mut unresolved)?;
                     report.created += 1;
                 }
                 Some(Claim {
@@ -386,7 +459,7 @@ impl Folder {
         }
 
         // Every file is bound now, so a link naming one that arrived in the
-        // same scan resolves (`folders.md` 25).
+        // same scan resolves (`folders.md` 27).
         for pending in unresolved {
             let (named, declined, _) = self.queue_links(
                 &pending.item_id,
@@ -408,7 +481,7 @@ impl Folder {
         }
 
         // Journaled rather than deleted: the first half of a rename looks
-        // exactly like a delete (`folders.md` 15, 16).
+        // exactly like a delete (`folders.md` 17, 18).
         let bound = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -437,7 +510,7 @@ impl Folder {
         Ok(report)
     }
 
-    /// Which item each file is, or `None` for a new one (`folders.md` 8 to
+    /// Which item each file is, or `None` for a new one (`folders.md` 10 to
     /// 12). Held ids decide first; then the binding by identity across every
     /// file before any by path, so a path never takes an item another file is
     /// by identity.
@@ -472,7 +545,7 @@ impl Folder {
                 continue;
             };
             // A copy bound to its own item before its id line was rewritten
-            // stays that item's file (`folders.md` 10).
+            // stays that item's file (`folders.md` 12).
             if by_path
                 .get(file.key.as_str())
                 .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
@@ -598,15 +671,15 @@ impl Folder {
         Ok(sent)
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 21, 28): a
-    /// document, or a file the slice holds a file type for.
-    fn pushes(&self, path: &Path, catalog: &Catalog) -> bool {
-        is_document(path) || self.file_type_of(path, catalog).is_some()
+    /// Whether this path is one the folder pushes (`folders.md` 23, 31): a
+    /// document, or a file whose type the search holds.
+    fn pushes(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> bool {
+        is_document(path) || self.file_type_of(path, settings, catalog).is_some()
     }
 
-    /// The type a file that is not a document becomes, where the slice holds
-    /// it (`folders.md` 28).
-    fn file_type_of(&self, path: &Path, catalog: &Catalog) -> Option<String> {
+    /// The type a file that is not a document becomes, where the search
+    /// holds it (`folders.md` 31).
+    fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
         if is_document(path) {
             return None;
         }
@@ -616,40 +689,46 @@ impl Folder {
         } else {
             FILE_TYPE.to_string()
         };
-        self.slice
-            .types
-            .iter()
-            .any(|declared| catalog.matches(declared, &file_type))
-            .then_some(file_type)
+        let types = settings.types();
+        (types.is_empty()
+            || types
+                .iter()
+                .any(|declared| catalog.matches(declared, &file_type)))
+        .then_some(file_type)
     }
 
     /// Queues a file as a new item under an id the device mints, with no
-    /// natural key (`folders.md` 8).
+    /// natural key (`folders.md` 10), its blanks filled from the defaults
+    /// (`folders.md` 3).
     fn queue_create(
         &self,
         file: &Scanned,
+        settings: &Settings,
         catalog: &Catalog,
         unresolved: &mut Vec<Unresolved>,
     ) -> Result<()> {
-        if let Some(file_type) = self.file_type_of(&file.path, catalog) {
-            return self.queue_create_file(file, file_type);
+        if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
+            return self.queue_create_file(file, file_type, settings);
         }
         let document = file.document();
         let mut properties = sendable(document.properties);
-        for (field, value) in &self.slice.defaults {
+        for (field, value) in &settings.defaults.properties {
             properties.entry(field.clone()).or_insert(value.clone());
         }
         properties
             .entry(document::TITLE_FIELD)
             .or_insert(Value::String(title_of(&file.key)));
         let draft = Draft {
-            r#type: self.slice.default_type.clone(),
+            r#type: settings.new_type(),
             properties,
-            tags: self.slice.tags.clone(),
-            tier: Some(self.slice.tier),
+            tags: settings.defaults.tags.clone(),
+            tier: Some(settings.new_tier()),
             ..Default::default()
         };
         let item_id = named_item(self.core.create_item(&draft)?, &file.key)?;
+        // Before the links, so a link naming a default's target adds no
+        // second edge.
+        self.queue_default_edges(&item_id, settings)?;
         let (named, declined, resolved) = self.queue_links(&item_id, &document.links, &[], &[])?;
         if !resolved {
             unresolved.push(Unresolved {
@@ -664,8 +743,14 @@ impl Folder {
     }
 
     /// A file that is not a document, as a file item: its bytes' upload, and
-    /// the create waiting on it (`folders.md` 28).
-    fn queue_create_file(&self, file: &Scanned, file_type: String) -> Result<()> {
+    /// the create waiting on it (`folders.md` 31). Its type is its bytes', so
+    /// of the defaults it takes the tier, the tags and the edges.
+    fn queue_create_file(
+        &self,
+        file: &Scanned,
+        file_type: String,
+        settings: &Settings,
+    ) -> Result<()> {
         let mut properties = Map::new();
         properties.insert(
             document::TITLE_FIELD.into(),
@@ -674,12 +759,35 @@ impl Folder {
         let draft = Draft {
             r#type: file_type,
             properties,
-            tags: self.slice.tags.clone(),
-            tier: Some(self.slice.tier),
+            tags: settings.defaults.tags.clone(),
+            tier: Some(settings.new_tier()),
             ..Default::default()
         };
         let item_id = named_item(self.core.create_file_item(&file.path, &draft)?, &file.key)?;
+        self.queue_default_edges(&item_id, settings)?;
         self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), None)
+    }
+
+    /// The defaults' edges for a new item. A `parent-of` default names the
+    /// parent, as the child's file writes it, so a new file lands beneath
+    /// what the search follows.
+    fn queue_default_edges(&self, item_id: &str, settings: &Settings) -> Result<()> {
+        for (edge_type, targets) in &settings.defaults.edges {
+            for target in targets {
+                let (source_id, target_id) = if edge_type == crate::filter::PARENT_OF {
+                    (target.clone(), item_id.to_string())
+                } else {
+                    (item_id.to_string(), target.clone())
+                };
+                self.core.create_edge(&crate::model::EdgeDraft {
+                    source_id,
+                    target_id,
+                    edge_type: edge_type.clone(),
+                    ..Default::default()
+                })?;
+            }
+        }
+        Ok(())
     }
 
     /// Queues what a file holds as an edit of its item, and answers whether
@@ -728,10 +836,10 @@ impl Folder {
         let mut edit_line = bound.and_then(|bound| bound.edit_line);
         if !in_step {
             // Bytes set aside in a conflicted copy against this device's own
-            // earlier save go on the version they were read at (`folders.md` 31).
+            // earlier save go on the version they were read at (`folders.md` 34).
             let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
             // A line no newer than one an earlier edit went on is spent: this
-            // edit was made against that one (`folders.md` 17).
+            // edit was made against that one (`folders.md` 19).
             let line = file
                 .line
                 .filter(|line| *line < held.version && edit_line.is_none_or(|spent| *line > spent));
@@ -764,7 +872,7 @@ impl Folder {
     }
 
     /// New bytes are an upload and an update naming them; a move carries the
-    /// new name as the title where the old name was it (`folders.md` 28).
+    /// new name as the title where the old name was it (`folders.md` 31).
     fn queue_update_file(&self, bound: &state::Bound, file: &Scanned, held: &Item) -> Result<bool> {
         let read_at = state::untaken_read_version(&bound.content_hash);
         let based = if read_at.is_some() {
@@ -831,8 +939,8 @@ impl Folder {
     }
 
     /// Links in the body become edges, and a lost link takes its edge
-    /// (`folders.md` 7, 23). Answers the targets named, the targets declined
-    /// (`folders.md` 27), and whether every link resolved.
+    /// (`folders.md` 9, 25). Answers the targets named, the targets declined
+    /// (`folders.md` 30), and whether every link resolved.
     fn queue_links(
         &self,
         item_id: &str,
@@ -923,6 +1031,26 @@ impl Folder {
     }
 }
 
+/// The `system.folder` a directory follows, from its record. A record of
+/// any other shape is refused, never read: settings kept on this machine
+/// are not a folder's (`folders.md` 1).
+fn read_record(root: &Path) -> Result<String> {
+    let text = std::fs::read_to_string(root.join(STATE_DIR).join(RECORD)).map_err(|error| {
+        CoreError::Invalid(format!(
+            "{} is not a folder ({error}); `folders add` makes one",
+            root.display()
+        ))
+    })?;
+    serde_json::from_str::<Record>(&text)
+        .map(|record| record.folder)
+        .map_err(|_| {
+            CoreError::Invalid(format!(
+                "{dir} keeps its settings on this machine, and a folder's settings live in a {FOLDER_TYPE} on the server: make one with `folders create` and add the folder again with `folders add {dir} --folder <id>`",
+                dir = root.display()
+            ))
+        })
+}
+
 /// The item a queued create made.
 fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
     queued
@@ -979,13 +1107,13 @@ pub struct Drained {
     #[serde(flatten)]
     pub report: crate::DrainReport,
     /// Edits the server refused `ancestor_unavailable`, sent again on the
-    /// version the copy holds (`folders.md` 17).
+    /// version the copy holds (`folders.md` 19).
     pub rebased: usize,
 }
 
 impl Folder {
     /// Sends what the queue holds, and each edit whose base the server no
-    /// longer holds again on the version the copy holds (`folders.md` 17).
+    /// longer holds again on the version the copy holds (`folders.md` 19).
     pub fn drain(&self) -> Result<Drained> {
         let mut report = self.core.drain()?;
         let mut rebased = 0;
@@ -1035,13 +1163,17 @@ impl Folder {
 }
 
 impl Folder {
-    /// Writes the slice out as files (`folders.md` 4), each bound before its
-    /// bytes land so the scan never reads it back (`folders.md` 14).
+    /// Writes what the search matches out as files (`folders.md` 2 and 6),
+    /// each bound before its bytes land so the scan never reads it back
+    /// (`folders.md` 16).
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
+        let settings = self.settings()?;
+        let members = self.members(&settings)?;
         let items = self.core.list(
             &crate::model::ListFilters {
-                tier: Some(self.slice.tier),
+                tier: Some(settings.tier()),
+                all_states: true,
                 ..Default::default()
             },
             crate::model::Sort::default(),
@@ -1053,23 +1185,15 @@ impl Folder {
         // Paths already taken in this pass: two items resolving to one would
         // have the second steal the first's file.
         let mut taken: HashSet<String> = HashSet::new();
-        // Every item this pass considered: the rest of the mapping is files of
-        // items that have left the slice.
-        let mut visited: HashSet<String> = HashSet::new();
         for item in &items {
-            visited.insert(item.id.clone());
-            // A type is held with its subtree (`device.md` 1).
-            if !self
-                .slice
-                .types
-                .iter()
-                .any(|declared| catalog.matches(declared, &item.r#type))
-            {
-                report.skipped += 1;
+            if !members.contains(&item.id) {
+                if item.r#type != FOLDER_TYPE {
+                    report.skipped += 1;
+                }
                 continue;
             }
             // This device's own create, not yet landed: the id goes back
-            // only once it has (`folders.md` 8).
+            // only once it has (`folders.md` 10).
             if item.version == 0 {
                 continue;
             }
@@ -1142,7 +1266,7 @@ impl Folder {
                 continue;
             }
             // The bytes on the disk, not the mapping's memory of them: a file
-            // changed since the scan read it is the person's (`folders.md` 24).
+            // changed since the scan read it is the person's (`folders.md` 26).
             if let Some(bound) = &bound
                 && std::fs::read(self.root.join(&bound.path))
                     .is_ok_and(|found| state::hash(&found) != bound.content_hash)
@@ -1159,7 +1283,7 @@ impl Folder {
                 continue;
             }
             // Something at the destination that is not this item's own file
-            // (`folders.md` 24), unless it is byte for byte this item's render.
+            // (`folders.md` 26), unless it is byte for byte this item's render.
             if !ours && path.exists() {
                 if bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes) {
                     let conn = self.core.conn()?;
@@ -1204,7 +1328,7 @@ impl Folder {
             }
 
             // Written over an edit still waiting, the line it writes is spent
-            // too, since the file holds that edit (`folders.md` 17, 18).
+            // too, since the file holds that edit (`folders.md` 19, 20).
             let spent = bound.as_ref().and_then(|bound| bound.edit_line);
             let edit_line = if carries_frontmatter(Path::new(&want))
                 && crate::store::item_waits(&*self.core.conn()?, &item.id)?
@@ -1278,19 +1402,71 @@ impl Folder {
                 report.rewritten += 1;
             }
         }
-        self.remove_departed(&visited, &mut report)?;
+        self.remove_departed(&members, &settings, &mut report)?;
         Ok(report)
     }
 
-    /// Takes away the file of an item the pull no longer writes, where its
-    /// bytes are the folder's own; nothing is journaled (`folders.md` 26).
-    fn remove_departed(&self, visited: &HashSet<String>, report: &mut PullReport) -> Result<()> {
+    /// The ids the search matches in the copy (`folders.md` 2), answered by
+    /// the local list so the folder and a list read one grammar alike.
+    fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
+        let types: Vec<Option<String>> = if settings.types().is_empty() {
+            vec![None]
+        } else {
+            settings.types().iter().cloned().map(Some).collect()
+        };
+        let mut members = HashSet::new();
+        for declared in types {
+            let found = self.core.list(
+                &crate::model::ListFilters {
+                    r#type: declared,
+                    tier: Some(settings.tier()),
+                    all_states: true,
+                    filter: settings.search.filter.clone(),
+                    beneath: settings.search.beneath.clone(),
+                    ..Default::default()
+                },
+                crate::model::Sort::default(),
+            )?;
+            members.extend(
+                found
+                    .into_iter()
+                    .filter(|item| {
+                        !item.r#type.starts_with("system.") && settings.holds_state(item.state)
+                    })
+                    .map(|item| item.id),
+            );
+        }
+        Ok(members)
+    }
+
+    /// A file whose item the search no longer matches (`folders.md` 29). One
+    /// that left by state or was trashed is taken away where its bytes are the
+    /// folder's own, and nothing is journaled; any other stays, flagged
+    /// `unmatched`.
+    fn remove_departed(
+        &self,
+        members: &HashSet<String>,
+        settings: &Settings,
+        report: &mut PullReport,
+    ) -> Result<()> {
         let bound = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
         };
         for row in bound {
-            if visited.contains(&row.item_id) {
+            if members.contains(&row.item_id) {
+                continue;
+            }
+            let held = {
+                let conn = self.core.conn()?;
+                crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
+            };
+            // A row the copy lost is the scan's to report (`folders.md` 33).
+            let Some(item) = held else {
+                continue;
+            };
+            if settings.holds_state(item.state) {
+                report.unmatched += 1;
                 continue;
             }
             let path = self.root.join(&row.path);
@@ -1317,7 +1493,7 @@ impl Folder {
     }
 
     /// Whether a file differs from its item's render in its version line
-    /// alone, with no edit of its own landed since (`folders.md` 18).
+    /// alone, with no edit of its own landed since (`folders.md` 20).
     fn behind_by_its_line_alone(
         &self,
         item: &Item,
@@ -1364,7 +1540,7 @@ impl Folder {
     }
 
     /// An item as a file's bytes and its body's link targets, with the id and
-    /// version line where the file carries frontmatter (`folders.md` 8, 17).
+    /// version line where the file carries frontmatter (`folders.md` 10, 19).
     fn render(
         &self,
         item: &Item,
@@ -1380,7 +1556,7 @@ impl Folder {
             .to_string();
         let held = document::links(&body);
         // The targets of the links in the file, whether the body carried them
-        // already or this adds them, for `folders.md` 23.
+        // already or this adds them, for `folders.md` 25.
         let mut wrote = Vec::new();
         for edge in self.core.edges_from(&item.id)? {
             let target = {
@@ -1422,7 +1598,7 @@ impl Folder {
 }
 
 /// A file whose links the scan could not all resolve on the way past,
-/// asked again once every file is bound (`folders.md` 25).
+/// asked again once every file is bound (`folders.md` 27).
 struct Unresolved {
     path: String,
     item_id: String,
@@ -1439,13 +1615,13 @@ fn extension_of(path: &Path) -> Option<String> {
 }
 
 /// Whether a file carries frontmatter, and with it a `marfa_id`: a Markdown
-/// file (`folders.md` 8).
+/// file (`folders.md` 10).
 fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
 /// Whether a file is a document, which a folder reads as an item's fields
-/// rather than sending as bytes (`folders.md` 21).
+/// rather than sending as bytes (`folders.md` 23).
 fn is_document(path: &Path) -> bool {
     carries_frontmatter(path) || extension_of(path).as_deref() == Some("txt")
 }
@@ -1469,7 +1645,7 @@ pub const LINK_EDGE: &str = "references";
 pub const ID_FIELD: &str = "marfa_id";
 
 /// The frontmatter field that names the version a Markdown file was written
-/// from, which an edit from it is based on (`folders.md` 17).
+/// from, which an edit from it is based on (`folders.md` 19).
 pub const VERSION_FIELD: &str = "marfa_version";
 
 /// The version a file's line names, where it is one the server could have
@@ -1497,7 +1673,7 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// File items whose bytes could not be had (`folders.md` 29).
+    /// File items whose bytes could not be had (`folders.md` 32).
     pub absent: usize,
     /// Files the pull would not write over: one the person changed since
     /// the folder last wrote it, and one at a path the mapping does not hold.
@@ -1505,29 +1681,32 @@ pub struct PullReport {
     /// Journal rows cleared by writing the file back, a person's own delete
     /// inside its grace among them.
     pub revived: usize,
-    /// Items whose file would land outside the folder (`folders.md` 22).
+    /// Items whose file would land outside the folder (`folders.md` 24).
     pub outside: usize,
     /// Items whose path another item in the same pass had already taken.
     pub collided: usize,
-    /// Files of items that left the slice, taken away (`folders.md` 26).
+    /// Files of items that left by state or were trashed, taken away
+    /// (`folders.md` 29).
     pub removed: usize,
-    /// Files of items that left the slice, kept because the person changed
-    /// them.
+    /// The same, kept because the person changed them.
     pub kept: usize,
+    /// Files whose item the search no longer matches for any other reason,
+    /// left where they are (`folders.md` 29).
+    pub unmatched: usize,
 }
 
 /// A file's frontmatter as a write's properties, without `marfa_id` and
 /// `marfa_version`, which name the item and version rather than fields.
 fn sendable(mut properties: Map<String, Value>) -> Map<String, Value> {
     // `shift_remove`: `remove` moves the last field into the hole, which
-    // reorders the frontmatter (`folders.md` 5).
+    // reorders the frontmatter (`folders.md` 7).
     properties.shift_remove(ID_FIELD);
     properties.shift_remove(VERSION_FIELD);
     properties
 }
 
 /// Whether every component of a path is a plain name inside the folder, with
-/// no symlink on the way (`folders.md` 22). A guard, not a boundary: the write
+/// no symlink on the way (`folders.md` 24). A guard, not a boundary: the write
 /// resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();
