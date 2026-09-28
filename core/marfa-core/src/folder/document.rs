@@ -245,7 +245,8 @@ fn to_yaml(value: &Value) -> Yaml {
     }
 }
 
-/// The `[[target]]` links a body carries, in order and without repeats.
+/// The `[[target]]` links a body carries, in order and without repeats. An
+/// embed, `![[target]]`, is not a link.
 pub fn links(body: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = body.as_bytes();
@@ -255,10 +256,11 @@ pub fn links(body: &str) -> Vec<String> {
         let Some(end) = body[open..].find("]]") else {
             break;
         };
+        let embedded = at + start > 0 && bytes[at + start - 1] == b'!';
         let target = body[open..open + end].trim();
         // An alias — `[[id|shown]]` — links to what is before the bar.
         let target = target.split('|').next().unwrap_or(target).trim();
-        if !target.is_empty() && !found.iter().any(|held| held == target) {
+        if !embedded && !target.is_empty() && !found.iter().any(|held| held == target) {
             found.push(target.to_string());
         }
         at = open + end + 2;
@@ -269,7 +271,7 @@ pub fn links(body: &str) -> Vec<String> {
     found
 }
 
-/// One wiki link, as a folder writes it.
+/// One wiki link, as an edge's line names its target.
 pub fn render_link(target: &str) -> String {
     format!("[[{target}]]")
 }
@@ -436,6 +438,11 @@ mod tests {
              this body becomes are not the links it carries"
         );
         assert!(links("a [[ ]] and an [[unclosed").is_empty());
+        assert_eq!(
+            links("![[picture.png]] beside [[note]]"),
+            vec!["note"],
+            "an embed was read as a link, so a picture shown in a note became a reference"
+        );
         assert_eq!(render_link("abc"), "[[abc]]");
     }
 }

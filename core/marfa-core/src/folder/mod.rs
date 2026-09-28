@@ -5,8 +5,10 @@
 //! file and an item, and the state that translation keeps across a restart.
 
 pub mod document;
+pub mod edge_types;
 pub mod fields;
 pub mod identity;
+mod lines;
 mod placement;
 pub mod settings;
 mod settings_file;
@@ -24,7 +26,9 @@ use crate::error::CoreError;
 use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
 
+use edge_types::EdgeTypes;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
+use lines::{EdgeWork, Names, Resolver};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 pub use settings::{FOLDER_TYPE, Settings};
@@ -74,10 +78,10 @@ pub struct ScanReport {
     /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
     /// Files bound to a row the copy lost, queued again as new items because
-    /// they changed or moved (`folders.md` 36); counted in `created` too.
+    /// they changed or moved (`folders.md` 35); counted in `created` too.
     pub requeued: usize,
     /// Files bound to a row the copy no longer holds and unchanged since, so
-    /// nothing is sent for them (`folders.md` 36).
+    /// nothing is sent for them (`folders.md` 35).
     pub lost: usize,
     /// Files this scan read and holds rather than sends (`folders.md` 9, 10).
     pub flagged: Vec<Flagged>,
@@ -87,17 +91,24 @@ pub struct ScanReport {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Flagged {
     pub path: String,
-    /// `unreadable` for frontmatter that does not parse as an item's, and
-    /// `refused` for an edit the server or this copy would not take.
+    /// `unreadable` for frontmatter that does not parse as an item's,
+    /// `refused` for an edit the server or this copy would not take, and
+    /// `edges` for edge lines that change nothing (`folders.md` 11).
     pub flag: &'static str,
     pub reason: String,
 }
 
 impl Flagged {
     fn of(path: &str, held: &str) -> Flagged {
-        let (flag, reason) = match held.strip_prefix(state::UNREADABLE) {
-            Some(reason) => ("unreadable", reason),
-            None => ("refused", held.strip_prefix(state::REFUSED).unwrap_or(held)),
+        let (flag, reason) = if let Some(reason) = held.strip_prefix(state::UNREADABLE) {
+            ("unreadable", reason)
+        } else if let Some(reason) = held
+            .strip_prefix(state::EDGES)
+            .or_else(|| held.strip_prefix(state::EDGES_WAITING))
+        {
+            ("edges", reason)
+        } else {
+            ("refused", held.strip_prefix(state::REFUSED).unwrap_or(held))
         };
         Flagged {
             path: path.to_string(),
@@ -156,10 +167,12 @@ impl Folder {
         // The catalog the hydration would read, so a default type the
         // search does not hold is refused before anything is bound.
         {
-            let types = added.core.http()?.types()?;
+            let http = added.core.http()?;
+            let types = http.types()?;
             let conn = added.core.conn()?;
             crate::store::replace_types(&conn, &types)?;
             Settings::of_wire(&row.item)?.check_types(&Catalog::load(&conn)?)?;
+            EdgeTypes::refresh(http, &conn)?;
         }
         // A key that cannot place its files would lay the folder out on this
         // machine alone; a credential that is not a key is not asked.
@@ -284,11 +297,12 @@ impl Folder {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
         self.core.lock.refuse_unless_writer()?;
+        let edge_types = EdgeTypes::refresh(self.core.http()?, &*self.core.conn()?)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         self.core.hydrate_every_type_or(
             settings.types(),
             settings.tier(),
-            &settings.whole_edge_types(),
+            &whole_edge_types(&settings, &edge_types),
         )
     }
 
@@ -319,15 +333,25 @@ impl Folder {
         } else {
             settings.types().iter().map(|name| name.trim()).collect()
         };
+        let Ok(edge_types) = EdgeTypes::load(&conn) else {
+            return Ok(true);
+        };
         let whole: HashSet<String> = crate::store::whole_edge_types(&conn)?.into_iter().collect();
-        let wanted: HashSet<String> = settings.whole_edge_types().into_iter().collect();
+        let wanted: HashSet<String> = whole_edge_types(&settings, &edge_types)
+            .into_iter()
+            .collect();
         Ok(held != asked || tier != settings.tier() || whole != wanted)
     }
 
     /// Takes in what the server has recorded since the copy's cursor, or
     /// hydrates again where the log has aged past it (`device.md` 16).
     pub fn catch_up(&self) -> Result<CaughtUp> {
-        match self.core.catch_up() {
+        // An edge type registered since is read with the rest.
+        let caught = self.core.catch_up().and_then(|report| {
+            EdgeTypes::refresh(self.core.http()?, &*self.core.conn()?)?;
+            Ok(report)
+        });
+        match caught {
             // Settings changed elsewhere can ask for another slice.
             Ok(report) if self.slice_moved()? => Ok(CaughtUp {
                 caught_up: Some(report),
@@ -353,6 +377,16 @@ impl Folder {
         found.sort();
         Ok(found)
     }
+}
+
+/// The edge types a folder's copy holds whole: its search's, and those a
+/// child's file writes, whose sources the slice may not hold (`folders.md` 11).
+fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes) -> Vec<String> {
+    let mut whole = settings.whole_edge_types();
+    whole.extend(edge_types.written_at_targets());
+    whole.sort();
+    whole.dedup();
+    whole
 }
 
 /// Walks a directory, skipping anything dot-led at any depth.
@@ -432,9 +466,9 @@ impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let settings = self.settings()?;
-        let catalog = {
+        let (catalog, mut edge_types) = {
             let conn = self.core.conn()?;
-            Catalog::load(&conn)?
+            (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let paths = self.files()?;
         // Every file the walk found, whether or not it is pushed: leaving one
@@ -459,7 +493,7 @@ impl Folder {
             let Ok(bytes) = std::fs::read(&path) else {
                 continue;
             };
-            // No blob the server holds is empty (`folders.md` 34).
+            // No blob the server holds is empty (`folders.md` 33).
             if bytes.is_empty() && !is_document(&path) {
                 report.skipped += 1;
                 continue;
@@ -469,7 +503,7 @@ impl Folder {
             let unreadable = read.as_ref().and_then(|read| {
                 read.unreadable
                     .clone()
-                    .or_else(|| fields::read(&read.front).err())
+                    .or_else(|| fields::read(&read.front, &edge_types).err())
             });
             // An unreadable file still names its item, so a move keeps it.
             let id = match &read {
@@ -503,9 +537,22 @@ impl Folder {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
         };
+        // A file read against an old list would send a new type's line as a
+        // property; where the list cannot be read, the one kept stands.
+        let changed = files.iter().any(|file| {
+            !snapshot
+                .iter()
+                .any(|bound| bound.path == file.key && bound.content_hash == file.hash)
+        });
+        if changed
+            && let Ok(http) = self.core.http()
+            && let Ok(fresh) = EdgeTypes::refresh(http, &*self.core.conn()?)
+        {
+            edge_types = fresh;
+        }
         let claims = self.claim(&files, &snapshot, &catalog)?;
         let withheld = self.withheld()?;
-        let mut unresolved: Vec<Unresolved> = Vec::new();
+        let mut work: Vec<EdgeWork> = Vec::new();
 
         for (file, claim) in files.iter().zip(claims) {
             if let Some(reason) = &file.unreadable {
@@ -517,7 +564,7 @@ impl Folder {
                 continue;
             }
             // A binding to a row the copy no longer holds binds nothing
-            // (`folders.md` 36).
+            // (`folders.md` 35).
             let claim = match claim {
                 Some(Claim {
                     item_id,
@@ -540,8 +587,9 @@ impl Folder {
                         file,
                         &settings,
                         &catalog,
+                        &edge_types,
                         &withheld,
-                        &mut unresolved,
+                        &mut work,
                     )? {
                         Some(flagged) => report.flagged.push(flagged),
                         None => report.created += 1,
@@ -556,7 +604,8 @@ impl Folder {
                         None,
                         file,
                         &catalog,
-                        &mut unresolved,
+                        &edge_types,
+                        &mut work,
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
@@ -570,6 +619,15 @@ impl Folder {
                     bound: Some(bound),
                 }) if bound.path == file.key => {
                     if bound.content_hash == file.hash {
+                        // Lines only the server can resolve are asked again
+                        // at each scan that can ask it.
+                        if bound
+                            .held
+                            .as_deref()
+                            .is_some_and(|held| held.starts_with(state::EDGES_WAITING))
+                        {
+                            work.push(self.edge_work(file, &item_id, Some(&bound)));
+                        }
                         // An editor's atomic save gives the same bytes a new
                         // inode, and a stale record would lose the next rename.
                         if bound.identity != file.mark {
@@ -590,7 +648,8 @@ impl Folder {
                         Some(&bound),
                         file,
                         &catalog,
-                        &mut unresolved,
+                        &edge_types,
+                        &mut work,
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
@@ -608,7 +667,8 @@ impl Folder {
                         Some(&bound),
                         file,
                         &catalog,
-                        &mut unresolved,
+                        &edge_types,
+                        &mut work,
                         &mut report.flagged,
                     )?;
                     self.place(&item_id, &file.key, &withheld)?;
@@ -617,22 +677,54 @@ impl Folder {
             }
         }
 
-        // Every file is bound now, so a link naming one that arrived in the
-        // same scan resolves (`folders.md` 30).
-        for pending in unresolved {
-            let (named, declined, _) = self.queue_links(
-                &pending.item_id,
-                &pending.links,
-                &pending.had,
-                &pending.declined,
-            )?;
+        // Every file is bound now, so a link or a line naming one that
+        // arrived in the same scan resolves (`folders.md` 30).
+        let mut resolver = Resolver::new(self, &catalog);
+        for pending in work {
+            // A failure is this file's alone: it waits, and the scan goes on.
+            let outcome = self
+                .queue_edges(&pending, &edge_types, &catalog, &mut resolver)
+                .unwrap_or_else(|error| lines::Outcome {
+                    links: pending.had_links.clone(),
+                    lines: pending.had_lines.clone(),
+                    held: Some(format!("{}{error}", state::EDGES_WAITING)),
+                    queued: Vec::new(),
+                });
             let conn = self.core.conn()?;
             if let Some(bound) = state::bound_at(&conn, &pending.path)? {
+                if let Some(held) = &outcome.held {
+                    report.flagged.push(Flagged::of(&pending.path, held));
+                }
+                // A file held for another reason keeps it.
+                let held = match &bound.held {
+                    Some(held)
+                        if !held.starts_with(state::EDGES)
+                            && !held.starts_with(state::EDGES_WAITING) =>
+                    {
+                        Some(held.clone())
+                    }
+                    _ => outcome.held,
+                };
+                let mut writes = bound.writes.clone();
+                let save = writes.save;
+                writes.queued.extend(
+                    outcome
+                        .queued
+                        .into_iter()
+                        .map(|id| state::Queued { id, save }),
+                );
+                // A refused edge the file no longer asks for holds it no longer.
+                writes.refused.retain(|refused| match &refused.change {
+                    state::Change::Edge { line, shown } => outcome.lines.contains(line) == *shown,
+                    _ => true,
+                });
                 state::bind(
                     &conn,
                     &state::Bound {
-                        links: named,
-                        declined,
+                        links: outcome.links,
+                        lines: outcome.lines,
+                        held,
+                        writes,
                         ..bound
                     },
                 )?;
@@ -863,14 +955,14 @@ impl Folder {
         Ok(sent)
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 26, 34): a
+    /// Whether this path is one the folder pushes (`folders.md` 26, 33): a
     /// document, or a file whose type the search holds.
     fn pushes(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> bool {
         is_document(path) || self.file_type_of(path, settings, catalog).is_some()
     }
 
     /// The type a file that is not a document becomes, where the search
-    /// holds it (`folders.md` 34).
+    /// holds it (`folders.md` 33).
     fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
         if is_document(path) {
             return None;
@@ -896,15 +988,16 @@ impl Folder {
         file: &Scanned,
         settings: &Settings,
         catalog: &Catalog,
+        edge_types: &EdgeTypes,
         withheld: &placement::Withheld,
-        unresolved: &mut Vec<Unresolved>,
+        work: &mut Vec<EdgeWork>,
     ) -> Result<Option<Flagged>> {
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
             self.queue_create_file(file, file_type, settings, catalog, withheld)?;
             return Ok(None);
         }
         let document = file.document();
-        let read = fields::read(&document.front).unwrap_or_default();
+        let read = fields::read(&document.front, edge_types).unwrap_or_default();
         let r#type = read
             .lines
             .r#type
@@ -947,34 +1040,38 @@ impl Folder {
             writes.queued.push(state::Queued { id, save: 1 });
         }
         // Before the links, so a link naming a default's target adds no
-        // second edge.
-        self.queue_default_edges(&item_id, settings)?;
+        // second edge; a line the file writes fills that blank itself.
+        self.queue_default_edges(&item_id, settings, Some((&document.front, edge_types)))?;
         self.place(&item_id, &file.key, withheld)?;
-        let (named, declined, resolved) = self.queue_links(&item_id, &document.links, &[], &[])?;
-        if !resolved {
-            unresolved.push(Unresolved {
-                path: file.key.clone(),
-                item_id: item_id.clone(),
-                links: document.links.clone(),
-                had: Vec::new(),
-                declined: Vec::new(),
-            });
-        }
         self.bind_scanned(
             file,
             &item_id,
-            named,
-            declined,
+            Vec::new(),
+            Vec::new(),
             Kept {
                 writes,
                 ..Kept::default()
             },
         )?;
+        work.push(self.edge_work(file, &item_id, None));
         Ok(None)
     }
 
+    /// A document's links and lines, to read once every file is bound.
+    fn edge_work(&self, file: &Scanned, item_id: &str, bound: Option<&state::Bound>) -> EdgeWork {
+        let document = file.document();
+        EdgeWork {
+            path: file.key.clone(),
+            item_id: item_id.to_string(),
+            links: document.links,
+            front: document.front,
+            had_links: bound.map(|bound| bound.links.clone()).unwrap_or_default(),
+            had_lines: bound.map(|bound| bound.lines.clone()).unwrap_or_default(),
+        }
+    }
+
     /// A file that is not a document, as a file item: its bytes' upload, and
-    /// the create waiting on it (`folders.md` 34). Its type is its bytes', so
+    /// the create waiting on it (`folders.md` 33). Its type is its bytes', so
     /// of the defaults it takes the tier, the tags and the edges.
     fn queue_create_file(
         &self,
@@ -997,21 +1094,37 @@ impl Folder {
             ..Default::default()
         };
         let item_id = named_item(self.core.create_file_item(&file.path, &draft)?, &file.key)?;
-        self.queue_default_edges(&item_id, settings)?;
+        self.queue_default_edges(&item_id, settings, None)?;
         self.place(&item_id, &file.key, withheld)?;
         self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), Kept::default())
     }
 
     /// The defaults' edges for a new item. A `parent-of` default names the
     /// parent, as the child's file writes it, so a new file lands beneath
-    /// what the search follows.
-    fn queue_default_edges(&self, item_id: &str, settings: &Settings) -> Result<()> {
+    /// what the search follows. A type the file's own frontmatter writes a
+    /// line for is no blank.
+    fn queue_default_edges(
+        &self,
+        item_id: &str,
+        settings: &Settings,
+        front: Option<(&Map<String, Value>, &EdgeTypes)>,
+    ) -> Result<()> {
         for (edge_type, targets) in &settings.defaults.edges {
+            let end = if edge_type == crate::filter::PARENT_OF {
+                edge_types::End::Target
+            } else {
+                edge_types::End::Source
+            };
+            if let Some((front, types)) = front
+                && let Some(name) = types.get(edge_type).and_then(|def| def.name_at(end))
+                && front.contains_key(name)
+            {
+                continue;
+            }
             for target in targets {
-                let (source_id, target_id) = if edge_type == crate::filter::PARENT_OF {
-                    (target.clone(), item_id.to_string())
-                } else {
-                    (item_id.to_string(), target.clone())
+                let (source_id, target_id) = match end {
+                    edge_types::End::Target => (target.clone(), item_id.to_string()),
+                    edge_types::End::Source => (item_id.to_string(), target.clone()),
                 };
                 self.core.create_edge(&crate::model::EdgeDraft {
                     source_id,
@@ -1026,13 +1139,15 @@ impl Folder {
 
     /// Queues what a file holds as an edit of its item, whole only where its
     /// version line is the copy's (`folders.md` 7); `bound` is `None` if unbound.
+    #[allow(clippy::too_many_arguments)]
     fn queue_update(
         &self,
         item_id: &str,
         bound: Option<&state::Bound>,
         file: &Scanned,
         catalog: &Catalog,
-        unresolved: &mut Vec<Unresolved>,
+        edge_types: &EdgeTypes,
+        work: &mut Vec<EdgeWork>,
         flagged: &mut Vec<Flagged>,
     ) -> Result<bool> {
         let Some(held) = self.core.get(item_id)? else {
@@ -1049,15 +1164,11 @@ impl Folder {
         {
             return self.queue_update_file(bound, file, &held, catalog);
         }
-        let had = bound.map(|bound| bound.links.clone()).unwrap_or_default();
-        let declined = bound
-            .map(|bound| bound.declined.clone())
-            .unwrap_or_default();
         let document = file.document();
-        let read = fields::read(&document.front).unwrap_or_default();
+        let read = fields::read(&document.front, edge_types).unwrap_or_default();
         let mut edit_line = bound.and_then(|bound| bound.edit_line);
         // Bytes set aside in a conflicted copy against this device's own
-        // earlier save go on the version they were read at (`folders.md` 37).
+        // earlier save go on the version they were read at (`folders.md` 36).
         let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
         // The file's last bytes showed the item as the server last answered
         // it, but for their line: a version step no file shows, or its own edit.
@@ -1066,8 +1177,16 @@ impl Folder {
             && !crate::store::item_waits(&*self.core.conn()?, item_id)?
             && match bound {
                 Some(bound) => {
-                    let (text, _) = self.render(&held, &declined, true, file.line, catalog)?;
-                    state::hash(text.as_bytes()) == bound.content_hash
+                    let names = Names::load(self, catalog)?;
+                    let rendered = self.render(
+                        &held,
+                        true,
+                        file.line,
+                        catalog,
+                        edge_types,
+                        (&names, Some(&document.front), &bound.lines),
+                    )?;
+                    state::hash(rendered.text.as_bytes()) == bound.content_hash
                 }
                 None => false,
             };
@@ -1108,7 +1227,7 @@ impl Folder {
         if whole {
             // No file can carry these, so leaving them out is no clear.
             for (field, value) in &held.properties {
-                if fields::reserved(field) {
+                if fields::reserved(field, edge_types) {
                     properties.insert(field.clone(), value.clone());
                 }
             }
@@ -1186,23 +1305,17 @@ impl Folder {
                 own.tags.as_ref().is_none_or(|tags| !tags.contains(tag))
             }
             state::Change::State(state) => own.state.is_none_or(|shown| shown == *state),
+            // The file's edge work decides these.
+            state::Change::Edge { .. } => true,
         });
-        let (named, declined, resolved) =
-            self.queue_links(item_id, &document.links, &had, &declined)?;
-        if !resolved {
-            unresolved.push(Unresolved {
-                path: file.key.clone(),
-                item_id: item_id.to_string(),
-                links: document.links.clone(),
-                had,
-                declined: declined.clone(),
-            });
-        }
+        let (links, lines) = bound
+            .map(|bound| (bound.links.clone(), bound.lines.clone()))
+            .unwrap_or_default();
         self.bind_scanned(
             file,
             item_id,
-            named,
-            declined,
+            links,
+            lines,
             Kept {
                 edit_line,
                 own: own.base,
@@ -1210,6 +1323,7 @@ impl Folder {
                 writes,
             },
         )?;
+        work.push(self.edge_work(file, item_id, bound));
         Ok(!in_step)
     }
 
@@ -1222,20 +1336,18 @@ impl Folder {
         held: String,
     ) -> Result<()> {
         let links = bound.map(|bound| bound.links.clone()).unwrap_or_default();
-        let declined = bound
-            .map(|bound| bound.declined.clone())
-            .unwrap_or_default();
+        let lines = bound.map(|bound| bound.lines.clone()).unwrap_or_default();
         let kept = Kept {
             edit_line: bound.and_then(|bound| bound.edit_line),
             own: bound.and_then(|bound| bound.own.clone()),
             held: Some(held),
             writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
         };
-        self.bind_scanned(file, item_id, links, declined, kept)
+        self.bind_scanned(file, item_id, links, lines, kept)
     }
 
     /// New bytes are an upload and an update naming them; a move carries the
-    /// new name as the title where the old name was it (`folders.md` 34).
+    /// new name as the title where the old name was it (`folders.md` 33).
     fn queue_update_file(
         &self,
         bound: &state::Bound,
@@ -1289,7 +1401,7 @@ impl Folder {
         file: &Scanned,
         item_id: &str,
         links: Vec<String>,
-        declined: Vec<String>,
+        lines: Vec<state::Line>,
         kept: Kept,
     ) -> Result<()> {
         let conn = self.core.conn()?;
@@ -1302,91 +1414,13 @@ impl Folder {
                 content_hash: file.hash.clone(),
                 written_hash: None,
                 links,
-                declined,
+                lines,
                 edit_line: kept.edit_line,
                 held: kept.held,
                 own: kept.own,
                 writes: kept.writes,
             },
         )
-    }
-
-    /// Links in the body become edges, and a lost link takes its edge
-    /// (`folders.md` 11, 28). Answers the targets named, the targets declined
-    /// (`folders.md` 33), and whether every link resolved.
-    fn queue_links(
-        &self,
-        item_id: &str,
-        links: &[String],
-        had: &[String],
-        declined: &[String],
-    ) -> Result<(Vec<String>, Vec<String>, bool)> {
-        if item_id.is_empty() {
-            return Ok((Vec::new(), Vec::new(), true));
-        }
-        // An error here read as "no edges" would recreate every edge and
-        // remove none.
-        let edges = self.core.edges_from(item_id)?;
-        let held: Vec<&str> = edges.iter().map(|edge| edge.target_id.as_str()).collect();
-        let mut named: Vec<String> = Vec::new();
-        let mut every_link_resolved = true;
-        for target in links {
-            let Some(resolved) = self.resolve_link(target)? else {
-                // A link naming nothing looks like a link removed.
-                every_link_resolved = false;
-                continue;
-            };
-            if !held.contains(&resolved.as_str()) {
-                self.core.create_edge(&crate::model::EdgeDraft {
-                    source_id: item_id.to_string(),
-                    target_id: resolved.clone(),
-                    edge_type: LINK_EDGE.into(),
-                    ..Default::default()
-                })?;
-            }
-            if !named.contains(&resolved) {
-                named.push(resolved);
-            }
-        }
-        if !every_link_resolved {
-            let mut kept = named;
-            for target in had {
-                if !kept.contains(target) {
-                    kept.push(target.clone());
-                }
-            }
-            return Ok((kept, declined.to_vec(), false));
-        }
-        let foreign: HashSet<&str> = edges
-            .iter()
-            .filter(|edge| edge.edge_type != LINK_EDGE)
-            .map(|edge| edge.target_id.as_str())
-            .collect();
-        let mut still_declined: Vec<String> = declined
-            .iter()
-            .filter(|target| !named.contains(target))
-            .cloned()
-            .collect();
-        for target in had {
-            if foreign.contains(target.as_str())
-                && !named.contains(target)
-                && !still_declined.contains(target)
-            {
-                still_declined.push(target.clone());
-            }
-        }
-        // An edge whose link the file never carried arrived from elsewhere
-        // and is not yet rendered.
-        for edge in edges {
-            if edge.edge_type != LINK_EDGE
-                || named.contains(&edge.target_id)
-                || !had.contains(&edge.target_id)
-            {
-                continue;
-            }
-            self.core.delete_edge(&edge.id)?;
-        }
-        Ok((named, still_declined, true))
     }
 
     /// The item a link names: an id the copy holds, or a file in this folder.
@@ -1402,6 +1436,49 @@ impl Folder {
         }
         Ok(None)
     }
+}
+
+/// A refused write's reason as a held file carries it: the server's code and
+/// message.
+fn refusal_of(row: &crate::model::QueuedWrite) -> String {
+    let code = row.reason.clone().unwrap_or_default();
+    let message = row
+        .answer
+        .as_deref()
+        .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
+        .and_then(|answer| answer["error"]["message"].as_str().map(str::to_string));
+    match message {
+        Some(message) => format!("{}{code}: {message}", state::REFUSED),
+        None => format!("{}{code}", state::REFUSED),
+    }
+}
+
+/// The line an edge write of a file's lines stands for, read from its row.
+fn edge_change(
+    conn: &rusqlite::Connection,
+    row: &crate::model::QueuedWrite,
+    item_id: &str,
+) -> Result<Option<state::Change>> {
+    let (Some(source), Some(target)) = (&row.item_id, &row.target_id) else {
+        return Ok(None);
+    };
+    let body: Value = serde_json::from_str(&crate::store::payload_of(conn, &row.id)?)?;
+    let Some(edge_type) = body["edge_type"].as_str() else {
+        return Ok(None);
+    };
+    let (end, other) = if source == item_id {
+        (edge_types::End::Source, target)
+    } else {
+        (edge_types::End::Target, source)
+    };
+    Ok(Some(state::Change::Edge {
+        line: state::Line {
+            edge_type: edge_type.to_string(),
+            end,
+            other: other.clone(),
+        },
+        shown: row.kind == WriteKind::CreateEdge,
+    }))
 }
 
 /// The item a queued create made.
@@ -1475,7 +1552,8 @@ impl Folder {
         let mut rebased = 0;
         while report.stopped.is_none() {
             let now = self.rebase_thinned()?;
-            if now == 0 {
+            let restored = self.put_back_replaced()?;
+            if now + restored == 0 {
                 break;
             }
             rebased += now;
@@ -1529,10 +1607,19 @@ impl Folder {
                             None => continue,
                         }
                     }
+                    WriteKind::CreateEdge | WriteKind::DeleteEdge => {
+                        match edge_change(&conn, row, &bound.item_id)? {
+                            Some(change) => change,
+                            None => continue,
+                        }
+                    }
                     _ => continue,
                 };
+                // A delete of an edge already gone did what it was asked.
+                let gone = row.kind == WriteKind::DeleteEdge
+                    && verdict.reason.as_deref() == Some("edge_not_found");
                 match verdict.verdict {
-                    Some(crate::model::Verdict::Refused) => {
+                    Some(crate::model::Verdict::Refused) if !gone => {
                         let code = verdict.reason.clone().unwrap_or_default();
                         let message = row
                             .answer
@@ -1545,16 +1632,23 @@ impl Folder {
                         if change == state::Change::Edit && save == bound.writes.save {
                             bound.edit_line = None;
                         }
-                        bound.writes.refused.push(state::Refused {
+                        let refused = state::Refused {
                             change,
                             save,
                             reason: match message {
                                 Some(message) => format!("{code}: {message}"),
                                 None => code,
                             },
-                        });
+                        };
+                        if !bound.writes.refused.contains(&refused) {
+                            bound.writes.refused.push(refused);
+                        }
                     }
-                    Some(crate::model::Verdict::Accepted | crate::model::Verdict::Merged) => {
+                    Some(
+                        crate::model::Verdict::Accepted
+                        | crate::model::Verdict::Merged
+                        | crate::model::Verdict::Refused,
+                    ) => {
                         bound.writes.refused.retain(|refused| {
                             refused.save >= save || !change.supersedes(&refused.change)
                         });
@@ -1569,6 +1663,114 @@ impl Folder {
             }
         }
         Ok(())
+    }
+
+    /// Puts back an edge whose delete landed and whose successor was refused,
+    /// so a failed replace never leaves the end with none (`folders.md` 11).
+    fn put_back_replaced(&self) -> Result<usize> {
+        use crate::model::Verdict;
+        let queue = self.core.queue()?;
+        let records = state::replaced(&*self.core.conn()?)?;
+        let mut queued = 0;
+        for (create, old) in records {
+            let row = queue.iter().find(|row| row.id == create);
+            let put_back = match row {
+                Some(row) => match row.verdict {
+                    None | Some(Verdict::Blocked) => continue,
+                    Some(Verdict::Refused | Verdict::Dead) => row.depends_on.iter().any(|waited| {
+                        queue.iter().any(|write| {
+                            &write.id == waited
+                                && write.kind == WriteKind::DeleteEdge
+                                && matches!(
+                                    write.verdict,
+                                    Some(Verdict::Accepted | Verdict::Merged)
+                                )
+                        })
+                    }),
+                    _ => false,
+                },
+                // Its answered rows were cleared: the copy, read back after
+                // each answer, says whether either edge stands.
+                None => {
+                    let held = self
+                        .core
+                        .edges_to(&old.target_id)?
+                        .into_iter()
+                        .chain(self.core.edges_to(&old.new_target_id)?);
+                    !held.into_iter().any(|edge| {
+                        edge.edge_type == old.edge_type
+                            && (edge.source_id == old.source_id && edge.target_id == old.target_id
+                                || edge.source_id == old.new_source_id
+                                    && edge.target_id == old.new_target_id)
+                    })
+                }
+            };
+            if put_back {
+                self.core.create_edge(&crate::model::EdgeDraft {
+                    source_id: old.source_id.clone(),
+                    target_id: old.target_id.clone(),
+                    edge_type: old.edge_type.clone(),
+                    properties: old.properties.clone(),
+                    ..Default::default()
+                })?;
+                let reason = row.map_or_else(
+                    || "the replacement was refused and its answer cleared".to_string(),
+                    refusal_of,
+                );
+                self.record_put_back(&old, &reason)?;
+                queued += 1;
+            }
+            state::settle_replaced(&*self.core.conn()?, &create)?;
+        }
+        Ok(queued)
+    }
+
+    /// Points the writing file's record back at the edge put back, and holds
+    /// the file while it still names the refused target.
+    fn record_put_back(&self, old: &state::Replaced, reason: &str) -> Result<()> {
+        let (item, end, from, to) = if old.new_source_id == old.source_id {
+            (
+                &old.source_id,
+                edge_types::End::Source,
+                &old.new_target_id,
+                &old.target_id,
+            )
+        } else {
+            (
+                &old.target_id,
+                edge_types::End::Target,
+                &old.new_source_id,
+                &old.source_id,
+            )
+        };
+        let conn = self.core.conn()?;
+        let Some(mut bound) = state::bound_to_item(&conn, item)? else {
+            return Ok(());
+        };
+        for line in &mut bound.lines {
+            if line.edge_type == old.edge_type && line.end == end && &line.other == from {
+                line.other = to.clone();
+            }
+        }
+        let refused = state::Refused {
+            change: state::Change::Edge {
+                line: state::Line {
+                    edge_type: old.edge_type.clone(),
+                    end,
+                    other: from.clone(),
+                },
+                shown: true,
+            },
+            save: bound.writes.save,
+            reason: reason
+                .strip_prefix(state::REFUSED)
+                .unwrap_or(reason)
+                .to_string(),
+        };
+        if !bound.writes.refused.contains(&refused) {
+            bound.writes.refused.push(refused);
+        }
+        state::bind(&conn, &bound)
     }
 
     /// Moves the first such edit of each row: the next was made against it,
@@ -1611,9 +1813,9 @@ impl Folder {
             },
             crate::model::Sort::default(),
         )?;
-        let catalog = {
+        let (catalog, edge_types) = {
             let conn = self.core.conn()?;
-            Catalog::load(&conn)?
+            (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let bound_items: HashSet<String> = {
             let conn = self.core.conn()?;
@@ -1643,6 +1845,9 @@ impl Folder {
                 .filter(|item| settings.holds_state(item.state))
                 .map(|item| (item, true)),
         );
+        self.hold_edge_ends(&work, &edge_types, &catalog)?;
+        // After the pins, so a line names a target the copy now holds.
+        let names = Names::load(self, &catalog)?;
         let withheld = self.withheld()?;
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
@@ -1731,13 +1936,18 @@ impl Folder {
             .map(|bound| bound.path.clone())
             .collect();
         let mut waiting = Vec::new();
+        let rendering = Rendering {
+            catalog: &catalog,
+            edge_types: &edge_types,
+            names: &names,
+        };
         for entry in placing {
-            if self.write_placed(&entry, &catalog, &withheld, Some(&leaving), &mut report)? {
+            if self.write_placed(&entry, &rendering, &withheld, Some(&leaving), &mut report)? {
                 waiting.push(entry);
             }
         }
         for entry in waiting {
-            self.write_placed(&entry, &catalog, &withheld, None, &mut report)?;
+            self.write_placed(&entry, &rendering, &withheld, None, &mut report)?;
         }
         self.remove_departed(&members, &settings, &mut report)?;
         report.flagged = {
@@ -1758,8 +1968,9 @@ impl Folder {
                 })
                 .collect()
         };
-        report.uncarried =
-            fields::uncarried(&catalog, |r#type| settings.holds_type(&catalog, r#type));
+        report.uncarried = fields::uncarried(&catalog, &edge_types, |r#type| {
+            settings.holds_type(&catalog, r#type)
+        });
         report.settings = self.write_settings_if_moved()?;
         Ok(report)
     }
@@ -1769,7 +1980,7 @@ impl Folder {
     fn write_placed(
         &self,
         entry: &Placing<'_>,
-        catalog: &Catalog,
+        rendering: &Rendering<'_>,
         withheld: &placement::Withheld,
         leaving: Option<&HashSet<String>>,
         report: &mut PullReport,
@@ -1778,12 +1989,9 @@ impl Folder {
             item, bound, want, ..
         } = entry;
         let (item, want) = (*item, want.clone());
+        let catalog = rendering.catalog;
         let path = self.root.join(&want);
-        let declined: Vec<String> = bound
-            .as_ref()
-            .map(|bound| bound.declined.clone())
-            .unwrap_or_default();
-        let (bytes, wrote) = match bytes_of(item, catalog) {
+        let (bytes, wrote, lines) = match bytes_of(item, catalog) {
             Some(blob) => {
                 // A file already holding these bytes needs no fetch, a
                 // file moving to its placement included.
@@ -1795,12 +2003,13 @@ impl Folder {
                             .is_ok_and(|named| crate::blob::name_of(found) == named)
                     });
                 match on_disk {
-                    Some(found) => (found, Vec::new()),
+                    Some(found) => (found, Vec::new(), Vec::new()),
                     None => match self.core.blob(blob) {
                         Ok(held) => (
                             std::fs::read(&held).map_err(|error| {
                                 CoreError::Store(format!("cannot read {}: {error}", held.display()))
                             })?,
+                            Vec::new(),
                             Vec::new(),
                         ),
                         // A refused credential refuses every file alike.
@@ -1813,14 +2022,26 @@ impl Folder {
                 }
             }
             None => {
-                let (text, wrote) = self.render(
+                // The lines the person typed, where they still name their
+                // items, are left as typed.
+                let typed = bound
+                    .as_ref()
+                    .filter(|bound| carries_frontmatter(Path::new(&bound.path)))
+                    .and_then(|bound| std::fs::read_to_string(self.root.join(&bound.path)).ok())
+                    .map(|text| document::read(&text).front);
+                let rendered = self.render(
                     item,
-                    &declined,
                     carries_frontmatter(Path::new(&want)),
                     Some(item.version),
                     catalog,
+                    rendering.edge_types,
+                    (
+                        rendering.names,
+                        typed.as_ref(),
+                        bound.as_ref().map_or(&[][..], |bound| &bound.lines),
+                    ),
                 )?;
-                (text.into_bytes(), wrote)
+                (rendered.text.into_bytes(), rendered.links, rendered.lines)
             }
         };
         let hash = state::hash(&bytes);
@@ -1847,9 +2068,7 @@ impl Folder {
                 report.unwritten += 1;
                 return Ok(false);
             }
-            Some(bound) if ours => {
-                self.behind_by_its_line_alone(item, bound, &declined, catalog)?
-            }
+            Some(bound) if ours => self.behind_by_its_line_alone(item, bound, rendering)?,
             _ => false,
         };
         // Something at the destination that is not this item's own file
@@ -1875,7 +2094,7 @@ impl Folder {
                     content_hash: hash.clone(),
                     written_hash: Some(hash),
                     links: wrote,
-                    declined,
+                    lines,
                     edit_line: None,
                     held: None,
                     own,
@@ -1909,7 +2128,7 @@ impl Folder {
             content_hash: hash.clone(),
             written_hash: Some(hash.clone()),
             links: wrote.clone(),
-            declined: declined.clone(),
+            lines: lines.clone(),
             edit_line,
             held: None,
             own: own.clone(),
@@ -2025,7 +2244,7 @@ impl Folder {
                 let conn = self.core.conn()?;
                 crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
             };
-            // A row the copy lost is the scan's to report (`folders.md` 36).
+            // A row the copy lost is the scan's to report (`folders.md` 35).
             let Some(item) = held else {
                 continue;
             };
@@ -2061,8 +2280,7 @@ impl Folder {
         &self,
         item: &Item,
         bound: &state::Bound,
-        declined: &[String],
-        catalog: &Catalog,
+        rendering: &Rendering<'_>,
     ) -> Result<bool> {
         if !carries_frontmatter(Path::new(&bound.path)) {
             return Ok(false);
@@ -2070,7 +2288,8 @@ impl Folder {
         let Ok(found) = std::fs::read_to_string(self.root.join(&bound.path)) else {
             return Ok(false);
         };
-        let line = line_of(&document::read(&found).front);
+        let front = document::read(&found).front;
+        let line = line_of(&front);
         // A line no newer than the one its own edit spent is rewritten once
         // that edit lands.
         if bound
@@ -2080,8 +2299,15 @@ impl Folder {
         {
             return Ok(false);
         }
-        let (text, _) = self.render(item, declined, true, line, catalog)?;
-        Ok(state::hash(text.as_bytes()) == bound.content_hash)
+        let rendered = self.render(
+            item,
+            true,
+            line,
+            rendering.catalog,
+            rendering.edge_types,
+            (rendering.names, Some(&front), &bound.lines),
+        )?;
+        Ok(state::hash(rendered.text.as_bytes()) == bound.content_hash)
     }
 
     /// Where an item's file goes (`folders.md` 18): where its placement says,
@@ -2126,71 +2352,130 @@ impl Folder {
         }
     }
 
-    /// An item as a file's bytes and its body's link targets (`folders.md` 7,
-    /// 12, 22); a property no file can carry is left out.
+    /// An item as a file (`folders.md` 7, 11, 12, 22).
     fn render(
         &self,
         item: &Item,
-        declined: &[String],
         frontmatter: bool,
         line: Option<i64>,
         catalog: &Catalog,
-    ) -> Result<(String, Vec<String>)> {
+        edge_types: &EdgeTypes,
+        lines: LinesBy<'_>,
+    ) -> Result<Rendered> {
         let body_field = fields::body_field(catalog, &item.r#type);
-        let mut body = item
+        let body = item
             .properties
             .get(body_field)
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
-        let held = document::links(&body);
-        // The targets of the links in the file, whether the body carried them
-        // already or this adds them, for `folders.md` 28.
-        let mut wrote = Vec::new();
-        for edge in self.core.edges_from(&item.id)? {
-            if edge.edge_type == PLACEMENT_EDGE {
-                continue;
+        let mut links = Vec::new();
+        for text in document::links(&body) {
+            if let Some(id) = self.resolve_link(&text)?
+                && !links.contains(&id)
+            {
+                links.push(id);
             }
-            let target = {
-                let conn = self.core.conn()?;
-                state::bound_to_item(&conn, &edge.target_id)?
-                    .map(|bound| bound.path)
-                    .unwrap_or_else(|| edge.target_id.clone())
-            };
-            let name = target.strip_suffix(".md").unwrap_or(&target).to_string();
-            if held.iter().any(|link| link == &name || link == &target) {
-                wrote.push(edge.target_id.clone());
-                continue;
-            }
-            // A bare id the person could delete and the pull would write back.
-            if self.core.get(&edge.target_id)?.is_none() {
-                continue;
-            }
-            if edge.edge_type != LINK_EDGE && declined.contains(&edge.target_id) {
-                continue;
-            }
-            wrote.push(edge.target_id.clone());
-            if !body.ends_with('\n') && !body.is_empty() {
-                body.push('\n');
-            }
-            body.push_str(&document::render_link(&name));
-            body.push('\n');
         }
         if !frontmatter {
-            return Ok((body, wrote));
+            return Ok(Rendered {
+                text: body,
+                links,
+                lines: Vec::new(),
+            });
         }
         let mut front = fields::lines_of(item);
         for (field, value) in &item.properties {
-            if field != body_field && !fields::reserved(field) {
+            if field != body_field && !fields::reserved(field, edge_types) {
                 front.insert(field.clone(), value.clone());
             }
         }
+        let (names, typed, recorded) = lines;
+        let (entries, written) =
+            self.lines_for(item, edge_types, catalog, names, typed, &links, recorded)?;
+        front.extend(entries);
         front.insert(ID_FIELD.into(), Value::String(item.id.clone()));
         if let Some(line) = line {
             front.insert(VERSION_FIELD.into(), Value::from(line));
         }
-        Ok((document::write(&front, &body)?, wrote))
+        Ok(Rendered {
+            text: document::write(&front, &body)?,
+            links,
+            lines: written,
+        })
     }
+
+    /// Pins the other end of every edge a file here writes, so its line has a
+    /// title to show; the record of them holds each such pin (`folders.md` 11).
+    fn hold_edge_ends(
+        &self,
+        work: &[(Item, bool)],
+        edge_types: &EdgeTypes,
+        catalog: &Catalog,
+    ) -> Result<()> {
+        let mut wanted: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for (item, _) in work {
+            if bytes_of(item, catalog).is_none() {
+                let recorded = state::bound_to_item(&*self.core.conn()?, &item.id)?
+                    .map(|bound| bound.lines)
+                    .unwrap_or_default();
+                wanted.extend(self.written_ends(item, edge_types, catalog, &recorded)?);
+            }
+        }
+        let recorded: HashSet<String> =
+            state::edge_ends(&*self.core.conn()?)?.into_iter().collect();
+        let mut kept = Vec::new();
+        for id in wanted {
+            let (held, pinned) = {
+                let conn = self.core.conn()?;
+                (
+                    crate::store::item_held(&conn, &id)?,
+                    crate::store::pinned(&conn, &id)?,
+                )
+            };
+            if held || pinned {
+                crate::store::pin(&*self.core.conn()?, &id)?;
+                kept.push(id);
+                continue;
+            }
+            // Unreadable now, offline or gone: the line names it by id.
+            match self.core.pin(&id) {
+                Ok(_) => kept.push(id),
+                Err(
+                    CoreError::NoServer | CoreError::NotFound { .. } | CoreError::Forbidden { .. },
+                ) => {}
+                Err(error) if error.is_environmental() => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let conn = self.core.conn()?;
+        state::set_edge_ends(&conn, &kept)?;
+        for id in recorded {
+            if !kept.contains(&id) {
+                state::unpin_if_unheld(&conn, &id)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What a render writes lines by: the copy's names, the file's own lines,
+/// and the edges its record says it carried.
+type LinesBy<'a> = (&'a Names, Option<&'a Map<String, Value>>, &'a [state::Line]);
+
+/// What a pull renders by, read once for every file it writes.
+struct Rendering<'a> {
+    catalog: &'a Catalog,
+    edge_types: &'a EdgeTypes,
+    names: &'a Names,
+}
+
+/// An item rendered as a file: its bytes as text, the items its body links,
+/// and the edges its lines name.
+struct Rendered {
+    text: String,
+    links: Vec<String>,
+    lines: Vec<state::Line>,
 }
 
 /// What a scan keeps on a file's binding beside its bytes.
@@ -2412,16 +2697,6 @@ struct Placing<'a> {
     rank: placement::Rank,
 }
 
-/// A file whose links the scan could not all resolve on the way past,
-/// asked again once every file is bound (`folders.md` 30).
-struct Unresolved {
-    path: String,
-    item_id: String,
-    links: Vec<String>,
-    had: Vec<String>,
-    declined: Vec<String>,
-}
-
 /// The extension of a path, lowercased.
 fn extension_of(path: &Path) -> Option<String> {
     path.extension()
@@ -2485,7 +2760,7 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// File items whose bytes could not be had (`folders.md` 35).
+    /// File items whose bytes could not be had (`folders.md` 34).
     pub absent: usize,
     /// Files the pull would not write over: one the person changed since
     /// the folder last wrote it, and one at a path the mapping does not hold.

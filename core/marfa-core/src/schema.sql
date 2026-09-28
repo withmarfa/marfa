@@ -277,11 +277,10 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- (`folders.md` 28): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
-  -- The targets whose rendered link the person took out, for edges of a kind
-  -- the folder could not have made, as a JSON array. The edge stays (25), so
-  -- without this the next pull writes the link back and the person removes
-  -- it again, forever (`folders.md` 33). Naming the link again lifts it.
-  declined_links TEXT NOT NULL,
+  -- The edges the file's frontmatter lines named, each its type, the end the
+  -- file is and the other end's id, as a JSON array: what tells a line the
+  -- person took out from an edge no pull has written yet (`folders.md` 11).
+  edge_lines TEXT NOT NULL,
   -- The newest version line an edit of this device's has spent, 0 where its
   -- file carried none; null where no edit went (`folders.md` 22, 23).
   edit_line INTEGER,

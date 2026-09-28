@@ -245,6 +245,7 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                 file.path, file.reason
             ),
             "behind" => format!("{}: {}", file.path, file.reason),
+            "edges" => format!("{} is left as written: {}", file.path, file.reason),
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
                 file.path, file.reason
@@ -282,7 +283,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 27, 29, 35), named only when there are
+/// get one on this pass (`folders.md` 27, 29, 34), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(

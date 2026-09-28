@@ -273,6 +273,47 @@ impl Http {
         self.get_json(&["edges"], &params)
     }
 
+    /// Every edge type the server holds, shipped and registered.
+    pub fn edge_types(&self) -> Result<Vec<serde_json::Value>, CoreError> {
+        let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &[])?;
+        Ok(page.data)
+    }
+
+    /// The items the key reads, in any state, whose `field` contains `text`
+    /// without regard to ASCII case, and whether `pages` pages left more.
+    pub fn items_containing(
+        &self,
+        field: &str,
+        text: &str,
+        pages: usize,
+    ) -> Result<(Vec<WireItemWithMetadata>, bool), CoreError> {
+        // The grammar escapes only a quote, so a closing backslash cannot be
+        // written; the caller matches the whole name after.
+        let searched = text.trim_end_matches('\\').replace('"', "\\\"");
+        let filter = format!("properties.{field} contains \"{searched}\"");
+        let limit = PAGE_LIMIT.to_string();
+        let mut found = Vec::new();
+        let mut cursor: Option<String> = None;
+        for _ in 0..pages {
+            let mut params: Vec<(&str, &str)> = vec![
+                ("filter", &filter),
+                ("state", "any"),
+                ("include", "metadata"),
+                ("limit", &limit),
+            ];
+            if let Some(cursor) = &cursor {
+                params.push(("cursor", cursor));
+            }
+            let page: WirePage<WireItemWithMetadata> = self.get_json(&["items"], &params)?;
+            found.extend(page.data);
+            match page.next_cursor {
+                Some(next) if Some(&next) != cursor.as_ref() => cursor = Some(next),
+                _ => return Ok((found, false)),
+            }
+        }
+        Ok((found, true))
+    }
+
     /// The key this credential is, as `GET /keys/current` answers it; `None`
     /// for a credential that is not a key, which that door refuses `403`.
     pub fn current_key(&self) -> Result<Option<serde_json::Value>, CoreError> {

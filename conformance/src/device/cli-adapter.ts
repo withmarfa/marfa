@@ -668,19 +668,21 @@ export interface ScanReport {
   deleted: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 36). Counted in `created` too. */
+   *  or moved (`folders.md` 35). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 36). */
+   *  sent (`folders.md` 35). */
   lost: number;
-  /** Files this scan read and holds rather than sends (`folders.md` 9, 10). */
+  /** Files this scan read and holds rather than sends (`folders.md` 9, 10,
+   *  11). */
   flagged: FlaggedFile[];
 }
 
-/** A file the folder holds rather than sends, and why. */
+/** A file the folder holds rather than sends, and why: `edges` for edge
+ *  lines that change nothing (`folders.md` 11). */
 export interface FlaggedFile {
   path: string;
-  flag: "unreadable" | "refused" | "behind";
+  flag: "unreadable" | "refused" | "behind" | "edges";
   reason: string;
 }
 
@@ -712,7 +714,7 @@ export interface PullReport {
   /** Files whose item the search no longer matches otherwise, left where
    *  they are (`folders.md` 32). */
   unmatched: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 35). */
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 34). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */
   settings: SettingsFileReport;
