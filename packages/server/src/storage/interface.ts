@@ -2795,7 +2795,6 @@ export interface ConnectorStore {
     process: string,
     holdMs: number,
   ): Promise<ConnectorHoldOutcome | null>;
-  /** Release the hold if `process` holds it. */
   releaseHold(id: string, process: string): Promise<void>;
 }
 
@@ -2815,7 +2814,6 @@ export interface ConnectorHeld {
 
 /** What a connector keeps on the instance, keyed by the registration source. */
 export interface ConnectorStateStore {
-  /** The source's state document; `{}` and null when none was written. */
   getState(
     source: string,
   ): Promise<{ state: Record<string, unknown>; updated_at: string | null }>;
@@ -2857,7 +2855,6 @@ export interface ConnectorStateStore {
     page: { limit: number; cursor?: string },
     readable: (type: string) => boolean,
   ): Promise<PaginatedResult<ConnectorAgreement>>;
-  /** Remove the source's document and every agreement, answering what went. */
   clear(source: string): Promise<{ state: boolean; agreements: number }>;
 }
 

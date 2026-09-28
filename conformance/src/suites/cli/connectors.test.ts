@@ -400,7 +400,6 @@ describe("connectors from the terminal", () => {
       "--process",
       "first",
     ]);
-    // Released, so the other process takes it.
     await connector.json([
       "connectors",
       "hold",

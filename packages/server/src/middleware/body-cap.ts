@@ -1,6 +1,7 @@
 /**
  * Blob and archive doors stream to disk, so they take no cap; bulk doors
  * need the larger one — stated once so `app.ts` and the OpenAPI doc agree.
+ * Inbound caps after its endpoint lookup, so an unknown address reads nothing.
  */
 export type BodyCap = "none" | "bulk" | "request" | "inbound";
 

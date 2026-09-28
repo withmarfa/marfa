@@ -190,7 +190,6 @@ describe("the hold", () => {
       (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
 
-    // At the bound, taken and released.
     const longest = "p".repeat(100);
     expect((await mine.client.holdConnector(mine.id, longest)).status).toBe(
       200,
@@ -253,7 +252,6 @@ describe("the hold", () => {
     expect(
       (await mine.client.releaseConnectorHold(mine.id, first)).status,
     ).toBe(200);
-    // Free once released: the second process takes it.
     expect((await mine.client.holdConnector(mine.id, second)).status).toBe(200);
   });
 
@@ -520,7 +518,6 @@ describe("what a connector keeps on the instance", () => {
     expect(Date.parse(second.data.updated_at)).toBeGreaterThan(
       Date.parse(first.data.updated_at),
     );
-    // Replaced whole, not merged.
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
       state: { page: 2 },
       updated_at: second.data.updated_at,
