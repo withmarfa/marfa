@@ -120,7 +120,7 @@ function makeStubStore(pending: PendingDelivery[]): {
   };
 
   const store: WebhookDeliveryStore = {
-    log: () => Promise.resolve(),
+    cleanup: () => Promise.resolve(0),
     list: () => Promise.resolve({ data: [], next_cursor: null }),
     schedule: () => Promise.resolve("del_x"),
     getPending: () => Promise.resolve(pending),
@@ -413,7 +413,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
     // always returns null — i.e. the poller or another direct worker
     // got there first.
     const store: WebhookDeliveryStore = {
-      log: () => Promise.resolve(),
+      cleanup: () => Promise.resolve(0),
       list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: () => Promise.resolve("del_raced"),
       getPending: () => Promise.resolve([]),
@@ -487,7 +487,7 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
       max_attempts: 4,
     };
     const store: WebhookDeliveryStore = {
-      log: () => Promise.resolve(),
+      cleanup: () => Promise.resolve(0),
       list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: () => Promise.resolve(claimed.id),
       getPending: () => Promise.resolve([]),
@@ -608,7 +608,7 @@ describe("WebhookConsumer fan-out gate", () => {
   function harness(events: string[]) {
     let scheduled = 0;
     const store: WebhookDeliveryStore = {
-      log: () => Promise.resolve(),
+      cleanup: () => Promise.resolve(0),
       list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: () => {
         scheduled += 1;
@@ -759,7 +759,7 @@ describe("WebhookConsumer subscription matching", () => {
 
     const scheduledFor: string[] = [];
     const store: WebhookDeliveryStore = {
-      log: () => Promise.resolve(),
+      cleanup: () => Promise.resolve(0),
       list: () => Promise.resolve({ data: [], next_cursor: null }),
       schedule: (entry) => {
         scheduledFor.push(entry.webhookId);

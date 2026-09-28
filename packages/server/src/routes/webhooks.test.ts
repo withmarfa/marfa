@@ -285,15 +285,16 @@ describe("GET /webhooks/:id/deliveries", () => {
       url: "https://example.com/deliveries-limit",
     });
 
-    // Seed three delivery attempts directly through the store.
     for (let i = 0; i < 3; i++) {
-      await ctx.storage.outboundWebhookDeliveries.log({
+      const id = await ctx.storage.outboundWebhookDeliveries.schedule({
         webhookId: created.id,
         eventType: "item.created",
-        statusCode: 200,
-        attempt: 1,
-        succeeded: true,
+        payload: "{}",
+        webhookUrl: created.url,
+        webhookSecret: created.secret,
+        nextAttemptAt: new Date(Date.now() + 86_400_000).toISOString(),
       });
+      await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
     }
 
     const res = await request(
