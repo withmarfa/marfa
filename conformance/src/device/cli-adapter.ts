@@ -667,10 +667,10 @@ export interface ScanReport {
   deleted: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 33). Counted in `created` too. */
+   *  or moved (`folders.md` 34). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 33). */
+   *  sent (`folders.md` 34). */
   lost: number;
 }
 
@@ -681,17 +681,22 @@ export interface PullReport {
   unchanged: number;
   skipped: number;
   unwritten: number;
-  collided: number;
+  /** Items whose placement another item holds, written at a free path
+   *  beside it (`folders.md` 16). */
+  beside: number;
+  /** Placements written: an `in-folder` edge made, or its path moved to
+   *  where the file is (`folders.md` 16). */
+  placed: number;
   outside: number;
   /** Files of items trashed or out of the search's states, taken away
-   *  (`folders.md` 29). */
+   *  (`folders.md` 30). */
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
   /** Files whose item the search no longer matches otherwise, left where
-   *  they are (`folders.md` 29). */
+   *  they are (`folders.md` 30). */
   unmatched: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 32). */
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 33). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */
   settings: SettingsFileReport;
@@ -714,7 +719,7 @@ export interface PushReport {
   settings: SettingsFileReport;
   scan: ScanReport;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
-   *  the version the copy holds (`folders.md` 19). */
+   *  the version the copy holds (`folders.md` 20). */
   drain: DrainReport & { rebased: number };
   /** A catch-up from the copy's cursor, a hydration where the log had aged
    *  past it, or the reason the server could not be reached for either. */

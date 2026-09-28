@@ -221,6 +221,24 @@ impl Settings {
     pub fn new_tier(&self) -> Tier {
         self.defaults.tier.unwrap_or_else(|| self.tier())
     }
+
+    /// The directory a new item of this type from elsewhere first goes
+    /// under: the most specific key naming the type or an ancestor of it.
+    pub fn first_placement_for(&self, r#type: &str, catalog: &Catalog) -> Option<&str> {
+        let naming: Vec<&String> = self
+            .first_placement
+            .keys()
+            .filter(|key| catalog.matches(key, r#type))
+            .collect();
+        naming
+            .iter()
+            .find(|key| {
+                !naming
+                    .iter()
+                    .any(|other| other != *key && catalog.matches(key, other))
+            })
+            .map(|key| self.first_placement[*key].as_str())
+    }
 }
 
 #[cfg(test)]
@@ -284,5 +302,29 @@ mod tests {
         let unheld = read(json!({ "search": { "types": ["core.note"] }, "defaults": { "type": "core.bookmark" } }))
             .unwrap();
         assert!(unheld.check_types(&catalog).is_err());
+    }
+
+    #[test]
+    fn a_first_placement_names_the_type_or_its_nearest_ancestor() {
+        use crate::store::testing::wire_type;
+        let conn = crate::store::testing::conn();
+        crate::store::replace_types(
+            &conn,
+            &[
+                wire_type("core.note", None, None),
+                wire_type("user.recipe", Some("core.note"), None),
+                wire_type("user.cake", Some("user.recipe"), None),
+            ],
+        )
+        .unwrap();
+        let catalog = Catalog::load(&conn).unwrap();
+        let settings = read(json!({
+            "first_placement": { "core.note": "Notes", "user.recipe": "Recipes" },
+        }))
+        .unwrap();
+        let placed = |r#type: &str| settings.first_placement_for(r#type, &catalog);
+        assert_eq!(placed("core.note"), Some("Notes"));
+        assert_eq!(placed("user.cake"), Some("Recipes"));
+        assert_eq!(placed("core.bookmark"), None);
     }
 }

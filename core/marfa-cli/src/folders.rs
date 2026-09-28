@@ -196,7 +196,7 @@ fn send(
 }
 
 /// Said in words, because what these edits carried went over whatever
-/// changed since their file was written (`folders.md` 19).
+/// changed since their file was written (`folders.md` 20).
 pub fn rebased_line(rebased: usize) -> String {
     format!(
         "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
@@ -217,7 +217,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 24, 26, 32), named only when there are
+/// get one on this pass (`folders.md` 25, 27, 33), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
@@ -229,7 +229,6 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.unwritten,
             "the folder did not write and would not write over",
         ),
-        (report.collided, "wanting a path another item took"),
         (report.outside, "wanting a path outside the folder"),
         (report.absent, "whose bytes could not be fetched"),
     ]
@@ -240,6 +239,12 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     if !held.is_empty() {
         line.push_str("; not written: ");
         line.push_str(&held.join(", "));
+    }
+    if report.beside > 0 {
+        line.push_str(&format!(
+            "; {} placed beside a path another item holds",
+            report.beside
+        ));
     }
     // A file the person deleted and the pull wrote back.
     if report.revived > 0 {

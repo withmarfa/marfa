@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -89,7 +96,8 @@ describe("a folder round trip", () => {
     );
     const pushed = await c.cli.json<PushReport>(["folders", "push", dir]);
     expect(pushed.scan.created).toBe(1);
-    expect(pushed.drain.sent).toBe(1);
+    // The create and its placement.
+    expect(pushed.drain.sent).toBe(2);
 
     // It is in Marfa under the id the folder minted, with no natural key.
     const queued = await c.cli.json<
@@ -114,6 +122,21 @@ describe("a folder round trip", () => {
     // The id is written into the file and never sent as a property of the
     // item.
     expect(landed.properties.marfa_id).toBeUndefined();
+    // Where the file sits is its placement: an edge to the folder's
+    // settings carrying its path.
+    const placement = async () =>
+      (
+        await c.cli.json<{
+          data: Array<{
+            target_id: string;
+            edge_type: string;
+            properties: Record<string, unknown>;
+          }>;
+        }>(["items", "edges", landed.id])
+      ).data.filter((edge) => edge.edge_type === "in-folder");
+    expect(await placement()).toMatchObject([
+      { target_id: settings.item.id, properties: { path: "dropped.md" } },
+    ]);
 
     // An agent with its own key changes it from anywhere.
     const changed = await c.cli.json<ItemEnvelope>([
@@ -217,5 +240,16 @@ describe("a folder round trip", () => {
     expect(onServer.item.properties.defaults).toEqual({
       tags: ["from-the-file"],
     });
+
+    // A move inside the folder sends its placement and no edit of the item.
+    const before = await c.cli.json<ItemEnvelope>(["items", "get", landed.id]);
+    mkdirSync(join(dir, "moved"));
+    renameSync(join(dir, "dropped.md"), join(dir, "moved", "dropped.md"));
+    await c.cli.json(["folders", "push", dir]);
+    expect(await placement()).toMatchObject([
+      { properties: { path: "moved/dropped.md" } },
+    ]);
+    const moved = await c.cli.json<ItemEnvelope>(["items", "get", landed.id]);
+    expect(moved.item.version).toBe(before.item.version);
   });
 });
