@@ -288,12 +288,14 @@ fn edges_are_created_between_two_items_and_updated_under_a_version() {
         body(&created),
         &json!({ "source_id": "a", "target_id": "b", "edge_type": "references", "properties": { "weight": 1 } })
     );
-    let updated = edges::update_request("e", r#"{"weight":2}"#, 4).unwrap();
+    let updated = edges::update_request("e", Some(r#"{"weight":2}"#), (None, None), 4).unwrap();
     assert_eq!(updated.method, Method::Patch);
     assert_eq!(
         body(&updated),
         &json!({ "properties": { "weight": 2 }, "version": 4 })
     );
+    let moved = edges::update_request("e", None, (None, Some("c".into())), 5).unwrap();
+    assert_eq!(body(&moved), &json!({ "target_id": "c", "version": 5 }));
     assert_eq!(edges::delete_request("e").method, Method::Delete);
     let listed = edges::list_request(&edges::EdgeListArgs {
         type_: Some("about".into()),

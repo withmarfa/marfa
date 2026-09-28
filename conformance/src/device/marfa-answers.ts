@@ -596,6 +596,15 @@ export const answers = {
       `Edge "${edge.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
       { ...edge, constraint: "cardinality" },
     ),
+  /** A move of an edge end whose type holds more than one at the end that
+   *  stays (`edges.md` 10). */
+  edgeMoveRefused: (
+    field: "source_id" | "target_id",
+    message: string,
+  ): Answer =>
+    refusal(400, "validation_error", message, {
+      errors: [{ path: field, message }],
+    }),
   /** `GET /keys/current`: the key the request bears, its edge grants as
    *  named. */
   currentKey: (

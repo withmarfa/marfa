@@ -12,7 +12,7 @@ use super::{
 };
 use crate::Result;
 use crate::catalog::Catalog;
-use crate::model::{Edge, EdgeDraft, Item};
+use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
 
 /// A file's links and lines, read once every file in the scan is bound
 /// (`folders.md` 31).
@@ -790,20 +790,15 @@ impl Folder {
                     }));
                     continue;
                 };
-                let replacing = self.core.replace_edge(&old.id, &draft(adds[0]))?;
-                queued.push(replacing.id.clone());
-                state::record_replaced(
-                    &*self.core.conn()?,
-                    &replacing.id,
-                    &state::Replaced {
-                        source_id: old.source_id.clone(),
-                        target_id: old.target_id.clone(),
-                        edge_type: old.edge_type.clone(),
-                        properties: old.properties.clone(),
-                        new_source_id: draft(adds[0]).source_id,
-                        new_target_id: draft(adds[0]).target_id,
-                    },
-                )?;
+                // One write moves the other end, so the end is never without its edge.
+                let moved = draft(adds[0]);
+                let edit = EdgeEdit {
+                    base_version: Some(old.version),
+                    source_id: (end == End::Target).then_some(moved.source_id),
+                    target_id: (end == End::Source).then_some(moved.target_id),
+                    ..Default::default()
+                };
+                queued.push(self.core.update_edge(&old.id, &edit)?.id);
                 removes.retain(|edge| edge.id != old.id);
             } else {
                 for other in adds {

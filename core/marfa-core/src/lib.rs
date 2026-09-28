@@ -623,13 +623,14 @@ impl Core {
         let mut conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         let tx = conn.transaction()?;
-        let queued = queue_edge(&tx, draft, &[])?;
+        let queued = queue_edge(&tx, draft)?;
         tx.commit()?;
         Ok(queued)
     }
 
-    /// Queues a change to an edge's properties. The version is required, for
-    /// the reason an item's is.
+    /// Queues a change to an edge's properties, or a move of one of its ends
+    /// in the same write. The version is required, for the reason an item's
+    /// is.
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -652,10 +653,24 @@ impl Core {
             )));
         }
         let payload = edit.payload(base)?;
-        let depends_on = store::untaken_create_for_edge(&conn, id)?;
+        let mut depends_on = store::untaken_create_for_edge(&conn, id)?;
         let mut next = held.clone();
         for (key, value) in &edit.properties {
             next.properties.insert(key.clone(), value.clone());
+        }
+        if let Some(source) = &edit.source_id {
+            next.source_id = source.clone();
+        }
+        if let Some(target) = &edit.target_id {
+            next.target_id = target.clone();
+        }
+        // An end moved to is an item the server has to hold first.
+        for moved in [&edit.source_id, &edit.target_id].into_iter().flatten() {
+            for waited in store::untaken_creates_for_item(&conn, moved)? {
+                if !depends_on.contains(&waited) {
+                    depends_on.push(waited);
+                }
+            }
         }
         next.updated_at = store::now_iso();
         let tx = conn.transaction()?;
@@ -687,20 +702,6 @@ impl Core {
         let held = held_edge(&conn, id)?;
         let tx = conn.transaction()?;
         let queued = queue_edge_delete(&tx, &held)?;
-        tx.commit()?;
-        Ok(queued)
-    }
-
-    /// Queues `old`'s delete and `draft`'s create waiting on it: sent first,
-    /// the create would be refused as a second edge at a one-edge end.
-    pub fn replace_edge(&self, old: &str, draft: &EdgeDraft) -> Result<QueuedWrite> {
-        self.lock.refuse_unless_writer()?;
-        let mut conn = self.conn()?;
-        store::refuse_unless_hydrated(&conn)?;
-        let held = held_edge(&conn, old)?;
-        let tx = conn.transaction()?;
-        let deleted = queue_edge_delete(&tx, &held)?;
-        let queued = queue_edge(&tx, draft, std::slice::from_ref(&deleted.id))?;
         tx.commit()?;
         Ok(queued)
     }
@@ -975,7 +976,6 @@ impl Core {
                     edge_type: "attached-to".into(),
                     ..Default::default()
                 },
-                &[],
             )?;
             Ok(Attached {
                 upload: upload.clone(),
@@ -1339,13 +1339,13 @@ fn queue_update(
 /// It waits for both of its endpoints' creates (`queue-and-verdicts.md` 4):
 /// an edge naming a row whose create has not landed is an edge the server
 /// has nowhere to put, and either end can be the one that has not.
-fn queue_edge(tx: &Connection, draft: &EdgeDraft, after: &[String]) -> Result<QueuedWrite> {
+fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
     let id = draft
         .id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let payload = draft.payload(&id)?;
-    let mut depends_on: Vec<String> = after.to_vec();
+    let mut depends_on: Vec<String> = Vec::new();
     for endpoint in [&draft.source_id, &draft.target_id] {
         for id in store::untaken_creates_for_item(tx, endpoint)? {
             if !depends_on.contains(&id) {
@@ -1978,10 +1978,6 @@ mod tests {
                 reader.update_edge("x", &EdgeEdit::default()).unwrap_err(),
             ),
             ("delete_edge", reader.delete_edge("x").unwrap_err()),
-            (
-                "replace_edge",
-                reader.replace_edge("x", &EdgeDraft::default()).unwrap_err(),
-            ),
             ("add_tag", reader.add_tag("x", "t").unwrap_err()),
             ("remove_tag", reader.remove_tag("x", "t").unwrap_err()),
             (
@@ -2087,7 +2083,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            31,
+            30,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

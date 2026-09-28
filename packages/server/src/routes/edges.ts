@@ -1,5 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
+import type { Context } from "hono";
+import {
+  ErrorCode,
+  MarfaError,
+  getEdgeTypeSchema,
+  isValidId,
+} from "@withmarfa/shared";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -23,7 +29,12 @@ import {
 } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { readableEdges } from "./_edge-visibility.js";
-import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
+import {
+  assertEdgeCanBeCreated,
+  assertEdgesCanBeCreated,
+  edgeTargetNotFound,
+} from "../storage/edge-constraints.js";
+import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import { publishEdge } from "../pubsub.js";
 import {
   refuseUnknownQueryParams,
@@ -81,6 +92,76 @@ function parseEdgeTypeFilter(
     );
   }
   return parts;
+}
+
+/** The ends an update moves the edge to, or `null`; judged here so a move is
+ *  refused for each new end as a create would refuse it. */
+async function endsAfterMove(
+  c: Context<AppEnv>,
+  storage: Storage,
+  existing: Edge,
+  body: { source_id?: string; target_id?: string },
+): Promise<{ source_id: string; target_id: string } | null> {
+  const ends = {
+    source_id: body.source_id ?? existing.source_id,
+    target_id: body.target_id ?? existing.target_id,
+  };
+  const movesSource = ends.source_id !== existing.source_id;
+  const movesTarget = ends.target_id !== existing.target_id;
+  if (!movesSource && !movesTarget) return null;
+  if (!isValidId(ends.source_id)) {
+    throw new MarfaError(ErrorCode.INVALID_ID, "Invalid source_id");
+  }
+  if (!isValidId(ends.target_id)) {
+    throw new MarfaError(ErrorCode.INVALID_ID, "Invalid target_id");
+  }
+  if (movesSource && movesTarget) {
+    throw moveRefusal(
+      "source_id",
+      "An update moves one end of an edge at a time; delete it and create the edge wanted",
+    );
+  }
+  const schema = getEdgeTypeSchema(existing.edge_type);
+  if (!schema) {
+    throw new MarfaError(
+      ErrorCode.EDGE_TYPE_NOT_FOUND,
+      `Unknown edge type: ${existing.edge_type}`,
+    );
+  }
+  const moved = movesSource ? "source_id" : "target_id";
+  const keptHoldsOne = movesSource
+    ? schema.cardinality === "one-to-one" ||
+      schema.cardinality === "one-to-many"
+    : schema.cardinality === "one-to-one" ||
+      schema.cardinality === "many-to-one";
+  if (!keptHoldsOne) {
+    throw moveRefusal(
+      moved,
+      `Edge "${existing.edge_type}" is ${schema.cardinality}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one`,
+    );
+  }
+  if (movesSource) {
+    const source = await storage.items.get(ends.source_id);
+    if (!source) {
+      throw new MarfaError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Edge source item not found: ${ends.source_id}`,
+      );
+    }
+    requireTypeAccess(c, source.type, "write");
+  }
+  // Before any check that reads the target, so an unreadable one says no more than a missing one.
+  const target = await storage.items.get(ends.target_id);
+  if (!target || !mayReadEdgeTarget(c)(target.type)) {
+    throw edgeTargetNotFound(ends.target_id);
+  }
+  return ends;
+}
+
+function moveRefusal(field: string, message: string): MarfaError {
+  return new MarfaError(ErrorCode.VALIDATION_ERROR, message, {
+    errors: [{ path: field, message }],
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -321,7 +402,9 @@ const updateEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Update an edge",
   description:
-    "Updates an edge's properties. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key, and deleting the edge to recreate it restarts its version at 1 and emits a delete and a create rather than an update. An edge's property set can therefore only grow. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
+    "Updates an edge's properties, or moves one of its ends, under the version the caller read. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key. An edge's property set can therefore only grow.\n\n" +
+    "**Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, a target the caller may not read answers exactly as a missing one, `404 item_not_found`, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. A type that holds more than one at the end that stays, or a body moving both ends, is refused `400 validation_error`; the edge type never changes.\n\n" +
+    "`version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Edge id.") }),
@@ -329,7 +412,24 @@ const updateEdgeRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            properties: z.record(z.string(), z.unknown()),
+            properties: z
+              .record(z.string(), z.unknown())
+              .optional()
+              .describe(
+                "Properties to merge over the ones the edge holds. Required unless an end moves.",
+              ),
+            source_id: z
+              .string()
+              .optional()
+              .describe(
+                "The source to move the edge to, where each target holds one edge of its type.",
+              ),
+            target_id: z
+              .string()
+              .optional()
+              .describe(
+                "The target to move the edge to, where each source holds one edge of its type.",
+              ),
             version: z
               .number()
               .int()
@@ -362,10 +462,14 @@ const updateEdgeRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "invalid_id",
+            "edge_constraint_violation",
+            "edge_cycle",
           ]),
         },
       },
-      description: "Attempted to change immutable field",
+      description:
+        "`missing_required_field` for no `version`, or no `properties` where no end moves; `validation_error` for a body moving both ends, or an end of a type that holds more than one edge at the end that stays, and for properties the type refuses; `invalid_id` for a malformed end; `edge_constraint_violation` and `edge_cycle` for an edge the moved end cannot hold, as a create answers them.",
     },
     403: {
       content: {
@@ -377,15 +481,20 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. A trashed source still gates on its type.",
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type, and on the new one's where the source moves. A trashed source still gates on its type.",
     },
     404: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["edge_not_found"]),
+          schema: makeErrorResponseSchema([
+            "edge_not_found",
+            "item_not_found",
+            "edge_type_not_found",
+          ]),
         },
       },
-      description: "Edge not found",
+      description:
+        "`edge_not_found` for the edge; `item_not_found` for an end it would move to that does not exist, or a target the caller may not read; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
     },
   },
 });
@@ -644,28 +753,56 @@ export function edgeRoutes(storage: Storage) {
     const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
-    // Reject attempts to change immutable fields — extra insurance beyond
-    // the schema (Zod strips anything the body schema does not name, but
-    // guard against future body-schema relaxation).
-    //
-    // `version` is a precondition on the write, not a field of the row, so
-    // it belongs on the allowed side of this guard. Naming it explicitly
-    // rather than reading the schema keeps the guard's list the thing a
-    // reader checks against.
-    const bodyKeys = Object.keys(body);
-    for (const k of bodyKeys) {
-      if (k !== "properties" && k !== "version") {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Edge ${k} is immutable after creation`,
-        );
-      }
+    // A stale write is refused for what it was based on, before anything it names is judged.
+    const stale = existing.version !== body.version;
+    const ends = stale ? null : await endsAfterMove(c, storage, existing, body);
+    if (!stale && ends === null && body.properties === undefined) {
+      throw new MarfaError(
+        ErrorCode.MISSING_REQUIRED_FIELD,
+        "properties is required where no end moves",
+        { field: "properties" },
+      );
     }
-    const result = await storage.edges.updateProperties(
-      id,
-      body.properties,
-      body.version,
-    );
+    const properties = body.properties ?? {};
+    const result = stale
+      ? { ok: false as const, current: existing }
+      : ends === null
+        ? await storage.edges.updateProperties(id, properties, body.version)
+        : await storage.runInTransaction(async () => {
+            const current = await storage.edges.get(id);
+            if (!current) {
+              throw new MarfaError(
+                ErrorCode.EDGE_NOT_FOUND,
+                `Edge ${id} not found`,
+              );
+            }
+            // Asked again inside the write, for one that landed since the read above.
+            if (current.version !== body.version) {
+              return { ok: false as const, current };
+            }
+            await assertEdgesCanBeCreated(
+              storage.edges,
+              storage.items,
+              [
+                {
+                  ...ends,
+                  edge_type: current.edge_type,
+                  properties: mergeUpdateProperties(
+                    current.properties,
+                    properties,
+                  ),
+                },
+              ],
+              mayReadEdgeTarget(c),
+              { replacing: current },
+            );
+            return storage.edges.updateProperties(
+              id,
+              properties,
+              body.version,
+              ends,
+            );
+          });
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
       // the whole current edge so the client can re-apply over it without
@@ -703,7 +840,14 @@ export function edgeRoutes(storage: Storage) {
       action: "edge.update",
       resource_type: "edge",
       resource_id: id,
-      details: { edge_type: existing.edge_type },
+      details:
+        ends === null
+          ? { edge_type: existing.edge_type }
+          : {
+              edge_type: existing.edge_type,
+              source_id: updated.source_id,
+              target_id: updated.target_id,
+            },
     });
     return c.json({ edge: updated }, 200);
   });

@@ -86,6 +86,7 @@ impl Folder {
                     &EdgeEdit {
                         properties,
                         base_version: Some(edge.version),
+                        ..Default::default()
                     },
                 )?;
             }

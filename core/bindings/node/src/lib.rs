@@ -1200,6 +1200,7 @@ impl MarfaCore {
         let edit = marfa_core::EdgeEdit {
             properties: object(Some(edit.properties))?,
             base_version: edit.base_version,
+            ..Default::default()
         };
         queued(self.inner.update_edge(&id, &edit).map_err(failure)?)
     }

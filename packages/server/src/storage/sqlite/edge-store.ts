@@ -260,6 +260,7 @@ export class SqliteEdgeStore implements EdgeStore {
     id: string,
     properties: Record<string, unknown>,
     expectedVersion?: number,
+    ends?: { source_id: string; target_id: string },
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }> {
     const identity = eq(edges.id, id);
     const where =
@@ -291,6 +292,7 @@ export class SqliteEdgeStore implements EdgeStore {
       const [written] = await tx
         .update(edges)
         .set({
+          ...ends,
           properties: JSON.stringify(merged),
           updated_at: now,
           version: sql`${edges.version} + 1`,

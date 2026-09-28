@@ -674,8 +674,14 @@ fn apply(
                 store::upsert_edge(tx, edge)?;
                 store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
+            } else if store::edge_write_waits(tx, &edge.id)? {
+                // Kept until this device's own write to it is answered, which lays over it.
+                store::upsert_edge(tx, edge)?;
+                store::lay_waiting_edge_writes_over(tx, &edge.id)?;
+                Ok(true)
             } else {
-                Ok(false)
+                // An edge moved to a source the copy does not hold leaves it.
+                store::delete_edge(tx, &edge.id)
             }
         }
         "edge.deleted" => {

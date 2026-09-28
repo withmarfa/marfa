@@ -21,13 +21,20 @@ pub enum EdgesCommand {
     },
     /// Link two items with an edge.
     Create(EdgeCreateArgs),
-    /// Change an edge's properties, conditional on the version read.
+    /// Change an edge's properties, or move one of its ends, conditional on
+    /// the version read.
     Update {
         /// The edge id.
         id: String,
         /// The properties, as a JSON object. Whole values.
         #[arg(long, value_name = "JSON")]
-        properties: String,
+        properties: Option<String>,
+        /// Move the edge to this source, where each target holds one of its type.
+        #[arg(long, value_name = "ID")]
+        source: Option<String>,
+        /// Move the edge to this target, where each source holds one of its type.
+        #[arg(long, value_name = "ID")]
+        target: Option<String>,
         /// The version the edit was based on.
         #[arg(long)]
         version: i64,
@@ -128,11 +135,23 @@ pub fn create_request(args: &EdgeCreateArgs) -> Result<Request, CliError> {
         .apply(Request::post(&["edges"]).json(Value::Object(body))))
 }
 
-pub fn update_request(id: &str, properties: &str, version: i64) -> Result<Request, CliError> {
-    Ok(Request::patch(&["edges", id]).json(json!({
-        "properties": Value::Object(object(properties, "--properties")?),
-        "version": version,
-    })))
+pub fn update_request(
+    id: &str,
+    properties: Option<&str>,
+    ends: (Option<String>, Option<String>),
+    version: i64,
+) -> Result<Request, CliError> {
+    let mut body = Map::new();
+    if let Some(properties) = properties {
+        body.insert(
+            "properties".into(),
+            Value::Object(object(properties, "--properties")?),
+        );
+    }
+    insert_opt(&mut body, "source_id", ends.0);
+    insert_opt(&mut body, "target_id", ends.1);
+    body.insert("version".into(), json!(version));
+    Ok(Request::patch(&["edges", id]).json(Value::Object(body)))
 }
 
 pub fn delete_request(id: &str) -> Request {
@@ -174,9 +193,16 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         EdgesCommand::Update {
             id,
             properties,
+            source,
+            target,
             version,
             idempotency,
-        } => idempotency.apply(update_request(id, properties, *version)?),
+        } => idempotency.apply(update_request(
+            id,
+            properties.as_deref(),
+            (source.clone(), target.clone()),
+            *version,
+        )?),
         EdgesCommand::Delete { id, idempotency } => idempotency.apply(delete_request(id)),
         EdgesCommand::Bulk(args) => bulk_request(args)?,
     };

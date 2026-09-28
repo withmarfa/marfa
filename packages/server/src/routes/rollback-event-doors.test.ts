@@ -255,6 +255,8 @@ type Family = "item" | "metadata" | "edge" | "bulk";
 interface DoorState {
   item: string;
   other: string;
+  /** The item an edge's end moves to. */
+  moved: string;
   edge: string;
   sourceId: string;
   tag: string;
@@ -265,6 +267,7 @@ interface DoorState {
 const NO_STATE: DoorState = {
   item: "",
   other: "",
+  moved: "",
   edge: "",
   sourceId: "",
   tag: "",
@@ -330,10 +333,14 @@ async function makeNote(body = "seed"): Promise<string> {
   return ((await res.json()) as { item: { id: string } }).item.id;
 }
 
-async function makeEdge(source: string, target: string): Promise<string> {
+async function makeEdge(
+  source: string,
+  target: string,
+  edgeType = "references",
+): Promise<string> {
   const res = await request(ctx.app, "POST", "/edges", {
     key: ctx.workingKey,
-    body: { source_id: source, target_id: target, edge_type: "references" },
+    body: { source_id: source, target_id: target, edge_type: edgeType },
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { edge: { id: string } }).edge.id;
@@ -827,6 +834,33 @@ const doors: Door[] = [
     attributable: (h, s) => edgeEventsTouching(h, [s.item, s.other]),
     landed: async (s) =>
       (await ctx.storage.edges.get(s.edge))?.properties.note === "edited",
+    survivesBreakage: false,
+  },
+  {
+    name: "PATCH /edges/{id} moves an edge's end",
+    family: "edge",
+    transactions: 1,
+    setup: async () => {
+      const item = await makeNote("edge source");
+      const other = await makeNote("edge target");
+      const moved = await makeNote("edge new source");
+      return {
+        item,
+        other,
+        moved,
+        edge: await makeEdge(item, other, "parent-of"),
+      };
+    },
+    act: async (s) => {
+      const res = await request(ctx.app, "PATCH", `/edges/${s.edge}`, {
+        key: ctx.workingKey,
+        body: { source_id: s.moved, version: 1 },
+      });
+      return res.status === 200;
+    },
+    attributable: (h, s) => edgeEventsTouching(h, [s.moved, s.other]),
+    landed: async (s) =>
+      (await ctx.storage.edges.get(s.edge))?.source_id === s.moved,
     survivesBreakage: false,
   },
   {

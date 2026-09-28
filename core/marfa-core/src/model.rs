@@ -1095,11 +1095,14 @@ pub struct Attached {
     pub edge: QueuedWrite,
 }
 
-/// A change to an edge's properties, and the version it was read at.
+/// A change to an edge's properties, or a move of one of its ends, and the
+/// version it was read at (`edges.md` 10).
 #[derive(Debug, Clone, Default)]
 pub struct EdgeEdit {
     pub properties: Map<String, Value>,
     pub base_version: Option<i64>,
+    pub source_id: Option<String>,
+    pub target_id: Option<String>,
 }
 
 impl EdgeEdit {
@@ -1107,6 +1110,14 @@ impl EdgeEdit {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         body.insert("version".into(), Value::from(base_version));
+        for (key, end) in [
+            ("source_id", &self.source_id),
+            ("target_id", &self.target_id),
+        ] {
+            if let Some(end) = end {
+                body.insert(key.into(), Value::String(end.clone()));
+            }
+        }
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 }

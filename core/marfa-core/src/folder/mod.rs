@@ -1503,19 +1503,49 @@ impl Folder {
     }
 }
 
-/// A refused write's reason as a held file carries it: the server's code and
-/// message.
-fn refusal_of(row: &crate::model::QueuedWrite) -> String {
-    let code = row.reason.clone().unwrap_or_default();
-    let message = row
-        .answer
-        .as_deref()
-        .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
-        .and_then(|answer| answer["error"]["message"].as_str().map(str::to_string));
-    match message {
-        Some(message) => format!("{}{code}: {message}", state::REFUSED),
-        None => format!("{}{code}", state::REFUSED),
-    }
+/// A line a move changed, kept with the end it named before so a refusal can
+/// point the record back there.
+struct MovedLine {
+    from: String,
+    to: state::Line,
+}
+
+/// Read from the row, since the copy may no longer hold the edge once the
+/// server has answered.
+fn moved_line(
+    conn: &rusqlite::Connection,
+    row: &crate::model::QueuedWrite,
+    bound: &state::Bound,
+) -> Result<Option<MovedLine>> {
+    let (Some(source), Some(target), Some(edge_id)) = (&row.item_id, &row.target_id, &row.edge_id)
+    else {
+        return Ok(None);
+    };
+    let body: Value = serde_json::from_str(&crate::store::payload_of(conn, &row.id)?)?;
+    let (end, from, to) = match (body["source_id"].as_str(), body["target_id"].as_str()) {
+        (None, Some(to)) if source == &bound.item_id => (edge_types::End::Source, target, to),
+        (Some(to), None) if target == &bound.item_id => (edge_types::End::Target, source, to),
+        _ => return Ok(None),
+    };
+    let edge_type = match crate::store::edge_by_id(conn, edge_id)? {
+        Some(edge) => edge.edge_type,
+        None => match bound
+            .lines
+            .iter()
+            .find(|line| line.end == end && line.other == to)
+        {
+            Some(line) => line.edge_type.clone(),
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(MovedLine {
+        from: from.clone(),
+        to: state::Line {
+            edge_type,
+            end,
+            other: to.to_string(),
+        },
+    }))
 }
 
 /// The line an edge write of a file's lines stands for, read from its row.
@@ -1616,9 +1646,8 @@ impl Folder {
         let mut report = self.core.drain()?;
         let mut rebased = 0;
         while report.stopped.is_none() {
-            let now = self.rebase_thinned()?;
-            let restored = self.put_back_replaced()?;
-            if now + restored == 0 {
+            let now = self.rebase_thinned()? + self.make_edges_gone_before_their_move()?;
+            if now == 0 {
                 break;
             }
             rebased += now;
@@ -1635,7 +1664,7 @@ impl Folder {
             report.retry_after_seconds = report.retry_after_seconds.max(again.retry_after_seconds);
         }
         let gave_way = self.settle_placements(&mut report)?;
-        self.hold_refused(&report)?;
+        self.hold_refused()?;
         Ok(Drained {
             report,
             rebased,
@@ -1644,20 +1673,20 @@ impl Folder {
     }
 
     /// Holds a file while the server refused a change it carries, until a later
-    /// save of it lands one in its place (`folders.md` 9).
-    fn hold_refused(&self, report: &crate::DrainReport) -> Result<()> {
+    /// save of it lands one in its place (`folders.md` 9). Read from the queue,
+    /// so a write a plain device drain answered is held at the next pass.
+    fn hold_refused(&self) -> Result<()> {
         let queue = self.core.queue()?;
         let conn = self.core.conn()?;
         for mut bound in state::every_bound(&conn)? {
-            let was = bound.writes.clone();
-            for verdict in &report.verdicts {
+            let was = (bound.writes.clone(), bound.lines.clone());
+            for verdict in &queue {
                 let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
                     continue;
                 };
                 let save = bound.writes.queued[at].save;
-                let Some(row) = queue.iter().find(|row| row.id == verdict.id) else {
-                    continue;
-                };
+                let row = verdict;
+                let mut moved: Option<MovedLine> = None;
                 let change = match row.kind {
                     WriteKind::UpdateItem => state::Change::Edit,
                     WriteKind::AddTag => state::Change::AddTag(row.tag.clone().unwrap_or_default()),
@@ -1678,6 +1707,17 @@ impl Folder {
                             None => continue,
                         }
                     }
+                    WriteKind::UpdateEdge => match moved_line(&conn, row, &bound)? {
+                        Some(line) => {
+                            let change = state::Change::Edge {
+                                line: line.to.clone(),
+                                shown: true,
+                            };
+                            moved = Some(line);
+                            change
+                        }
+                        None => continue,
+                    },
                     _ => continue,
                 };
                 // A delete of an edge already gone did what it was asked.
@@ -1696,6 +1736,14 @@ impl Folder {
                         // A refused edit landed nothing its line could be current with.
                         if change == state::Change::Edit && save == bound.writes.save {
                             bound.edit_line = None;
+                        }
+                        // A refused move left the edge where it was, so the record names it there again.
+                        if let Some(moved) = &moved {
+                            for line in &mut bound.lines {
+                                if *line == moved.to {
+                                    line.other = moved.from.clone();
+                                }
+                            }
                         }
                         let refused = state::Refused {
                             change,
@@ -1723,119 +1771,59 @@ impl Folder {
                 }
                 bound.writes.queued.remove(at);
             }
-            if bound.writes != was {
+            if (&bound.writes, &bound.lines) != (&was.0, &was.1) {
                 state::bind(&conn, &bound)?;
             }
         }
         Ok(())
     }
 
-    /// Puts back an edge whose delete landed and whose successor was refused,
-    /// so a failed replace never leaves the end with none (`folders.md` 11).
-    fn put_back_replaced(&self) -> Result<usize> {
-        use crate::model::Verdict;
+    /// Makes the edge a line names where its move was answered that another
+    /// machine deleted the edge first: the line still asks for it.
+    fn make_edges_gone_before_their_move(&self) -> Result<usize> {
         let queue = self.core.queue()?;
-        let records = state::replaced(&*self.core.conn()?)?;
-        let mut queued = 0;
-        for (create, old) in records {
-            let row = queue.iter().find(|row| row.id == create);
-            let put_back = match row {
-                Some(row) => match row.verdict {
-                    None | Some(Verdict::Blocked) => continue,
-                    Some(Verdict::Refused | Verdict::Dead) => row.depends_on.iter().any(|waited| {
-                        queue.iter().any(|write| {
-                            &write.id == waited
-                                && write.kind == WriteKind::DeleteEdge
-                                && matches!(
-                                    write.verdict,
-                                    Some(Verdict::Accepted | Verdict::Merged)
-                                )
-                        })
-                    }),
-                    _ => false,
-                },
-                // Its answered rows were cleared: the copy, read back after
-                // each answer, says whether either edge stands.
-                None => {
-                    let held = self
-                        .core
-                        .edges_to(&old.target_id)?
-                        .into_iter()
-                        .chain(self.core.edges_to(&old.new_target_id)?);
-                    !held.into_iter().any(|edge| {
-                        edge.edge_type == old.edge_type
-                            && (edge.source_id == old.source_id && edge.target_id == old.target_id
-                                || edge.source_id == old.new_source_id
-                                    && edge.target_id == old.new_target_id)
-                    })
+        let mut made = 0;
+        let bounds = state::every_bound(&*self.core.conn()?)?;
+        for mut bound in bounds {
+            let mut changed = false;
+            for at in 0..bound.writes.queued.len() {
+                let Some(row) = queue
+                    .iter()
+                    .find(|row| row.id == bound.writes.queued[at].id)
+                else {
+                    continue;
+                };
+                if row.kind != WriteKind::UpdateEdge
+                    || row.verdict != Some(crate::model::Verdict::Refused)
+                    || row.reason.as_deref() != Some("edge_not_found")
+                {
+                    continue;
                 }
-            };
-            if put_back {
-                self.core.create_edge(&crate::model::EdgeDraft {
-                    source_id: old.source_id.clone(),
-                    target_id: old.target_id.clone(),
-                    edge_type: old.edge_type.clone(),
-                    properties: old.properties.clone(),
-                    ..Default::default()
+                let Some(moved) = moved_line(&*self.core.conn()?, row, &bound)? else {
+                    continue;
+                };
+                let body: Value =
+                    serde_json::from_str(&crate::store::payload_of(&*self.core.conn()?, &row.id)?)?;
+                let (source_id, target_id) = match moved.to.end {
+                    edge_types::End::Source => (bound.item_id.clone(), moved.to.other.clone()),
+                    edge_types::End::Target => (moved.to.other.clone(), bound.item_id.clone()),
+                };
+                let created = self.core.create_edge(&crate::model::EdgeDraft {
+                    source_id,
+                    target_id,
+                    edge_type: moved.to.edge_type.clone(),
+                    properties: body["properties"].as_object().cloned().unwrap_or_default(),
+                    id: None,
                 })?;
-                let reason = row.map_or_else(
-                    || "the replacement was refused and its answer cleared".to_string(),
-                    refusal_of,
-                );
-                self.record_put_back(&old, &reason)?;
-                queued += 1;
+                bound.writes.queued[at].id = created.id;
+                changed = true;
+                made += 1;
             }
-            state::settle_replaced(&*self.core.conn()?, &create)?;
-        }
-        Ok(queued)
-    }
-
-    /// Points the writing file's record back at the edge put back, and holds
-    /// the file while it still names the refused target.
-    fn record_put_back(&self, old: &state::Replaced, reason: &str) -> Result<()> {
-        let (item, end, from, to) = if old.new_source_id == old.source_id {
-            (
-                &old.source_id,
-                edge_types::End::Source,
-                &old.new_target_id,
-                &old.target_id,
-            )
-        } else {
-            (
-                &old.target_id,
-                edge_types::End::Target,
-                &old.new_source_id,
-                &old.source_id,
-            )
-        };
-        let conn = self.core.conn()?;
-        let Some(mut bound) = state::bound_to_item(&conn, item)? else {
-            return Ok(());
-        };
-        for line in &mut bound.lines {
-            if line.edge_type == old.edge_type && line.end == end && &line.other == from {
-                line.other = to.clone();
+            if changed {
+                state::bind(&*self.core.conn()?, &bound)?;
             }
         }
-        let refused = state::Refused {
-            change: state::Change::Edge {
-                line: state::Line {
-                    edge_type: old.edge_type.clone(),
-                    end,
-                    other: from.clone(),
-                },
-                shown: true,
-            },
-            save: bound.writes.save,
-            reason: reason
-                .strip_prefix(state::REFUSED)
-                .unwrap_or(reason)
-                .to_string(),
-        };
-        if !bound.writes.refused.contains(&refused) {
-            bound.writes.refused.push(refused);
-        }
-        state::bind(&conn, &bound)
+        Ok(made)
     }
 
     /// Moves the first such edit of each row: the next was made against it,
