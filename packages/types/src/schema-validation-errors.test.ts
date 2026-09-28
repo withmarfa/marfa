@@ -222,6 +222,15 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     },
     atField: "link_field",
   },
+  {
+    name: "link_field naming a field whose name holds a quote",
+    input: {
+      id: "acme.y",
+      fields: { 'vendor"id': { type: "string" } },
+      link_field: 'vendor"id',
+    },
+    atField: "link_field",
+  },
 ];
 
 describe("every validation error explains itself", () => {

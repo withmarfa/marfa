@@ -132,7 +132,7 @@ const DisplayHintsSchema = z
 const LinkFieldSchema = z
   .string()
   .describe(
-    "The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own.",
+    "The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. The field's name holds neither a double quote nor a backslash.",
   );
 
 const VersionPolicySchema = z
@@ -392,7 +392,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a type",
   description:
-    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -500,7 +500,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a registered type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`. Naming, changing or withdrawing a `link_field` is a change that needs one, and the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`. Naming, changing or withdrawing a `link_field` is a change that needs one, and the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

@@ -174,6 +174,84 @@ describe("a type's link", () => {
     expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
   });
 
+  it("refuses a link whose field's name holds a quote or a backslash", async () => {
+    const id = `user.linked-odd-${ctx.runId}`;
+    const fields = {
+      vendor_id: { type: "string" },
+      'vendor"id': { type: "string" },
+      "vendor\\id": { type: "string" },
+    };
+    for (const link_field of ['vendor"id', "vendor\\id"]) {
+      const refused = await client.rawRequest<unknown>("/types", {
+        method: "POST",
+        body: { id, fields, link_field },
+      });
+      expect(refused.status, `link_field ${link_field}`).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_schema");
+      const errors = refused.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(errors?.map((e) => e.field)).toContain("link_field");
+    }
+    expect((await client.getType(id)).status).toBe(404);
+    // The witness: both are string fields the type may declare.
+    const registered = await client.registerType({
+      id,
+      fields: fields as never,
+      link_field: "vendor_id",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+  });
+
+  it("refuses a parent change that leaves a subtype's link naming no string field", async () => {
+    const parent = `user.linked-parent-${ctx.runId}`;
+    const sub = `user.linked-parent-sub-${ctx.runId}`;
+    const title = { type: "string" };
+    expect(
+      (
+        await client.registerType({
+          id: parent,
+          fields: { vendor_id: { type: "string" }, title },
+        } as never)
+      ).ok,
+    ).toBe(true);
+    const named = await client.registerType({
+      id: sub,
+      parent,
+      fields: {},
+      link_field: "vendor_id",
+    } as never);
+    expect(named.ok, JSON.stringify(named.error)).toBe(true);
+
+    for (const fields of [
+      { title },
+      { vendor_id: { type: "integer" }, title },
+    ]) {
+      const refused = await client.updateType(parent, { fields, version: 2 });
+      expect(refused.status, JSON.stringify(fields)).toBe(400);
+      expect(refused.error?.error.code).toBe("invalid_schema");
+      const errors = refused.error?.error.details?.errors as
+        { field: string }[] | undefined;
+      expect(errors?.map((e) => e.field)).toContain("fields.vendor_id");
+    }
+    expect((await client.getType(parent)).data.fields.vendor_id?.type).toBe(
+      "string",
+    );
+
+    // The witness: once the subtype names no link, the parent may drop it.
+    const unlinked = await client.updateType(sub, {
+      parent,
+      fields: {},
+      version: 2,
+    });
+    expect(unlinked.ok, JSON.stringify(unlinked.error)).toBe(true);
+    const dropped = await client.updateType(parent, {
+      fields: { title },
+      version: 2,
+    });
+    expect(dropped.ok, JSON.stringify(dropped.error)).toBe(true);
+    expect((await client.getType(sub)).data.parent).toBe(parent);
+  });
+
   it("holds the rows a type already has to a link it gains", async () => {
     const id = `user.linked-gains-${ctx.runId}`;
     const schema = {
