@@ -1571,11 +1571,13 @@ impl Folder {
         let (held, bound) = {
             let conn = self.core.conn()?;
             (
-                crate::store::item_held(&conn, item_id)?,
+                crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop(),
                 state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),
             )
         };
-        let missing = if held {
+        // An item already in the bin is where the delete would put it, and the
+        // server refuses a second delete `404`.
+        let missing = if held.is_some_and(|item| item.state != ItemState::Trashed) {
             let look = match &bound {
                 Some(bound) => peers.moved_to(bound, self.holds(item_id, settings, members)),
                 None => Look::Nowhere,
@@ -3171,12 +3173,18 @@ impl Folder {
             Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
                 Departing::Kept
             }
-            _ => Departing::Yes,
+            Ok(_) => Departing::Yes,
+            // The person's delete is newer than the departure, so the scan
+            // journals it and sends it (`folders.md` 21).
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Departing::No,
+            // Bytes it cannot read are not shown to be the folder's own.
+            Err(_) => Departing::Kept,
         })
     }
 
     /// Takes a departed item's file away with its binding; nothing is
-    /// journaled, since the folder was not told of a delete.
+    /// journaled, since the folder was not told of a delete. A journal row
+    /// here is a file back since its scan, so it asks nothing now.
     fn take_away(&self, row: &state::Bound) -> Result<()> {
         let path = self.root.join(&row.path);
         if path.exists() && plainly_inside(&self.root, &row.path) {

@@ -12055,6 +12055,81 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
   });
 
+  it("sends a person's journaled delete of an item that leaves by state, and none for one trashed elsewhere", async () => {
+    const archived = {
+      id: "01a00000-0000-7000-8000-0000000000d2",
+      properties: { title: "archived", body: "body\n" },
+    };
+    const trashed = {
+      id: "01a00000-0000-7000-8000-0000000000d3",
+      properties: { title: "trashed", body: "body\n" },
+    };
+    harness = await folderHarness("folder-journaled-departure", {
+      settings: { search: { types: ["core.note"], state: ["active"] } },
+      rows: { "core.note": [{ item: archived }, { item: trashed }] },
+      events: [
+        replay("3", [
+          itemEvent(
+            "2",
+            "item.state_changed",
+            wireItem({ ...archived, state: "archived" }),
+          ),
+          itemEvent(
+            "3",
+            "item.deleted",
+            wireItem({ ...trashed, state: "trashed" }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // The person deletes both files, and the scan journals them.
+    rmSync(join(harness.dir, "archived.md"));
+    rmSync(join(harness.dir, "trashed.md"));
+    const journaled = await harness.folder.scan();
+    expect(journaled.ok && journaled.value.missing).toBe(2);
+    // Another device archives one and trashes the other inside the grace.
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(2);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.removed,
+      "the pull counted as removed files the person had already deleted, and cleared their journaled deletes",
+    ).toBe(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const swept = await harness.folder.scan();
+    expect(swept.ok).toBe(true);
+    if (!swept.ok) return;
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const deletes = queued.value
+      .filter((row) => row.kind === "delete_item")
+      .map((row) => row.item_id);
+    // The archived item's delete witnesses that a delete is produced here,
+    // so the trashed item's absence is not a sweep that sent nothing.
+    expect(
+      deletes,
+      "the person's delete of a file whose item was only archived elsewhere was never sent, and the item they deleted stays on the server",
+    ).toContain(archived.id);
+    expect(
+      deletes,
+      "a delete was sent for an item already in the bin, which the server refuses item_not_found",
+    ).toEqual([archived.id]);
+    expect(swept.value.trashed).toEqual(["archived.md"]);
+    const status = await harness.folder.status();
+    expect(status.ok).toBe(true);
+    if (!status.ok) return;
+    expect(
+      status.value.files.map((file) => file.path),
+      "a journaled file whose item is already in the bin kept its binding",
+    ).toEqual([]);
+  });
+
   it("keeps an unmatched file current, so its second edit keeps another device's change", async () => {
     const item = {
       id: "01a00000-0000-7000-8000-0000000000f1",
