@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
-import type { CliContext, ItemEnvelope } from "./harness.js";
+import type { CliContext, ItemEnvelope, Refusal } from "./harness.js";
 
 /**
  * A file attached to a note: its bytes stored by hash, a file item carrying
@@ -113,24 +113,44 @@ describe("attaching a file", () => {
     expect(link.url).toContain(attached.blob.hash.replace("sha256:", ""));
     expect(link.expires_in).toBe(120);
 
-    // The one copy cannot be dropped: the door answers its own refusal
-    // with the floor it holds, and the log still names the copy after.
-    const store = locations.data[0]!.store_id;
-    const kept = await c.operator.refused([
-      "blobs",
-      "drop",
-      attached.blob.hash,
-      "--store",
-      store,
-    ]);
-    expect(kept.code).toBe(1);
-    expect(kept.envelope.error.server?.code).toBe("copies_below_minimum");
+    // The last copy cannot be dropped: the door answers its own refusal
+    // with the floor it holds, and the log still names the copy after. A
+    // server with an object store may have replicated the upload by now, so
+    // copies above the floor go first.
+    let kept: { store: string; code: number; envelope: Refusal } | undefined;
+    for (let tries = 0; tries < 5 && kept === undefined; tries += 1) {
+      const now = await c.cli.json<{ data: { store_id: string }[] }>([
+        "blobs",
+        "locations",
+        attached.blob.hash,
+      ]);
+      const store = now.data[0]?.store_id;
+      if (store === undefined) break;
+      const outcome = await c.operator.run([
+        "--json",
+        "blobs",
+        "drop",
+        attached.blob.hash,
+        "--store",
+        store,
+      ]);
+      if (outcome.code !== 0) {
+        kept = {
+          store,
+          code: outcome.code,
+          envelope: JSON.parse(outcome.stderr.trim()) as Refusal,
+        };
+      }
+    }
+    expect(kept, "every copy was dropped, so no floor was held").toBeDefined();
+    expect(kept!.code).toBe(1);
+    expect(kept!.envelope.error.server?.code).toBe("copies_below_minimum");
     const still = await c.cli.json<{ data: { store_id: string }[] }>([
       "blobs",
       "locations",
       attached.blob.hash,
     ]);
-    expect(still.data.map((copy) => copy.store_id)).toContain(store);
+    expect(still.data.map((copy) => copy.store_id)).toContain(kept!.store);
   });
 
   it("refuses a file that is not there before anything is sent", async () => {
