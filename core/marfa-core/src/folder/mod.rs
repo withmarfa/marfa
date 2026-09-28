@@ -7,14 +7,17 @@
 pub mod document;
 pub mod edge_types;
 mod embeds;
+mod elsewhere;
 pub mod fields;
 pub mod identity;
 mod lines;
 mod placement;
+pub mod registry;
 pub mod settings;
 mod settings_file;
 pub mod state;
 
+use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,10 +32,13 @@ use crate::{Core, Result, Server};
 
 use edge_types::EdgeTypes;
 use embeds::ATTACHMENT_EDGE;
+use elsewhere::{Look, Peers};
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{EdgeWork, Names, Resolver};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
+pub use registry::{REGISTRY_ENV, Registered, Registry};
+
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
 
@@ -77,6 +83,18 @@ pub struct ScanReport {
     pub missing: usize,
     /// Journaled files whose grace ran out, now queued as deletes.
     pub deleted: usize,
+    /// The paths of those, each found in no folder on this machine
+    /// (`folders.md` 40).
+    pub trashed: Vec<String>,
+    /// Journaled files found in another folder here, so not trashed
+    /// (`folders.md` 40).
+    pub moved_away: usize,
+    /// Journaled files held, since the other folders could not all be read
+    /// (`folders.md` 40).
+    pub unsure: Vec<Unsure>,
+    /// Why the registry could not be read, where it could not
+    /// (`folders.md` 38).
+    pub registry: Option<String>,
     /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
     /// Files bound to a row the copy lost, queued again as new items because
@@ -92,12 +110,20 @@ pub struct ScanReport {
     pub embeds: Vec<Flagged>,
 }
 
+/// A missing file not trashed yet, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Unsure {
+    pub path: String,
+    pub reason: String,
+}
+
 /// A file the folder holds rather than sends, and why.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Flagged {
     pub path: String,
     /// `unreadable`, `refused`, or `edges` for lines that change nothing
-    /// (`folders.md` 9, 10, 11); `embed` for an embed read as nothing (12).
+    /// (`folders.md` 9, 10, 11); `embed` for an embed read as nothing (12);
+    /// `waiting` for a moved file whose item cannot be read yet (40).
     pub flag: &'static str,
     pub reason: String,
 }
@@ -198,6 +224,10 @@ impl Folder {
                 CoreError::Store(format!("cannot remove {}: {error}", old.display()))
             })?;
         }
+        // Unlisted, its moves would read as deletes to the others (`folders.md` 38).
+        if let Some(registry) = Registry::located() {
+            registry.add(&added.root, folder)?;
+        }
         Ok(added)
     }
 
@@ -224,11 +254,55 @@ impl Folder {
         }
         let core = Core::open(state.join("core.sqlite"), server)?;
         let folder = settings_file::bound(&core)?.ok_or_else(not_a_folder)?;
-        Ok(Folder {
+        let opened = Folder {
             root,
             folder,
             core,
             key: std::sync::OnceLock::new(),
+        };
+        let _ = opened.register();
+        Ok(opened)
+    }
+
+    /// Lists the folder again where the registry lost it or the directory
+    /// moved, and answers why it could not, where it could not.
+    fn register(&self) -> Option<String> {
+        let registry = Registry::located()?;
+        registry
+            .register(&self.root, &self.folder)
+            .err()
+            .map(|error| error.to_string())
+    }
+
+    /// Unregisters the folder and removes `.marfa/`, leaving its files
+    /// (`folders.md` 38); refused while it is held or writes wait.
+    pub fn remove(self) -> Result<()> {
+        if self.core.handle() != crate::Handle::Writer {
+            return Err(CoreError::Invalid(format!(
+                "{} is held by another process, a `folders watch` say; stop it and remove the folder then",
+                self.root.display()
+            )));
+        }
+        let waiting = self
+            .core
+            .queue()?
+            .iter()
+            .filter(|write| matches!(write.verdict, None | Some(crate::model::Verdict::Blocked)))
+            .count();
+        if waiting > 0 {
+            return Err(CoreError::Invalid(format!(
+                "{} has {waiting} write(s) not yet sent; push it first, or they are lost with the folder",
+                self.root.display()
+            )));
+        }
+        if let Some(registry) = Registry::located() {
+            registry.unregister(&self.root)?;
+        }
+        let Folder { root, core, .. } = self;
+        drop(core);
+        let state = root.join(STATE_DIR);
+        std::fs::remove_dir_all(&state).map_err(|error| {
+            CoreError::Store(format!("cannot remove {}: {error}", state.display()))
         })
     }
 
@@ -402,7 +476,8 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
     whole
 }
 
-/// Walks a directory, skipping anything dot-led at any depth.
+/// Walks a directory, skipping anything dot-led at any depth and any folder
+/// inside it, whose files are that folder's.
 fn walk(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -428,7 +503,9 @@ fn walk(dir: &Path, into: &mut Vec<PathBuf>) -> Result<()> {
         // A symlink is neither: following one would give two paths one
         // identity on purpose.
         if metadata.is_dir() {
-            walk(&path, into)?;
+            if !path.join(STATE_DIR).is_dir() {
+                walk(&path, into)?;
+            }
         } else if metadata.is_file() {
             into.push(path);
         }
@@ -473,11 +550,28 @@ struct Claim {
     bound: Option<state::Bound>,
 }
 
+/// The files a scan leaves waiting, by their place in it, with why.
+type Waiting = HashMap<usize, String>;
+
+/// Copy or move, across the folders on this machine (`folders.md` 39).
+enum Arrival {
+    /// The item its id names, where the copy holds it.
+    Here,
+    /// A copy into this folder, which becomes a new item.
+    Copy,
+    /// A move whose item cannot be read yet, and why.
+    Waits(String),
+}
+
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
     /// too, so one rule decides identity (`folders.md` 18).
     pub fn scan(&self) -> Result<ScanReport> {
-        let mut report = ScanReport::default();
+        let mut report = ScanReport {
+            // Every pass, so a watch lists its folder again too.
+            registry: self.register(),
+            ..ScanReport::default()
+        };
         let settings = self.settings()?;
         let (catalog, mut edge_types) = {
             let conn = self.core.conn()?;
@@ -617,11 +711,20 @@ impl Folder {
         {
             edge_types = fresh;
         }
-        let claims = self.claim(&files, &snapshot, &catalog)?;
+        let peers = Peers::of(self);
+        let (claims, mut waiting) = self.claim(&files, &snapshot, &settings, &catalog, &peers)?;
         let withheld = self.withheld()?;
         let mut work: Vec<EdgeWork> = Vec::new();
 
-        for (file, claim) in files.iter().zip(claims) {
+        for (at, (file, claim)) in files.iter().zip(claims).enumerate() {
+            if let Some(reason) = waiting.remove(&at) {
+                report.flagged.push(Flagged {
+                    path: file.key.clone(),
+                    flag: "waiting",
+                    reason,
+                });
+                continue;
+            }
             if let Some(reason) = &file.unreadable {
                 self.hold_unreadable(file, claim.as_ref(), reason, &withheld)?;
                 report.flagged.push(Flagged::of(
@@ -825,7 +928,7 @@ impl Folder {
             state::journal_missing(&conn, &row.path, &row.item_id)?;
             report.missing += 1;
         }
-        report.deleted = self.sweep_journal()?;
+        self.sweep_journal(&settings, &peers, &mut report)?;
         Ok(report)
     }
 
@@ -837,8 +940,10 @@ impl Folder {
         &self,
         files: &[Scanned],
         snapshot: &[state::Bound],
+        settings: &Settings,
         catalog: &Catalog,
-    ) -> Result<Vec<Option<Claim>>> {
+        peers: &Peers<'_>,
+    ) -> Result<(Vec<Option<Claim>>, Waiting)> {
         let by_mark: HashMap<&str, &state::Bound> = snapshot
             .iter()
             .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
@@ -859,6 +964,8 @@ impl Folder {
         };
 
         let mut contests: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+        let mut waiting = Waiting::new();
+        let members = OnceCell::new();
         for (at, file) in files.iter().enumerate() {
             let Some(id) = file.id.as_deref() else {
                 continue;
@@ -870,6 +977,16 @@ impl Folder {
                 .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
             {
                 continue;
+            }
+            if named(file).is_none_or(|bound| bound.item_id != id) {
+                match self.arrival(id, &file.key, settings, peers, &members)? {
+                    Arrival::Copy => continue,
+                    Arrival::Waits(reason) => {
+                        waiting.insert(at, reason);
+                        continue;
+                    }
+                    Arrival::Here => {}
+                }
             }
             // A file item's file is its bytes, never a document naming it, and
             // no `system.*` row is a file's item.
@@ -934,7 +1051,7 @@ impl Folder {
             }
         }
         for (at, file) in files.iter().enumerate() {
-            if claims[at].is_some() {
+            if claims[at].is_some() || waiting.contains_key(&at) {
                 continue;
             }
             if let Some(bound) = by_path.get(file.key.as_str())
@@ -946,7 +1063,96 @@ impl Folder {
                 });
             }
         }
-        Ok(claims)
+        // A file that cannot carry an id, moved here from another folder on
+        // this machine, is the item that folder bound it to (`folders.md` 40).
+        for (at, file) in files.iter().enumerate() {
+            if claims[at].is_some()
+                || waiting.contains_key(&at)
+                || file.id.is_some()
+                || carries_frontmatter(&file.path)
+            {
+                continue;
+            }
+            let Some(theirs) = peers.left_behind(file.mark.as_deref(), &file.hash) else {
+                continue;
+            };
+            if by_item.contains_key(theirs.item_id.as_str()) || taken.contains(&theirs.item_id) {
+                continue;
+            }
+            match self.read_moved(&theirs.item_id)? {
+                Some(reason) => {
+                    waiting.insert(at, reason);
+                }
+                None if self.core.get(&theirs.item_id)?.is_some() => {
+                    taken.insert(theirs.item_id.clone());
+                    claims[at] = Some(Claim {
+                        item_id: theirs.item_id.clone(),
+                        // What that folder's binding says of the bytes, and
+                        // nothing of its queue.
+                        bound: Some(state::Bound {
+                            edit_line: None,
+                            held: None,
+                            writes: state::Writes::default(),
+                            ..theirs
+                        }),
+                    });
+                }
+                None => {}
+            }
+        }
+        Ok((claims, waiting))
+    }
+
+    /// Copy or move, for a file carrying an id this folder has no file of
+    /// (`folders.md` 39).
+    fn arrival(
+        &self,
+        id: &str,
+        key: &str,
+        settings: &Settings,
+        peers: &Peers<'_>,
+        members: &OnceCell<HashSet<String>>,
+    ) -> Result<Arrival> {
+        if peers.carry(id) {
+            // At its own placement here, it is the item's file come back, an
+            // editor saving over a file another folder took in say.
+            let placed_here = self
+                .placement(id)?
+                .is_some_and(|edge| path_of(&edge) == Some(key));
+            return Ok(if placed_here || self.holds(id, settings, members) {
+                Arrival::Here
+            } else {
+                Arrival::Copy
+            });
+        }
+        if self.core.get(id)?.is_none() && peers.held_elsewhere(id) {
+            return Ok(match self.read_moved(id)? {
+                Some(reason) => Arrival::Waits(reason),
+                None => Arrival::Here,
+            });
+        }
+        Ok(Arrival::Here)
+    }
+
+    /// Whether this folder's search holds the item, answered once a pass.
+    fn holds(&self, id: &str, settings: &Settings, members: &OnceCell<HashSet<String>>) -> bool {
+        members
+            .get_or_init(|| self.members(settings).unwrap_or_default())
+            .contains(id)
+    }
+
+    /// Reads a moved file's item in, pinned; `Some` with why where it cannot
+    /// be asked now. An item the server will not show leaves a new item.
+    fn read_moved(&self, id: &str) -> Result<Option<String>> {
+        if self.core.get(id)?.is_some() {
+            return Ok(None);
+        }
+        match self.core.pin(id) {
+            Ok(_) | Err(CoreError::NotFound { .. } | CoreError::Forbidden { .. }) => Ok(None),
+            Err(error) => Ok(Some(format!(
+                "it carries the id of an item moved from another folder on this machine, which cannot be read yet ({error}); it is taken at the next push"
+            ))),
+        }
     }
 
     /// Keeps an unreadable file bound where it now is, sending only a move's
@@ -994,33 +1200,57 @@ impl Folder {
         Ok(())
     }
 
-    /// Sends the deletes whose grace has run out.
-    fn sweep_journal(&self) -> Result<usize> {
+    /// Sends the deletes whose grace has run out, save for a file found in
+    /// another folder on this machine (`folders.md` 40).
+    fn sweep_journal(
+        &self,
+        settings: &Settings,
+        peers: &Peers<'_>,
+        report: &mut ScanReport,
+    ) -> Result<()> {
         let journaled = {
             let conn = self.core.conn()?;
             state::journaled(&conn)?
         };
         let now = crate::store::now_iso();
-        let mut sent = 0usize;
+        let members = OnceCell::new();
         for (path, item_id, missing_since) in journaled {
             if !elapsed_past(&missing_since, &now, RENAME_GRACE) {
                 continue;
             }
             // A row already gone is the one excuse; anything else the store
             // says is an error, not a reason to skip the delete.
-            let held = {
+            let (held, bound) = {
                 let conn = self.core.conn()?;
-                crate::store::item_held(&conn, &item_id)?
+                (
+                    crate::store::item_held(&conn, &item_id)?,
+                    state::bound_at(&conn, &path)?.filter(|bound| bound.item_id == item_id),
+                )
             };
             if held {
-                self.core.delete_item(&item_id)?;
-                sent += 1;
+                let look = match &bound {
+                    Some(bound) => peers.moved_to(bound, self.holds(&item_id, settings, &members)),
+                    None => Look::Nowhere,
+                };
+                match look {
+                    Look::Moved => report.moved_away += 1,
+                    // Held as a delete is while offline, until it can be told.
+                    Look::Unsure(reason) => {
+                        report.unsure.push(Unsure { path, reason });
+                        continue;
+                    }
+                    Look::Nowhere => {
+                        self.core.delete_item(&item_id)?;
+                        report.deleted += 1;
+                        report.trashed.push(path.clone());
+                    }
+                }
             }
             let conn = self.core.conn()?;
             state::journal_clear(&conn, &path)?;
             state::unbind(&conn, &path)?;
         }
-        Ok(sent)
+        Ok(())
     }
 
     /// Whether this path is one the folder pushes (`folders.md` 27, 34): a
@@ -1906,11 +2136,15 @@ impl Folder {
             .filter(|id| !members.contains(id))
             .collect();
         let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
-        work.extend(
-            held.into_iter()
-                .filter(|item| settings.holds_state(item.state))
-                .map(|item| (item, true)),
-        );
+        let peers = Peers::of(self);
+        for item in held {
+            if !settings.holds_state(item.state) {
+                continue;
+            }
+            if !self.let_go(&item.id, &peers, &mut report)? {
+                work.push((item, true));
+            }
+        }
         self.hold_edge_ends(&work, &edge_types, &catalog)?;
         let withheld = self.withheld()?;
         // After the pins, so an embed names an attachment the copy now holds;
@@ -1986,6 +2220,25 @@ impl Folder {
             {
                 continue;
             }
+            // Gone from the disk it is the scan's to journal; written back,
+            // a file another folder took in would return (`folders.md` 41).
+            if *unmatched
+                && bound
+                    .as_ref()
+                    .is_some_and(|bound| !self.root.join(&bound.path).exists())
+            {
+                continue;
+            }
+            // Moved to another folder here and not yet taken there, written
+            // anew it would make the moved file read as a copy (`folders.md` 39).
+            if bound.is_none() && peers.arriving(&item.id) {
+                report.elsewhere += 1;
+                continue;
+            }
+            let taken = match &bound {
+                None if !*unmatched => peers.let_go(&item.id),
+                _ => None,
+            };
             let placed = self.placement(&item.id)?;
             // An embedded file goes where its link says, and its placement
             // follows (`folders.md` 12).
@@ -2023,6 +2276,7 @@ impl Folder {
                 bound,
                 want,
                 rank,
+                taken,
             });
         }
         // Ranked by what the server holds, so every machine gives a shared
@@ -2108,10 +2362,19 @@ impl Folder {
         report: &mut PullReport,
     ) -> Result<bool> {
         let Placing {
-            item, bound, want, ..
+            item,
+            bound,
+            want,
+            taken,
+            ..
         } = entry;
         let (item, want) = (*item, want.clone());
         let catalog = rendering.catalog;
+        if let Some((from, theirs)) = taken
+            && self.take_in(item, &want, from, theirs, withheld, report)?
+        {
+            return Ok(false);
+        }
         let path = self.root.join(&want);
         let (bytes, wrote, lines) = match bytes_of(item, catalog) {
             Some(blob) => {
@@ -2309,6 +2572,84 @@ impl Folder {
             report.rewritten += 1;
         }
         Ok(false)
+    }
+
+    /// Moves in a file another folder let go of, bound before it lands
+    /// (`folders.md` 19, 41). Answers whether it did.
+    fn take_in(
+        &self,
+        item: &Item,
+        want: &str,
+        from: &Path,
+        theirs: &state::Bound,
+        withheld: &placement::Withheld,
+        report: &mut PullReport,
+    ) -> Result<bool> {
+        let path = self.root.join(want);
+        if path.exists() {
+            return Ok(false);
+        }
+        let binding = |identity: Option<String>| state::Bound {
+            path: want.to_string(),
+            item_id: item.id.clone(),
+            identity,
+            content_hash: theirs.content_hash.clone(),
+            written_hash: Some(theirs.content_hash.clone()),
+            links: theirs.links.clone(),
+            lines: theirs.lines.clone(),
+            edit_line: None,
+            held: None,
+            own: theirs.own.clone(),
+            writes: state::Writes::default(),
+        };
+        state::bind(&*self.core.conn()?, &binding(None))?;
+        let moved = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| {
+                // Copied where a rename cannot cross volumes; a source left
+                // behind is still its folder's, which lets it go later.
+                std::fs::rename(from, &path).or_else(|_| {
+                    std::fs::copy(from, &path).map(|_| {
+                        let _ = std::fs::remove_file(from);
+                    })
+                })
+            });
+        if moved.is_err() {
+            state::unbind(&*self.core.conn()?, want)?;
+            return Ok(false);
+        }
+        state::journal_clear(&*self.core.conn()?, want)?;
+        if let Ok(metadata) = std::fs::symlink_metadata(&path)
+            && let Some(found) = identity::of(&metadata)
+        {
+            state::bind(&*self.core.conn()?, &binding(Some(found.key())))?;
+        }
+        report.placed += usize::from(self.place(&item.id, want, withheld)?);
+        report.taken += 1;
+        Ok(true)
+    }
+
+    /// Removes this folder's own bytes of an item another folder holds with
+    /// a file, trashing nothing (`folders.md` 41). Answers whether it did.
+    fn let_go(&self, item_id: &str, peers: &Peers<'_>, report: &mut PullReport) -> Result<bool> {
+        let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
+            return Ok(false);
+        };
+        let path = self.root.join(&bound.path);
+        let own = std::fs::read(&path)
+            .is_ok_and(|found| bound.written_hash.as_deref() == Some(state::hash(&found).as_str()));
+        if !own || !plainly_inside(&self.root, &bound.path) || !peers.filed_elsewhere(item_id) {
+            return Ok(false);
+        }
+        std::fs::remove_file(&path).map_err(|error| {
+            CoreError::Store(format!("cannot remove {}: {error}", path.display()))
+        })?;
+        let conn = self.core.conn()?;
+        state::unbind(&conn, &bound.path)?;
+        state::journal_clear(&conn, &bound.path)?;
+        report.let_go += 1;
+        Ok(true)
     }
 
     /// The ids the search matches in the copy (`folders.md` 2), answered by
@@ -2843,6 +3184,9 @@ struct Placing<'a> {
     bound: Option<state::Bound>,
     want: String,
     rank: placement::Rank,
+    /// A file another folder on this machine let go of, to take in rather
+    /// than write anew (`folders.md` 41).
+    taken: Option<(PathBuf, state::Bound)>,
 }
 
 /// The extension of a path, lowercased.
@@ -2952,6 +3296,14 @@ pub struct PullReport {
     /// Files whose item the search no longer matches for any other reason,
     /// left where they are (`folders.md` 33).
     pub unmatched: usize,
+    /// Files taken in from another folder (`folders.md` 41).
+    pub taken: usize,
+    /// Items not written because their file sits unbound in another folder
+    /// (`folders.md` 40).
+    pub elsewhere: usize,
+    /// Files removed because another folder holds their item with a file
+    /// (`folders.md` 41).
+    pub let_go: usize,
     /// The settings file, rewritten where the settings moved on (`folders.md`
     /// 1).
     pub settings: SettingsFileReport,

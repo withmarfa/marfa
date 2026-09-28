@@ -47,10 +47,18 @@ export interface Refusal {
 
 /**
  * What the child sees of this process's environment: the system's own
- * variables and nothing of the developer's (a `MARFA_DB`, a kept
- * `MARFA_API_KEY`), so what a scenario passes is all the binary has.
+ * variables and the run's folder registry, and nothing of the developer's
+ * (a `MARFA_DB`, a kept `MARFA_API_KEY`), so what a scenario passes is all
+ * the binary has.
  */
-const INHERITED = ["PATH", "HOME", "TMPDIR", "LANG", "XDG_RUNTIME_DIR"];
+const INHERITED = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "LANG",
+  "XDG_RUNTIME_DIR",
+  "MARFA_FOLDER_REGISTRY",
+];
 
 /** The long-running children a file started, killed when the file ends. */
 const held: ChildProcess[] = [];

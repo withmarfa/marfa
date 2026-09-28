@@ -301,10 +301,28 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
 }
 
 pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
-    let mut statement = conn.prepare(
-        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files ORDER BY path",
-    )?;
-    let rows = statement.query_map([], read_bound)?;
+    bound_where(conn, "", [])
+}
+
+/// The files bound under this device, inode and birth time.
+pub fn bound_with_identity(conn: &Connection, identity: &str) -> Result<Vec<Bound>, CoreError> {
+    bound_where(conn, "WHERE identity = ?1", [identity])
+}
+
+/// The files bound with these bytes.
+pub fn bound_with_hash(conn: &Connection, content_hash: &str) -> Result<Vec<Bound>, CoreError> {
+    bound_where(conn, "WHERE content_hash = ?1", [content_hash])
+}
+
+fn bound_where<P: rusqlite::Params>(
+    conn: &Connection,
+    clause: &str,
+    params: P,
+) -> Result<Vec<Bound>, CoreError> {
+    let mut statement = conn.prepare(&format!(
+        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes FROM folder_files {clause} ORDER BY path",
+    ))?;
+    let rows = statement.query_map(params, read_bound)?;
     let mut bound = Vec::new();
     for row in rows {
         bound.push(row?);

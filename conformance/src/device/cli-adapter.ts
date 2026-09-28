@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { keychainEnv } from "../utils/keychain.js";
 import {
@@ -84,6 +84,16 @@ export interface CliDeviceOptions {
   key?: string;
   /** Open the store to read only (`device.md` 41). */
   reader?: boolean;
+  /**
+   * The folder registry the binary reads, standing in for one machine's
+   * (`folders.md` 38); the run's own where unnamed.
+   */
+  registry?: string;
+  /**
+   * A home for the binary in place of the run's, with no registry named, so
+   * it finds the machine's own registry under it.
+   */
+  home?: string;
 }
 
 export function newStore(label: string): string {
@@ -350,7 +360,7 @@ export class CliDevice implements DeviceUnderTest {
         ...this.server(),
       ],
       {
-        env: { ...process.env, ...keychainEnv() },
+        env: this.env(),
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -551,6 +561,20 @@ export class CliDevice implements DeviceUnderTest {
     ];
   }
 
+  /** What the binary runs under: the run's keychain, and the registry this
+   *  device names, where it names one. */
+  private env(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ...process.env, ...keychainEnv() };
+    if (this.options.home !== undefined) {
+      env.HOME = this.options.home;
+      delete env.MARFA_FOLDER_REGISTRY;
+      delete env.XDG_DATA_HOME;
+    } else if (this.options.registry !== undefined) {
+      env.MARFA_FOLDER_REGISTRY = this.options.registry;
+    }
+    return env;
+  }
+
   /** A command that prints one JSON value per line as it runs. */
   private async lines(args: string[]): Promise<Outcome<unknown[]>> {
     const outcome = await this.invokeText([...this.prefix(), ...args]);
@@ -604,7 +628,7 @@ export class CliDevice implements DeviceUnderTest {
       // deadline for everything else; this bound stops one hung spawn from
       // taking the file's whole budget with nothing naming it.
       ({ stdout } = await run(this.options.binary, full, {
-        env: { ...process.env, ...keychainEnv() },
+        env: this.env(),
         timeout: 60_000,
         maxBuffer: 32 * 1024 * 1024,
       }));
@@ -666,6 +690,17 @@ export interface ScanReport {
   unchanged: number;
   missing: number;
   deleted: number;
+  /** The paths of those, each found in no folder on the machine
+   *  (`folders.md` 40). */
+  trashed: string[];
+  /** Journaled files held, since the other folders could not all be read
+   *  (`folders.md` 40). */
+  unsure: Array<{ path: string; reason: string }>;
+  /** Why the registry could not be read, where it could not. */
+  registry: string | null;
+  /** Journaled files found in another folder on the machine, so nothing was
+   *  trashed (`folders.md` 40). */
+  moved_away: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
    *  or moved (`folders.md` 36). Counted in `created` too. */
@@ -686,7 +721,7 @@ export interface ScanReport {
  *  read as nothing (`folders.md` 12). */
 export interface FlaggedFile {
   path: string;
-  flag: "unreadable" | "refused" | "behind" | "edges" | "embed";
+  flag: "unreadable" | "refused" | "behind" | "edges" | "embed" | "waiting";
   reason: string;
 }
 
@@ -718,6 +753,15 @@ export interface PullReport {
   /** Files whose item the search no longer matches otherwise, left where
    *  they are (`folders.md` 33). */
   unmatched: number;
+  /** Files another folder on the machine let go of, taken in here
+   *  (`folders.md` 41). */
+  taken: number;
+  /** Items whose file was moved to another folder on the machine that has
+   *  not taken it yet, so none is written here (`folders.md` 40). */
+  elsewhere: number;
+  /** Files of items another folder on the machine holds with a file of its
+   *  own, taken away with nothing trashed (`folders.md` 41). */
+  let_go: number;
   /** File items whose bytes could not be had, so no file was written (`folders.md` 35). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */
@@ -778,7 +822,15 @@ export interface PushReport {
 export class CliFolder {
   constructor(
     readonly dir: string,
-    private readonly options: { binary: string; url: string; key: string },
+    private readonly options: {
+      binary: string;
+      url: string;
+      key: string;
+      /** The registry of the machine this folder is on (`folders.md` 38). */
+      registry?: string;
+      /** A home whose own registry the binary finds, in place of either. */
+      home?: string;
+    },
   ) {}
 
   /** The store this folder keeps its working copy and queue in. */
@@ -793,7 +845,22 @@ export class CliFolder {
       store: this.store,
       url: this.options.url,
       key: this.options.key,
+      // Unnamed, the registry sits beside the directory, shared only by
+      // folders with the same parent.
+      registry:
+        this.options.registry ?? join(dirname(this.dir), "folders.json"),
+      home: this.options.home,
     });
+  }
+
+  /** The folders the registry of this folder's machine lists. */
+  async list(): Promise<Outcome<RegisteredFolder[]>> {
+    return this.run<RegisteredFolder[]>(["folders", "list"]);
+  }
+
+  /** Takes the folder off its machine, leaving its files. */
+  async remove(): Promise<Outcome<unknown>> {
+    return this.run(["folders", "remove", this.dir]);
   }
 
   /** Binds the directory to the `system.folder` whose settings it follows. */
@@ -841,22 +908,12 @@ export class CliFolder {
 
   /** A watch left running, which the caller stops. */
   watch(): HeldCommand {
-    return new CliDevice({
-      binary: this.options.binary,
-      store: this.store,
-      url: this.options.url,
-      key: this.options.key,
-    }).hold(["folders", "watch", this.dir], "root");
+    return this.device().hold(["folders", "watch", this.dir], "root");
   }
 
   /** A watch left running that prints for a person, not a program. */
   watchText(): HeldCommand {
-    return new CliDevice({
-      binary: this.options.binary,
-      store: this.store,
-      url: this.options.url,
-      key: this.options.key,
-    }).hold(["folders", "watch", this.dir], "text");
+    return this.device().hold(["folders", "watch", this.dir], "text");
   }
 
   /** A pull, printed for a person. */
@@ -876,11 +933,12 @@ export class CliFolder {
   private async run<T>(args: string[]): Promise<Outcome<T>> {
     // A folder command names its directory and finds its own store under
     // `.marfa`, so it runs at the root, with no `--db` at all.
-    return new CliDevice({
-      binary: this.options.binary,
-      store: this.store,
-      url: this.options.url,
-      key: this.options.key,
-    }).root<T>(args);
+    return this.device().root<T>(args);
   }
+}
+
+/** A folder a machine's registry lists (`folders.md` 38). */
+export interface RegisteredFolder {
+  dir: string;
+  folder: string;
 }

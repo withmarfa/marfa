@@ -375,6 +375,8 @@ export interface FolderHarness {
   settings: FolderRow;
   /** What the hydration served, so a scripted write door knows those rows. */
   rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+  /** The folder registry of the machine it is on (`folders.md` 38). */
+  registry: string;
   stop: () => Promise<void>;
 }
 
@@ -437,6 +439,13 @@ export async function folderHarness(
     key?: Responder[];
     /** Skip the hydration, for the cases that are about a folder before one. */
     hydrate?: boolean;
+    /**
+     * Another folder's registry, for two folders on one machine. Unnamed, a
+     * folder has a registry of its own, as a machine of its own would.
+     */
+    registry?: string;
+    /** A home whose own registry the binary finds, in place of either. */
+    home?: string;
     /** The type catalog the server serves, the scripted one unless named. */
     catalog?: Answer;
     /** What `GET /edge-types` answers, the shipped types unless named. */
@@ -456,14 +465,15 @@ export async function folderHarness(
   } = {},
 ): Promise<FolderHarness> {
   const server = options.sharing?.server ?? (await ScriptedServer.start());
-  const dir = join(
-    mkdtempSync(join(tmpdir(), `marfa-folder-${label}-`)),
-    "notes",
-  );
+  const root = mkdtempSync(join(tmpdir(), `marfa-folder-${label}-`));
+  const dir = join(root, "notes");
+  const registry = options.registry ?? join(root, "registry", "folders.json");
   const folder = new CliFolder(dir, {
     binary: requireBinary(),
     url: server.url,
     key: options.sharing?.key ?? KEY,
+    registry,
+    home: options.home,
   });
   const settings =
     options.folder ??
@@ -525,6 +535,7 @@ export async function folderHarness(
     dir,
     settings,
     rows: options.rows ?? {},
+    registry,
     stop,
   };
 }

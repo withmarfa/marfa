@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Subcommand;
+use marfa_core::folder::Registry;
 use marfa_core::{CoreError, Folder};
 
 use crate::commands::folders as folder_settings;
@@ -23,6 +24,15 @@ pub enum FoldersCommand {
         /// The folder's `system.folder` id.
         #[arg(long, value_name = "ID")]
         folder: String,
+    },
+    /// List the folders on this machine, as its registry holds them. The
+    /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
+    List,
+    /// Take a folder off this machine: its own state under `.marfa` goes,
+    /// and its files stay as plain files. Refused while writes wait.
+    Remove {
+        /// The folder.
+        dir: PathBuf,
     },
     /// Pull what the folder's search needs into its working copy.
     Hydrate {
@@ -87,6 +97,36 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         folder.folder_id()
                     )
                 },
+            )
+        }
+        FoldersCommand::List => {
+            let listed = match Registry::located() {
+                Some(registry) => registry.folders()?,
+                None => Vec::new(),
+            };
+            output::report(&listed, json, || {
+                if listed.is_empty() {
+                    return "no folders on this machine".into();
+                }
+                listed
+                    .iter()
+                    .map(|entry| {
+                        format!(
+                            "{} follows the folder {}",
+                            entry.dir.display(),
+                            entry.folder
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
+        FoldersCommand::Remove { dir } => {
+            Folder::open(&dir, None)?.remove()?;
+            output::report(
+                &serde_json::json!({ "dir": dir, "removed": true }),
+                json,
+                || format!("{} is no longer a folder; its files stay", dir.display()),
             )
         }
         FoldersCommand::Hydrate { dir } => {
@@ -252,6 +292,7 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
             ),
             "behind" => format!("{}: {}", file.path, file.reason),
             "edges" => format!("{} is left as written: {}", file.path, file.reason),
+            "waiting" => format!("{} waits: {}", file.path, file.reason),
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
                 file.path, file.reason
@@ -357,6 +398,18 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.unmatched,
             "file(s) left in place whose item the search no longer matches",
         ),
+        (
+            report.taken,
+            "file(s) taken in from another folder on this machine",
+        ),
+        (
+            report.elsewhere,
+            "item(s) whose file was moved to another folder on this machine, written here once that folder takes it",
+        ),
+        (
+            report.let_go,
+            "file(s) removed whose item another folder on this machine holds, with nothing trashed",
+        ),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
@@ -406,6 +459,12 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         .map(|(count, what)| format!("; {count} {what}"))
         .collect::<String>()
     );
+    if report.moved_away > 0 {
+        line.push_str(&format!(
+            "; {} moved to another folder on this machine, so nothing was trashed",
+            report.moved_away
+        ));
+    }
     let behind = report
         .flagged
         .iter()
@@ -422,5 +481,27 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         line.push('\n');
         line.push_str(&embed);
     }
+    for said in trashed_lines(report) {
+        line.push('\n');
+        line.push_str(&said);
+    }
     line
+}
+
+/// What a scan's look in the other folders on this machine came to, in
+/// words (`folders.md` 38, 40).
+pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
+    let registry = report.registry.iter().map(|why| {
+        format!("this folder stands alone, since the folder registry cannot be read: {why}")
+    });
+    let trashed = report.trashed.iter().map(|path| {
+        format!("{path} was found in no folder on this machine, so its item was trashed")
+    });
+    let unsure = report.unsure.iter().map(|file| {
+        format!(
+            "{} is missing and not trashed, since the other folders cannot all be read: {}",
+            file.path, file.reason
+        )
+    });
+    registry.chain(trashed).chain(unsure).collect()
 }
