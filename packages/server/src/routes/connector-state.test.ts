@@ -1,5 +1,9 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { subscribeAll } from "../pubsub.js";
+import {
+  __resetEventLogForTests,
+  initEventLog,
+  subscribeAll,
+} from "../pubsub.js";
 import type { LiveFrame } from "../pubsub.js";
 import {
   createTestContext,
@@ -15,9 +19,12 @@ let ctx: TestContext;
 beforeAll(async () => {
   // Short enough that a test can wait out a hold.
   ctx = await createTestContext({ connectorHoldMs: 300 });
+  // The test context installs no event log, and a replay reads one.
+  initEventLog(ctx.storage.eventLog);
 });
 
 afterAll(async () => {
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 
@@ -28,21 +35,23 @@ async function json<T>(res: Response): Promise<T> {
 let minted = 0;
 
 /** A key of its own source, registered: one registration per key. */
-async function connector(): Promise<{ key: string; connector: Connector }> {
+async function connector(
+  body: Record<string, unknown> = {},
+): Promise<{ key: string; keyId: string; connector: Connector }> {
   minted += 1;
   const source = `state-process-${String(minted)}`;
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.workingKey,
-    body: { label: `${source} key`, source },
+    body: { label: `${source} key`, source, ...body },
   });
   expect(res.status).toBe(201);
-  const { key } = await json<{ key: string }>(res);
+  const { key, id: keyId } = await json<{ key: string; id: string }>(res);
   const registered = await request(ctx.app, "POST", "/connectors", {
     key,
     body: { name: source },
   });
   expect(registered.status).toBe(201);
-  return { key, connector: await json<Connector>(registered) };
+  return { key, keyId, connector: await json<Connector>(registered) };
 }
 
 /** Every state and agreement write needs the writing process to hold. */
@@ -54,14 +63,17 @@ async function hold(key: string, id: string, process = "p"): Promise<void> {
   expect(res.status).toBe(200);
 }
 
-async function note(): Promise<{
+async function note(type = "core.note"): Promise<{
   id: string;
   updated_at: string;
   version: number;
 }> {
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.workingKey,
-    body: { type: "core.note", properties: { body: "agreed" } },
+    body:
+      type === "core.note"
+        ? { type, properties: { body: "agreed" } }
+        : { type, properties: { title: "agreed" } },
   });
   expect(res.status).toBe(201);
   return (
@@ -210,6 +222,12 @@ describe("what a connector keeps", () => {
     const { key, connector: mine } = await connector();
     await hold(key, mine.id);
     const row = await note();
+    const cursor = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    const logged = async () =>
+      (await ctx.storage.eventLog.getAfter(cursor, 1000)).map((e) => [
+        e.event_type,
+        e.item_id,
+      ]);
     const controller = new AbortController();
     const frames: LiveFrame[] = [];
     const done = (async () => {
@@ -236,6 +254,7 @@ describe("what a connector keeps", () => {
     }
     await settle();
     const closed = frames.length;
+    expect(await logged()).toEqual([]);
     const read = await request(ctx.app, "GET", `/items/${row.id}`, {
       key: ctx.workingKey,
     });
@@ -259,6 +278,7 @@ describe("what a connector keeps", () => {
         .filter((f) => f.kind === "item" && f.event.item.id === row.id)
         .map((f) => f.event.type),
     ).toEqual(["updated"]);
+    expect(await logged()).toEqual([["updated", row.id]]);
   });
 
   it("takes an agreements batch past the request cap, under the bulk one", async () => {
@@ -298,6 +318,102 @@ describe("what a connector keeps", () => {
       },
     );
     expect(state.status).toBe(413);
+  });
+
+  it("goes with a row a bulk purge or the trash sweep takes", async () => {
+    const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
+    const bulk = await note();
+    const swept = await note();
+    const agreements = () =>
+      rows(
+        `SELECT item_id FROM connector_agreements WHERE source = '${mine.source}' ORDER BY item_id`,
+      );
+    const written = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${mine.id}/agreements`,
+      {
+        key,
+        body: {
+          process: "p",
+          set: [bulk, swept].map(({ id }) => ({
+            item_id: id,
+            waiting: true,
+            record: {},
+          })),
+        },
+      },
+    );
+    expect(await json(written)).toMatchObject({ written: 2 });
+    for (const { id } of [bulk, swept]) {
+      const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
+        key: ctx.workingKey,
+      });
+      expect(trashed.status).toBe(200);
+    }
+    expect(await agreements()).toHaveLength(2);
+
+    expect(await ctx.storage.items.bulkPurge([bulk.id])).toBe(1);
+    expect(await agreements()).toEqual([{ item_id: swept.id }]);
+    await ctx.storage.items.purgeTrashedOlderThan(
+      new Date(Date.now() + 86_400_000).toISOString(),
+    );
+    expect(await agreements()).toEqual([]);
+  });
+
+  it("pages past a whole page of rows the key no longer reads", async () => {
+    const {
+      key,
+      keyId,
+      connector: mine,
+    } = await connector({
+      type_permissions: { "core.note": "write", "core.task": "read" },
+    });
+    await hold(key, mine.id);
+    const tasks = [await note("core.task"), await note("core.task")];
+    const kept = await note();
+    for (const { id } of [...tasks, kept]) {
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/connectors/${mine.id}/agreements`,
+        {
+          key,
+          body: {
+            process: "p",
+            set: [{ item_id: id, waiting: true, record: {} }],
+          },
+        },
+      );
+      expect(res.status).toBe(200);
+      // Distinct instants, so the first page is the two tasks.
+      await sleep(3);
+    }
+    const narrowed = await request(ctx.app, "PATCH", `/keys/${keyId}`, {
+      key: ctx.workingKey,
+      body: { type_permissions: { "core.note": "write" } },
+    });
+    expect(narrowed.status).toBe(200);
+
+    const pages: string[][] = [];
+    let cursor: string | null = null;
+    do {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/connectors/${mine.id}/agreements?limit=2${cursor === null ? "" : `&cursor=${cursor}`}`,
+        { key },
+      );
+      expect(res.status).toBe(200);
+      const page = await json<{
+        data: { item_id: string }[];
+        next_cursor: string | null;
+      }>(res);
+      pages.push(page.data.map((row) => row.item_id));
+      cursor = page.next_cursor;
+    } while (cursor !== null && pages.length < 5);
+    expect(pages).toEqual([[], [kept.id]]);
   });
 });
 

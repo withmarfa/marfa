@@ -1053,8 +1053,16 @@ describe("what a connector keeps on the instance", () => {
     const row = await note("quiet");
     const aboutRow = (data: unknown) =>
       JSON.stringify(data ?? null).includes(row.id);
+    // Read to the update itself, so a frame before it cannot end the read.
+    const updateSeen = (evts: { data: unknown }[]) =>
+      evts.some(
+        (e) =>
+          aboutRow(e.data) &&
+          (e.data as { item?: { version?: number } }).item?.version ===
+            row.version + 1,
+      );
 
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
+    const cursor = await withStream(apiUrl, apiKey, {}, async (stream) => {
       await sleep(250);
       for (const input of [
         { set: [{ item_id: row.id, waiting: true, record: { etag: "1" } }] },
@@ -1085,33 +1093,71 @@ describe("what a connector keeps on the instance", () => {
       );
       const { events } = await collectUntil(
         stream,
-        (evts) => evts.some((e) => aboutRow(e.data)),
-        "an event about the row",
+        updateSeen,
+        "the update to the row",
         signal,
       );
       expect(
         events.filter((e) => aboutRow(e.data)).map((e) => e.event),
       ).toEqual(["item.updated"]);
+      const announced = events.find((e) => e.event === "stream_cursor");
+      return (announced?.data as { cursor?: unknown } | undefined)?.cursor;
     });
+
+    // The live stream announced this cursor before the writes.
+    expect(typeof cursor).toBe("string");
+    await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: String(cursor) },
+      async (replay) => {
+        const { events } = await collectUntil(
+          replay,
+          updateSeen,
+          "the update to the row on the replay",
+          signal,
+        );
+        expect(
+          events.filter((e) => aboutRow(e.data)).map((e) => e.event),
+        ).toEqual(["item.updated"]);
+      },
+    );
   });
 
   it("goes with a purged row", async () => {
     const mine = await connector("agreement-purge");
     const process = await holding(mine);
     const row = await note("purged");
+    const kept = await note("kept");
     const written = await mine.client.writeConnectorAgreements(mine.id, {
       process,
-      set: [{ item_id: row.id, waiting: true, record: { etag: "p" } }],
+      set: [row, kept].map(({ id }) => ({
+        item_id: id,
+        waiting: true,
+        record: { etag: "p" },
+      })),
     });
-    expect(written.data.written).toBe(1);
+    expect(written.data.written).toBe(2);
     expect((await client.deleteItem(row.id)).status).toBe(200);
     // The witness: a trashed row keeps its agreement.
     expect(await found(mine, [row.id])).toEqual([row.id]);
     expect((await client.purgeItem(row.id)).status).toBe(200);
-    expect(await found(mine, [row.id])).toEqual([]);
+    expect(await found(mine, [row.id, kept.id])).toEqual([kept.id]);
     expect(
-      (await mine.client.listConnectorAgreements(mine.id)).data.data,
-    ).toEqual([]);
+      (await mine.client.listConnectorAgreements(mine.id)).data.data.map(
+        (r) => r.item_id,
+      ),
+    ).toEqual([kept.id]);
+
+    // Reads join the rows, so only the clear's count shows the store itself.
+    expect((await mine.client.clearConnectorState(mine.id)).status).toBe(200);
+    const audited = await client.listAudit({
+      resource_id: mine.id,
+      action: "connector_state.clear",
+    });
+    expect(audited.data.data.map((r) => r.details)).toEqual([
+      { source: mine.source, state: false, agreements: 1 },
+    ]);
   });
 
   it("fences the state and the agreements to the process that holds the registration", async () => {
@@ -1372,6 +1418,10 @@ describe("what a connector keeps on the instance", () => {
     ).toEqual([]);
 
     await seed();
+    const current = await getOperatorClient().rawRequest<{ id: string }>(
+      "/keys/current",
+    );
+    expect(current.status).toBe(200);
     const operator = await getOperatorClient().clearConnectorState(mine.id);
     expect(operator.status).toBe(200);
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
@@ -1394,7 +1444,10 @@ describe("what a connector keeps on the instance", () => {
       { source: mine.source, state: true, agreements: 2 },
       { source: mine.source, state: true, agreements: 2 },
     ]);
-    expect(audited.data.data.map((row) => row.key_id)).toContain(mine.keyId);
+    expect(audited.data.data.map((row) => row.key_id)).toEqual([
+      current.data.id,
+      mine.keyId,
+    ]);
   });
 
   it("keeps each source's state and agreements apart", async () => {
@@ -1426,6 +1479,26 @@ describe("what a connector keeps on the instance", () => {
         waiting.data.data.map(({ updated_at: _, ...rest }) => rest),
       ).toEqual(own);
     }
+
+    const cleared = await a.client.writeConnectorAgreements(a.id, {
+      process,
+      clear: [row.id],
+    });
+    expect(cleared.data).toEqual({ written: 0, cleared: 1, skipped: [] });
+    expect(await found(a, [row.id])).toEqual([]);
+    expect(
+      (await b.client.findConnectorAgreements(b.id, [row.id])).data.data.map(
+        (r) => r.record,
+      ),
+    ).toEqual([{ etag: b.id }]);
+    expect(
+      (
+        await a.client.writeConnectorAgreements(a.id, {
+          process,
+          set: [{ item_id: row.id, waiting: true, record: { etag: a.id } }],
+        })
+      ).data.written,
+    ).toBe(1);
 
     const aState = await a.client.replaceConnectorState(a.id, {
       process,
