@@ -145,8 +145,8 @@ describe("the server resolves a conflict", () => {
   it("gives the conflicted copy no edge its writer could not have made, and none to a row in the bin", async () => {
     requireRule(caps, "serverSideMerge");
 
-    // The writer may write notes and the edges below, and only read
-    // bookmarks: a bookmark's edge is one it could not have made itself.
+    // The writer may write notes and the edges below, only read bookmarks,
+    // and not read tasks at all.
     const keyResp = await client.createKey({
       label: "conflict-copy-narrow",
       source: `${ctx.source}-narrow`,
@@ -174,10 +174,6 @@ describe("the server resolves a conflict", () => {
       trackItem(ctx, r.data.item.id);
       return r.data.item;
     };
-    const original = await make("core.note", "narrow original");
-    const noteParent = await make("core.note", "note parent");
-    const bookmarkRow = await make("core.bookmark", "bookmark");
-    const binned = await make("core.note", "binned topic");
     const link = async (
       source_id: string,
       target_id: string,
@@ -187,46 +183,69 @@ describe("the server resolves a conflict", () => {
       expect(r.ok, edge_type).toBe(true);
       trackEdge(ctx, r.data.edge.id);
     };
+    const conflict = async (item: { id: string; version: number }) => {
+      expect(
+        (
+          await client.updateItem(item.id, {
+            properties: { body: "narrow body from the winner" },
+            version: item.version,
+          })
+        ).ok,
+      ).toBe(true);
+      const resolved = await narrow.rawRequest<{
+        conflict_resolution?: { conflicted_copy_id?: string };
+      }>(`/items/${item.id}?conflict=auto`, {
+        method: "PATCH",
+        body: {
+          properties: { body: "narrow body from the loser" },
+          version: item.version,
+        },
+      });
+      expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
+      await trackSourceScopedItems({ client, ctx });
+      const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
+      expect(copy).toBeTruthy();
+      const back = await client.listItemBackrefs(copy!);
+      const out = await client.listItemEdges(copy!);
+      return {
+        inbound: back.data.data.map((e) => `${e.source_id}>${e.edge_type}`),
+        outbound: out.data.data.map((e) => `${e.edge_type}>${e.target_id}`),
+      };
+    };
+
+    // A child's place is written at the child, so the copy takes it, but
+    // only from a parent whose type the writer may write.
+    const original = await make("core.note", "narrow original");
+    const noteParent = await make("core.note", "note parent");
     await link(noteParent.id, original.id, "parent-of");
-    await link(bookmarkRow.id, original.id, "about");
+    const orphan = await make("core.note", "narrow orphan");
+    const bookmarkParent = await make("core.bookmark", "bookmark parent");
+    await link(bookmarkParent.id, orphan.id, "parent-of");
+
+    // What it is about is written at its source, so the copy takes it, but
+    // only to a target the writer may read.
+    const readable = await make("core.bookmark", "readable topic");
+    await link(original.id, readable.id, "about");
+    const unreadable = await make("core.task", "unreadable topic");
+    await link(original.id, unreadable.id, "about");
+    const binned = await make("core.note", "binned topic");
     await link(original.id, binned.id, "about");
     const lacked = await make("core.note", "lacked target");
     await link(original.id, lacked.id, "references");
     expect((await client.deleteItem(binned.id)).ok).toBe(true);
 
-    const base = original.version;
-    expect(
-      (
-        await client.updateItem(original.id, {
-          properties: { body: "narrow body from the winner" },
-          version: base,
-        })
-      ).ok,
-    ).toBe(true);
-    const resolved = await narrow.rawRequest<{
-      conflict_resolution?: { conflicted_copy_id?: string };
-    }>(`/items/${original.id}?conflict=auto`, {
-      method: "PATCH",
-      body: {
-        properties: { body: "narrow body from the loser" },
-        version: base,
-      },
-    });
-    expect(resolved.ok, JSON.stringify(resolved.error)).toBe(true);
-    await trackSourceScopedItems({ client, ctx });
-    const copy = resolved.data.conflict_resolution?.conflicted_copy_id;
-    expect(copy).toBeTruthy();
-
-    const back = await client.listItemBackrefs(copy!);
-    const out = await client.listItemEdges(copy!);
-    const inbound = back.data.data.map((e) => `${e.source_id}>${e.edge_type}`);
-    const outbound = out.data.data.map((e) => `${e.edge_type}>${e.target_id}`);
-    // The witness: an edge this writer could have made comes with the copy.
-    expect(inbound).toContain(`${noteParent.id}>parent-of`);
-    expect(inbound).not.toContain(`${bookmarkRow.id}>about`);
-    expect(outbound).not.toContain(`about>${binned.id}`);
+    const copied = await conflict(original);
+    // The witnesses: an edge this writer could have made comes with the
+    // copy, from a parent it may write and to a target it may only read.
+    expect(copied.inbound).toContain(`${noteParent.id}>parent-of`);
+    expect(copied.outbound).toContain(`about>${readable.id}`);
+    expect(copied.outbound).not.toContain(`about>${unreadable.id}`);
+    expect(copied.outbound).not.toContain(`about>${binned.id}`);
     // `references` is an edge type the writer's key does not reach.
-    expect(outbound).not.toContain(`references>${lacked.id}`);
+    expect(copied.outbound).not.toContain(`references>${lacked.id}`);
+
+    const orphaned = await conflict(orphan);
+    expect(orphaned.inbound).not.toContain(`${bookmarkParent.id}>parent-of`);
   });
 
   it("gives the conflicted copy only the edges the original's own file writes, none that cascade or block", async () => {

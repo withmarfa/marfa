@@ -574,7 +574,11 @@ export interface ConflictResolutionInput {
   /**
    * Whether the writer could create this edge; a sibling is given only those.
    */
-  may_copy_edge?: (edgeType: string, sourceType: string) => boolean;
+  may_copy_edge?: (
+    edgeType: string,
+    sourceType: string,
+    targetType: string,
+  ) => boolean;
 }
 
 /**

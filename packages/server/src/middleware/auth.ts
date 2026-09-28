@@ -524,17 +524,19 @@ export function mayWriteReserved(key: ApiKey, type: string): boolean {
 
 /**
  * Whether this credential may create an edge of `edgeType` from a
- * `sourceType` row, as `POST /edges` decides.
+ * `sourceType` row to a `targetType` row, as `POST /edges` decides.
  */
 export function mayWriteEdge(
   key: ApiKey,
   edgeType: string,
   sourceType: string,
+  targetType: string,
 ): boolean {
   return (
     mayWriteReserved(key, sourceType) &&
     resolveTypePermission(sourceType, key.type_permissions) === "write" &&
-    edgePermissionCovers(key.edge_permissions, edgeType, "write")
+    edgePermissionCovers(key.edge_permissions, edgeType, "write") &&
+    mayReadType(key, targetType)
   );
 }
 
