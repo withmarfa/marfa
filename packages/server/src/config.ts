@@ -103,8 +103,8 @@ export interface AppConfig {
    *  no cap: its body streams to disk.
    *  Read from `MARFA_MAX_REQUEST_BYTES`; default 1MB. */
   maxRequestBytes: number;
-  /** Max body size in bytes for the doors `bodyCapFor` names bulk, whose
-   *  batches outgrow the per-request cap. `MARFA_MAX_BULK_REQUEST_BYTES`; 16MB unless set. */
+  /** Max body size in bytes for the doors `bodyCapFor` names bulk; batches
+   *  outgrow the per-request cap. `MARFA_MAX_BULK_REQUEST_BYTES`, 16MB. */
   maxBulkRequestBytes?: number;
   /** The object store, attached when this is set: a second place the bytes
    *  live, and the one that signs its own fetch links. */

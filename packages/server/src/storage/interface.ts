@@ -2812,7 +2812,7 @@ export interface ConnectorHeld {
   expires_at: string;
 }
 
-/** What a connector keeps on the instance, keyed by its registration's source. */
+/** What a connector keeps on the instance, keyed by the registration source. */
 export interface ConnectorStateStore {
   /** The source's state document; `{}` and null when none was written. */
   getState(

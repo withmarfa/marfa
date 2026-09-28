@@ -4,8 +4,8 @@ import { cliContext, unique } from "./harness.js";
 import type { CliContext } from "./harness.js";
 
 /**
- * A CLI process writing on a key's behalf, registered as a connector. The
- * key is the identity: its heartbeat, run, hold and state are its own, not even the operator's.
+ * A CLI process writing on a key's behalf, registered as a connector: the
+ * key is the identity — heartbeat, run, hold and state are its alone.
  */
 
 let c: CliContext;

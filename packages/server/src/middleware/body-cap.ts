@@ -1,6 +1,6 @@
 /**
  * Blob and archive doors stream to disk, so they take no cap; bulk doors
- * (rows or agreements) need the larger one — stated once so `app.ts`'s mount and the OpenAPI doc can't disagree.
+ * need the larger one — stated once so `app.ts` and the OpenAPI doc agree.
  */
 export type BodyCap = "none" | "bulk" | "request" | "inbound";
 

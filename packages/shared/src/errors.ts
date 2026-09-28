@@ -201,7 +201,8 @@ export enum ErrorCode {
   HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
   /** `GET /connectors/{id}` and the doors under it: no such registration. */
   CONNECTOR_NOT_FOUND = "connector_not_found",
-  /** Another process holds the connector's registration until `details.expires_at`. */
+  /** Another process holds the connector's registration until
+   *  `details.expires_at`. */
   CONNECTOR_HELD = "connector_held",
   /** An endpoint id the connector's registration does not carry. */
   ENDPOINT_NOT_FOUND = "endpoint_not_found",

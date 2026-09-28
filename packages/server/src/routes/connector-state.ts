@@ -463,7 +463,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     const body = c.req.valid("json");
-    // Both lists are optional, so a misspelled one would answer a write of nothing.
+    // Both lists are optional; a misspelled key answers a write of nothing.
     refuseUnknownBodyKeys(await c.req.json(), AgreementsInputSchema);
     const set = body.set ?? [];
     const clear = body.clear ?? [];
