@@ -628,9 +628,8 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues a change to an edge's properties, or a move of one of its ends
-    /// in the same write. The version is required, for the reason an item's
-    /// is.
+    /// A move of an end goes in the same write as the properties, so the edge is
+    /// never absent between two; the version is required, as an item's is.
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;

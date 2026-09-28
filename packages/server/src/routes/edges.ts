@@ -494,7 +494,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "`edge_not_found` for the edge; `item_not_found` for an end it would move to that does not exist, or a target the caller may not read; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
+        "`edge_not_found` for the edge; `item_not_found` for an end it would move to that does not exist, a target the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
     },
   },
 });

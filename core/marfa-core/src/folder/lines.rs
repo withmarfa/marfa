@@ -793,10 +793,11 @@ impl Folder {
                 // One write moves the other end, so the end is never without its edge.
                 let moved = draft(adds[0]);
                 let edit = EdgeEdit {
+                    // Unchanged on the version named, and what remakes the edge if another machine deleted it.
+                    properties: old.properties.clone(),
                     base_version: Some(old.version),
                     source_id: (end == End::Target).then_some(moved.source_id),
                     target_id: (end == End::Source).then_some(moved.target_id),
-                    ..Default::default()
                 };
                 queued.push(self.core.update_edge(&old.id, &edit)?.id);
                 removes.retain(|edge| edge.id != old.id);

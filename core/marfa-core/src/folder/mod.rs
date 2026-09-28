@@ -1503,6 +1503,13 @@ impl Folder {
     }
 }
 
+/// Whether a move was answered that another machine deleted its edge first.
+fn gone_before_its_move(row: &crate::model::QueuedWrite) -> bool {
+    row.kind == WriteKind::UpdateEdge
+        && row.verdict == Some(crate::model::Verdict::Refused)
+        && row.reason.as_deref() == Some("edge_not_found")
+}
+
 /// A line a move changed, kept with the end it named before so a refusal can
 /// point the record back there.
 struct MovedLine {
@@ -1663,6 +1670,8 @@ impl Folder {
             }
             report.retry_after_seconds = report.retry_after_seconds.max(again.retry_after_seconds);
         }
+        // Queued even where the drain stopped, so the copy holds the edge the line asks for.
+        self.make_edges_gone_before_their_move()?;
         let gave_way = self.settle_placements(&mut report)?;
         self.hold_refused()?;
         Ok(Drained {
@@ -1672,9 +1681,8 @@ impl Folder {
         })
     }
 
-    /// Holds a file while the server refused a change it carries, until a later
-    /// save of it lands one in its place (`folders.md` 9). Read from the queue,
-    /// so a write a plain device drain answered is held at the next pass.
+    /// Read from the queue rather than this drain's report, so a refusal a plain
+    /// device drain was answered holds its file too (`folders.md` 9, 11).
     fn hold_refused(&self) -> Result<()> {
         let queue = self.core.queue()?;
         let conn = self.core.conn()?;
@@ -1720,6 +1728,10 @@ impl Folder {
                     },
                     _ => continue,
                 };
+                // Left for the next drain that is not stopped to make the edge it asks for.
+                if moved.is_some() && gone_before_its_move(row) {
+                    continue;
+                }
                 // A delete of an edge already gone did what it was asked.
                 let gone = row.kind == WriteKind::DeleteEdge
                     && verdict.reason.as_deref() == Some("edge_not_found");
@@ -1793,10 +1805,7 @@ impl Folder {
                 else {
                     continue;
                 };
-                if row.kind != WriteKind::UpdateEdge
-                    || row.verdict != Some(crate::model::Verdict::Refused)
-                    || row.reason.as_deref() != Some("edge_not_found")
-                {
+                if !gone_before_its_move(row) {
                     continue;
                 }
                 let Some(moved) = moved_line(&*self.core.conn()?, row, &bound)? else {

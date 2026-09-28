@@ -2022,6 +2022,76 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["moving"]);
   });
 
+  it("lays its own waiting move of an edge's target over the server's change to the edge", async () => {
+    harness = await startHarness("moved-edge-waiting-target");
+    const { server, device } = harness;
+    const moving = {
+      id: "moving",
+      source_id: "first",
+      target_id: "older",
+      edge_type: "supersedes",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "first",
+              edges: {
+                supersedes: { data: [wireEdge(moving)], next_cursor: null },
+              },
+            },
+          },
+          { item: { id: "second" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        edgeEvent(
+          "11",
+          "edge.updated",
+          wireEdge({
+            ...moving,
+            properties: { note: "elsewhere" },
+            version: 2,
+          }),
+        ),
+      ]),
+    );
+    const edgeTargets = async (
+      read: Promise<{ ok: boolean; value?: unknown }>,
+    ) => {
+      const outcome = await read;
+      expect(outcome.ok).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { target_id: string }[]).map(
+            (edge) => edge.target_id,
+          )
+        : [];
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const queued = await device.updateEdge("moving", {
+      properties: {},
+      version: 1,
+      target_id: "oldest",
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    // The witness: the move is laid over the copy before the catch-up.
+    expect(await edgeTargets(device.edgesFrom("first"))).toEqual(["oldest"]);
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect(
+      await edgeTargets(device.edgesFrom("first")),
+      "the target this device moved the edge to was not laid over the server's edge",
+    ).toEqual(["oldest"]);
+  });
+
   it("keeps a pinned row outside the slice current", async () => {
     harness = await startHarness("pinned-outside");
     const { server, device } = harness;

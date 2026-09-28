@@ -213,6 +213,32 @@ describe("moving an edge's end", () => {
     expect(refusal(loop)).toMatchObject({ status: 400, code: "edge_cycle" });
     expect(await stored(upper.id)).toEqual(upper);
 
+    // A move onto its own source closes a loop on every type, not only the
+    // ones a walk is run for.
+    for (const edgeType of ["in-thread", "supersedes"]) {
+      const source = await makeItem(`cycle-${edgeType}-source`);
+      const held = await makeEdge(
+        source,
+        await makeItem(`cycle-${edgeType}-target`),
+        edgeType,
+      );
+      const self = await client.updateEdge(held.id, {
+        target_id: source,
+        version: held.version,
+      });
+      expect(
+        refusal(self),
+        `an edge of type ${edgeType} was moved onto its own source`,
+      ).toMatchObject({ status: 400, code: "edge_cycle" });
+      expect(await stored(held.id)).toEqual(held);
+      // The witness: the same edge moves onto another item.
+      const elsewhere = await client.updateEdge(held.id, {
+        target_id: aside,
+        version: held.version,
+      });
+      expect(elsewhere.status, JSON.stringify(elsewhere.error)).toBe(200);
+    }
+
     // The witness: a parent outside the chain is taken.
     const moved = await client.updateEdge(upper.id, {
       source_id: aside,
@@ -336,6 +362,40 @@ describe("moving an edge's end", () => {
     expect(await stored(held.id)).toEqual(held);
     const moved = await writer.updateEdge(held.id, {
       source_id: note,
+      version: held.version,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+  });
+
+  it("refuses a move of an edge whose end that stays is in the bin, as its create is refused", async () => {
+    const message = await makeItem("bin-message");
+    const threads = [await makeItem("bin-a"), await makeItem("bin-b")];
+    const held = await makeEdge(message, threads[0]!, "in-thread");
+    expect((await client.deleteItem(message)).ok).toBe(true);
+
+    const refused = await client.updateEdge(held.id, {
+      target_id: threads[1]!,
+      version: held.version,
+    });
+    expect(refusal(refused)).toMatchObject({
+      status: 404,
+      code: "item_not_found",
+    });
+    expect(await stored(held.id)).toEqual(held);
+    const created = await client.createEdge({
+      source_id: message,
+      target_id: threads[1]!,
+      edge_type: "in-thread",
+    });
+    expect(
+      created.status,
+      "a create from the same source in the bin was taken, so the move's refusal is not the create's",
+    ).toBe(404);
+
+    // The witness: restored, the same move is taken.
+    expect((await client.restoreItem(message)).ok).toBe(true);
+    const moved = await client.updateEdge(held.id, {
+      target_id: threads[1]!,
       version: held.version,
     });
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
