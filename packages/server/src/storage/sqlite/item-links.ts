@@ -40,8 +40,6 @@ function linkTaken(
   );
 }
 
-/** Holds a row's entry to its type and properties after a write; the
- *  previous type is absent on a create. */
 export async function syncLink(
   db: Executor,
   row: { id: string; type: string; properties: Record<string, unknown> },
@@ -110,8 +108,7 @@ export async function forgetNaturalKey(
     .run();
 }
 
-/** Records each link and natural key the purge of `ids` leaves, under the
- *  row's type; runs before the rows go. */
+/** Runs before the rows are deleted: it reads their links and keys. */
 export async function recordTombstones(
   db: Executor,
   ids: readonly string[],
@@ -138,8 +135,7 @@ export async function recordTombstones(
   `);
 }
 
-/** Replaces a type's link entries with those `field` gives its rows. The
- *  old link's tombstones go too: they hold another field's values. */
+/** The old link's tombstones go: they hold another field's values. */
 export async function rebuildTypeLinks(
   db: Executor,
   type: string,
@@ -150,7 +146,6 @@ export async function rebuildTypeLinks(
   await buildTypeLinks(db, type, field);
 }
 
-/** Enters each row of `type` under `field`, refusing a value two share. */
 export async function buildTypeLinks(
   db: Executor,
   type: string,
@@ -184,7 +179,6 @@ export async function buildTypeLinks(
   `);
 }
 
-/** Drops a type's link entries and every tombstone kept under it. */
 export async function forgetType(db: Executor, type: string): Promise<void> {
   await db.delete(item_links).where(eq(item_links.type, type)).run();
   await db.delete(link_tombstones).where(eq(link_tombstones.type, type)).run();

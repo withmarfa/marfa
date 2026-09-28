@@ -961,7 +961,6 @@ async function processBulkItem(
         ...(raw.version !== undefined && { version: raw.version }),
       });
     } catch (err) {
-      // Every store refusal below 500, not only link_taken, errors the entry.
       if (isEntryVerdict(err)) {
         return {
           result: {
