@@ -13,20 +13,26 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct UpdateEdgeRequest {
-    #[serde(rename = "properties")]
-    pub properties: std::collections::HashMap<String, serde_json::Value>,
+    /// Properties to merge over the ones the edge holds. Required unless an end moves.
+    #[serde(rename = "properties", skip_serializing_if = "Option::is_none")]
+    pub properties: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// The source to move the edge to, where each target holds one edge of its type.
+    #[serde(rename = "source_id", skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// The target to move the edge to, where each source holds one edge of its type.
+    #[serde(rename = "target_id", skip_serializing_if = "Option::is_none")]
+    pub target_id: Option<String>,
     /// The version the caller read. Required, and a stale value is refused with 409: an update carries the version it is based on, or it is not an update but a blind overwrite.
     #[serde(rename = "version")]
     pub version: i32,
 }
 
 impl UpdateEdgeRequest {
-    pub fn new(
-        properties: std::collections::HashMap<String, serde_json::Value>,
-        version: i32,
-    ) -> UpdateEdgeRequest {
+    pub fn new(version: i32) -> UpdateEdgeRequest {
         UpdateEdgeRequest {
-            properties,
+            properties: None,
+            source_id: None,
+            target_id: None,
             version,
         }
     }

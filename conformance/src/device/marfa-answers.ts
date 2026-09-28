@@ -596,6 +596,35 @@ export const answers = {
       `Edge "${edge.edge_type}" is one-to-many on the target side; target already has an inbound edge of this type`,
       { ...edge, constraint: "cardinality" },
     ),
+  /** An edge write refused by the edge type's half of the dual gate
+   *  (`edges.md` 21). */
+  edgePermissionDenied: (edgeType: string): Answer =>
+    refusal(
+      403,
+      "edge_permission_denied",
+      `Missing edge.${edgeType}:write permission`,
+      { edge_type: edgeType, required: "write" },
+    ),
+  /** An edge update naming no properties and moving no end (`edges.md` 10). */
+  edgeChangesNothing: (): Answer =>
+    refusal(
+      400,
+      "missing_required_field",
+      "properties is required where no end moves",
+      { field: "properties" },
+    ),
+  /** An edge end a move names that the server does not hold (`edges.md` 10). */
+  edgeEndNotFound: (end: "source" | "target", id: string): Answer =>
+    refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),
+  /** A move of an edge end whose type holds more than one at the end that
+   *  stays (`edges.md` 10). */
+  edgeMoveRefused: (
+    field: "source_id" | "target_id",
+    message: string,
+  ): Answer =>
+    refusal(400, "validation_error", message, {
+      errors: [{ path: field, message }],
+    }),
   /** `GET /keys/current`: the key the request bears, its edge grants as
    *  named. */
   currentKey: (

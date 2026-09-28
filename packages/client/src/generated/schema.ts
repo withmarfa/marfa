@@ -465,7 +465,11 @@ export interface paths {
         head?: never;
         /**
          * Update an edge
-         * @description Updates an edge's properties. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key, and deleting the edge to recreate it restarts its version at 1 and emits a delete and a create rather than an update. An edge's property set can therefore only grow. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.
+         * @description Updates an edge's properties, or moves one of its ends, under the version the caller read. Properties merge shallowly with what the edge already holds, as they do on items, so a call naming one property leaves the others standing; there is no replace mode and no way to remove a single property: sending `null` stores a null rather than clearing the key. An edge's property set can therefore only grow.
+         *
+         *     **Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, a target the caller may not read answers exactly as a missing one, `404 item_not_found`, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. A type that holds more than one at the end that stays, or a body moving both ends, is refused `400 validation_error`; the edge type never changes.
+         *
+         *     `version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.
          */
         patch: operations["updateEdge"];
         trace?: never;
@@ -1958,10 +1962,10 @@ export interface components {
                 };
             };
         };
-        MissingRequiredFieldOrValidationErrorRefusal: {
+        EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal: {
             error: {
                 /** @enum {string} */
-                code: "missing_required_field" | "validation_error";
+                code: "edge_not_found" | "edge_type_not_found" | "item_not_found";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -1998,6 +2002,16 @@ export interface components {
             reverse_name?: string;
             /** @enum {string} */
             written_at: "source" | "target";
+        };
+        MissingRequiredFieldOrValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "missing_required_field" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         ConflictRefusal: {
             error: {
@@ -7210,9 +7224,14 @@ export interface operations {
         requestBody?: {
             content: {
                 "application/json": {
-                    properties: {
+                    /** @description Properties to merge over the ones the edge holds. Required unless an end moves. */
+                    properties?: {
                         [key: string]: unknown;
                     };
+                    /** @description The source to move the edge to, where each target holds one edge of its type. */
+                    source_id?: string;
+                    /** @description The target to move the edge to, where each source holds one edge of its type. */
+                    target_id?: string;
                     /** @description The version the caller read. Required, and a stale value is refused with 409: an update carries the version it is based on, or it is not an update but a blind overwrite. */
                     version: number;
                 };
@@ -7234,7 +7253,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeResponse"];
                 };
             };
-            /** @description Attempted to change immutable field */
+            /** @description `missing_required_field` for no `version`, or no `properties` where no end moves; `validation_error` for a body moving both ends, or an end of a type that holds more than one edge at the end that stays, and for properties the type refuses; `invalid_id` for a malformed end; `edge_constraint_violation` and `edge_cycle` for an edge the moved end cannot hold, as a create answers them. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7247,7 +7266,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */
@@ -7265,7 +7284,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. A trashed source still gates on its type. */
+            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type, and on the new one's where the source moves. A trashed source still gates on its type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7280,7 +7299,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Edge not found */
+            /** @description `edge_not_found` for the edge; `item_not_found` for an end it would move to that does not exist, a target the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7293,7 +7312,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeNotFoundRefusal"];
+                    "application/json": components["schemas"]["EdgeNotFoundOrEdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /** @description The version supplied is stale; the body carries the current edge */

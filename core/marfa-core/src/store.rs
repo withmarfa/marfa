@@ -668,6 +668,11 @@ pub fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<Queued
     )
 }
 
+/// Whether a write of this device's to the edge is still to be answered.
+pub fn edge_write_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(!waiting_writes_for_edge(conn, id)?.is_empty())
+}
+
 fn waiting_writes_for_edge(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
@@ -3174,7 +3179,8 @@ pub fn lay_waiting_writes_over(
 }
 
 /// The same for an edge: an edit still waiting is laid back over the
-/// server's properties, and a delete still waiting takes the edge out again.
+/// server's properties and ends, and a delete still waiting takes the edge
+/// out again.
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
     let waiting = waiting_writes_for_edge(conn, edge_id)?;
     let Some(mut edge) = edge_by_id(conn, edge_id)? else {
@@ -3188,6 +3194,12 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
                     for (key, value) in properties {
                         edge.properties.insert(key.clone(), value.clone());
                     }
+                }
+                if let Some(source) = payload.get("source_id").and_then(Value::as_str) {
+                    edge.source_id = source.to_string();
+                }
+                if let Some(target) = payload.get("target_id").and_then(Value::as_str) {
+                    edge.target_id = target.to_string();
                 }
             }
             WriteKind::DeleteEdge => {

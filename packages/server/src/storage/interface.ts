@@ -2210,8 +2210,9 @@ export interface EdgeStore {
    */
   list(filters?: EdgeListFilters): Promise<PaginatedResult<Edge>>;
   /**
-   * Replace an edge's properties in place and move its version on.
-   * `source_id` / `target_id` / `edge_type` are immutable. An unknown id
+   * Replace an edge's properties in place and move its version on, and
+   * move one of its ends where `ends` names them. `edge_type` is immutable,
+   * and the caller has judged the ends as a create would. An unknown id
    * raises `edge_not_found`, which the handler answers 404 — a bare error
    * here would reach the generic tail and cost the caller a 500 for a row
    * that is simply gone.
@@ -2255,6 +2256,7 @@ export interface EdgeStore {
     id: string,
     properties: Record<string, unknown>,
     expectedVersion?: number,
+    ends?: { source_id: string; target_id: string },
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }>;
   /** Delete an edge by id. An unknown id is a silent no-op. */
   delete(id: string): Promise<void>;

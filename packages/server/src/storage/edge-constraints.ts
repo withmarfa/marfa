@@ -144,6 +144,9 @@ export interface EdgeProposal {
  *    edge does not target a revoked folder unless `replay` says an archive
  *    recorded it.
  *
+ * `replacing` names a stored edge the one proposal moves, which the
+ * cardinality counts leave out.
+ *
  * Throws `MarfaError` on the first failure encountered in input order, matching
  * the sequential-validation behavior the single-edge entry point exposed.
  * Returns the resolved edge-type schemas in input order.
@@ -155,7 +158,7 @@ export async function assertEdgesCanBeCreated(
   itemStore: ItemStore,
   proposals: EdgeProposal[],
   mayReadTarget: (type: string) => boolean,
-  opts: { replay?: boolean } = {},
+  opts: { replay?: boolean; replacing?: Edge } = {},
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
 
@@ -294,6 +297,18 @@ export async function assertEdgesCanBeCreated(
     edgeStore.countsBySourceBatch(Array.from(needSourceCount.values())),
     edgeStore.countsByTargetBatch(Array.from(needTargetCount.values())),
   ]);
+  const moving = opts.replacing;
+  if (moving !== undefined) {
+    // The edge being moved leaves its old ends, so it is not a second one there.
+    for (const [counts, end] of [
+      [sourceCounts, moving.source_id],
+      [targetCounts, moving.target_id],
+    ] as const) {
+      const key = `${end}|${moving.edge_type}`;
+      const held = counts.get(key);
+      if (held !== undefined) counts.set(key, held - 1);
+    }
+  }
 
   // In-batch accumulators — each proposal that passes validation counts
   // toward the next proposal's cardinality check, matching the old

@@ -1887,6 +1887,211 @@ describe("catch-up keeps the copy to its slice", () => {
     ).toEqual(["kept-beneath"]);
   });
 
+  it("moves an edge whose source moved within the slice, and drops one whose source moved outside it", async () => {
+    harness = await startHarness("moved-edge-events");
+    const { server, device } = harness;
+    const within = {
+      id: "within",
+      source_id: "first",
+      target_id: "older",
+      edge_type: "supersedes",
+    };
+    const outside = {
+      id: "outside",
+      source_id: "first",
+      target_id: "oldest",
+      edge_type: "in-thread",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "first",
+              edges: {
+                supersedes: { data: [wireEdge(within)], next_cursor: null },
+                "in-thread": { data: [wireEdge(outside)], next_cursor: null },
+              },
+            },
+          },
+          { item: { id: "second" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("12", [
+        edgeEvent(
+          "11",
+          "edge.updated",
+          wireEdge({ ...within, source_id: "second", version: 2 }),
+        ),
+        edgeEvent(
+          "12",
+          "edge.updated",
+          wireEdge({ ...outside, source_id: "outer", version: 2 }),
+        ),
+      ]),
+    );
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((edge) => edge.id).sort()
+        : [];
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: before the catch-up the first row held both edges.
+    expect(await ids(device.edgesFrom("first"))).toEqual(["outside", "within"]);
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+
+    expect(
+      await ids(device.edgesFrom("second")),
+      "an edge moved to a source the copy holds was not moved there",
+    ).toEqual(["within"]);
+    expect(
+      await ids(device.edgesFrom("first")),
+      "an edge moved to a source outside the slice stayed at the source it left",
+    ).toEqual([]);
+  });
+
+  it("keeps an edge whose source moved outside the slice while a move of its own waits", async () => {
+    harness = await startHarness("moved-edge-waiting");
+    const { server, device } = harness;
+    const moving = {
+      id: "moving",
+      source_id: "first",
+      target_id: "older",
+      edge_type: "supersedes",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "first",
+              edges: {
+                supersedes: { data: [wireEdge(moving)], next_cursor: null },
+              },
+            },
+          },
+          { item: { id: "second" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        edgeEvent(
+          "11",
+          "edge.updated",
+          wireEdge({ ...moving, source_id: "outer", version: 2 }),
+        ),
+      ]),
+    );
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((edge) => edge.id).sort()
+        : [];
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const queued = await device.updateEdge("moving", {
+      properties: {},
+      version: 1,
+      source_id: "second",
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    // The witness: the move is laid over the copy before the catch-up.
+    expect(await ids(device.edgesFrom("second"))).toEqual(["moving"]);
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect(
+      await ids(device.edgesFrom("second")),
+      "an edge whose move still waits was dropped for a source the copy does not hold",
+    ).toEqual(["moving"]);
+  });
+
+  it("lays its own waiting move of an edge's target over the server's change to the edge", async () => {
+    harness = await startHarness("moved-edge-waiting-target");
+    const { server, device } = harness;
+    const moving = {
+      id: "moving",
+      source_id: "first",
+      target_id: "older",
+      edge_type: "supersedes",
+    };
+    scriptHydration(server, {
+      head: "10",
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "first",
+              edges: {
+                supersedes: { data: [wireEdge(moving)], next_cursor: null },
+              },
+            },
+          },
+          { item: { id: "second" } },
+        ],
+      },
+    });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [
+        edgeEvent(
+          "11",
+          "edge.updated",
+          wireEdge({
+            ...moving,
+            properties: { note: "elsewhere" },
+            version: 2,
+          }),
+        ),
+      ]),
+    );
+    const edgeTargets = async (
+      read: Promise<{ ok: boolean; value?: unknown }>,
+    ) => {
+      const outcome = await read;
+      expect(outcome.ok).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { target_id: string }[]).map(
+            (edge) => edge.target_id,
+          )
+        : [];
+    };
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const queued = await device.updateEdge("moving", {
+      properties: {},
+      version: 1,
+      target_id: "oldest",
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    // The witness: the move is laid over the copy before the catch-up.
+    expect(await edgeTargets(device.edgesFrom("first"))).toEqual(["oldest"]);
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect(
+      await edgeTargets(device.edgesFrom("first")),
+      "the target this device moved the edge to was not laid over the server's edge",
+    ).toEqual(["oldest"]);
+  });
+
   it("keeps a pinned row outside the slice current", async () => {
     harness = await startHarness("pinned-outside");
     const { server, device } = harness;

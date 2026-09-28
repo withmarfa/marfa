@@ -286,11 +286,17 @@ pub enum EdgesCommand {
         /// The edge id.
         id: String,
         /// The properties to write, as a JSON object. Whole values.
-        #[arg(long, value_name = "JSON")]
+        #[arg(long, value_name = "JSON", default_value = "{}")]
         properties: String,
         /// The version the edit was based on. Required, as on an item.
         #[arg(long)]
         version: Option<i64>,
+        /// Move the edge to this source, where each target holds one of its type.
+        #[arg(long, value_name = "ID")]
+        source: Option<String>,
+        /// Move the edge to this target, where each source holds one of its type.
+        #[arg(long, value_name = "ID")]
+        target: Option<String>,
     },
     /// Drop an edge locally and queue the delete.
     Delete {
@@ -803,10 +809,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     id,
                     properties: props,
                     version,
+                    source,
+                    target,
                 } => {
                     let edit = EdgeEdit {
                         properties: properties(&props)?,
                         base_version: version,
+                        source_id: source,
+                        target_id: target,
                     };
                     output::queued_one(&core.update_edge(&id, &edit)?, json)
                 }

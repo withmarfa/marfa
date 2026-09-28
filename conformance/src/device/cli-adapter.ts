@@ -440,7 +440,12 @@ export class CliDevice implements DeviceUnderTest {
 
   async updateEdge(
     id: string,
-    edit: { properties: Record<string, unknown>; version?: number },
+    edit: {
+      properties: Record<string, unknown>;
+      version?: number;
+      source_id?: string;
+      target_id?: string;
+    },
   ): Promise<Outcome<QueuedWrite>> {
     const args = [
       "edges",
@@ -451,6 +456,8 @@ export class CliDevice implements DeviceUnderTest {
     ];
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
+    if (edit.source_id !== undefined) args.push("--source", edit.source_id);
+    if (edit.target_id !== undefined) args.push("--target", edit.target_id);
     return this.json<QueuedWrite>(args);
   }
 

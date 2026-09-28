@@ -202,10 +202,6 @@ pub fn unpin_if_unheld(conn: &Connection, item_id: &str) -> Result<(), CoreError
 const EDGE_END: &str = "folder_edge_end:";
 const MADE: &str = "made";
 
-/// A replacement whose create the drain has not settled, keyed by that
-/// create's queue id, so a pass that ends first leaves it to the next.
-const REPLACED: &str = "folder_replaced:";
-
 /// Every `meta` key under `prefix`, with its value, by a range the key's
 /// index answers.
 fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreError> {
@@ -245,39 +241,6 @@ pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), C
         crate::store::unpin(conn, id)?;
     }
     Ok(())
-}
-
-/// The edge a replacement took away, to put back if its successor is refused.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct Replaced {
-    pub source_id: String,
-    pub target_id: String,
-    pub edge_type: String,
-    pub properties: serde_json::Map<String, serde_json::Value>,
-    /// The successor's ends, to tell from the copy what became of a
-    /// replacement whose queue rows were cleared.
-    pub new_source_id: String,
-    pub new_target_id: String,
-}
-
-pub fn record_replaced(conn: &Connection, create: &str, old: &Replaced) -> Result<(), CoreError> {
-    crate::store::meta_set(
-        conn,
-        &format!("{REPLACED}{create}"),
-        &serde_json::to_string(old)?,
-    )
-}
-
-pub fn replaced(conn: &Connection) -> Result<Vec<(String, Replaced)>, CoreError> {
-    let mut found = Vec::new();
-    for (create, json) in under(conn, REPLACED)? {
-        found.push((create, serde_json::from_str(&json)?));
-    }
-    Ok(found)
-}
-
-pub fn settle_replaced(conn: &Connection, create: &str) -> Result<(), CoreError> {
-    crate::store::meta_delete(conn, &format!("{REPLACED}{create}"))
 }
 
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {

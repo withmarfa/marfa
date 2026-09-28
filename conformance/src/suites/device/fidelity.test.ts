@@ -1855,7 +1855,7 @@ describe("the scripted answers match the server's", () => {
     expect(at(unclosed.error, "error.code")).toBe("validation_error");
   });
 
-  it("matches the refusal of a second parent, and takes the new one once the old edge is gone", async () => {
+  it("matches the refusal of a second parent, a parent moved in one step, and each refusal of a move", async () => {
     const first = await note({ title: "first parent", body: "first" });
     const second = await note({ title: "second parent", body: "second" });
     const child = await note({ title: "moving child", body: "child" });
@@ -1890,35 +1890,143 @@ describe("the scripted answers match the server's", () => {
       },
     );
 
-    // The old edge's delete, and then the new one: what a folder sends.
-    const gone = await client.rawRequest(
-      `/edges/${String(at(held.data, "edge.id"))}`,
-      { method: "DELETE" },
-    );
-    expect(gone.ok, JSON.stringify(gone.error)).toBe(true);
-    const moved = await parent(second.id);
-    expect(moved.status, JSON.stringify(moved.error)).toBe(201);
+    // What a folder sends: the edge's other end moved, in one write.
+    const edgeId = String(at(held.data, "edge.id"));
+    const moved = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { source_id: second.id, version: 1 },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const movedEdge = {
+      id: edgeId,
+      source_id: second.id,
+      target_id: child.id,
+      edge_type: "parent-of",
+      version: 2,
+    };
     expectFidelity(
-      "the new parent",
+      "a parent moved",
       { status: moved.status, body: moved.data },
-      writeAnswers.edge({
-        id: String(at(moved.data, "edge.id")),
-        source_id: second.id,
-        target_id: child.id,
-        edge_type: "parent-of",
-      }),
+      writeAnswers.edge(movedEdge, 200),
       {
         same: [
+          "edge.id",
           "edge.source_id",
           "edge.target_id",
           "edge.edge_type",
           "edge.version",
+          "edge.properties",
+        ],
+        shape: ["edge.created_at", "edge.updated_at"],
+      },
+    );
+
+    // Stale and naming the end its type holds many at: the version is judged first.
+    const stale = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { target_id: first.id, version: 1 },
+    });
+    expect(
+      stale.status,
+      "a stale move was taken, so there is no refusal to compare",
+    ).toBe(409);
+    expectFidelity(
+      "a stale move",
+      { status: stale.status, body: stale.error },
+      answers.edgeVersionConflict(wireEdge(movedEdge)),
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "current.id",
+          "current.source_id",
+          "current.target_id",
+          "current.version",
         ],
         shape: [
-          "edge.id",
-          "edge.properties",
-          "edge.created_at",
-          "edge.updated_at",
+          "error.message",
+          "current.edge_type",
+          "current.properties",
+          "current.created_at",
+          "current.updated_at",
+        ],
+      },
+    );
+
+    // A child's end holds one parent-of and a parent's many, so only the
+    // parent moves.
+    const wrongEnd = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { target_id: first.id, version: 2 },
+    });
+    expect(
+      wrongEnd.status,
+      "a move of the end its type holds many at was taken, so there is no refusal to compare",
+    ).toBe(400);
+    expectFidelity(
+      "a move of the end that holds many",
+      { status: wrongEnd.status, body: wrongEnd.error },
+      answers.edgeMoveRefused("target_id", "none to replace"),
+      {
+        same: ["error.code", "error.details.errors.0.path"],
+        shape: ["error.message", "error.details.errors.0.message"],
+      },
+    );
+
+    const nothing = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { version: 2 },
+    });
+    expect(nothing.status, "an update changing nothing was taken").toBe(400);
+    expectFidelity(
+      "an update changing nothing",
+      { status: nothing.status, body: nothing.error },
+      answers.edgeChangesNothing(),
+      { same: ["error.code", "error.message", "error.details.field"] },
+    );
+
+    const missing = uuidv7();
+    const nowhere = await client.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { source_id: missing, version: 2 },
+    });
+    expect(nowhere.status, "a move to no item was taken").toBe(404);
+    expectFidelity(
+      "a move to an item the server does not hold",
+      { status: nowhere.status, body: nowhere.error },
+      answers.edgeEndNotFound("source", missing),
+      { same: ["error.code", "error.message"] },
+    );
+
+    // The stand-in the folder fixtures refuse a move with.
+    const minted = await client.createKey({
+      label: "fidelity-no-parent-of",
+      source: `${ctx.source}-fidelity-no-parent-of`,
+      type_permissions: { "*": "write" },
+      edge_permissions: { about: "write" },
+      permissions: [],
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const denied = await narrow.rawRequest(`/edges/${edgeId}`, {
+      method: "PATCH",
+      body: { source_id: first.id, version: 2 },
+    });
+    expect(denied.status, "a key without parent-of moved one").toBe(403);
+    expectFidelity(
+      "a move the edge type's gate refuses",
+      { status: denied.status, body: denied.error },
+      answers.edgePermissionDenied("parent-of"),
+      {
+        same: [
+          "error.code",
+          "error.message",
+          "error.details.edge_type",
+          "error.details.required",
         ],
       },
     );

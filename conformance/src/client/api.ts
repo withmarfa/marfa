@@ -630,11 +630,18 @@ export class MarfaClient {
    */
   async updateEdge(
     id: string,
-    changes: { properties: Record<string, unknown>; version: number },
+    changes: {
+      properties?: Record<string, unknown>;
+      source_id?: string;
+      target_id?: string;
+      version: number;
+    },
+    headers?: Record<string, string>,
   ): Promise<ApiResponse<{ edge: MarfaEdge }>> {
     return this.request<{ edge: MarfaEdge }>(`/edges/${id}`, {
       method: "PATCH",
       body: changes,
+      ...(headers === undefined ? {} : { headers }),
     });
   }
 

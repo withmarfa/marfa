@@ -204,6 +204,7 @@ function scriptFolderWrites(
   );
   options.door?.(door);
   const edges = options.edges ?? new EdgeDoor();
+  edges.holds = (id) => door.rows.has(id);
   scriptWrites(harness.server, {
     create: [
       (request) => {
@@ -268,13 +269,17 @@ function scriptFolderWrites(
 /**
  * The edge doors, holding what they are sent as the server does: a create
  * answered at version 1 and refused where the same edge is held already, an
- * update on the version held moving it on, and each change, with the item
- * writes it is told of, logged as the event the stream would carry.
+ * update on the version held moving it on, and moving an end where the end
+ * that stays holds one, and each change, with the item writes it is told of,
+ * logged as the event the stream would carry.
  */
 class EdgeDoor {
   readonly edges = new Map<string, WireEdgeOptions & { version: number }>();
   /** Every change as its event, ids counting on from the head read's `1`. */
   readonly events: SseFrame[] = [];
+  /** What the door held after each change, as `heldEdges` reads it, so a
+   *  fixture can ask whether any reader could have found an end empty. */
+  readonly history: string[][] = [];
   /** An answer standing in for the server's to an edge written or
    *  changed, a refusal say; the door decides where it answers `undefined`. */
   placing?: (edge: WireEdgeOptions) => Answer | undefined;
@@ -282,6 +287,8 @@ class EdgeDoor {
   deleting?: (edge: WireEdgeOptions) => Answer | undefined;
   /** Listings of an item's edges still to fail, as a server failing now. */
   failListings = 0;
+  /** Whether the item door holds a row, which an end moved to must be. */
+  holds: (id: string) => boolean = () => true;
   private minted = 0;
 
   /** An edge the server holds already, one a hydration serves. */
@@ -334,21 +341,41 @@ class EdgeDoor {
       const held = this.edges.get(request.pathname.split("/").at(-1) ?? "");
       const body = JSON.parse(request.body) as {
         properties?: Record<string, unknown>;
+        source_id?: string;
+        target_id?: string;
         version: number;
       };
       if (held === undefined) {
         return refusal(404, "edge_not_found", "No such edge");
       }
+      // The real door's order: the version, then the ends, then the body.
       if (body.version !== held.version) {
         return answers.edgeVersionConflict(wireEdge(held));
       }
+      const ends = {
+        source_id: body.source_id ?? held.source_id,
+        target_id: body.target_id ?? held.target_id,
+      };
+      const refused = moveRefusal(held, ends);
+      if (refused !== undefined) return refused;
+      const moves =
+        ends.source_id !== held.source_id || ends.target_id !== held.target_id;
+      for (const end of ["source", "target"] as const) {
+        const id = ends[`${end}_id`];
+        if (moves && !this.holds(id)) return answers.edgeEndNotFound(end, id);
+      }
+      if (!moves && body.properties === undefined) {
+        return answers.edgeChangesNothing();
+      }
       const standIn = this.placing?.({
         ...held,
+        ...ends,
         properties: { ...held.properties, ...body.properties },
       });
       if (standIn !== undefined) return standIn;
       const edge = {
         ...held,
+        ...ends,
         properties: { ...held.properties, ...body.properties },
         version: held.version + 1,
         updated_at: this.stamp(),
@@ -453,6 +480,7 @@ class EdgeDoor {
     this.events.push(
       edgeEvent(String(this.events.length + 2), kind, wireEdge(edge)),
     );
+    this.history.push(heldEdges(this));
   }
 
   /** A moment later than every one before it, so an older edge reads older. */
@@ -460,6 +488,38 @@ class EdgeDoor {
     this.minted += 1;
     return new Date(Date.UTC(2026, 8, 18) + this.minted * 1000).toISOString();
   }
+}
+
+/**
+ * The server's refusal of a move of an edge's end, where the end that stays
+ * holds more than one of its type or both ends move; `undefined` where it
+ * moves nothing or may move.
+ */
+function moveRefusal(
+  held: WireEdgeOptions,
+  ends: { source_id: string; target_id: string },
+): Answer | undefined {
+  const movesSource = ends.source_id !== held.source_id;
+  const movesTarget = ends.target_id !== held.target_id;
+  if (!movesSource && !movesTarget) return undefined;
+  const edgeType = held.edge_type ?? "references";
+  if (movesSource && movesTarget) {
+    return answers.edgeMoveRefused(
+      "source_id",
+      "An update moves one end of an edge at a time; delete it and create the edge wanted",
+    );
+  }
+  const cardinality =
+    SCRIPTED_EDGE_TYPES.find((type) => type.id === edgeType)?.cardinality ??
+    "many-to-many";
+  const keptHoldsOne = movesSource
+    ? cardinality === "one-to-one" || cardinality === "one-to-many"
+    : cardinality === "one-to-one" || cardinality === "many-to-one";
+  if (keptHoldsOne) return undefined;
+  return answers.edgeMoveRefused(
+    movesSource ? "source_id" : "target_id",
+    `Edge "${edgeType}" is ${cardinality}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one`,
+  );
 }
 
 /** What the folder sent to the items door, parsed. */
@@ -2829,6 +2889,8 @@ async function edgeHarness(
     settings?: FolderSettings;
     events?: Responder[];
     lookup?: (text: string) => Answer | undefined;
+    /** Handed the item door, for a fixture that answers one of its writes. */
+    door?: (door: FolderDoor) => void;
   } = {},
 ): Promise<{ harness: FolderHarness; door: EdgeDoor }> {
   const whole = (type: string) =>
@@ -2845,7 +2907,7 @@ async function edgeHarness(
   });
   const door = new EdgeDoor();
   for (const edge of edges) door.hold(edge);
-  scriptFolderWrites(made, { edges: door });
+  scriptFolderWrites(made, { edges: door, door: options.door });
   return { harness: made, door };
 }
 
@@ -2881,6 +2943,19 @@ function sentEdgeWrites(harness: FolderHarness): string[] {
     }
     if (request.method === "DELETE" && request.pathname.startsWith("/edges/")) {
       return [`delete ${request.pathname.split("/").at(-1) ?? ""}`];
+    }
+    if (request.method === "PATCH" && request.pathname.startsWith("/edges/")) {
+      const id = request.pathname.split("/").at(-1) ?? "";
+      const body = JSON.parse(request.body) as {
+        source_id?: string;
+        target_id?: string;
+      };
+      if (body.source_id !== undefined) {
+        return [`move ${id} source ${body.source_id}`];
+      }
+      if (body.target_id !== undefined) {
+        return [`move ${id} target ${body.target_id}`];
+      }
     }
     return [];
   });
@@ -3775,7 +3850,7 @@ describe("edges in frontmatter", () => {
     harness = made.harness;
     made.door.placing = (edge) =>
       edge.edge_type === "about"
-        ? refusal(403, "edge_permission_denied", "No about here")
+        ? answers.edgePermissionDenied("about")
         : undefined;
     put(
       harness,
@@ -3925,13 +4000,184 @@ describe("edges in frontmatter", () => {
     ).toEqual([]);
   });
 
-  it("puts back an edge whose successor died, or whose answer was cleared first", async () => {
+  it("replaces a one-target edge's target in one step", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1ec";
+    const threadEdge = "01a00000-0000-7000-8000-00000000e1ee";
     const made = await edgeHarness(
-      "folder-edge-put-back-kept",
-      [titled(project, "One"), titled(other, "Two"), titled(child, "Child")],
+      "folder-edge-replace",
+      [
+        titled(project, "One"),
+        titled(other, "Two"),
+        titled(child, "Child"),
+        titled(alpha, "Alpha"),
+        titled(beta, "Beta"),
+      ],
       [
         {
-          id: "01a00000-0000-7000-8000-00000000e1f7",
+          id: parentEdge,
+          source_id: project,
+          target_id: child,
+          edge_type: "parent-of",
+          properties: { since: "spring" },
+        },
+        {
+          id: threadEdge,
+          source_id: child,
+          target_id: alpha,
+          edge_type: "in-thread",
+        },
+      ],
+    );
+    harness = made.harness;
+    const door = made.door;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(frontOf(harness, "Child.md")).toContain('in-thread: "[[Alpha]]"');
+
+    // The child's end holds one parent, so its other end, the parent, moves.
+    edit(harness, "Child.md", "[[One]]", "[[Two]]");
+    // The message's end holds one thread, so the thread moves.
+    edit(harness, "Child.md", "[[Alpha]]", "[[Beta]]");
+    const moved = await harness.folder.push();
+    expect(moved.ok, JSON.stringify(moved)).toBe(true);
+    if (!moved.ok) return;
+    expect(
+      sentEdgeWrites(harness).sort(),
+      "the replacement was not sent as one write moving the edge's other end",
+    ).toEqual(
+      [
+        `move ${parentEdge} source ${other}`,
+        `move ${threadEdge} target ${beta}`,
+      ].sort(),
+    );
+    expect(heldEdges(door)).toEqual(
+      [`${other} parent-of ${child}`, `${child} in-thread ${beta}`].sort(),
+    );
+    expect(
+      door.edges.get(parentEdge)?.properties,
+      "the edge moved lost the properties it carried",
+    ).toEqual({ since: "spring" });
+    const parentsAt = (held: string[]) =>
+      held.filter((edge) => edge.endsWith(` parent-of ${child}`)).length;
+    expect(
+      door.history.map(parentsAt),
+      "the server held the child with no parent, or two, between writes",
+    ).toEqual(door.history.map(() => 1));
+    expect(
+      moved.value.pull?.flagged,
+      "a replacement taken by the server held its file",
+    ).toEqual([]);
+    expect(frontOf(harness, "Child.md")).toContain('child-of: "[[Two]]"');
+
+    // The witness: the door's history sees an end emptied where a write empties it.
+    edit(harness, "Child.md", 'child-of: "[[Two]]"\n', "");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness)).toContain(`delete ${parentEdge}`);
+    expect(door.history.map(parentsAt).at(-1)).toBe(0);
+  });
+
+  it("keeps the old edge where the replace is refused", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1f7";
+    const threadEdge = "01a00000-0000-7000-8000-00000000e1fc";
+    const made = await edgeHarness(
+      "folder-edge-replace-refused",
+      [
+        titled(project, "One"),
+        titled(other, "Two"),
+        titled(third, "Three"),
+        titled(child, "Child"),
+        titled(alpha, "Alpha"),
+        titled(beta, "Beta"),
+        titled(gamma, "Gamma"),
+      ],
+      [
+        {
+          id: parentEdge,
+          source_id: project,
+          target_id: child,
+          edge_type: "parent-of",
+        },
+        {
+          id: threadEdge,
+          source_id: child,
+          target_id: alpha,
+          edge_type: "in-thread",
+        },
+      ],
+    );
+    harness = made.harness;
+    const door = made.door;
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // The child's parent moves at the source end, its thread at the target end.
+    door.placing = (edge) =>
+      (edge.edge_type === "parent-of" && edge.source_id === other) ||
+      (edge.edge_type === "in-thread" && edge.target_id === beta)
+        ? answers.edgePermissionDenied(edge.edge_type)
+        : undefined;
+    edit(harness, "Child.md", "[[One]]", "[[Two]]");
+    edit(harness, "Child.md", "[[Alpha]]", "[[Beta]]");
+    const refused = await harness.folder.push();
+    expect(refused.ok, JSON.stringify(refused)).toBe(true);
+    if (!refused.ok) return;
+    expect(sentEdgeWrites(harness).sort()).toEqual(
+      [
+        `move ${parentEdge} source ${other}`,
+        `move ${threadEdge} target ${beta}`,
+      ].sort(),
+    );
+    expect(
+      heldEdges(door),
+      "a refused move left the child without the edge it had",
+    ).toEqual(
+      [`${project} parent-of ${child}`, `${child} in-thread ${alpha}`].sort(),
+    );
+    expect(
+      refused.value.pull?.flagged.map((file) => [file.path, file.flag]),
+      "the file whose line was refused was not flagged",
+    ).toEqual([["Child.md", "refused"]]);
+    expect(refused.value.pull?.flagged[0]?.reason).toContain(
+      "edge_permission_denied",
+    );
+    expect(read(harness, "Child.md")).toContain('child-of: "[[Two]]"');
+    const local = await harness.folder.device().text(["edges", "to", child]);
+    expect(
+      local.ok && local.value,
+      "the copy kept the refused parent rather than the one the server holds",
+    ).toContain(project);
+
+    // The witness that the record names each old edge again: the next change
+    // moves each from there, in one step, and the file is held no longer.
+    door.placing = undefined;
+    edit(harness, "Child.md", "[[Two]]", "[[Three]]");
+    edit(harness, "Child.md", "[[Beta]]", "[[Gamma]]");
+    const next = await harness.folder.push();
+    expect(next.ok, JSON.stringify(next)).toBe(true);
+    if (!next.ok) return;
+    expect(sentEdgeWrites(harness).slice(2).sort()).toEqual(
+      [
+        `move ${parentEdge} source ${third}`,
+        `move ${threadEdge} target ${gamma}`,
+      ].sort(),
+    );
+    expect(heldEdges(door)).toEqual(
+      [`${third} parent-of ${child}`, `${child} in-thread ${gamma}`].sort(),
+    );
+    expect(next.value.pull?.flagged).toEqual([]);
+  });
+
+  it("holds a file whose move a plain device drain saw refused", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1f8";
+    const made = await edgeHarness(
+      "folder-edge-replace-device-drain",
+      [
+        titled(project, "One"),
+        titled(other, "Two"),
+        titled(third, "Three"),
+        titled(child, "Child"),
+      ],
+      [
+        {
+          id: parentEdge,
           source_id: project,
           target_id: child,
           edge_type: "parent-of",
@@ -3942,50 +4188,46 @@ describe("edges in frontmatter", () => {
     const door = made.door;
     expect((await harness.folder.pull()).ok).toBe(true);
 
-    // Refused under a plain device drain whose answers are then cleared.
     door.placing = (edge) =>
       edge.edge_type === "parent-of" && edge.source_id === other
-        ? refusal(403, "edge_permission_denied", "No parent here")
+        ? answers.edgePermissionDenied("parent-of")
         : undefined;
+    // By id, which a scan with no server resolves from the copy.
     edit(harness, "Child.md", "[[One]]", `[[${other}]]`);
     expect((await harness.folder.scan()).ok).toBe(true);
     expect((await harness.folder.device().drain()).ok).toBe(true);
-    expect((await harness.folder.device().text(["forget"])).ok).toBe(true);
-    expect(heldEdges(door)).toEqual([]);
-    const cleared = await harness.folder.push();
-    expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
-    expect(
-      heldEdges(door),
-      "a replacement whose answers were cleared left the child with no parent",
-    ).toEqual([`${project} parent-of ${child}`]);
+    // The witness: the plain drain sent the move and the server refused it.
+    expect(sentEdgeWrites(harness)).toEqual([
+      `move ${parentEdge} source ${other}`,
+    ]);
+    expect(heldEdges(door)).toEqual([`${project} parent-of ${child}`]);
 
-    // A successor that dies after its retries is put back the same way.
-    door.placing = (edge) =>
-      edge.edge_type === "parent-of" && edge.source_id === other
-        ? { kind: "json", status: 200, body: "not json at all" }
-        : undefined;
-    edit(harness, "Child.md", `[[${other}]]`, "[[Two]]");
-    for (let pass = 0; pass < 6; pass += 1) {
-      expect((await harness.folder.push()).ok).toBe(true);
-    }
+    const next = await harness.folder.push();
+    expect(next.ok, JSON.stringify(next)).toBe(true);
+    if (!next.ok) return;
     expect(
-      heldEdges(door),
-      "a successor that died left the child with no parent",
-    ).toEqual([`${project} parent-of ${child}`]);
+      next.value.pull?.flagged.map((file) => [file.path, file.flag]),
+      "a move refused under a plain device drain never held its file",
+    ).toEqual([["Child.md", "refused"]]);
+
+    // The record names the old edge again, so the next change moves it from there.
+    door.placing = undefined;
+    edit(harness, "Child.md", `[[${other}]]`, "[[Three]]");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness).at(-1)).toBe(
+      `move ${parentEdge} source ${third}`,
+    );
+    expect(heldEdges(door)).toEqual([`${third} parent-of ${child}`]);
   });
 
-  it("replaces a one-target edge's target as one step, and keeps the old edge if the write fails", async () => {
+  it("makes the edge a line asks for where its move finds the edge deleted elsewhere", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1f9";
     const made = await edgeHarness(
-      "folder-edge-replace",
-      [
-        titled(project, "One"),
-        titled(other, "Two"),
-        titled(third, "Three"),
-        titled(child, "Child"),
-      ],
+      "folder-edge-replace-gone",
+      [titled(project, "One"), titled(other, "Two"), titled(child, "Child")],
       [
         {
-          id: "01a00000-0000-7000-8000-00000000e1ec",
+          id: parentEdge,
           source_id: project,
           target_id: child,
           edge_type: "parent-of",
@@ -3996,103 +4238,184 @@ describe("edges in frontmatter", () => {
     harness = made.harness;
     const door = made.door;
     expect((await harness.folder.pull()).ok).toBe(true);
+
+    // Another machine deletes the edge before this one's move reaches it.
+    door.edges.delete(parentEdge);
     edit(harness, "Child.md", "[[One]]", "[[Two]]");
-    const moved = await harness.folder.push();
-    expect(moved.ok, JSON.stringify(moved)).toBe(true);
-    if (!moved.ok) return;
-    expect(
-      moved.value.drain.verdicts
-        .filter((entry) => entry.kind.endsWith("_edge"))
-        .map((entry) => entry.verdict),
-      "a new parent was sent as a second one, and refused",
-    ).not.toContain("refused");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    // The witness: the move was sent and answered that the edge is gone.
+    expect(sentEdgeWrites(harness)[0]).toBe(
+      `move ${parentEdge} source ${other}`,
+    );
     expect(
       heldEdges(door),
-      "the child did not move to its new parent in one step",
-    ).toEqual([`${other} parent-of ${child}`]);
-    expect(sentEdgeWrites(harness).map((write) => write.split(" ")[0])).toEqual(
-      ["delete", "create"],
-    );
-
-    // The edge that will be put back carries a property of its own.
-    const two = [...door.edges.values()].find(
-      (edge) => edge.edge_type === "parent-of",
-    );
-    const noted = await harness.folder.device().updateEdge(String(two?.id), {
-      properties: { since: "spring" },
-      version: two?.version ?? 1,
-    });
-    expect(noted.ok, JSON.stringify(noted)).toBe(true);
-    expect((await harness.folder.device().drain()).ok).toBe(true);
-
-    // The new parent is refused this time: the child keeps the one it had.
-    door.placing = (edge) =>
-      edge.edge_type === "parent-of" && edge.source_id === project
-        ? refusal(403, "edge_permission_denied", "No write on parent-of here")
-        : undefined;
-    edit(harness, "Child.md", "[[Two]]", "[[One]]");
-    const refused = await harness.folder.push();
-    expect(refused.ok, JSON.stringify(refused)).toBe(true);
-    if (!refused.ok) return;
-    expect(
-      heldEdges(door),
-      "a refused new parent left the child with none",
+      "the child was left with no parent though its line names one",
     ).toEqual([`${other} parent-of ${child}`]);
     expect(
       [...door.edges.values()].find((edge) => edge.edge_type === "parent-of")
         ?.properties,
-      "the edge put back lost the properties the old one carried",
+      "the edge made in the deleted one's place lost the properties the copy held",
     ).toEqual({ since: "spring" });
-    expect(
-      refused.value.pull?.flagged.map((file) => [file.path, file.flag]),
-      "the file whose line was refused was not flagged",
-    ).toEqual([["Child.md", "refused"]]);
-    expect(read(harness, "Child.md")).toContain('child-of: "[[One]]"');
+    expect(pushed.value.pull?.flagged).toEqual([]);
+  });
 
-    // Drained by the device alone, the put-back waits in the store for the
-    // folder's next pass.
-    const refuse = door.placing;
-    door.placing = undefined;
-    edit(harness, "Child.md", "[[One]]", "[[Three]]");
-    expect((await harness.folder.push()).ok).toBe(true);
-    expect(heldEdges(door)).toEqual([`${third} parent-of ${child}`]);
-    door.placing = refuse;
-    // By id, which a scan with no server resolves from the copy.
-    edit(harness, "Child.md", "[[Three]]", `[[${project}]]`);
+  it("makes the edge a gone move's line asks for at the next drain, where the first one stops", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1fb";
+    const made = await edgeHarness(
+      "folder-edge-replace-gone-stopped",
+      [
+        titled(project, "One"),
+        titled(other, "Two"),
+        titled(child, "Child"),
+        titled(alpha, "Alpha"),
+        titled(beta, "Beta"),
+      ],
+      [
+        {
+          id: parentEdge,
+          source_id: project,
+          target_id: child,
+          edge_type: "parent-of",
+        },
+      ],
+    );
+    harness = made.harness;
+    const door = made.door;
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // Another machine deletes the edge; a plain device drain sends the move.
+    door.edges.delete(parentEdge);
+    edit(harness, "Child.md", "[[One]]", `[[${other}]]`);
     expect((await harness.folder.scan()).ok).toBe(true);
     expect((await harness.folder.device().drain()).ok).toBe(true);
-    expect(
-      heldEdges(door),
-      "the refused replacement's delete did not land, so there is nothing to put back",
-    ).toEqual([]);
-    const later = await harness.folder.push();
-    expect(later.ok, JSON.stringify(later)).toBe(true);
-    expect(
-      heldEdges(door),
-      "a replacement refused under a plain device drain was never put back",
-    ).toEqual([`${third} parent-of ${child}`]);
+    expect(sentEdgeWrites(harness)).toEqual([
+      `move ${parentEdge} source ${other}`,
+    ]);
 
-    // The record names the edge put back, so the next change replaces it.
+    // The next folder drain stops at a credential the server refuses.
+    door.placing = (edge) =>
+      edge.edge_type === "in-thread"
+        ? refusal(401, "unauthorized", "no credential")
+        : undefined;
+    edit(harness, "Alpha.md", /marfa_id:/, 'in-thread: "[[Beta]]"\nmarfa_id:');
+    const stopped = await harness.folder.push();
+    expect(
+      stopped.ok && stopped.value.drain.stopped,
+      "the drain did not stop",
+    ).toBeTruthy();
+    expect(heldEdges(door)).toEqual([]);
+
+    // The credential is back.
     door.placing = undefined;
-    edit(harness, "Child.md", `[[${project}]]`, "[[Two]]");
     expect((await harness.folder.push()).ok).toBe(true);
-    expect(heldEdges(door)).toEqual([`${other} parent-of ${child}`]);
-
-    // A refused delete refuses the new edge with it, and nothing is put back.
-    const putBack = () =>
-      sentEdgeWrites(harness!).filter(
-        (write) => write === `create ${other} parent-of ${child}`,
-      ).length;
-    const before = putBack();
-    door.deleting = () => refusal(403, "edge_permission_denied", "Not here");
-    edit(harness, "Child.md", "[[Two]]", "[[Three]]");
-    const kept = await harness.folder.push();
-    expect(kept.ok, JSON.stringify(kept)).toBe(true);
-    expect(heldEdges(door)).toEqual([`${other} parent-of ${child}`]);
     expect(
-      putBack(),
-      "an edge whose delete was refused was put back beside itself",
-    ).toBe(before);
+      heldEdges(door),
+      `a drain that stopped lost the edge the line asks for; sent ${JSON.stringify(sentEdgeWrites(harness))}`,
+    ).toContain(`${other} parent-of ${child}`);
+  });
+
+  it("waits for the create of the item its line now names before it moves the edge", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1fd";
+    let refusedOnce = false;
+    const made = await edgeHarness(
+      "folder-edge-replace-new-parent",
+      [titled(project, "One"), titled(child, "Child")],
+      [
+        {
+          id: parentEdge,
+          source_id: project,
+          target_id: child,
+          edge_type: "parent-of",
+        },
+      ],
+      {
+        // The new parent's create is answered with nothing a device can read,
+        // once, so it is still to be taken when the move is next in line.
+        door: (items) => {
+          const create = items.create.bind(items);
+          items.create = (sent) => {
+            if (!refusedOnce && sent.properties?.title === "Fresh") {
+              refusedOnce = true;
+              return {
+                answer: { kind: "json", status: 200, body: "not json at all" },
+              };
+            }
+            return create(sent);
+          };
+        },
+      },
+    );
+    harness = made.harness;
+    const door = made.door;
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // Scanned without a drain, so the move is queued behind a create not yet sent.
+    put(harness, "Fresh.md", "The new parent.\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const queued = await harness.folder.device().queue();
+    const fresh = queued.ok
+      ? queued.value.filter((row) => row.kind === "create_item").at(-1)?.item_id
+      : undefined;
+    expect(fresh, "the scan queued no create for the new file").toBeDefined();
+    edit(harness, "Child.md", "[[One]]", `[[${String(fresh)}]]`);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    for (let pass = 0; pass < 3; pass += 1) {
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    // The witness: the create was refused once, so the move had a chance to overtake it.
+    expect(refusedOnce).toBe(true);
+    expect(
+      heldEdges(door),
+      "the move went before the create of the parent it names, and was refused",
+    ).toEqual([`${fresh} parent-of ${child}`]);
+  });
+
+  it("leaves the server's edge whole where a move dies after its retries", async () => {
+    const parentEdge = "01a00000-0000-7000-8000-00000000e1fa";
+    const made = await edgeHarness(
+      "folder-edge-replace-dead",
+      [titled(project, "One"), titled(other, "Two"), titled(child, "Child")],
+      [
+        {
+          id: parentEdge,
+          source_id: project,
+          target_id: child,
+          edge_type: "parent-of",
+        },
+      ],
+    );
+    harness = made.harness;
+    const door = made.door;
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    door.placing = (edge) =>
+      edge.edge_type === "parent-of" && edge.source_id === other
+        ? { kind: "json", status: 200, body: "not json at all" }
+        : undefined;
+    edit(harness, "Child.md", "[[One]]", "[[Two]]");
+    const verdicts: string[] = [];
+    for (let pass = 0; pass < 6; pass += 1) {
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      if (pushed.ok) {
+        verdicts.push(
+          ...pushed.value.drain.verdicts
+            .filter((entry) => entry.kind === "update_edge")
+            .map((entry) => String(entry.verdict)),
+        );
+      }
+    }
+    // The witness: every retry sent the same move, until it died.
+    expect(verdicts).toContain("dead");
+    expect(new Set(sentEdgeWrites(harness))).toEqual(
+      new Set([`move ${parentEdge} source ${other}`]),
+    );
+    expect(
+      heldEdges(door),
+      "a move that died left the server's edge anywhere but whole at one end",
+    ).toEqual([`${project} parent-of ${child}`]);
   });
 
   it("flags a line naming too many targets for its edge type, and changes nothing", async () => {
