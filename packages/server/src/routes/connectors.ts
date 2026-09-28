@@ -193,7 +193,7 @@ const registerConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Register the caller's key as a connector",
   description:
-    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
+    "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. The operator key is refused `403 forbidden` too: it runs the instance and never acts as a connector. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
   security: [{ bearerAuth: [] }],
   request: {
     body: { content: { "application/json": { schema: RegisterSchema } } },
@@ -224,7 +224,7 @@ const registerConnectorRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
-      description: "A session token, which is not a key",
+      description: "A session token, which is not a key, or the operator key",
     },
   },
 });
@@ -647,6 +647,12 @@ export function connectorRoutes(storage: Storage) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "A connector registers under a key, not under an app's session token",
+      );
+    }
+    if (key.is_operator === true) {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "The operator key runs the instance and does not register as a connector",
       );
     }
     const body = c.req.valid("json");

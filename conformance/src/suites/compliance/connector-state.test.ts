@@ -1305,54 +1305,6 @@ describe("what a connector keeps on the instance", () => {
     expect(await found(mine, [row.id])).toEqual([row.id]);
   });
 
-  it("refuses the operator key on a registration of its own, but for the clear", async () => {
-    const operator = getOperatorClient();
-    const current = await operator.rawRequest<{ id: string }>("/keys/current");
-    expect(current.status).toBe(200);
-    const registered = await operator.registerConnector({
-      name: `${ctx.runId} operator`,
-    });
-    expect([200, 201]).toContain(registered.status);
-    const id = registered.data.id;
-    try {
-      // The witness: the registration is the operator key's own.
-      expect(registered.data.key_id).toBe(current.data.id);
-      const process = randomUUID();
-      const row = await note("operator");
-      for (const [door, res] of [
-        ["POST hold", await operator.holdConnector(id, process)],
-        ["DELETE hold", await operator.releaseConnectorHold(id, process)],
-        ["GET state", await operator.getConnectorState(id)],
-        [
-          "PUT state",
-          await operator.replaceConnectorState(id, {
-            process,
-            state: { cursor: "operator" },
-          }),
-        ],
-        [
-          "POST agreements",
-          await operator.writeConnectorAgreements(id, {
-            process,
-            set: [{ item_id: row.id, waiting: true, record: {} }],
-          }),
-        ],
-        [
-          "POST agreements/find",
-          await operator.findConnectorAgreements(id, [row.id]),
-        ],
-        ["GET agreements", await operator.listConnectorAgreements(id)],
-      ] as const) {
-        expect(res.status, door).toBe(403);
-        expect(res.error?.error.code, door).toBe("forbidden");
-      }
-      expect((await operator.getConnector(id)).data.hold_expires_at).toBeNull();
-      expect((await operator.clearConnectorState(id)).status).toBe(200);
-    } finally {
-      await operator.deleteConnector(id);
-    }
-  });
-
   it("clears the state and the agreements for the own key or the operator, and audits it", async () => {
     const mine = await connector("clear");
     const process = await holding(mine);

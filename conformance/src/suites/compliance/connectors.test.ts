@@ -79,6 +79,22 @@ describe("registration", () => {
     expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
   });
 
+  it("refuses to register the operator key", async () => {
+    const operator = getOperatorClient();
+    // The witness: the same door registers a working key.
+    const witness = await createSecondClient(ctx, "register-witness");
+    const mine = await witness.registerConnector({
+      name: `${ctx.runId} witness`,
+    });
+    expect(mine.status).toBe(201);
+    const refused = await operator.registerConnector({
+      name: `${ctx.runId} operator`,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect((await witness.deleteConnector(mine.data.id)).status).toBe(200);
+  });
+
   it("refuses a name or a description outside the bounds", async () => {
     const fine = await client.registerConnector({
       name: "n".repeat(200),

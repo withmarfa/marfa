@@ -33,8 +33,7 @@ export const MAX_STATE_BYTES = 512 * 1024;
 export const MAX_RECORD_BYTES = 16 * 1024;
 export const MAX_AGREEMENTS_PER_REQUEST = 500;
 
-const CONNECTOR_KEY_ONLY =
-  "The connector's own key only, and never the operator key, even on a registration of its own.";
+const CONNECTOR_KEY_ONLY = "The connector's own key only.";
 
 const UNDECLARED_REFUSED =
   "A top-level field the body does not declare is refused.";
@@ -401,20 +400,6 @@ function held(expiresAt: string | null): MarfaError {
       );
 }
 
-/** The operator key registering itself does not make it a connector's key. */
-function requireConnectorKey(
-  ownerKeyId: string,
-  key: { id: string; is_operator?: boolean },
-): void {
-  if (key.is_operator === true) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      "The operator key does not act as a connector",
-    );
-  }
-  requireOwnKey(ownerKeyId, key.id);
-}
-
 function serializedBytes(value: unknown): number {
   return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
@@ -426,7 +411,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(holdRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     refuseUnknownBodyKeys(await c.req.json(), HoldInputSchema);
     const { process } = c.req.valid("json");
     const hold = await storage.connectors.takeHold(
@@ -447,7 +432,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(releaseHoldRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     refuseUnknownQueryParams(c.req.raw.url, releaseHoldRoute.request.query);
     await storage.connectors.releaseHold(
       connector.id,
@@ -459,14 +444,14 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(getStateRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     return c.json(await storage.connectorState.getState(connector.source), 200);
   });
 
   router.openapi(putStateRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     refuseUnknownBodyKeys(await c.req.json(), StateInputSchema);
     const { process, state } = c.req.valid("json");
     if (serializedBytes(state) > MAX_STATE_BYTES) {
@@ -504,7 +489,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(writeAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     const body = c.req.valid("json");
     refuseUnknownBodyKeys(await c.req.json(), AgreementsInputSchema);
     const set = body.set ?? [];
@@ -539,7 +524,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(findAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     refuseUnknownBodyKeys(await c.req.json(), FindInputSchema);
     const { item_ids } = c.req.valid("json");
     return c.json(
@@ -557,7 +542,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
   router.openapi(listAgreementsRoute, async (c) => {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
-    requireConnectorKey(connector.key_id, key);
+    requireOwnKey(connector.key_id, key.id);
     refuseUnknownQueryParams(c.req.raw.url, listAgreementsRoute.request.query);
     const { waiting, limit, cursor } = c.req.valid("query");
     return c.json(
