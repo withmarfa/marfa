@@ -153,15 +153,8 @@ export function blobHash(data: Uint8Array): string {
 }
 
 /**
- * A minimal version 2 archive carrying `items`, and the `blobs` and type
- * registrations given, and nothing else.
- *
- * `edges.ndjson`, and `types.ndjson` when no type is given, are emitted
- * empty rather than omitted, which is what the server's own exporter does and
- * what lets the restore tell a damaged archive from an empty one. The blob
- * entries sit between the items and the edges, so a member follows every
- * blob and a blob whose padding was wrong would put the reader off that
- * member.
+ * A minimal version 2 archive: `items`, and the `blobs` and `types` given.
+ * Empty members are emitted, not omitted, so a restore can tell damaged from empty.
  */
 export function itemsArchive(
   items: ArchiveItem[],

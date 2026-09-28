@@ -150,9 +150,8 @@ pub enum ItemsCommand {
         /// A natural key's `source_id`; repeat for more.
         #[arg(long = "source-id", value_name = "ID")]
         source_ids: Vec<String>,
-        /// The time of the vendor's own change the connector made in carrying
-        /// the purge out, RFC 3339; one earlier than a tombstone holds leaves
-        /// it as it is.
+        /// The vendor-side change time, RFC 3339; one earlier than a
+        /// tombstone holds leaves it as it is.
         #[arg(long = "settled-at", value_name = "TIME")]
         settled_at: String,
     },
