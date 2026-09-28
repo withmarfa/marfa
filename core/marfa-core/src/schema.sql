@@ -247,7 +247,7 @@ CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
 -- is equality on the whole string, which misses every row waiting on two
 -- creates. An index here would say the lookup was cheap without making it so.
 
--- A folder's own state (`folders.md` 25). In this file rather than beside it
+-- A folder's own state (`folders.md` 26). In this file rather than beside it
 -- because the mapping, the journal and the queue have to move together: a
 -- file bound to an item whose create did not queue is a file the folder
 -- thinks it has pushed, and one transaction is what stops that.
@@ -260,28 +260,28 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- Device, inode and birth time, joined. Null where the filesystem gave no
   -- usable identity, which is not the same as a file nobody has seen: a null
   -- here means a rename cannot be followed and the file becomes a new item
-  -- rather than a guess (`folders.md` 16).
+  -- rather than a guess (`folders.md` 17).
   identity TEXT,
   -- The bytes the folder last agreed with, hashed. What makes echo
-  -- suppression have no gap (`folders.md` 19): a change whose content the
+  -- suppression have no gap (`folders.md` 20): a change whose content the
   -- folder already holds is a change the folder made.
   content_hash TEXT NOT NULL,
   -- The bytes the folder itself last wrote at this path, hashed; null where
   -- the last agreement was a scan's read of the person's bytes. A pull takes
   -- away the file of an item that left the slice only when the file still
-  -- holds these bytes (`folders.md` 32): a file the folder never wrote, or
+  -- holds these bytes (`folders.md` 33): a file the folder never wrote, or
   -- the person changed since, is theirs and stays.
   written_hash TEXT,
   -- The item ids the links in those bytes named, as a JSON array. What tells
   -- a link the person removed from an edge that has not been rendered yet
-  -- (`folders.md` 28): both are an edge the copy holds that the body does not
+  -- (`folders.md` 29): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
   -- The edges the file's lines last named, as JSON: what tells a line taken
   -- out from an edge no pull has written yet (`folders.md` 11).
   edge_lines TEXT NOT NULL,
   -- The newest version line an edit of this device's has spent, 0 where its
-  -- file carried none; null where no edit went (`folders.md` 22, 23).
+  -- file carried none; null where no edit went (`folders.md` 23, 24).
   edit_line INTEGER,
   -- Why the bytes at content_hash went unsent or were refused, so a pull
   -- leaves the file as the person wrote it (`folders.md` 9, 10).
@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS folder_files (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
 
--- Deletes, journaled and deferred (`folders.md` 20, 21). A file that
+-- Deletes, journaled and deferred (`folders.md` 21, 22). A file that
 -- disappears is recorded here rather than sent, because the first half of a
 -- rename looks exactly like a delete; the grace is what tells them apart.
 -- A row that survives the grace becomes a delete.

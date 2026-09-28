@@ -668,21 +668,25 @@ export interface ScanReport {
   deleted: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 35). Counted in `created` too. */
+   *  or moved (`folders.md` 36). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 35). */
+   *  sent (`folders.md` 36). */
   lost: number;
   /** Files this scan read and holds rather than sends (`folders.md` 9, 10,
    *  11). */
   flagged: FlaggedFile[];
+  /** Embeds in the files this scan read that name no file it sends
+   *  (`folders.md` 12), each flagged `embed`. */
+  embeds: FlaggedFile[];
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
- *  lines that change nothing (`folders.md` 11). */
+ *  lines that change nothing (`folders.md` 11), and `embed` for an embed
+ *  read as nothing (`folders.md` 12). */
 export interface FlaggedFile {
   path: string;
-  flag: "unreadable" | "refused" | "behind" | "edges";
+  flag: "unreadable" | "refused" | "behind" | "edges" | "embed";
   reason: string;
 }
 
@@ -694,27 +698,27 @@ export interface PullReport {
   skipped: number;
   unwritten: number;
   /** Items whose placement another item holds, written at a free path
-   *  beside it (`folders.md` 18). */
+   *  beside it (`folders.md` 19). */
   beside: number;
   /** Placements written: an `in-folder` edge made, or its path moved to
-   *  where the file is (`folders.md` 18). */
+   *  where the file is (`folders.md` 19). */
   placed: number;
   /** Items whose placement would make them another kind of file, left
-   *  unwritten (`folders.md` 18). */
+   *  unwritten (`folders.md` 19). */
   unsuited: number;
   /** Placements the server refused, not sent again until the key or the
-   *  settings change (`folders.md` 18). */
+   *  settings change (`folders.md` 19). */
   unplaced: number;
   outside: number;
   /** Files of items trashed or out of the search's states, taken away
-   *  (`folders.md` 32). */
+   *  (`folders.md` 33). */
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
   /** Files whose item the search no longer matches otherwise, left where
-   *  they are (`folders.md` 32). */
+   *  they are (`folders.md` 33). */
   unmatched: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 34). */
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 35). */
   absent: number;
   /** The settings file, rewritten where the settings moved on. */
   settings: SettingsFileReport;
@@ -723,6 +727,9 @@ export interface PullReport {
   /** Properties a type the folder holds declares under a name no file can
    *  carry as a property (`folders.md` 7). */
   uncarried: Array<{ type: string; property: string }>;
+  /** Embeds whose file this pull did not write where they say
+   *  (`folders.md` 12), each flagged `embed`. */
+  embeds: FlaggedFile[];
 }
 
 /** What became of the folder's settings file (`folders.md` 1). */
@@ -742,11 +749,11 @@ export interface PushReport {
   settings: SettingsFileReport;
   scan: ScanReport;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
-   *  the version the copy holds (`folders.md` 22). */
+   *  the version the copy holds (`folders.md` 23). */
   drain: DrainReport & {
     rebased: number;
     /** Placements another machine made first, withdrawn for the server's
-     *  (`folders.md` 18). */
+     *  (`folders.md` 19). */
     gave_way: number;
   };
   /** A catch-up from the copy's cursor, a hydration where the log had aged

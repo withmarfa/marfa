@@ -18,11 +18,11 @@ const SETTLE: Duration = Duration::from_millis(250);
 
 /// How often the folder acts with nothing happening: nothing on the
 /// filesystem marks the moment a journaled delete's grace runs out
-/// (`folders.md` 20).
+/// (`folders.md` 21).
 const TICK: Duration = Duration::from_secs(1);
 
 /// Watches a folder and keeps it in step. Every pass, the first included, is
-/// the same scan (`folders.md` 17).
+/// the same scan (`folders.md` 18).
 pub fn watch(
     dir: &Path,
     server: Server,
@@ -159,7 +159,7 @@ fn watch_files(
                 if matches!(event.kind, EventKind::Access(_)) {
                     continue;
                 }
-                // Dot-led paths are never watched (`folders.md` 24, 25), but
+                // Dot-led paths are never watched (`folders.md` 25, 26), but
                 // for the settings file; this stops a write under `.marfa`
                 // waking a pass.
                 if event
@@ -220,6 +220,7 @@ struct Standing {
     settings: Option<String>,
     flagged: Vec<marfa_core::folder::Flagged>,
     uncarried: Vec<marfa_core::folder::Uncarried>,
+    embeds: Vec<String>,
 }
 
 /// One pass: read the folder, send what it queued, write back what came in.
@@ -265,11 +266,13 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
             flagged
         },
         uncarried: pulled.uncarried.clone(),
+        embeds: crate::folders::embed_lines(scanned.embeds.iter().chain(&pulled.embeds)),
     };
     let changed = standing.as_ref() != Some(&now);
     let said: Vec<String> = crate::folders::uncarried_line(&now.uncarried)
         .into_iter()
         .chain(crate::folders::flagged_lines(&now.flagged))
+        .chain(now.embeds.iter().cloned())
         .collect();
     *standing = Some(now);
     if !happened && !changed {
@@ -333,7 +336,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
 }
 
 /// Whether a path is the folder's settings file, the one file under `.marfa`
-/// a watch watches, so a save of it is waited out as any file's is (`folders.md` 25).
+/// a watch watches, so a save of it is waited out as any file's is (`folders.md` 26).
 fn settings_file(root: &Path, path: &Path) -> bool {
     path == root
         .join(marfa_core::folder::STATE_DIR)

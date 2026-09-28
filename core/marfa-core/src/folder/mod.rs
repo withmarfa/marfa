@@ -6,6 +6,7 @@
 
 pub mod document;
 pub mod edge_types;
+mod embeds;
 pub mod fields;
 pub mod identity;
 mod lines;
@@ -27,6 +28,7 @@ use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
 
 use edge_types::EdgeTypes;
+use embeds::ATTACHMENT_EDGE;
 pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 use lines::{EdgeWork, Names, Resolver};
 pub use placement::PLACEMENT_EDGE;
@@ -34,16 +36,16 @@ use placement::{beside, cleaned, path_of, suited};
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
 
-/// Where a folder keeps what is its own (`folders.md` 25).
+/// Where a folder keeps what is its own (`folders.md` 26).
 pub const STATE_DIR: &str = ".marfa";
 
 /// How long a missing file is journaled before it becomes a delete
-/// (`folders.md` 20): the window in which the other half of a rename can
+/// (`folders.md` 21): the window in which the other half of a rename can
 /// arrive.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
 /// The folder's settings written out, the one file under `.marfa/` a folder
-/// reads and watches (`folders.md` 1, 25).
+/// reads and watches (`folders.md` 1, 26).
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
 /// A record of settings kept on this machine alone, which a folder refuses
@@ -78,13 +80,16 @@ pub struct ScanReport {
     /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
     /// Files bound to a row the copy lost, queued again as new items because
-    /// they changed or moved (`folders.md` 35); counted in `created` too.
+    /// they changed or moved (`folders.md` 36); counted in `created` too.
     pub requeued: usize,
     /// Files bound to a row the copy no longer holds and unchanged since, so
-    /// nothing is sent for them (`folders.md` 35).
+    /// nothing is sent for them (`folders.md` 36).
     pub lost: usize,
     /// Files this scan read and holds rather than sends (`folders.md` 9, 10).
     pub flagged: Vec<Flagged>,
+    /// Embeds in the files this scan read that name no file it sends
+    /// (`folders.md` 12).
+    pub embeds: Vec<Flagged>,
 }
 
 /// A file the folder holds rather than sends, and why.
@@ -92,7 +97,7 @@ pub struct ScanReport {
 pub struct Flagged {
     pub path: String,
     /// `unreadable`, `refused`, or `edges` for lines that change nothing
-    /// (`folders.md` 9, 10, 11).
+    /// (`folders.md` 9, 10, 11); `embed` for an embed read as nothing (12).
     pub flag: &'static str,
     pub reason: String,
 }
@@ -298,11 +303,10 @@ impl Folder {
         self.core.lock.refuse_unless_writer()?;
         let edge_types = EdgeTypes::refresh(self.core.http()?, &*self.core.conn()?)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
-        self.core.hydrate_every_type_or(
-            settings.types(),
-            settings.tier(),
-            &whole_edge_types(&settings, &edge_types),
-        )
+        let catalog = Catalog::load(&*self.core.conn()?)?;
+        let whole = whole_edge_types(&settings, &edge_types, &catalog);
+        self.core
+            .hydrate_every_type_or(settings.types(), settings.tier(), &whole)
     }
 
     /// Hydrates where the copy cannot answer: never hydrated, cut short, or
@@ -336,9 +340,10 @@ impl Folder {
             return Ok(true);
         };
         let whole: HashSet<String> = crate::store::whole_edge_types(&conn)?.into_iter().collect();
-        let wanted: HashSet<String> = whole_edge_types(&settings, &edge_types)
-            .into_iter()
-            .collect();
+        let wanted: HashSet<String> =
+            whole_edge_types(&settings, &edge_types, &Catalog::load(&conn)?)
+                .into_iter()
+                .collect();
         Ok(held != asked || tier != settings.tier() || whole != wanted)
     }
 
@@ -369,7 +374,7 @@ impl Folder {
     }
 
     /// Every file the folder watches, in a stable order. Dot-led directories
-    /// are excluded at any depth, `.marfa/` with them (`folders.md` 24, 25).
+    /// are excluded at any depth, `.marfa/` with them (`folders.md` 25, 26).
     pub fn files(&self) -> Result<Vec<PathBuf>> {
         let mut found = Vec::new();
         walk(&self.root, &mut found)?;
@@ -378,11 +383,20 @@ impl Folder {
     }
 }
 
-/// The edge types a folder's copy holds whole: its search's, and those a
-/// child's file writes, whose sources the slice may not hold (`folders.md` 11).
-fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes) -> Vec<String> {
+/// The edge types a folder's copy holds whole, since their other ends may lie
+/// outside the slice: its search's, `child-of`'s and attachments' (`folders.md` 11, 12).
+fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = settings.whole_edge_types();
     whole.extend(edge_types.written_at_targets());
+    // A search of files alone holds no document to embed one.
+    let documents = settings.types().is_empty()
+        || settings
+            .types()
+            .iter()
+            .any(|named| !catalog.matches(FILE_TYPE, named.trim()));
+    if documents && edge_types.get(ATTACHMENT_EDGE).is_some() {
+        whole.push(ATTACHMENT_EDGE.into());
+    }
     whole.sort();
     whole.dedup();
     whole
@@ -430,7 +444,7 @@ struct Scanned {
     text: String,
     hash: String,
     /// Device, inode and birth time, where the filesystem gave a usable
-    /// three (`folders.md` 16).
+    /// three (`folders.md` 17).
     mark: Option<String>,
     born: Option<u128>,
     /// The `marfa_id` a Markdown file's frontmatter carries.
@@ -461,7 +475,7 @@ struct Claim {
 
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
-    /// too, so one rule decides identity (`folders.md` 17).
+    /// too, so one rule decides identity (`folders.md` 18).
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let settings = self.settings()?;
@@ -470,13 +484,67 @@ impl Folder {
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
         let paths = self.files()?;
+        let keys = paths
+            .iter()
+            .map(|path| identity::relative(&self.root, path))
+            .collect::<Result<Vec<String>>>()?;
+        // Markdown files first, so a file only an embed names is sent too
+        // (`folders.md` 12).
+        let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+        let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
+        let mut embedded: HashSet<String> = HashSet::new();
+        let index = embeds::Files::of(&keys);
+        for (path, key) in paths.iter().zip(&keys) {
+            if !carries_frontmatter(path) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let body = document::read(&String::from_utf8_lossy(&bytes)).body;
+            let mut found = Vec::new();
+            for embed in document::embeds(&body) {
+                if let Some(target) = embeds::on_disk(key, &embed, &index) {
+                    if let embeds::Target::At(at) = &target {
+                        embedded.insert(at.clone());
+                    }
+                    found.push((embed.raw().to_string(), target));
+                }
+            }
+            if !found.is_empty() {
+                shown.insert(key.clone(), found);
+            }
+            early.insert(path.clone(), bytes);
+        }
+        let snapshot = {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+        };
+        // A file already a file item is read whatever the search says, so one
+        // no longer embedded, or moved, is followed rather than journaled.
+        let files_bound: Vec<&state::Bound> = snapshot
+            .iter()
+            .filter(|row| !is_document(Path::new(&row.path)))
+            .collect();
+        let bound_paths: HashSet<&str> = files_bound.iter().map(|row| row.path.as_str()).collect();
+        let bound_marks: HashSet<&str> = files_bound
+            .iter()
+            .filter_map(|row| row.identity.as_deref())
+            .collect();
+        let bound = |path: &Path, key: &str| {
+            bound_paths.contains(key)
+                || std::fs::symlink_metadata(path)
+                    .ok()
+                    .and_then(|metadata| identity::of(&metadata))
+                    .is_some_and(|found| bound_marks.contains(found.key().as_str()))
+        };
         // Every file the walk found, whether or not it is pushed: leaving one
         // out journals it missing and deletes the item bound to it.
-        let mut seen: HashSet<String> = HashSet::new();
+        let seen: HashSet<String> = keys.iter().cloned().collect();
         let mut held: Vec<PathBuf> = Vec::new();
-        for path in &paths {
-            seen.insert(identity::relative(&self.root, path)?);
-            if self.pushes(path, &settings, &catalog) {
+        for (path, key) in paths.iter().zip(&keys) {
+            if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)
+            {
                 held.push(path.clone());
             } else {
                 report.skipped += 1;
@@ -489,10 +557,14 @@ impl Folder {
         for path in held {
             // Unreadable now, a dataless placeholder say: the next scan reads
             // it, and the folder holds what it last agreed with meanwhile.
-            let Ok(bytes) = std::fs::read(&path) else {
-                continue;
+            let bytes = match early.remove(&path) {
+                Some(bytes) => bytes,
+                None => match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                },
             };
-            // No blob the server holds is empty (`folders.md` 33).
+            // No blob the server holds is empty (`folders.md` 34).
             if bytes.is_empty() && !is_document(&path) {
                 report.skipped += 1;
                 continue;
@@ -532,10 +604,6 @@ impl Folder {
                 path,
             });
         }
-        let snapshot = {
-            let conn = self.core.conn()?;
-            state::every_bound(&conn)?
-        };
         // A file read against an old list would send a new type's line as a
         // property; where the list cannot be read, the one kept stands.
         let changed = files.iter().any(|file| {
@@ -563,7 +631,7 @@ impl Folder {
                 continue;
             }
             // A binding to a row the copy no longer holds binds nothing
-            // (`folders.md` 35).
+            // (`folders.md` 36).
             let claim = match claim {
                 Some(Claim {
                     item_id,
@@ -584,7 +652,7 @@ impl Folder {
                 None => {
                     match self.queue_create(
                         file,
-                        &settings,
+                        (&settings, embedded.contains(&file.key)),
                         &catalog,
                         &edge_types,
                         &withheld,
@@ -677,8 +745,11 @@ impl Folder {
         }
 
         // Every file is bound now, so a link or a line naming one that
-        // arrived in the same scan resolves (`folders.md` 30).
+        // arrived in the same scan resolves (`folders.md` 31).
         let mut resolver = Resolver::new(self, &catalog);
+        for pending in &mut work {
+            pending.embeds = shown.remove(&pending.path).unwrap_or_default();
+        }
         for pending in work {
             // A failure is this file's alone: it waits, and the scan goes on.
             let outcome = self
@@ -688,7 +759,14 @@ impl Folder {
                     lines: pending.had_lines.clone(),
                     held: Some(format!("{}{error}", state::EDGES_WAITING)),
                     queued: Vec::new(),
+                    embeds: Vec::new(),
                 });
+            report.embeds.extend(
+                outcome
+                    .embeds
+                    .iter()
+                    .map(|reason| embeds::reported(&pending.path, reason.clone())),
+            );
             let conn = self.core.conn()?;
             if let Some(bound) = state::bound_at(&conn, &pending.path)? {
                 if let Some(held) = &outcome.held {
@@ -722,7 +800,7 @@ impl Folder {
         }
 
         // Journaled rather than deleted: the first half of a rename looks
-        // exactly like a delete (`folders.md` 20, 21).
+        // exactly like a delete (`folders.md` 21, 22).
         let bound = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -751,8 +829,8 @@ impl Folder {
         Ok(report)
     }
 
-    /// Which item each file is, or `None` for a new one (`folders.md` 12 to
-    /// 16). Held ids decide first; then the binding by identity across every
+    /// Which item each file is, or `None` for a new one (`folders.md` 13 to
+    /// 17). Held ids decide first; then the binding by identity across every
     /// file before any by path, so a path never takes an item another file is
     /// by identity.
     fn claim(
@@ -786,7 +864,7 @@ impl Folder {
                 continue;
             };
             // A copy bound to its own item before its id line was rewritten
-            // stays that item's file (`folders.md` 14).
+            // stays that item's file (`folders.md` 15).
             if by_path
                 .get(file.key.as_str())
                 .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
@@ -945,24 +1023,16 @@ impl Folder {
         Ok(sent)
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 26, 33): a
+    /// Whether this path is one the folder pushes (`folders.md` 27, 34): a
     /// document, or a file whose type the search holds.
     fn pushes(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> bool {
         is_document(path) || self.file_type_of(path, settings, catalog).is_some()
     }
 
     /// The type a file that is not a document becomes, where the search
-    /// holds it (`folders.md` 33).
+    /// holds it (`folders.md` 34).
     fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
-        if is_document(path) {
-            return None;
-        }
-        let named = crate::blob::file_type_for(&crate::blob::mime_type_for(path, None), None);
-        let file_type = if catalog.known(&named) {
-            named
-        } else {
-            FILE_TYPE.to_string()
-        };
+        let file_type = bytes_type(path, catalog)?;
         let types = settings.types();
         (types.is_empty()
             || types
@@ -972,17 +1042,21 @@ impl Folder {
     }
 
     /// Queues a file as a new item under an id the device mints (`folders.md`
-    /// 12); one naming a type no document can be is flagged instead.
+    /// 13); one naming a type no document can be is flagged instead.
     fn queue_create(
         &self,
         file: &Scanned,
-        settings: &Settings,
+        (settings, embedded): (&Settings, bool),
         catalog: &Catalog,
         edge_types: &EdgeTypes,
         withheld: &placement::Withheld,
         work: &mut Vec<EdgeWork>,
     ) -> Result<Option<Flagged>> {
-        if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
+        // An embedded file goes as its bytes' type whatever the search holds.
+        let file_type = self
+            .file_type_of(&file.path, settings, catalog)
+            .or_else(|| embedded.then(|| bytes_type(&file.path, catalog)).flatten());
+        if let Some(file_type) = file_type {
             self.queue_create_file(file, file_type, settings, catalog, withheld)?;
             return Ok(None);
         }
@@ -1057,11 +1131,12 @@ impl Folder {
             front: document.front,
             had_links: bound.map(|bound| bound.links.clone()).unwrap_or_default(),
             had_lines: bound.map(|bound| bound.lines.clone()).unwrap_or_default(),
+            embeds: Vec::new(),
         }
     }
 
     /// A file that is not a document, as a file item: its bytes' upload, and
-    /// the create waiting on it (`folders.md` 33). Its type is its bytes', so
+    /// the create waiting on it (`folders.md` 34). Its type is its bytes', so
     /// of the defaults it takes the tier, the tags and the edges.
     fn queue_create_file(
         &self,
@@ -1158,7 +1233,7 @@ impl Folder {
         let read = fields::read(&document.front, edge_types).unwrap_or_default();
         let mut edit_line = bound.and_then(|bound| bound.edit_line);
         // Bytes set aside in a conflicted copy against this device's own
-        // earlier save go on the version they were read at (`folders.md` 36).
+        // earlier save go on the version they were read at (`folders.md` 37).
         let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
         // The file's last bytes showed the item as the server last answered
         // it, but for their line: a version step no file shows, or its own edit.
@@ -1170,7 +1245,7 @@ impl Folder {
                     let names = Names::load(self, catalog)?;
                     let rendered = self.render(
                         &held,
-                        true,
+                        &file.key,
                         file.line,
                         catalog,
                         edge_types,
@@ -1183,7 +1258,7 @@ impl Folder {
         let standing = match file.line {
             _ if untaken.is_some() => Standing::Spent,
             Some(line) if line == held.version || current_but_line => Standing::Current,
-            // Behind only by the file's own edit, which it holds (`folders.md` 22).
+            // Behind only by the file's own edit, which it holds (`folders.md` 23).
             Some(line) if line < held.version && edit_line.is_some_and(|spent| line <= spent) => {
                 Standing::Spent
             }
@@ -1337,7 +1412,7 @@ impl Folder {
     }
 
     /// New bytes are an upload and an update naming them; a move carries the
-    /// new name as the title where the old name was it (`folders.md` 33).
+    /// new name as the title where the old name was it (`folders.md` 34).
     fn queue_update_file(
         &self,
         bound: &state::Bound,
@@ -1527,16 +1602,16 @@ pub struct Drained {
     #[serde(flatten)]
     pub report: crate::DrainReport,
     /// Edits the server refused `ancestor_unavailable`, sent again on the
-    /// version the copy holds (`folders.md` 22).
+    /// version the copy holds (`folders.md` 23).
     pub rebased: usize,
     /// Placements another machine made first, withdrawn for the server's
-    /// (`folders.md` 18).
+    /// (`folders.md` 19).
     pub gave_way: usize,
 }
 
 impl Folder {
     /// Sends what the queue holds, and each edit whose base the server no
-    /// longer holds again on the version the copy holds (`folders.md` 22).
+    /// longer holds again on the version the copy holds (`folders.md` 23).
     pub fn drain(&self) -> Result<Drained> {
         let mut report = self.core.drain()?;
         let mut rebased = 0;
@@ -1789,12 +1864,12 @@ impl Folder {
 
 impl Folder {
     /// Writes what the search matches out as files (`folders.md` 2 and 6),
-    /// each where its placement says (`folders.md` 18) and bound before its
-    /// bytes land so the scan never reads it back (`folders.md` 19).
+    /// each where its placement says (`folders.md` 19) and bound before its
+    /// bytes land so the scan never reads it back (`folders.md` 20).
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
         let settings = self.settings()?;
-        let members = self.members(&settings)?;
+        let mut members = self.members(&settings)?;
         let items = self.core.list(
             &crate::model::ListFilters {
                 tier: Some(settings.tier()),
@@ -1815,16 +1890,17 @@ impl Folder {
                 .collect()
         };
         let mut work: Vec<(Item, bool)> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
         for item in items {
             if members.contains(&item.id) {
                 work.push((item, false));
             } else if !bound_items.contains(&item.id) && item.r#type != FOLDER_TYPE {
-                report.skipped += 1;
+                skipped.push(item.id);
             }
         }
         // A bound file whose item left the search, but not by state or the
         // bin, is kept current as a member's is and flagged; it never gets a
-        // new file (`folders.md` 32).
+        // new file (`folders.md` 33).
         let outside: Vec<String> = bound_items
             .into_iter()
             .filter(|id| !members.contains(id))
@@ -1836,9 +1912,57 @@ impl Folder {
                 .map(|item| (item, true)),
         );
         self.hold_edge_ends(&work, &edge_types, &catalog)?;
+        let withheld = self.withheld()?;
+        // After the pins, so an embed names an attachment the copy now holds;
+        // an item a file here embeds is that file's, never unmatched.
+        let embedded = {
+            let mut hosts = Vec::new();
+            for (item, _) in &work {
+                if item.version == 0 || bytes_of(item, &catalog).is_some() {
+                    continue;
+                }
+                let bound = state::bound_to_item(&*self.core.conn()?, &item.id)?;
+                let placed = self.placement(&item.id)?;
+                if let Some(path) = self.path_for(
+                    item,
+                    placed.as_ref(),
+                    bound.as_ref(),
+                    &withheld,
+                    &settings,
+                    &catalog,
+                ) {
+                    hosts.push((item, path));
+                }
+            }
+            self.embedded(&hosts, &catalog)?
+        };
+        report.embeds = embedded.reports;
+        let missing: Vec<String> = embedded
+            .at
+            .keys()
+            .filter(|id| !work.iter().any(|(item, _)| &item.id == *id))
+            .cloned()
+            .collect();
+        let found = crate::store::items_by_ids(&*self.core.conn()?, &missing)?;
+        for (item, unmatched) in &mut work {
+            *unmatched &= !embedded.at.contains_key(&item.id);
+        }
+        // Held by the file embedding it whatever state the search narrows to;
+        // a trashed one's file goes as any trashed item's does.
+        work.extend(
+            found
+                .into_iter()
+                .filter(|item| matches!(item.state, ItemState::Active | ItemState::Archived))
+                .map(|item| (item, false)),
+        );
+        members.extend(
+            work.iter()
+                .filter(|(item, _)| embedded.at.contains_key(&item.id))
+                .map(|(item, _)| item.id.clone()),
+        );
+        report.skipped = skipped.iter().filter(|id| !members.contains(*id)).count();
         // After the pins, so a line names a target the copy now holds.
         let names = Names::load(self, &catalog)?;
-        let withheld = self.withheld()?;
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
         for (item, unmatched) in &work {
@@ -1846,7 +1970,7 @@ impl Folder {
                 report.unmatched += 1;
             }
             // This device's own create, not yet landed: the id goes back
-            // only once it has (`folders.md` 12).
+            // only once it has (`folders.md` 13).
             if item.version == 0 {
                 continue;
             }
@@ -1863,15 +1987,22 @@ impl Folder {
                 continue;
             }
             let placed = self.placement(&item.id)?;
-            let Some(want) = self
-                .path_for(
-                    item,
-                    placed.as_ref(),
-                    bound.as_ref(),
-                    &withheld,
-                    &settings,
-                    &catalog,
-                )
+            // An embedded file goes where its link says, and its placement
+            // follows (`folders.md` 12).
+            let Some(want) = embedded
+                .at
+                .get(&item.id)
+                .cloned()
+                .or_else(|| {
+                    self.path_for(
+                        item,
+                        placed.as_ref(),
+                        bound.as_ref(),
+                        &withheld,
+                        &settings,
+                        &catalog,
+                    )
+                })
                 .filter(|want| plainly_inside(&self.root, want))
             else {
                 report.outside += 1;
@@ -2022,7 +2153,7 @@ impl Folder {
                     .map(|text| document::read(&text).front);
                 let rendered = self.render(
                     item,
-                    carries_frontmatter(Path::new(&want)),
+                    &want,
                     Some(item.version),
                     catalog,
                     rendering.edge_types,
@@ -2039,7 +2170,7 @@ impl Folder {
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
 
         // The bytes on the disk, not the mapping's memory of them: a file
-        // changed since the scan read it is the person's (`folders.md` 29).
+        // changed since the scan read it is the person's (`folders.md` 30).
         let changed = |bound: &state::Bound| {
             std::fs::read(self.root.join(&bound.path))
                 .is_ok_and(|found| state::hash(&found) != bound.content_hash)
@@ -2063,7 +2194,7 @@ impl Folder {
             _ => false,
         };
         // Something at the destination that is not this item's own file
-        // (`folders.md` 29), unless it is byte for byte this item's render.
+        // (`folders.md` 30), unless it is byte for byte this item's render.
         let occupied = !in_place && !ours && path.exists();
         let rebound =
             occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
@@ -2103,7 +2234,7 @@ impl Folder {
         }
 
         // Written over an edit still waiting, the line it writes is spent
-        // too, since the file holds that edit (`folders.md` 22, 23).
+        // too, since the file holds that edit (`folders.md` 23, 24).
         let spent = bound.as_ref().and_then(|bound| bound.edit_line);
         let edit_line = if carries_frontmatter(Path::new(&want))
             && crate::store::item_waits(&*self.core.conn()?, &item.id)?
@@ -2213,7 +2344,7 @@ impl Folder {
         Ok(members)
     }
 
-    /// A file whose item the search no longer matches (`folders.md` 32). One
+    /// A file whose item the search no longer matches (`folders.md` 33). One
     /// that left by state or was trashed is taken away where its bytes are the
     /// folder's own, and nothing is journaled; any other stays, flagged
     /// `unmatched`.
@@ -2235,7 +2366,7 @@ impl Folder {
                 let conn = self.core.conn()?;
                 crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
             };
-            // A row the copy lost is the scan's to report (`folders.md` 35).
+            // A row the copy lost is the scan's to report (`folders.md` 36).
             let Some(item) = held else {
                 continue;
             };
@@ -2266,7 +2397,7 @@ impl Folder {
     }
 
     /// Whether a file differs from its item's render in its version line
-    /// alone, with no edit of its own landed since (`folders.md` 23).
+    /// alone, with no edit of its own landed since (`folders.md` 24).
     fn behind_by_its_line_alone(
         &self,
         item: &Item,
@@ -2292,7 +2423,7 @@ impl Folder {
         }
         let rendered = self.render(
             item,
-            true,
+            &bound.path,
             line,
             rendering.catalog,
             rendering.edge_types,
@@ -2301,7 +2432,7 @@ impl Folder {
         Ok(state::hash(rendered.text.as_bytes()) == bound.content_hash)
     }
 
-    /// Where an item's file goes (`folders.md` 18): where its placement says,
+    /// Where an item's file goes (`folders.md` 19): where its placement says,
     /// or else the file it has, or else by its title under its type's first
     /// placement. `None` for a path the folder does not write.
     fn path_for(
@@ -2343,11 +2474,11 @@ impl Folder {
         }
     }
 
-    /// An item as a file (`folders.md` 7, 11, 12, 22).
+    /// An item as its file at `path` (`folders.md` 7, 11, 12, 13, 23).
     fn render(
         &self,
         item: &Item,
-        frontmatter: bool,
+        path: &str,
         line: Option<i64>,
         catalog: &Catalog,
         edge_types: &EdgeTypes,
@@ -2368,13 +2499,18 @@ impl Folder {
                 links.push(id);
             }
         }
-        if !frontmatter {
+        if !carries_frontmatter(Path::new(path)) {
             return Ok(Rendered {
                 text: body,
                 links,
                 lines: Vec::new(),
             });
         }
+        let embedded: Vec<String> = self
+            .shown_in(item, path, &body, catalog)?
+            .into_iter()
+            .filter_map(|shown| shown.item)
+            .collect();
         let mut front = fields::lines_of(item);
         for (field, value) in &item.properties {
             if field != body_field && !fields::reserved(field, edge_types) {
@@ -2382,8 +2518,15 @@ impl Folder {
             }
         }
         let (names, typed, recorded) = lines;
-        let (entries, written) =
-            self.lines_for(item, edge_types, catalog, names, typed, &links, recorded)?;
+        let (entries, written) = self.lines_for(
+            item,
+            edge_types,
+            catalog,
+            names,
+            typed,
+            (&links, &embedded),
+            recorded,
+        )?;
         front.extend(entries);
         front.insert(ID_FIELD.into(), Value::String(item.id.clone()));
         if let Some(line) = line {
@@ -2397,7 +2540,8 @@ impl Folder {
     }
 
     /// Pins the other end of every edge a file here writes, so its line has a
-    /// title to show; the record of them holds each such pin (`folders.md` 11).
+    /// title to show, and every attachment of a document, so an embed can name
+    /// it; the record of them holds each such pin (`folders.md` 11, 12).
     fn hold_edge_ends(
         &self,
         work: &[(Item, bool)],
@@ -2411,6 +2555,13 @@ impl Folder {
                     .map(|bound| bound.lines)
                     .unwrap_or_default();
                 wanted.extend(self.written_ends(item, edge_types, catalog, &recorded)?);
+                wanted.extend(
+                    self.core
+                        .edges_to(&item.id)?
+                        .into_iter()
+                        .filter(|edge| edge.edge_type == ATTACHMENT_EDGE)
+                        .map(|edge| edge.source_id),
+                );
             }
         }
         let recorded: HashMap<String, bool> =
@@ -2505,7 +2656,7 @@ impl OwnChanges {
     }
 }
 
-/// How a file's version line stands against the copy's (`folders.md` 7, 22).
+/// How a file's version line stands against the copy's (`folders.md` 7, 23).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Standing {
     /// The version the copy holds: sent whole, own lines and all.
@@ -2702,13 +2853,13 @@ fn extension_of(path: &Path) -> Option<String> {
 }
 
 /// Whether a file carries frontmatter, and with it a `marfa_id`: a Markdown
-/// file (`folders.md` 12).
+/// file (`folders.md` 13).
 fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
 /// Whether a file is a document, which a folder reads as an item's fields
-/// rather than sending as bytes (`folders.md` 26).
+/// rather than sending as bytes (`folders.md` 27).
 fn is_document(path: &Path) -> bool {
     carries_frontmatter(path) || extension_of(path).as_deref() == Some("txt")
 }
@@ -2720,6 +2871,20 @@ fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
         return None;
     }
     item.properties.get("blob_ref").and_then(Value::as_str)
+}
+
+/// The type a file that is not a document becomes: its MIME type's, where
+/// the copy knows it, and `core.file` otherwise.
+fn bytes_type(path: &Path, catalog: &Catalog) -> Option<String> {
+    if is_document(path) {
+        return None;
+    }
+    let named = crate::blob::file_type_for(&crate::blob::mime_type_for(path, None), None);
+    Some(if catalog.known(&named) {
+        named
+    } else {
+        FILE_TYPE.to_string()
+    })
 }
 
 /// The type every file item is, with its subtree.
@@ -2757,7 +2922,7 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// File items whose bytes could not be had (`folders.md` 34).
+    /// File items whose bytes could not be had (`folders.md` 35).
     pub absent: usize,
     /// Files the pull would not write over: one the person changed since
     /// the folder last wrote it, and one at a path the mapping does not hold.
@@ -2765,27 +2930,27 @@ pub struct PullReport {
     /// Journal rows cleared by writing the file back, a person's own delete
     /// inside its grace among them.
     pub revived: usize,
-    /// Items whose file would land outside the folder (`folders.md` 27).
+    /// Items whose file would land outside the folder (`folders.md` 28).
     pub outside: usize,
     /// Items whose placement another item holds, written at a free path
-    /// beside it, which becomes their placement (`folders.md` 18).
+    /// beside it, which becomes their placement (`folders.md` 19).
     pub beside: usize,
     /// Items whose placement would make them another kind of file, left
-    /// unwritten (`folders.md` 18).
+    /// unwritten (`folders.md` 19).
     pub unsuited: usize,
     /// Placements the server refused, not sent again until the key or the
-    /// settings change (`folders.md` 18).
+    /// settings change (`folders.md` 19).
     pub unplaced: usize,
     /// Placements written: an `in-folder` edge made, or its `path` moved to
-    /// where the file is (`folders.md` 18).
+    /// where the file is (`folders.md` 19).
     pub placed: usize,
     /// Files of items that left by state or were trashed, taken away
-    /// (`folders.md` 32).
+    /// (`folders.md` 33).
     pub removed: usize,
     /// The same, kept because the person changed them.
     pub kept: usize,
     /// Files whose item the search no longer matches for any other reason,
-    /// left where they are (`folders.md` 32).
+    /// left where they are (`folders.md` 33).
     pub unmatched: usize,
     /// The settings file, rewritten where the settings moved on (`folders.md`
     /// 1).
@@ -2796,10 +2961,13 @@ pub struct PullReport {
     /// Properties the types this folder holds declare under a name a file
     /// reads as something else, so no file carries them (`folders.md` 7).
     pub uncarried: Vec<Uncarried>,
+    /// Embeds whose file this pull did not write where they say (`folders.md`
+    /// 12).
+    pub embeds: Vec<Flagged>,
 }
 
 /// Whether every component of a path is a plain name inside the folder, with
-/// no symlink on the way (`folders.md` 27). A guard, not a boundary: the write
+/// no symlink on the way (`folders.md` 28). A guard, not a boundary: the write
 /// resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();

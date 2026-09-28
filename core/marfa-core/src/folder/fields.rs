@@ -14,7 +14,7 @@ use crate::model::{Item, ItemState, Tier};
 pub const ID_FIELD: &str = "marfa_id";
 
 /// The frontmatter field that names the version a Markdown file was written
-/// from, which an edit from it is based on (`folders.md` 22).
+/// from, which an edit from it is based on (`folders.md` 23).
 pub const VERSION_FIELD: &str = "marfa_version";
 
 pub const TYPE_FIELD: &str = "type";
