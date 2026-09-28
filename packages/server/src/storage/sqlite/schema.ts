@@ -1030,3 +1030,66 @@ export const connectorRuns = sqliteTable(
     ),
   ],
 );
+
+export const inboundEndpoints = sqliteTable(
+  "inbound_endpoints",
+  {
+    id: text("id").primaryKey(),
+    connector_id: text("connector_id")
+      .notNull()
+      .references(() => connectors.id, { onDelete: "cascade" }),
+    /** A SHA-256 of the address's token; the token itself is never stored. */
+    token_hash: text("token_hash").notNull().unique(),
+    token_last4: text("token_last4").notNull(),
+    label: text("label"),
+    /** The header whose value names a delivery, lowercased. */
+    duplicate_header: text("duplicate_header"),
+    created_at: text("created_at").notNull(),
+    retired_at: text("retired_at"),
+  },
+  (table) => [index("idx_inbound_endpoints_connector").on(table.connector_id)],
+);
+
+export const inboundDeliveries = sqliteTable(
+  "inbound_deliveries",
+  {
+    id: text("id").primaryKey(),
+    endpoint_id: text("endpoint_id")
+      .notNull()
+      .references(() => inboundEndpoints.id, { onDelete: "cascade" }),
+    connector_id: text("connector_id").notNull(),
+    received_at: text("received_at").notNull(),
+    method: text("method").notNull(),
+    query: text("query").notNull(),
+    /** `[name, value]` pairs in the order and case they arrived. */
+    headers: text("headers").notNull(),
+    size: integer("size").notNull(),
+    sha256: text("sha256").notNull(),
+    dedupe_key: text("dedupe_key"),
+    handled_at: text("handled_at"),
+    /** `processed`, `duplicate` or `rejected`, once handled. */
+    outcome: text("outcome"),
+  },
+  (table) => [
+    // The listing and the backlog count both read a connector's deliveries
+    // by whether they are handled, oldest first.
+    index("idx_inbound_deliveries_connector_handled").on(
+      table.connector_id,
+      table.handled_at,
+      table.received_at,
+      table.id,
+    ),
+    index("idx_inbound_deliveries_endpoint_dedupe").on(
+      table.endpoint_id,
+      table.dedupe_key,
+    ),
+    index("idx_inbound_deliveries_received").on(table.received_at),
+  ],
+);
+
+export const inboundDeliveryBodies = sqliteTable("inbound_delivery_bodies", {
+  delivery_id: text("delivery_id")
+    .primaryKey()
+    .references(() => inboundDeliveries.id, { onDelete: "cascade" }),
+  body: blob("body", { mode: "buffer" }).notNull(),
+});

@@ -60,6 +60,7 @@ const ALWAYS = [
   "trash-purge",
   "revoked-key-reap",
   "rate-limit-cleanup",
+  "inbound-delivery-cleanup",
   "blob-replicate",
   "blob-integrity",
 ];
@@ -78,6 +79,7 @@ describe("the housekeeping registrations", () => {
       "revoked-key-reap",
       "auth-session-cleanup",
       "rate-limit-cleanup",
+      "inbound-delivery-cleanup",
       "dcr-client-cleanup",
       "blob-replicate",
       "blob-integrity",

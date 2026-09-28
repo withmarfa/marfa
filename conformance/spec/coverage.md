@@ -144,6 +144,18 @@ Fixture paths are under `src/suites/`.
 | `POST /connectors/{id}/runs`      | covered | `compliance/connectors.test.ts` | The connector's own key only; `succeeded` or `failed`; the last hundred kept.                        |
 | `GET /connectors/{id}/runs`       | covered | `compliance/connectors.test.ts` | Any key; newest first, `limit` up to the shared ceiling.                                             |
 
+## Inbound webhooks
+
+| Operation                                            | Status      | Fixture                               | Notes                                                                                                  |
+| ---------------------------------------------------- | ----------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `POST /connectors/{id}/endpoints`                    | covered     | `compliance/inbound-webhooks.test.ts` | The connector's own key or the operator's; the address in full once; ten live at most.                 |
+| `GET /connectors/{id}/endpoints`                     | covered     | `compliance/inbound-webhooks.test.ts` | The same two keys; newest first, retired ones included, each address redacted.                         |
+| `DELETE /connectors/{id}/endpoints/{endpoint_id}`    | covered     | `compliance/inbound-webhooks.test.ts` | Retires rather than removes; its address answers as an unserved path from then on.                     |
+| `GET /connectors/{id}/deliveries`                    | covered     | `compliance/inbound-webhooks.test.ts` | The connector's own key only; oldest first, unhandled unless `state` says otherwise.                   |
+| `GET /connectors/{id}/deliveries/{delivery_id}/body` | covered     | `compliance/inbound-webhooks.test.ts` | The connector's own key only; the bytes as they arrived, as `application/octet-stream`.                |
+| `POST /connectors/{id}/deliveries/handled`           | covered     | `compliance/inbound-webhooks.test.ts` | The connector's own key only; the first mark stands.                                                   |
+| `POST /inbound/{token}`                              | unpublished | `compliance/inbound-webhooks.test.ts` | Where a sender posts, with no credential: the address is the credential, and no Marfa client calls it. |
+
 ## Folders
 
 | Operation                   | Status  | Fixture                      | Notes                                                                                                              |
@@ -177,5 +189,6 @@ Fixture paths are under `src/suites/`.
 Every other covered operation's success body is validated against the served document by `expectMatchesSchema`; `src/utils/schema-coverage.test.ts` fails when one is not. These answer something the document's JSON schemas cannot describe.
 
 - `GET /blobs/{hash}`: the bytes themselves, `application/octet-stream`.
+- `GET /connectors/{id}/deliveries/{delivery_id}/body`: a delivery's bytes as they arrived, `application/octet-stream`.
 - `GET /export`: newline-delimited JSON, or a gzip archive.
 - `GET /events`: a server-sent event stream.

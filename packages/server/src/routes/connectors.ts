@@ -9,7 +9,12 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import type { InboundEndpoint, Storage } from "../storage/interface.js";
+import {
+  INBOUND_PREFIX,
+  hashInboundToken,
+  mintInboundToken,
+} from "../inbound/address.js";
 import {
   createOpenAPIRouter,
   makeErrorResponseSchema,
@@ -17,6 +22,7 @@ import {
 } from "../openapi.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { nullableRef, pageOf } from "./_schemas.js";
+import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -68,6 +74,76 @@ const RunInputSchema = z.object({
 const IdParam = z.object({
   id: z.string().describe("A connector's `id`, as `GET /connectors` lists it."),
 });
+
+const InboundEndpointSchema = z
+  .object({
+    id: z.string(),
+    connector_id: z.string(),
+    label: z.string().nullable(),
+    duplicate_header: z
+      .string()
+      .nullable()
+      .describe(
+        "Lowercased. A delivery repeating this header's value is marked a repeat of the first that carried it.",
+      ),
+    path: z
+      .string()
+      .describe(
+        "The address, under the instance's own: in full only in the answer that made it, redacted to its last four characters after.",
+      ),
+    created_at: z.string(),
+    retired_at: z.string().nullable(),
+  })
+  .openapi("InboundEndpoint");
+
+const EndpointInputSchema = z.object({
+  label: z.string().min(1).max(200).optional(),
+  duplicate_header: z
+    .string()
+    .regex(/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/, "an HTTP header name")
+    .optional()
+    .describe(
+      "A header whose value names a delivery, such as `X-GitHub-Delivery`: a delivery repeating a value is marked as a repeat, never dropped.",
+    ),
+});
+
+const InboundOutcomeSchema = z.enum(["processed", "duplicate", "rejected"]);
+
+const InboundDeliverySchema = z
+  .object({
+    id: z.string(),
+    endpoint_id: z.string(),
+    received_at: z.string(),
+    method: z.string(),
+    query: z.string(),
+    headers: z
+      .array(z.tuple([z.string(), z.string()]))
+      .describe("`[name, value]` pairs in the order and case they arrived."),
+    size: z.number().int(),
+    sha256: z.string(),
+    duplicate_of: z
+      .object({ id: z.string(), outcome: InboundOutcomeSchema.nullable() })
+      .nullable(),
+    handled_at: z.string().nullable(),
+    outcome: InboundOutcomeSchema.nullable(),
+  })
+  .openapi("InboundDelivery");
+
+const EndpointParam = IdParam.extend({
+  endpoint_id: z.string().describe("An endpoint's `id`."),
+});
+
+const DeliveryParam = IdParam.extend({
+  delivery_id: z.string().describe("A delivery's `id`."),
+});
+
+const HandledInputSchema = z.object({
+  ids: z.array(z.string()).min(1).max(MAX_PAGE_LIMIT),
+  outcome: InboundOutcomeSchema,
+});
+
+/** Live endpoints one registration may hold. */
+export const MAX_LIVE_ENDPOINTS = 10;
 
 const anyKeyResponses = {
   401: {
@@ -190,7 +266,7 @@ const deleteConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Remove a registration and its runs",
   description:
-    "Removes the registration and every run it reported. The connector's own key or the operator key; another key is refused `403 forbidden`.",
+    "Removes the registration, every run it reported, and its inbound webhook endpoints with every delivery they stored. The connector's own key or the operator key; another key is refused `403 forbidden`.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -302,6 +378,224 @@ const listRunsRoute = createRoute({
     },
     ...anyKeyResponses,
     ...notFoundResponse,
+  },
+});
+
+const validationResponse = {
+  400: {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["validation_error"]),
+      },
+    },
+    description: "An invalid body or query",
+  },
+};
+
+const createEndpointRoute = createRoute({
+  operationId: "createInboundEndpoint",
+  method: "post",
+  path: "/{id}/endpoints",
+  tags: ["Connectors"],
+  summary: "Make an inbound webhook endpoint",
+  description: `Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints, and one more is refused \`409 conflict\`.`,
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: {
+      content: { "application/json": { schema: EndpointInputSchema } },
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: InboundEndpointSchema } },
+      description: "The endpoint, its address in full",
+    },
+    ...validationResponse,
+    ...ownKeyResponses,
+    409: {
+      content: {
+        "application/json": { schema: makeErrorResponseSchema(["conflict"]) },
+      },
+      description: "The registration holds as many live endpoints as it may",
+    },
+  },
+});
+
+const listEndpointsRoute = createRoute({
+  operationId: "listInboundEndpoints",
+  method: "get",
+  path: "/{id}/endpoints",
+  tags: ["Connectors"],
+  summary: "List a connector's inbound webhook endpoints",
+  description:
+    "Newest first, retired ones included, each address redacted. The connector's own key or the operator key.",
+  security: [{ bearerAuth: [] }],
+  request: { params: IdParam },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: pageOf(InboundEndpointSchema, "InboundEndpointPage"),
+        },
+      },
+      description: "The endpoints",
+    },
+    ...ownKeyResponses,
+  },
+});
+
+const retireEndpointRoute = createRoute({
+  operationId: "retireInboundEndpoint",
+  method: "delete",
+  path: "/{id}/endpoints/{endpoint_id}",
+  tags: ["Connectors"],
+  summary: "Retire an inbound webhook endpoint",
+  description:
+    "Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.",
+  security: [{ bearerAuth: [] }],
+  request: { params: EndpointParam },
+  responses: {
+    200: {
+      content: { "application/json": { schema: InboundEndpointSchema } },
+      description: "The endpoint, retired",
+    },
+    ...anyKeyResponses,
+    403: ownKeyResponses[403],
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "connector_not_found",
+            "endpoint_not_found",
+          ]),
+        },
+      },
+      description: "No such connector, or no such endpoint on it",
+    },
+  },
+});
+
+const listDeliveriesRoute = createRoute({
+  operationId: "listInboundDeliveries",
+  method: "get",
+  path: "/{id}/deliveries",
+  tags: ["Connectors"],
+  summary: "List a connector's inbound deliveries",
+  description:
+    "Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    query: z.object({
+      state: z
+        .enum(["pending", "handled", "any"])
+        .default("pending")
+        .describe("Which deliveries: not yet handled, handled, or both."),
+      endpoint_id: z
+        .string()
+        .optional()
+        .describe("Only the deliveries this endpoint received."),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .max(MAX_PAGE_LIMIT)
+        .default(DEFAULT_PAGE_LIMIT)
+        .describe(
+          `How many deliveries, oldest first: at most ${String(MAX_PAGE_LIMIT)}, ${String(DEFAULT_PAGE_LIMIT)} unless given.`,
+        ),
+      cursor: z
+        .string()
+        .optional()
+        .describe("Opaque cursor from a previous page's `next_cursor`."),
+    }),
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: pageOf(InboundDeliverySchema, "InboundDeliveryPage"),
+        },
+      },
+      description: "The deliveries",
+    },
+    ...validationResponse,
+    ...ownKeyResponses,
+  },
+});
+
+const deliveryBodyRoute = createRoute({
+  operationId: "getInboundDeliveryBody",
+  method: "get",
+  path: "/{id}/deliveries/{delivery_id}/body",
+  tags: ["Connectors"],
+  summary: "Read an inbound delivery's body",
+  description:
+    "The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.",
+  security: [{ bearerAuth: [] }],
+  request: { params: DeliveryParam },
+  responses: {
+    200: {
+      content: {
+        "application/octet-stream": {
+          schema: { type: "string" as const, format: "binary" as const },
+        },
+      },
+      description: "The body",
+    },
+    ...anyKeyResponses,
+    403: ownKeyResponses[403],
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "connector_not_found",
+            "delivery_not_found",
+          ]),
+        },
+      },
+      description: "No such connector, or no such delivery on it",
+    },
+  },
+});
+
+const markHandledRoute = createRoute({
+  operationId: "markInboundDeliveriesHandled",
+  method: "post",
+  path: "/{id}/deliveries/handled",
+  tags: ["Connectors"],
+  summary: "Mark inbound deliveries handled",
+  description:
+    "Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. An id that is not this connector's refuses the whole request and marks nothing. The connector's own key only.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: IdParam,
+    body: { content: { "application/json": { schema: HandledInputSchema } } },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({ data: z.array(InboundDeliverySchema) }),
+        },
+      },
+      description: "The deliveries, marked",
+    },
+    ...validationResponse,
+    ...anyKeyResponses,
+    403: ownKeyResponses[403],
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "connector_not_found",
+            "delivery_not_found",
+          ]),
+        },
+      },
+      description: "No such connector, or a delivery it does not hold",
+    },
   },
 });
 
@@ -423,6 +717,7 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(listRunsRoute, async (c) => {
     requireAuth(c);
     const connector = await connectorOrRefuse(c.req.valid("param").id);
+    refuseUnknownQueryParams(c.req.raw.url, listRunsRoute.request.query);
     const { limit, cursor } = c.req.valid("query");
     return c.json(
       await storage.connectors.listRuns(connector.id, { limit, cursor }),
@@ -430,7 +725,154 @@ export function connectorRoutes(storage: Storage) {
     );
   });
 
+  router.openapi(createEndpointRoute, async (c) => {
+    const key = requireAuth(c);
+    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    requireOwnKeyOrOperator(connector.key_id, key);
+    const body = c.req.valid("json");
+    const token = mintInboundToken();
+    const endpoint = await storage.inbound.createEndpoint(
+      {
+        connectorId: connector.id,
+        tokenHash: hashInboundToken(token),
+        tokenLast4: token.slice(-4),
+        label: body.label ?? null,
+        duplicateHeader: body.duplicate_header?.toLowerCase() ?? null,
+      },
+      MAX_LIVE_ENDPOINTS,
+    );
+    if (endpoint === "limit") {
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `A connector holds at most ${String(MAX_LIVE_ENDPOINTS)} live endpoints; retire one first`,
+      );
+    }
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      key_id: key.id,
+      action: "inbound_endpoint.create",
+      resource_type: "inbound_endpoint",
+      resource_id: endpoint.id,
+      details: { connector_id: connector.id, label: endpoint.label },
+    });
+    return c.json(endpointView(endpoint, `${INBOUND_PREFIX}${token}`), 201);
+  });
+
+  router.openapi(listEndpointsRoute, async (c) => {
+    const key = requireAuth(c);
+    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    requireOwnKeyOrOperator(connector.key_id, key);
+    const endpoints = await storage.inbound.listEndpoints(connector.id);
+    return c.json(
+      {
+        data: endpoints.map((endpoint) => endpointView(endpoint)),
+        next_cursor: null,
+      },
+      200,
+    );
+  });
+
+  router.openapi(retireEndpointRoute, async (c) => {
+    const key = requireAuth(c);
+    const { id, endpoint_id } = c.req.valid("param");
+    const connector = await connectorOrRefuse(id);
+    requireOwnKeyOrOperator(connector.key_id, key);
+    const retired = await storage.inbound.retireEndpoint(
+      connector.id,
+      endpoint_id,
+    );
+    if (retired === null) {
+      throw new MarfaError(ErrorCode.ENDPOINT_NOT_FOUND, "Endpoint not found");
+    }
+    if (retired.retired) {
+      await storage.audit.log({
+        client_ip: c.get("clientIp") ?? null,
+        key_id: key.id,
+        action: "inbound_endpoint.retire",
+        resource_type: "inbound_endpoint",
+        resource_id: retired.endpoint.id,
+        details: { connector_id: connector.id },
+      });
+    }
+    return c.json(endpointView(retired.endpoint), 200);
+  });
+
+  router.openapi(listDeliveriesRoute, async (c) => {
+    const key = requireAuth(c);
+    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    requireOwnKey(connector.key_id, key.id);
+    refuseUnknownQueryParams(c.req.raw.url, listDeliveriesRoute.request.query);
+    const { state, endpoint_id, limit, cursor } = c.req.valid("query");
+    return c.json(
+      await storage.inbound.listDeliveries(
+        connector.id,
+        endpoint_id === undefined
+          ? { state }
+          : { state, endpointId: endpoint_id },
+        { limit, cursor },
+      ),
+      200,
+    );
+  });
+
+  router.openapi(deliveryBodyRoute, async (c) => {
+    const key = requireAuth(c);
+    const { id, delivery_id } = c.req.valid("param");
+    const connector = await connectorOrRefuse(id);
+    requireOwnKey(connector.key_id, key.id);
+    const body = await storage.inbound.body(connector.id, delivery_id);
+    if (body === null) {
+      throw new MarfaError(ErrorCode.DELIVERY_NOT_FOUND, "Delivery not found");
+    }
+    return c.body(new Uint8Array(body), 200, {
+      "Content-Type": "application/octet-stream",
+    });
+  });
+
+  router.openapi(markHandledRoute, async (c) => {
+    const key = requireAuth(c);
+    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    requireOwnKey(connector.key_id, key.id);
+    const { ids, outcome } = c.req.valid("json");
+    const marked = await storage.inbound.markHandled(
+      connector.id,
+      ids,
+      outcome,
+    );
+    if (marked === null) {
+      throw new MarfaError(
+        ErrorCode.DELIVERY_NOT_FOUND,
+        "A delivery named is not this connector's; nothing was marked",
+      );
+    }
+    return c.json({ data: marked }, 200);
+  });
+
   return router;
+}
+
+function endpointView(endpoint: InboundEndpoint, path?: string) {
+  return {
+    id: endpoint.id,
+    connector_id: endpoint.connector_id,
+    label: endpoint.label,
+    duplicate_header: endpoint.duplicate_header,
+    path: path ?? `${INBOUND_PREFIX}****${endpoint.token_last4}`,
+    created_at: endpoint.created_at,
+    retired_at: endpoint.retired_at,
+  };
+}
+
+function requireOwnKeyOrOperator(
+  ownerKeyId: string,
+  key: { id: string; is_operator?: boolean },
+): void {
+  if (ownerKeyId !== key.id && key.is_operator !== true) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "Only the connector's own key or the operator key may do this",
+    );
+  }
 }
 
 function requireOwnKey(ownerKeyId: string, keyId: string): void {

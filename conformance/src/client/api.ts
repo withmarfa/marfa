@@ -22,6 +22,9 @@ import type {
   ConnectorRow,
   ConnectorRun,
   ConnectorRunInput,
+  InboundDeliveryRow,
+  InboundEndpointRow,
+  InboundOutcome,
   BulkInput,
   BulkItemInput,
   BulkResponse,
@@ -832,6 +835,76 @@ export class MarfaClient {
   ): Promise<ApiResponse<PaginatedResult<ConnectorRun>>> {
     return this.request<PaginatedResult<ConnectorRun>>(
       `/connectors/${id}/runs${pageQuery(page)}`,
+    );
+  }
+
+  /** `POST /connectors/{id}/endpoints`: an address a sender posts to. */
+  async createInboundEndpoint(
+    id: string,
+    input: { label?: string; duplicate_header?: string } = {},
+  ): Promise<ApiResponse<InboundEndpointRow>> {
+    return this.request<InboundEndpointRow>(`/connectors/${id}/endpoints`, {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  async listInboundEndpoints(
+    id: string,
+  ): Promise<ApiResponse<PaginatedResult<InboundEndpointRow>>> {
+    return this.request<PaginatedResult<InboundEndpointRow>>(
+      `/connectors/${id}/endpoints`,
+    );
+  }
+
+  async retireInboundEndpoint(
+    id: string,
+    endpointId: string,
+  ): Promise<ApiResponse<InboundEndpointRow>> {
+    return this.request<InboundEndpointRow>(
+      `/connectors/${id}/endpoints/${endpointId}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async listInboundDeliveries(
+    id: string,
+    query: {
+      state?: "pending" | "handled" | "any";
+      endpoint_id?: string;
+      limit?: number;
+      cursor?: string;
+    } = {},
+  ): Promise<ApiResponse<PaginatedResult<InboundDeliveryRow>>> {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(name, String(value));
+    }
+    const search = params.toString();
+    return this.request<PaginatedResult<InboundDeliveryRow>>(
+      `/connectors/${id}/deliveries${search === "" ? "" : `?${search}`}`,
+    );
+  }
+
+  /** The body door answers bytes, which the JSON transport would decode, so
+   *  this answers the response itself. */
+  async getInboundDeliveryBody(
+    id: string,
+    deliveryId: string,
+  ): Promise<Response> {
+    return fetch(
+      `${this.baseUrl}/connectors/${id}/deliveries/${deliveryId}/body`,
+      { headers: { Authorization: `Bearer ${this.apiKey}` } },
+    );
+  }
+
+  async markInboundDeliveriesHandled(
+    id: string,
+    input: { ids: string[]; outcome: InboundOutcome },
+  ): Promise<ApiResponse<{ data: InboundDeliveryRow[] }>> {
+    return this.request<{ data: InboundDeliveryRow[] }>(
+      `/connectors/${id}/deliveries/handled`,
+      { method: "POST", body: input },
     );
   }
 

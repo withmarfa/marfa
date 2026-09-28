@@ -419,6 +419,22 @@ describe("heartbeats and runs", () => {
     expect((await client.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
+  it("refuses a query key the runs listing does not declare", async () => {
+    const mine = await register(client, `${ctx.runId} unknown key`);
+    const refused = await other.rawRequest<unknown>(
+      `/connectors/${mine.data.id}/runs?outcome=failed`,
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details?.["unknown_parameters"]).toEqual([
+      "outcome",
+    ]);
+    // Witness: the declared key is answered.
+    expect(
+      (await other.listConnectorRuns(mine.data.id, { limit: 1 })).status,
+    ).toBe(200);
+  });
+
   it("keeps the last hundred runs", async () => {
     const mine = await register(client, `${ctx.runId} hundred`);
     const at = new Date().toISOString();

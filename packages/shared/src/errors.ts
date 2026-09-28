@@ -201,6 +201,18 @@ export enum ErrorCode {
   HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
   /** `GET /connectors/{id}` and the doors under it: no such registration. */
   CONNECTOR_NOT_FOUND = "connector_not_found",
+  /** An endpoint id the connector's registration does not carry. */
+  ENDPOINT_NOT_FOUND = "endpoint_not_found",
+  /** A delivery id the connector's registration does not carry. */
+  DELIVERY_NOT_FOUND = "delivery_not_found",
+  /**
+   * An inbound endpoint cannot take a delivery now: its connector's backlog
+   * is full, or the instance holds as many bodies in flight as it will.
+   * Retryable: the sender records a failure it can deliver again.
+   */
+  INBOUND_UNAVAILABLE = "inbound_unavailable",
+  /** A body that did not finish arriving within the door's deadline. */
+  REQUEST_TIMEOUT = "request_timeout",
   /**
    * Every streaming connection slot is in use and none freed within the
    * reservation window. Retryable by definition: streams end and slots
@@ -360,6 +372,10 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
+  [ErrorCode.ENDPOINT_NOT_FOUND]: 404,
+  [ErrorCode.DELIVERY_NOT_FOUND]: 404,
+  [ErrorCode.INBOUND_UNAVAILABLE]: 503,
+  [ErrorCode.REQUEST_TIMEOUT]: 408,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.WRITE_CONTENTION]: 503,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,

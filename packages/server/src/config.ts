@@ -34,6 +34,40 @@ export function envNumber(raw: string | undefined, fallback: number): number {
  */
 export const DEFAULT_KEYS_RATE_LIMIT = 200;
 
+/** What bounds the inbound webhook doors. */
+export interface InboundLimits {
+  /** The largest delivery the door stores, in bytes. */
+  maxBytes: number;
+  /** Receipts per endpoint per `rateLimitWindowMs`, while the limiter is on. */
+  requestsPerWindow: number;
+  /** Unhandled deliveries a registration may hold before the door refuses. */
+  backlogDeliveries: number;
+  /** Their bytes. */
+  backlogBytes: number;
+  /** Bytes the door holds in memory across every receipt at once. */
+  inFlightBytes: number;
+  /** How long a body has to arrive whole, so a stalled sender cannot hold in-flight bytes. */
+  readTimeoutMs: number;
+  handledRetentionDays: number;
+  pendingRetentionDays: number;
+}
+
+/**
+ * GitHub caps a payload at 25 MB. An unhandled delivery is kept long past
+ * any sender's own redelivery window, so a connector off for weeks loses
+ * nothing that arrived.
+ */
+export const DEFAULT_INBOUND_LIMITS: InboundLimits = {
+  maxBytes: 25 * 1024 * 1024,
+  requestsPerWindow: 600,
+  backlogDeliveries: 10_000,
+  backlogBytes: 1024 * 1024 * 1024,
+  inFlightBytes: 100 * 1024 * 1024,
+  readTimeoutMs: 30_000,
+  handledRetentionDays: 7,
+  pendingRetentionDays: 30,
+};
+
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -304,6 +338,9 @@ export interface AppConfig {
    *  aggregate window. Optional on the type so test contexts
    *  constructing `AppConfig` literals don't have to supply it. */
   rateLimitAggregateMultiplier?: number;
+  /** Optional on the type so a test context's `AppConfig` literal takes
+   *  `DEFAULT_INBOUND_LIMITS`. */
+  inbound?: InboundLimits;
   /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
    *  by `index.ts` from `version.json` at startup; defaults to `"dev"`
    *  when no version file is present (local development). It is not the
@@ -826,6 +863,40 @@ export function loadConfig(): AppConfig {
       process.env.RATE_LIMIT_AGGREGATE_MULTIPLIER,
       4,
     ),
+    inbound: {
+      maxBytes: envNumber(
+        process.env.MARFA_INBOUND_MAX_BYTES,
+        DEFAULT_INBOUND_LIMITS.maxBytes,
+      ),
+      requestsPerWindow: envNumber(
+        process.env.RATE_LIMIT_INBOUND_REQUESTS,
+        DEFAULT_INBOUND_LIMITS.requestsPerWindow,
+      ),
+      backlogDeliveries: envNumber(
+        process.env.MARFA_INBOUND_BACKLOG_DELIVERIES,
+        DEFAULT_INBOUND_LIMITS.backlogDeliveries,
+      ),
+      backlogBytes: envNumber(
+        process.env.MARFA_INBOUND_BACKLOG_BYTES,
+        DEFAULT_INBOUND_LIMITS.backlogBytes,
+      ),
+      inFlightBytes: envNumber(
+        process.env.MARFA_INBOUND_IN_FLIGHT_BYTES,
+        DEFAULT_INBOUND_LIMITS.inFlightBytes,
+      ),
+      readTimeoutMs: envNumber(
+        process.env.MARFA_INBOUND_READ_TIMEOUT_MS,
+        DEFAULT_INBOUND_LIMITS.readTimeoutMs,
+      ),
+      handledRetentionDays: envNumber(
+        process.env.MARFA_INBOUND_HANDLED_RETENTION_DAYS,
+        DEFAULT_INBOUND_LIMITS.handledRetentionDays,
+      ),
+      pendingRetentionDays: envNumber(
+        process.env.MARFA_INBOUND_PENDING_RETENTION_DAYS,
+        DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
+      ),
+    },
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
     otelEnvironment: process.env.MARFA_OTEL_ENVIRONMENT,

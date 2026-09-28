@@ -17,6 +17,8 @@ describe("bodyCapFor", () => {
         "/blobs/{hash}",
         "/blobs/:hash",
         "/admin/restore-archive",
+        "/inbound/{token}",
+        "/inbound/:token",
       ].map((path) => [path, bodyCapFor(path)]),
     );
     expect(caps).toEqual({
@@ -32,6 +34,8 @@ describe("bodyCapFor", () => {
       "/blobs/{hash}": "none",
       "/blobs/:hash": "none",
       "/admin/restore-archive": "none",
+      "/inbound/{token}": "inbound",
+      "/inbound/:token": "inbound",
     });
   });
 });

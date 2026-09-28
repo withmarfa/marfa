@@ -222,6 +222,16 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "the stored one: the listing shows it as it is, and a hundred runs " +
       "later it is gone.",
   },
+  {
+    table: "inbound_deliveries",
+    column: "outcome",
+    castType: "InboundOutcome",
+    because:
+      "A mark a connector set, not a decision the server makes. The " +
+      "handled door admits only the three values, the server branches on " +
+      "none, and a connector reading an unknown one as not processed only " +
+      "fetches from its sender again. The sweep removes the row within days.",
+  },
 ];
 
 /** One `GROUP BY` row: a stored value and how many rows hold it. */

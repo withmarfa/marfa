@@ -9,12 +9,8 @@ const row = (properties: Record<string, unknown>) => ({
 
 describe("liveConnectionRefusal", () => {
   it("names a route for a live app, and no route at all for a live connector", () => {
-    // The app arm names a door that exists. The connector arm used to name
-    // `POST /connections/{id}/uninstall` and promise it would revoke leased
-    // tokens, drop cached upstream tokens and disable inbound webhooks —
-    // one route and three subsystems, none of which this build has.
-    // This assertion is the reason that sentence stood: it pinned the route
-    // by name, so the refusal read as maintained.
+    // The app arm names a door that exists; nothing under `/connections`
+    // does, so the connector arm names no route.
     expect(
       liveConnectionRefusal(row({ kind: "app", status: "active" })),
     ).toContain("DELETE /auth/grants/01a0");

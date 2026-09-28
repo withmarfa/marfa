@@ -152,4 +152,145 @@ describe("connectors from the terminal", () => {
     expect(gone.envelope.error.code).toBe("not_found");
     expect(gone.envelope.error.server?.code).toBe("connector_not_found");
   });
+
+  it("makes an endpoint, reads what arrived at it a page at a time, marks it handled, and retires it", async () => {
+    const minted = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "inbound",
+      "--source",
+      unique("cli-inbound"),
+      "--type-permission",
+      "core.note=write",
+    ]);
+    trackKey(c.ctx, minted.id);
+    const connector = c.cli.as(minted.key);
+    const registered = await connector.json<Connector>([
+      "connectors",
+      "register",
+      "--name",
+      unique("cli-inbound"),
+    ]);
+
+    const made = await connector.json<{
+      id: string;
+      path: string;
+      url: string;
+      duplicate_header: string | null;
+    }>([
+      "connectors",
+      "endpoints",
+      "create",
+      registered.id,
+      "--label",
+      "sender",
+      "--duplicate-header",
+      "X-Delivery",
+    ]);
+    expect(made.duplicate_header).toBe("x-delivery");
+    expect(made.url).toBe(`${c.apiUrl.replace(/\/$/, "")}${made.path}`);
+
+    for (let i = 0; i < 2; i++) {
+      const sent = await fetch(made.url, {
+        method: "POST",
+        headers: { "X-Delivery": "d-1" },
+        body: "from the sender",
+      });
+      expect(sent.status).toBe(202);
+    }
+
+    interface Page {
+      data: { id: string; duplicate_of: { id: string } | null }[];
+      next_cursor: string | null;
+    }
+    const first = await connector.json<Page>([
+      "connectors",
+      "deliveries",
+      "list",
+      registered.id,
+      "--limit",
+      "1",
+    ]);
+    expect(first.data).toHaveLength(1);
+    expect(first.next_cursor).not.toBeNull();
+    const rest = await connector.json<Page>([
+      "connectors",
+      "deliveries",
+      "list",
+      registered.id,
+      "--limit",
+      "1",
+      "--cursor",
+      first.next_cursor ?? "",
+    ]);
+    const [original] = first.data;
+    const [repeat] = rest.data;
+    if (original === undefined || repeat === undefined) {
+      throw new Error("the two deliveries were not both listed");
+    }
+    expect(repeat.duplicate_of?.id).toBe(original.id);
+
+    const body = await connector.run([
+      "connectors",
+      "deliveries",
+      "body",
+      registered.id,
+      original.id,
+    ]);
+    expect(body.code).toBe(0);
+    expect(body.stdout).toBe("from the sender");
+
+    const handled = await connector.json<{ data: { outcome: string }[] }>([
+      "connectors",
+      "deliveries",
+      "handle",
+      registered.id,
+      original.id,
+      repeat.id,
+      "--outcome",
+      "processed",
+    ]);
+    expect(handled.data.map((row) => row.outcome)).toEqual([
+      "processed",
+      "processed",
+    ]);
+    const waiting = await connector.json<Page>([
+      "connectors",
+      "deliveries",
+      "list",
+      registered.id,
+    ]);
+    expect(waiting.data).toEqual([]);
+    const notItsOwn = await c.operator.refused([
+      "connectors",
+      "deliveries",
+      "list",
+      registered.id,
+    ]);
+    expect(notItsOwn.envelope.error.server?.status).toBe(403);
+
+    const listed = await connector.json<{ data: { path: string }[] }>([
+      "connectors",
+      "endpoints",
+      "list",
+      registered.id,
+    ]);
+    expect(listed.data.map((row) => row.path)).toEqual([
+      `/inbound/****${made.path.slice(-4)}`,
+    ]);
+    const retired = await c.operator.json<{ retired_at: string | null }>([
+      "connectors",
+      "endpoints",
+      "retire",
+      registered.id,
+      made.id,
+    ]);
+    expect(retired.retired_at).not.toBeNull();
+    expect(
+      (await fetch(made.url, { method: "POST", body: "late" })).status,
+    ).toBe(404);
+
+    await c.operator.json(["connectors", "delete", registered.id]);
+  });
 });

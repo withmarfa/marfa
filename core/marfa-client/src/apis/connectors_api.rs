@@ -13,6 +13,14 @@ use crate::{apis::ResponseContent, models};
 use reqwest;
 use serde::{Deserialize, Serialize, de::Error as _};
 
+/// struct for passing parameters to the method [`create_inbound_endpoint`]
+#[derive(Clone, Debug)]
+pub struct CreateInboundEndpointParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    pub create_inbound_endpoint_request: Option<models::CreateInboundEndpointRequest>,
+}
+
 /// struct for passing parameters to the method [`delete_connector`]
 #[derive(Clone, Debug)]
 pub struct DeleteConnectorParams {
@@ -25,6 +33,15 @@ pub struct DeleteConnectorParams {
 pub struct GetConnectorParams {
     /// A connector's `id`, as `GET /connectors` lists it.
     pub id: String,
+}
+
+/// struct for passing parameters to the method [`get_inbound_delivery_body`]
+#[derive(Clone, Debug)]
+pub struct GetInboundDeliveryBodyParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    /// A delivery's `id`.
+    pub delivery_id: String,
 }
 
 /// struct for passing parameters to the method [`heartbeat_connector`]
@@ -45,6 +62,37 @@ pub struct ListConnectorRunsParams {
     pub cursor: Option<String>,
 }
 
+/// struct for passing parameters to the method [`list_inbound_deliveries`]
+#[derive(Clone, Debug)]
+pub struct ListInboundDeliveriesParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    /// Which deliveries: not yet handled, handled, or both.
+    pub state: Option<String>,
+    /// Only the deliveries this endpoint received.
+    pub endpoint_id: Option<String>,
+    /// How many deliveries, oldest first: at most 200, 50 unless given.
+    pub limit: Option<i32>,
+    /// Opaque cursor from a previous page's `next_cursor`.
+    pub cursor: Option<String>,
+}
+
+/// struct for passing parameters to the method [`list_inbound_endpoints`]
+#[derive(Clone, Debug)]
+pub struct ListInboundEndpointsParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+}
+
+/// struct for passing parameters to the method [`mark_inbound_deliveries_handled`]
+#[derive(Clone, Debug)]
+pub struct MarkInboundDeliveriesHandledParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    pub mark_inbound_deliveries_handled_request:
+        Option<models::MarkInboundDeliveriesHandledRequest>,
+}
+
 /// struct for passing parameters to the method [`register_connector`]
 #[derive(Clone, Debug)]
 pub struct RegisterConnectorParams {
@@ -57,6 +105,23 @@ pub struct ReportConnectorRunParams {
     /// A connector's `id`, as `GET /connectors` lists it.
     pub id: String,
     pub report_connector_run_request: Option<models::ReportConnectorRunRequest>,
+}
+
+/// struct for passing parameters to the method [`retire_inbound_endpoint`]
+#[derive(Clone, Debug)]
+pub struct RetireInboundEndpointParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    /// An endpoint's `id`.
+    pub endpoint_id: String,
+}
+
+/// struct for typed successes of method [`create_inbound_endpoint`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CreateInboundEndpointSuccess {
+    Status201(models::InboundEndpoint),
+    UnknownValue(serde_json::Value),
 }
 
 /// struct for typed successes of method [`delete_connector`]
@@ -72,6 +137,14 @@ pub enum DeleteConnectorSuccess {
 #[serde(untagged)]
 pub enum GetConnectorSuccess {
     Status200(models::Connector),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`get_inbound_delivery_body`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetInboundDeliveryBodySuccess {
+    Status200(Vec<u8>),
     UnknownValue(serde_json::Value),
 }
 
@@ -99,6 +172,30 @@ pub enum ListConnectorsSuccess {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed successes of method [`list_inbound_deliveries`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ListInboundDeliveriesSuccess {
+    Status200(models::InboundDeliveryPage),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`list_inbound_endpoints`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ListInboundEndpointsSuccess {
+    Status200(models::InboundEndpointPage),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`mark_inbound_deliveries_handled`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MarkInboundDeliveriesHandledSuccess {
+    Status200(models::MarkInboundDeliveriesHandled200Response),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed successes of method [`register_connector`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -113,6 +210,29 @@ pub enum RegisterConnectorSuccess {
 #[serde(untagged)]
 pub enum ReportConnectorRunSuccess {
     Status201(models::ConnectorRun),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`retire_inbound_endpoint`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RetireInboundEndpointSuccess {
+    Status200(models::InboundEndpoint),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`create_inbound_endpoint`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CreateInboundEndpointError {
+    Status400(models::ValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status409(models::ConflictRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
 }
 
@@ -135,6 +255,18 @@ pub enum DeleteConnectorError {
 pub enum GetConnectorError {
     Status401(models::UnauthorizedRefusal),
     Status404(models::ConnectorNotFoundRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_inbound_delivery_body`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetInboundDeliveryBodyError {
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundOrDeliveryNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -175,6 +307,45 @@ pub enum ListConnectorsError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`list_inbound_deliveries`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ListInboundDeliveriesError {
+    Status400(models::ValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`list_inbound_endpoints`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ListInboundEndpointsError {
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`mark_inbound_deliveries_handled`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MarkInboundDeliveriesHandledError {
+    Status400(models::ValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundOrDeliveryNotFoundRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`register_connector`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -202,7 +373,66 @@ pub enum ReportConnectorRunError {
     UnknownValue(serde_json::Value),
 }
 
-/// Removes the registration and every run it reported. The connector's own key or the operator key; another key is refused `403 forbidden`.
+/// struct for typed errors of method [`retire_inbound_endpoint`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RetireInboundEndpointError {
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundOrEndpointNotFoundRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints, and one more is refused `409 conflict`.
+pub fn create_inbound_endpoint(
+    configuration: &configuration::Configuration,
+    params: CreateInboundEndpointParams,
+) -> Result<ResponseContent<CreateInboundEndpointSuccess>, Error<CreateInboundEndpointError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/endpoints",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.create_inbound_endpoint_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<CreateInboundEndpointSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<CreateInboundEndpointError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Removes the registration, every run it reported, and its inbound webhook endpoints with every delivery they stored. The connector's own key or the operator key; another key is refused `403 forbidden`.
 pub fn delete_connector(
     configuration: &configuration::Configuration,
     params: DeleteConnectorParams,
@@ -281,6 +511,44 @@ pub fn get_connector(
     } else {
         let content = resp.text()?;
         let entity: Option<GetConnectorError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// The bytes exactly as they arrived, as `application/octet-stream` whatever the sender declared. The connector's own key only.
+pub fn get_inbound_delivery_body(
+    configuration: &configuration::Configuration,
+    params: GetInboundDeliveryBodyParams,
+) -> Result<reqwest::blocking::Response, Error<GetInboundDeliveryBodyError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/deliveries/{delivery_id}/body",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id),
+        delivery_id = crate::apis::urlencode(params.delivery_id)
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        Ok(resp)
+    } else {
+        let content = resp.text()?;
+        let entity: Option<GetInboundDeliveryBodyError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,
@@ -421,6 +689,154 @@ pub fn list_connectors(
     }
 }
 
+/// Oldest first, the ones not yet handled unless `state` says otherwise, without their bodies. The connector's own key only.
+pub fn list_inbound_deliveries(
+    configuration: &configuration::Configuration,
+    params: ListInboundDeliveriesParams,
+) -> Result<ResponseContent<ListInboundDeliveriesSuccess>, Error<ListInboundDeliveriesError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/deliveries",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = params.state {
+        req_builder = req_builder.query(&[("state", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.endpoint_id {
+        req_builder = req_builder.query(&[("endpoint_id", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.limit {
+        req_builder = req_builder.query(&[("limit", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.cursor {
+        req_builder = req_builder.query(&[("cursor", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<ListInboundDeliveriesSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<ListInboundDeliveriesError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Newest first, retired ones included, each address redacted. The connector's own key or the operator key.
+pub fn list_inbound_endpoints(
+    configuration: &configuration::Configuration,
+    params: ListInboundEndpointsParams,
+) -> Result<ResponseContent<ListInboundEndpointsSuccess>, Error<ListInboundEndpointsError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/endpoints",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<ListInboundEndpointsSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<ListInboundEndpointsError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Marks each delivery `processed`, `duplicate` or `rejected` and answers them in the order named. The first mark stands, so a repeat answers it again. An id that is not this connector's refuses the whole request and marks nothing. The connector's own key only.
+pub fn mark_inbound_deliveries_handled(
+    configuration: &configuration::Configuration,
+    params: MarkInboundDeliveriesHandledParams,
+) -> Result<
+    ResponseContent<MarkInboundDeliveriesHandledSuccess>,
+    Error<MarkInboundDeliveriesHandledError>,
+> {
+    let uri_str = format!(
+        "{}/connectors/{id}/deliveries/handled",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.mark_inbound_deliveries_handled_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<MarkInboundDeliveriesHandledSuccess> =
+            serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<MarkInboundDeliveriesHandledError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
 /// Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.
 pub fn register_connector(
     configuration: &configuration::Configuration,
@@ -501,6 +917,52 @@ pub fn report_connector_run(
     } else {
         let content = resp.text()?;
         let entity: Option<ReportConnectorRunError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Its address answers `404` from now on, and it stays listed with `retired_at`. Deliveries it already stored stay readable until they age out. The connector's own key or the operator key.
+pub fn retire_inbound_endpoint(
+    configuration: &configuration::Configuration,
+    params: RetireInboundEndpointParams,
+) -> Result<ResponseContent<RetireInboundEndpointSuccess>, Error<RetireInboundEndpointError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/endpoints/{endpoint_id}",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id),
+        endpoint_id = crate::apis::urlencode(params.endpoint_id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::DELETE, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<RetireInboundEndpointSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<RetireInboundEndpointError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,

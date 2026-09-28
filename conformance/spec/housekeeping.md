@@ -1,6 +1,6 @@
 # Housekeeping
 
-The periodic work the server does on itself, including the trash purge, version thinning, the event-log and audit cleanups, the sweeps that bound the smaller tables, blob replication and the blob integrity check, the unreferenced-blob sweep, the enrichment sweep, the webhook retry poll and the liveness heartbeat. One scheduler runs every housekeeping job from one table, so what runs, when it is next due and what its last run did are answerable at one door, and any of them can be run on demand.
+The periodic work the server does on itself, including the trash purge, version thinning, the event-log and audit cleanups, the sweeps that bound the smaller tables, blob replication and the blob integrity check, the unreferenced-blob sweep, the enrichment sweep, the webhook retry poll, the inbound delivery sweep and the liveness heartbeat. One scheduler runs every housekeeping job from one table, so what runs, when it is next due and what its last run did are answerable at one door, and any of them can be run on demand.
 
 ## The housekeeping jobs
 

@@ -24,6 +24,7 @@ import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteIdempotencyStore } from "./idempotency-store.js";
 import { SqliteHousekeepingStore } from "./housekeeping-store.js";
 import { SqliteConnectorStore } from "./connector-store.js";
+import { SqliteInboundStore } from "./inbound-store.js";
 import {
   reportEdgeNameCollisions,
   reportSeedCollisions,
@@ -161,6 +162,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     rateLimits: new SqliteRateLimitStore(db),
     housekeeping: new SqliteHousekeepingStore(db),
     connectors: new SqliteConnectorStore(db),
+    inbound: new SqliteInboundStore(db),
     /**
      * Genuinely transactional under libsql + ALS routing. Opens a libsql
      * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,

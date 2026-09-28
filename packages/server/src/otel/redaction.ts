@@ -8,6 +8,7 @@ import type {
   ReadableLogRecord,
 } from "@opentelemetry/sdk-logs";
 import type { AnyValueMap } from "@opentelemetry/api-logs";
+import { loggablePath } from "../inbound/address.js";
 
 /**
  * PII discipline for OpenTelemetry.
@@ -65,9 +66,11 @@ export const REDACT_SUBSTRINGS: readonly string[] = [
   "bearer",
 ];
 
-/** Lowercased URL-valued attribute names whose query string is stripped. */
+/** Lowercased URL-valued attribute names whose query string is stripped
+ *  and whose inbound address is redacted. */
 const URL_VALUE_KEYS: ReadonlySet<string> = new Set([
   "url.full",
+  "url.path",
   "http.url",
   "http.target",
 ]);
@@ -77,7 +80,8 @@ const REDACTED = "[REDACTED]";
 function stripQuery(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const q = value.indexOf("?");
-  return q === -1 ? value : `${value.slice(0, q)}?${REDACTED}`;
+  const kept = loggablePath(q === -1 ? value : value.slice(0, q));
+  return q === -1 ? kept : `${kept}?${REDACTED}`;
 }
 
 /**

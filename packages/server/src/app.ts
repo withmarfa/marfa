@@ -32,6 +32,7 @@ import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { housekeepingRoutes } from "./routes/housekeeping.js";
 import { connectorRoutes } from "./routes/connectors.js";
+import { inboundRoutes } from "./routes/inbound.js";
 import { folderRoutes } from "./routes/folders.js";
 import type { Housekeeping } from "./housekeeping/scheduler.js";
 import { keyRoutes } from "./routes/keys.js";
@@ -238,7 +239,7 @@ export function createApp(
     "*",
     createMiddleware<AppEnv>(async (c, next) => {
       const cap = bodyCapFor(c.req.path);
-      if (cap === "none") return next();
+      if (cap === "none" || cap === "inbound") return next();
       if (cap === "bulk") return bulkBodyLimit(c, next);
       return requestBodyLimit(c, next);
     }),
@@ -272,6 +273,7 @@ export function createApp(
     "edges",
     "admin_archive",
     "connectors",
+    "inbound_webhooks",
   ];
   // The deployed `version` comes from `version.json`, read at startup by
   // index.ts and threaded through `config.versionSha`; `contract` is the
@@ -299,6 +301,10 @@ export function createApp(
   // falling through to `/auth/*`.
   app.route("/auth/static", authStaticRoutes());
 
+  // Ahead of the credential and the limiter: a sender holds no key, and the
+  // door keeps its own window per endpoint rather than per address.
+  app.route("/inbound", inboundRoutes(storage, config));
+
   // Resolve the effective client IP once per request and stash it on
   // `c.var.clientIp`. Runs BEFORE auth so audit rows emitted from
   // auth-side paths (e.g. token revocation) and route handlers alike
@@ -318,8 +324,8 @@ export function createApp(
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS,
   // RATE_LIMIT_WINDOW_MS and RATE_LIMIT_KEYS_REQUESTS). Protects every door
-  // mounted below it; the root, `/health` and `/auth/static` sit above it,
-  // and `openapi-finalize.ts` declares the root that way. Configuration
+  // mounted below it; the root, `/health`, `/auth/static` and `/inbound`
+  // sit above it, and `openapi-finalize.ts` declares the root that way. Configuration
   // flows through AppConfig: the rate-limit middleware reads its settings
   // from there rather than from `process.env`, so a deployment's limits are
   // whatever `loadConfig` resolved at boot.
