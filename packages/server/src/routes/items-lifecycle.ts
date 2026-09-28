@@ -44,13 +44,14 @@ const restoreItemRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "invalid_id",
             "invalid_transition",
             "validation_error",
           ]),
         },
       },
       description:
-        "`invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed.",
+        "`invalid_id` for a malformed id. `invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed.",
     },
     401: {
       content: {

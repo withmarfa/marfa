@@ -224,11 +224,14 @@ const createKeyRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+          ]),
         },
       },
       description:
-        "Body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused.",
+        "`missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused.",
     },
     401: {
       content: {

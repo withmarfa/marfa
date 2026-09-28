@@ -183,11 +183,15 @@ const searchRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error", "unknown_type"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+            "unknown_type",
+          ]),
         },
       },
       description:
-        "An invalid type pattern, a time bound that is not an instant, " +
+        "`missing_required_field` when `q` is absent. An invalid type pattern, a time bound that is not an instant, " +
         "a `state` that is neither a lifecycle state nor the widening " +
         "sentinel, or an unrecognized query parameter.",
     },

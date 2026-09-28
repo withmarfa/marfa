@@ -52,7 +52,7 @@ pub enum SearchItemsSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SearchItemsError {
-    Status400(models::UnknownTypeOrValidationErrorRefusal),
+    Status400(models::MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
     Status429(models::RateLimitedRefusal),

@@ -340,6 +340,7 @@ pub enum UpdateItemSuccess {
 pub enum AddItemTagsError {
     Status400(models::InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -364,7 +365,7 @@ pub enum ApplyBulkActionError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum BulkGetItemsError {
-    Status400(models::InvalidIdOrValidationErrorRefusal),
+    Status400(models::InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status413(models::RequestTooLargeRefusal),
@@ -419,7 +420,7 @@ pub enum CreateItemError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum DeleteItemError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
@@ -473,6 +474,7 @@ pub enum GetItemStatsError {
 pub enum ListItemVersionsError {
     Status400(models::InvalidIdRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -485,7 +487,7 @@ pub enum ListItemVersionsError {
 pub enum ListItemsError {
     Status400(models::MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::TypeNotPermittedRefusal),
+    Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -495,7 +497,7 @@ pub enum ListItemsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListOccurrencesError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status429(models::RateLimitedRefusal),
@@ -507,7 +509,7 @@ pub enum ListOccurrencesError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum PurgeItemError {
-    Status400(models::InvalidTransitionOrValidationErrorRefusal),
+    Status400(models::InvalidIdOrInvalidTransitionOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenOrTypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
@@ -523,7 +525,9 @@ pub enum PurgeItemError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RemoveItemTagError {
+    Status400(models::InvalidIdRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -535,7 +539,7 @@ pub enum RemoveItemTagError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RestoreItemError {
-    Status400(models::InvalidTransitionOrValidationErrorRefusal),
+    Status400(models::InvalidIdOrInvalidTransitionOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
@@ -569,7 +573,7 @@ pub enum TransitionItemError {
 pub enum UpdateItemError {
     Status400(models::EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::TypeNotPermittedRefusal),
+    Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
     Status404(models::EdgeTypeNotFoundOrItemNotFoundRefusal),
     Status409(models::UpdateItem409Response),
     Status413(models::RequestTooLargeRefusal),

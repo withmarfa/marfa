@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InvalidTransitionOrValidationErrorRefusalError {
+pub struct InvalidIdOrInvalidTransitionOrValidationErrorRefusalError {
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,9 +21,12 @@ pub struct InvalidTransitionOrValidationErrorRefusalError {
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl InvalidTransitionOrValidationErrorRefusalError {
-    pub fn new(code: Code, message: String) -> InvalidTransitionOrValidationErrorRefusalError {
-        InvalidTransitionOrValidationErrorRefusalError {
+impl InvalidIdOrInvalidTransitionOrValidationErrorRefusalError {
+    pub fn new(
+        code: Code,
+        message: String,
+    ) -> InvalidIdOrInvalidTransitionOrValidationErrorRefusalError {
+        InvalidIdOrInvalidTransitionOrValidationErrorRefusalError {
             code,
             message,
             details: None,
@@ -33,6 +36,8 @@ impl InvalidTransitionOrValidationErrorRefusalError {
 ///
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Code {
+    #[serde(rename = "invalid_id")]
+    InvalidId,
     #[serde(rename = "invalid_transition")]
     InvalidTransition,
     #[serde(rename = "validation_error")]
@@ -41,6 +46,6 @@ pub enum Code {
 
 impl Default for Code {
     fn default() -> Code {
-        Self::InvalidTransition
+        Self::InvalidId
     }
 }

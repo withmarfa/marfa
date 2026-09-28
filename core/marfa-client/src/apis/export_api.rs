@@ -56,7 +56,7 @@ pub enum ExportDataSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum AdminRestoreArchiveError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::InvalidPropertiesOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
     Status409(models::ConflictRefusal),

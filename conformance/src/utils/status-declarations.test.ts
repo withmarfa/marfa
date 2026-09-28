@@ -119,6 +119,24 @@ describe("the status checker", () => {
     expect(formatUndeclared(report)).toContain("type_not_permitted");
   });
 
+  it("catches a code a declared status answered and does not list, and passes once it lists it", () => {
+    const log = parseRequestLines([OBSERVED_200, OBSERVED_403].join("\n"));
+    const missing = reportStatuses(
+      log,
+      documentRefusing({ 200: [], 403: ["forbidden"] }),
+    );
+    expect(missing.undeclared).toEqual([]);
+    expect(missing.undeclaredCodes).toEqual([
+      "GET /items/{id} 403 type_not_permitted",
+    ]);
+
+    const listed = reportStatuses(
+      log,
+      documentRefusing({ 200: [], 403: ["forbidden", "type_not_permitted"] }),
+    );
+    expect(listed.undeclaredCodes).toEqual([]);
+  });
+
   it("passes the same log once the door declares it", () => {
     const report = reportStatuses(
       parseRequestLines([OBSERVED_200, OBSERVED_403].join("\n")),
@@ -415,9 +433,16 @@ describe("the status checker", () => {
     );
     const tsx = resolve(script, "..", "..", "node_modules", ".bin", "tsx");
     let statuses = [200, 401, 403];
+    let refusing: Record<number, string[]> | undefined;
     const server = createServer((_req, res) => {
       res.setHeader("Content-Type", "application/json");
-      res.end(JSON.stringify(documentDeclaring(statuses)));
+      res.end(
+        JSON.stringify(
+          refusing === undefined
+            ? documentDeclaring(statuses)
+            : documentRefusing(refusing),
+        ),
+      );
     });
     await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
     const address = server.address();
@@ -480,6 +505,18 @@ describe("the status checker", () => {
       const undrawn = await run(stateWith([OBSERVED_200]), "--complete");
       expect(undrawn.stderr).toContain("GET /items/{id} 403");
       expect(undrawn.status).toBe(1);
+
+      refusing = { 200: [], 403: ["forbidden"] };
+      const unlistedCode = await run(stateWith([OBSERVED_200, OBSERVED_403]));
+      expect(unlistedCode.stderr).toContain(
+        "GET /items/{id} 403 type_not_permitted",
+      );
+      expect(unlistedCode.status).toBe(1);
+
+      refusing = { 200: [], 403: ["forbidden", "type_not_permitted"] };
+      const listedCode = await run(stateWith([OBSERVED_200, OBSERVED_403]));
+      expect(listedCode.stderr).toBe("");
+      expect(listedCode.status).toBe(0);
     } finally {
       server.close();
       for (const state of states)

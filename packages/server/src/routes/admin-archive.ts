@@ -159,10 +159,14 @@ const restoreArchiveRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "invalid_properties",
+            "validation_error",
+          ]),
         },
       },
-      description: "Invalid archive or unsupported version",
+      description:
+        "`validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; the whole archive is refused before anything is written.",
     },
     401: {
       content: {

@@ -78,7 +78,7 @@ pub enum UpdateKeySuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CreateKeyError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
     Status409(models::ConflictRefusal),

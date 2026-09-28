@@ -782,11 +782,12 @@ const listFromSourceRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema(["invalid_id", "validation_error"]),
         },
       },
       description:
-        "An unrecognized query parameter. Declared because this door " +
+        "`invalid_id` for a malformed item id; `validation_error` for an " +
+        "unrecognized query parameter. Declared because this door " +
         "answers it: a refusal a caller cannot find in the reference is " +
         "the same silence in a different place.",
     },
@@ -853,11 +854,12 @@ const listBackrefsRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema(["invalid_id", "validation_error"]),
         },
       },
       description:
-        "An unrecognized query parameter. Declared because this door " +
+        "`invalid_id` for a malformed item id; `validation_error` for an " +
+        "unrecognized query parameter. Declared because this door " +
         "answers it: a refusal a caller cannot find in the reference is " +
         "the same silence in a different place.",
     },

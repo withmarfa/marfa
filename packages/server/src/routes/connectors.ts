@@ -204,10 +204,14 @@ const registerConnectorRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+          ]),
         },
       },
-      description: "Invalid registration",
+      description:
+        "`missing_required_field` for a body without `name`; `validation_error` for any other invalid registration",
     },
     ...anyKeyResponses,
     403: {
@@ -324,10 +328,14 @@ const reportRunRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+          ]),
         },
       },
-      description: "Invalid run",
+      description:
+        "`missing_required_field` for a body without `outcome`, `started_at` or `finished_at`; `validation_error` for any other invalid run",
     },
     ...ownKeyResponses,
   },
@@ -582,7 +590,18 @@ const markHandledRoute = createRoute({
       },
       description: "The deliveries, marked",
     },
-    ...validationResponse,
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+          ]),
+        },
+      },
+      description:
+        "`missing_required_field` for a body without `ids` or `outcome`; `validation_error` for any other invalid body",
+    },
     ...anyKeyResponses,
     403: ownKeyResponses[403],
     404: {

@@ -604,11 +604,14 @@ const listItemsRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read, or when a `backref` term is anchored on an item whose type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
     },
   },
 });
@@ -817,10 +820,14 @@ const updateItemRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
         },
       },
-      description: "The credential does not hold write on the item's type.",
+      description:
+        "`type_not_permitted` when the credential does not hold write on the item's type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
     },
     404: {
       content: {
@@ -875,11 +882,15 @@ const deleteItemRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "edge_constraint_violation",
+            "invalid_id",
+            "validation_error",
+          ]),
         },
       },
       description:
-        "The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+        "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -909,6 +920,18 @@ const deleteItemRoute = createRoute({
   },
 });
 
+/** The type gate every metadata and tag door runs on the item's type. */
+function metadataTypeRefusal(level: "read" | "write") {
+  return {
+    content: {
+      "application/json": {
+        schema: makeErrorResponseSchema(["type_not_permitted"]),
+      },
+    },
+    description: `The credential's type permissions do not reach the item's type with ${level}.`,
+  };
+}
+
 const getMetadataRoute = createRoute({
   operationId: "getItemMetadata",
   method: "get",
@@ -930,6 +953,14 @@ const getMetadataRoute = createRoute({
       },
       description: "Item metadata",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
+      description: "Invalid item ID",
+    },
     401: {
       content: {
         "application/json": {
@@ -938,6 +969,7 @@ const getMetadataRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: metadataTypeRefusal("read"),
     404: {
       content: {
         "application/json": {
@@ -999,6 +1031,7 @@ const putMetadataRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: metadataTypeRefusal("write"),
     404: {
       content: {
         "application/json": {
@@ -1060,6 +1093,7 @@ const patchMetadataRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: metadataTypeRefusal("write"),
     404: {
       content: {
         "application/json": {
@@ -1123,6 +1157,7 @@ const addTagsRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: metadataTypeRefusal("write"),
     404: {
       content: {
         "application/json": {
@@ -1158,6 +1193,14 @@ const removeTagRoute = createRoute({
       },
       description: "Tag removed",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["invalid_id"]),
+        },
+      },
+      description: "Invalid item ID",
+    },
     401: {
       content: {
         "application/json": {
@@ -1166,6 +1209,7 @@ const removeTagRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: metadataTypeRefusal("write"),
     404: {
       content: {
         "application/json": {
@@ -1200,13 +1244,14 @@ const purgeItemRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "invalid_id",
             "invalid_transition",
             "validation_error",
           ]),
         },
       },
       description:
-        "`invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
     },
     401: {
       content: {

@@ -120,10 +120,15 @@ const bulkGetRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error", "invalid_id"]),
+          schema: makeErrorResponseSchema([
+            "missing_required_field",
+            "validation_error",
+            "invalid_id",
+          ]),
         },
       },
-      description: "Validation error (too many ids, or a malformed id)",
+      description:
+        "Validation error: `ids` absent (`missing_required_field`), too many ids, or a malformed id",
     },
     401: {
       content: {
