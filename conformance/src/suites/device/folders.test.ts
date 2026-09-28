@@ -9884,7 +9884,7 @@ describe("where a file sits", () => {
     expect(idIn(harness, "there.md")).toBe(id);
   });
 
-  it("sends a refused placement again while watching, once the key's grant is restored", async () => {
+  it("sends a refused placement again while watching, once the key's grant is restored, reading the key at most once a minute", async () => {
     let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
     let refusing = true;
     const edges = new EdgeDoor();
@@ -9910,30 +9910,49 @@ describe("where a file sits", () => {
           (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
             "in-folder",
       ).length;
+    const keyReads = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === "/keys/current",
+      ).length;
     put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
     const watching = harness.folder.watchText();
+    let restored = 0;
     try {
       await vi.waitFor(() => expect(placings()).toBe(1), {
         timeout: 20_000,
         interval: 100,
       });
-      // Passes enough for a refused placement to be sent again, were it.
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // Passes enough for a refused placement, or the key, to be asked again
+      // at every one, were either.
+      const readsAtRefusal = keyReads();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
       expect(placings(), "a refused placement was sent pass after pass").toBe(
         1,
       );
+      // The witness: the key was read, for the refusal to be recorded under.
+      expect(readsAtRefusal).toBeGreaterThan(0);
+      expect(
+        keyReads() - readsAtRefusal,
+        "a watch read the key at every pass while a refusal stood, which a server's rate limit does not allow",
+      ).toBe(0);
 
       key = answers.currentKey("fixture-key", { "*": "write" });
       refusing = false;
+      restored = Date.now();
       await vi.waitFor(
         () => expect(edges.placements(harness!.settings.id).size).toBe(1),
-        { timeout: 20_000, interval: 100 },
+        { timeout: 70_000, interval: 250 },
       );
     } finally {
       await watching.stop();
     }
+    expect(
+      Date.now() - restored,
+      "a restored grant was not met within the minute the key is read again in",
+    ).toBeLessThan(65_000);
     expect(placings()).toBe(2);
-  });
+  }, 110_000);
 
   it("says the placements it holds back once while watching", async () => {
     const edges = new EdgeDoor();

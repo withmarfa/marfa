@@ -96,8 +96,8 @@ pub struct Folder {
     root: PathBuf,
     folder: String,
     core: Core,
-    /// The key the credential is, once asked this pass.
-    key: std::sync::Mutex<Option<placement::KeyState>>,
+    /// The key the credential is, as last asked.
+    key: std::sync::Mutex<Option<placement::KeyRead>>,
     /// Whether the folder's volume keeps a file's permission, once asked.
     permissions: std::sync::OnceLock<bool>,
 }
@@ -775,7 +775,6 @@ impl Folder {
     }
 
     fn scan_as(&self, full: bool) -> Result<ScanReport> {
-        self.forget_key();
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -10,6 +11,7 @@ use serde_json::{Map, Value};
 use super::Folder;
 use crate::catalog::Catalog;
 use crate::drain::DrainReport;
+use crate::error::CoreError;
 use crate::model::{
     BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, QueuedWrite, Verdict, WriteKind,
 };
@@ -33,6 +35,16 @@ pub(super) type Withheld = BTreeMap<String, Held>;
 pub(super) struct Held {
     path: String,
     at: Option<(String, i64)>,
+}
+
+/// How long a key's answer stands before it is asked again: a running watch
+/// meets a restored grant within it (`folders.md` 19).
+const KEY_REREAD: Duration = Duration::from_secs(60);
+
+/// The key as last asked, and when; `None` where the asking failed.
+pub(super) struct KeyRead {
+    state: Option<KeyState>,
+    at: Instant,
 }
 
 /// The key a credential is, as far as placing goes: its id and its
@@ -186,31 +198,30 @@ impl Folder {
         }
     }
 
-    /// The key this credential is, asked once a pass: a scan lets the last
-    /// answer go, so a grant restored while a watch runs is seen.
+    /// The key this credential is, asked at most once a `KEY_REREAD`, a
+    /// failed asking included, so a watch spares the server's rate limit.
     fn key_state(&self) -> Result<KeyState> {
-        let mut known = self
+        let mut last = self
             .key
             .lock()
-            .map_err(|_| crate::error::CoreError::Store("the key's record was poisoned".into()))?;
-        if let Some(known) = known.as_ref() {
-            return Ok(known.clone());
+            .map_err(|_| CoreError::Store("the key's record was poisoned".into()))?;
+        if let Some(read) = last.as_ref()
+            && read.at.elapsed() < KEY_REREAD
+        {
+            return read.state.clone().ok_or_else(|| {
+                CoreError::Network("the key could not be read, and is asked again later".into())
+            });
         }
-        let state = self
+        let asked = self
             .core
-            .http()?
-            .current_key()?
-            .map(|key| KeyState::of(&key))
-            .unwrap_or_default();
-        *known = Some(state.clone());
-        Ok(state)
-    }
-
-    /// Lets the key's last answer go, for the next pass to ask again.
-    pub(super) fn forget_key(&self) {
-        if let Ok(mut known) = self.key.lock() {
-            *known = None;
-        }
+            .http()
+            .and_then(|http| http.current_key())
+            .map(|key| key.map(|key| KeyState::of(&key)).unwrap_or_default());
+        *last = Some(KeyRead {
+            state: asked.as_ref().ok().cloned(),
+            at: Instant::now(),
+        });
+        asked
     }
 
     /// Gives way where another machine placed or moved the item first, and
