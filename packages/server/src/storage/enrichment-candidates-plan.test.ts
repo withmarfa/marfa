@@ -1,18 +1,6 @@
 /**
- * The enrichment candidate query must be index-served, verified by reading
- * the query plan rather than by reasoning about it. It runs on a timer
- * forever, so on an extracted corpus it has to cost nothing — and it once
- * shipped as a full scan plus a sort behind a comment claiming otherwise.
- *
- * The check captures the SQL the real store issues (via a Drizzle logger
- * wrapped around the same connection) and asks the database how it would
- * run it. That the store inlines its state and blob literals is
- * load-bearing: a bound parameter defeats the partial-index implication
- * proof. The type list is bound, and grows with the registry, so the plan
- * is read with and without a type that inherits its way to a file. A third
- * case re-applies the schema onto a database that already carries the index
- * under its pre-rename name, to prove `IF NOT EXISTS` does not quietly keep
- * serving that stale predicate once a type inherits its way to a file.
+ * Verified by reading the query plan, not by reasoning about it — it once
+ * shipped as a full scan behind a comment claiming otherwise; literals stay inlined since a bound param defeats the partial-index proof.
  */
 import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
@@ -43,19 +31,16 @@ async function candidatePlan(opts?: {
   try {
     await client.executeMultiple(SCHEMA_SQL);
     if (opts?.seedLegacyIndex) {
-      // What a pre-rename build already wrote: the same name, but the old
-      // type-filtered predicate. Dropped and recreated rather than just
-      // created, so this also covers the pre-rename name, which the schema
-      // just applied above under its current (type-free) predicate.
+      // What a pre-rename build wrote: same name, old predicate. Dropped and
+      // recreated, since the schema above already created it under the current one.
       await client.execute(
         "DROP INDEX IF EXISTS `idx_items_enrichment_candidates`",
       );
       await client.execute(
         "CREATE INDEX `idx_items_enrichment_candidates` ON `items` (`created_at`) WHERE (type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;",
       );
-      // Every boot re-applies the current schema, idempotently — this is
-      // the load-bearing step: `IF NOT EXISTS` must not repair the stale
-      // index above just because it shares the pre-rename name.
+      // Re-applies the schema, idempotently: `IF NOT EXISTS` must not treat the
+      // stale index above as already satisfying the current predicate.
       await client.executeMultiple(SCHEMA_SQL);
     }
     const captured: CapturedQuery[] = [];
@@ -65,10 +50,8 @@ async function candidatePlan(opts?: {
 
     const query = captured.at(-1);
     expect(query).toBeDefined();
-    // Explain the parameterized statement as-is. SQLite plans at prepare
-    // time, before any value is bound, so substituting the params first
-    // would show a plan production never gets — the exact mistake the
-    // literal inlining in the store exists to avoid.
+    // Explained unsubstituted: SQLite plans at prepare time, before binding,
+    // so pre-substituting params would hide the mistake this guards against.
     const plan = await client.execute(
       `EXPLAIN QUERY PLAN ${query!.sql}`,
       query!.params as never[],
@@ -84,10 +67,8 @@ async function candidatePlan(opts?: {
   }
 }
 
-// "SCAN items USING INDEX idx_…" is the desired shape: an ordered walk of the
-// partial index, already sorted by the column the index is keyed on —
-// created_at, which is when a file arrived and the order the queue is served
-// in. The bad plan is a bare table scan plus a temporary sort.
+// The desired shape: an ordered walk of the partial index, already sorted
+// by created_at, the queue's serving order — not a scan plus a temp sort.
 function expectIndexServed(plan: string): void {
   expect(plan).toContain("SCAN items USING INDEX idx_items_enrichment_queue");
   expect(plan).not.toContain("TEMP B-TREE");

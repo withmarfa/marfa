@@ -2638,12 +2638,8 @@ export interface EnrichmentStateRecord extends EnrichmentStateInput {
  */
 export interface EnrichmentStore {
   /**
-   * File items needing extraction: `core.file` and every type under it by
-   * name or by declared parent, not trashed, with a `blob_ref`, and either
-   * never looked at, changed since (`blob_ref` differs), authored under an
-   * older extractor, failed with attempts to spare, or skipped under a
-   * different configuration than `configSignature`. Ordered oldest-created
-   * first; bounded by `limit`.
+   * File items needing extraction: `core.file` and its descendants, not
+   * trashed, with a `blob_ref`, unprocessed by `extractorVersion`/`configSignature`. Oldest-created first, bounded by `limit`.
    */
   listCandidates(
     extractorVersion: number,

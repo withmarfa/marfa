@@ -715,9 +715,8 @@ export function declaredDescendantsOutsideNamespace(rootId: string): string[] {
     try {
       if (isSubtypeOf(schema.id, rootId)) out.push(schema.id);
     } catch {
-      // A cyclic or excessive chain is not a known descendant of anything;
-      // the caller (e.g. the enrichment sweep) must not fail over one
-      // broken type while resolving every other one's membership.
+      // A cyclic or excessive chain isn't a known descendant of anything; a
+      // caller resolving every type's membership must not fail over one broken type.
     }
   }
   return out;
