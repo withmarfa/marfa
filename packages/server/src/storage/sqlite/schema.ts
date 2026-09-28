@@ -112,7 +112,8 @@ export const metadata = sqliteTable("metadata", {
 // Which rows a trash took with it through a cascading edge, so restoring
 // the row named brings them back and leaves alone a row trashed on its own.
 // A record goes when its row leaves the bin or is purged; a purge of the row
-// it names as `trashed_with` re-keys it first (`rehomeTrashRecords`).
+// it names as `trashed_with` re-keys it, or deletes it where it becomes its
+// own trash's root (`rehomeTrashRecords`).
 export const trash_cascades = sqliteTable(
   "trash_cascades",
   {

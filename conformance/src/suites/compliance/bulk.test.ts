@@ -618,9 +618,7 @@ describe("bulk_action", () => {
   });
 
   it("restores a row and what its trash took in one transition, counting each row once", async () => {
-    // A parent trashed with the child and grandchild its trash took, all
-    // three matched: the parent's restore brings the other two back before
-    // the job reaches them.
+    // Restoring the parent brings the other two back before the job reaches them.
     const tag = `ba-restore-${ctx.runId}`;
     const [grandchild, child, parent] = await seedTagged(3, tag);
     for (const [source_id, target_id] of [
