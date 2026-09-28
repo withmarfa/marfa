@@ -2406,7 +2406,7 @@ export interface components {
                 [key: string]: unknown;
             };
             tags?: string[];
-            /** @description A map from edge type to the target ids a new file takes: at most 100 edge types, each with at most 100 targets. */
+            /** @description A map from edge type to the item ids a new file takes an edge with: at most 100 edge types, each with at most 100 ids. Each edge runs from the new file to the item named, except `parent-of`, which runs from the item named to the new file, making the new file its child. */
             edges?: {
                 [key: string]: string[];
             };

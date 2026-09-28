@@ -11,18 +11,18 @@ pub struct Bound {
     pub path: String,
     pub item_id: String,
     /// Device, inode and birth time. Null where the filesystem gave none
-    /// (`folders.md` 12).
+    /// (`folders.md` 14).
     pub identity: Option<String>,
     pub content_hash: String,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
     /// where the last agreement was a scan's read. A pull removes only a
-    /// file it wrote (`folders.md` 26).
+    /// file it wrote (`folders.md` 29).
     pub written_hash: Option<String>,
     /// The item ids the links in those bytes named, as the folder last read
     /// or wrote them. Empty where the file named none.
     pub links: Vec<String>,
     /// The targets whose rendered link the person took out, for an edge the
-    /// folder keeps (`folders.md` 27). A pull renders no link for them.
+    /// folder keeps (`folders.md` 30). A pull renders no link for them.
     pub declined: Vec<String>,
     /// The newest version line an edit of this device's has spent, 0 where
     /// its file carried none; `None` where no edit went.
@@ -42,7 +42,7 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 /// A content hash no bytes have, for a save set aside in a conflicted copy
-/// against this device's own (`folders.md` 31): the file reads as changed,
+/// against this device's own (`folders.md` 34): the file reads as changed,
 /// and its next edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
@@ -57,7 +57,11 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
         .and_then(|version| version.parse().ok())
 }
 
+/// Binds a file, and pins its row so the copy keeps it whatever the search
+/// says of it (`device.md` 1, `folders.md` 29).
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
+    let before = bound_at(conn, &bound.path)?;
+    crate::store::pin(conn, &bound.item_id)?;
     conn.execute(
         "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, seen_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -82,11 +86,27 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
             now_iso()
         ],
     )?;
+    if let Some(before) = before {
+        unpin_if_unbound(conn, &before.item_id)?;
+    }
     Ok(())
 }
 
 pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    let before = bound_at(conn, path)?;
     conn.execute("DELETE FROM folder_files WHERE path = ?1", [path])?;
+    if let Some(before) = before {
+        unpin_if_unbound(conn, &before.item_id)?;
+    }
+    Ok(())
+}
+
+/// The row stays held until a catch-up or hydration lets it go, as any
+/// unpinned row outside the slice does (`device.md` 1).
+fn unpin_if_unbound(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    if bound_to_item(conn, item_id)?.is_none() {
+        crate::store::unpin(conn, item_id)?;
+    }
     Ok(())
 }
 

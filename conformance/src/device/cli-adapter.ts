@@ -635,13 +635,27 @@ export class CliDevice implements DeviceUnderTest {
   }
 }
 
-/** What `folders add` is given. */
-export interface FolderSlice {
-  types: string[];
-  tier?: Tier;
-  defaultType?: string;
-  defaults?: Record<string, unknown>;
-  tags?: string[];
+/** A `system.folder`'s settings, as the folder door takes them. */
+export interface FolderSettings {
+  title?: string;
+  search?: {
+    types?: string[];
+    tier?: Tier;
+    state?: Array<"active" | "archived">;
+    filter?: string;
+    beneath?: string;
+  };
+  defaults?: {
+    type?: string;
+    tier?: Tier;
+    properties?: Record<string, unknown>;
+    tags?: string[];
+    edges?: Record<string, string[]>;
+  };
+  include?: string[];
+  ignore?: string[];
+  first_placement?: Record<string, string>;
+  removal_threshold?: { files?: number; fraction?: number };
 }
 
 export interface ScanReport {
@@ -653,10 +667,10 @@ export interface ScanReport {
   deleted: number;
   skipped: number;
   /** Files bound to a row the copy lost, queued again because they changed
-   *  or moved (`folders.md` 30). Counted in `created` too. */
+   *  or moved (`folders.md` 33). Counted in `created` too. */
   requeued: number;
   /** Files bound to a row the copy lost and unchanged since, so nothing was
-   *  sent (`folders.md` 30). */
+   *  sent (`folders.md` 33). */
   lost: number;
 }
 
@@ -669,20 +683,38 @@ export interface PullReport {
   unwritten: number;
   collided: number;
   outside: number;
-  /** Files of items that left the slice, taken away (`folders.md` 26). */
+  /** Files of items trashed or out of the search's states, taken away
+   *  (`folders.md` 29). */
   removed: number;
   /** The same, left where they are because the person changed them. */
   kept: number;
-  /** File items whose bytes could not be had, so no file was written (`folders.md` 29). */
+  /** Files whose item the search no longer matches otherwise, left where
+   *  they are (`folders.md` 29). */
+  unmatched: number;
+  /** File items whose bytes could not be had, so no file was written (`folders.md` 32). */
   absent: number;
+  /** The settings file, rewritten where the settings moved on. */
+  settings: SettingsFileReport;
+}
+
+/** What became of the folder's settings file (`folders.md` 1). */
+export interface SettingsFileReport {
+  /** An edit of the file went through the folder door and landed. */
+  sent: boolean;
+  /** The file was written from the settings the copy holds. */
+  written: boolean;
+  /** Why the file's edit is not in force, where it is not. */
+  flagged: string | null;
 }
 
 export interface PushReport {
   /** The hydration a copy that could not answer took first, if it needed one. */
   hydrated: HydrateReport | null;
+  /** The person's edit of the settings file, sent before anything else. */
+  settings: SettingsFileReport;
   scan: ScanReport;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
-   *  the version the copy holds (`folders.md` 17). */
+   *  the version the copy holds (`folders.md` 19). */
   drain: DrainReport & { rebased: number };
   /** A catch-up from the copy's cursor, a hydration where the log had aged
    *  past it, or the reason the server could not be reached for either. */
@@ -724,15 +756,16 @@ export class CliFolder {
     });
   }
 
-  async add(slice: FolderSlice): Promise<Outcome<unknown>> {
-    const args = ["folders", "add", this.dir, "--types", slice.types.join(",")];
-    if (slice.tier !== undefined) args.push("--tier", slice.tier);
-    if (slice.defaultType !== undefined)
-      args.push("--default-type", slice.defaultType);
-    if (slice.defaults !== undefined)
-      args.push("--defaults", JSON.stringify(slice.defaults));
-    for (const tag of slice.tags ?? []) args.push("--tag", tag);
-    return this.run(args);
+  /** Binds the directory to the `system.folder` whose settings it follows. */
+  async add(folder: string): Promise<Outcome<unknown>> {
+    return this.run([
+      "folders",
+      "add",
+      this.dir,
+      "--folder",
+      folder,
+      ...this.server(),
+    ]);
   }
 
   async hydrate(): Promise<Outcome<HydrateReport>> {
@@ -784,6 +817,11 @@ export class CliFolder {
       url: this.options.url,
       key: this.options.key,
     }).hold(["folders", "watch", this.dir], "text");
+  }
+
+  /** A pull, printed for a person. */
+  async pullText(): Promise<Outcome<string>> {
+    return this.device().rootText(["folders", "pull", this.dir]);
   }
 
   /** A push, printed for a person. */

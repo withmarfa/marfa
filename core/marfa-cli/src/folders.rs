@@ -1,42 +1,30 @@
-//! Folders on this machine: a directory that holds a slice as files.
+//! Folders on this machine: a directory that holds what a search matches, as files.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Subcommand;
-use marfa_core::{CoreError, Folder, Slice};
+use marfa_core::{CoreError, Folder};
 
 use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
 use crate::error::CliError;
 use crate::output::{self, Printer};
 use crate::remote::{Named, Remote};
-use crate::values::{Tier, properties};
 use crate::watch;
 
 #[derive(Debug, Subcommand)]
 pub enum FoldersCommand {
-    /// Make a directory a folder: a view on a slice, with defaults.
+    /// Make a directory a folder that follows a `system.folder`'s settings,
+    /// which `folders create` makes. Needs read on `system.folder`.
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
-        /// The types this folder holds.
-        #[arg(long, value_delimiter = ',', required = true, value_name = "TYPE")]
-        types: Vec<String>,
-        /// The tier the folder's slice is held at.
-        #[arg(long, default_value = "library")]
-        tier: Tier,
-        /// What a new file becomes. The default is the first type named.
-        #[arg(long = "default-type", value_name = "TYPE")]
-        default_type: Option<String>,
-        /// Properties every new file gets, as a JSON object.
-        #[arg(long, value_name = "JSON", default_value = "{}")]
-        defaults: String,
-        /// A tag every item in this folder carries.
-        #[arg(long = "tag", value_name = "TAG")]
-        tags: Vec<String>,
+        /// The folder's `system.folder` id.
+        #[arg(long, value_name = "ID")]
+        folder: String,
     },
-    /// Pull the folder's slice into its working copy.
+    /// Pull what the folder's search needs into its working copy.
     Hydrate {
         /// The folder.
         dir: PathBuf,
@@ -46,7 +34,7 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
-    /// Write the slice out as files.
+    /// Write what the folder's search matches out as files.
     Pull {
         /// The folder.
         dir: PathBuf,
@@ -84,26 +72,22 @@ pub enum FoldersCommand {
 /// files.
 pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), CliError> {
     match command {
-        FoldersCommand::Add {
-            dir,
-            types,
-            tier,
-            default_type,
-            defaults,
-            tags,
-        } => {
-            let slice = Slice {
-                default_type: default_type
-                    .unwrap_or_else(|| types.first().cloned().unwrap_or_default()),
-                types,
-                tier: tier.into(),
-                defaults: properties(&defaults)?,
-                tags,
-            };
-            let folder = Folder::add(&dir, slice, None)?;
-            output::report(folder.slice(), json, || {
-                format!("{} is a folder", folder.root().display())
-            })
+        FoldersCommand::Add { dir, folder } => {
+            let folder = Folder::add(&dir, &folder, Some(named.server()?))?;
+            output::report(
+                &serde_json::json!({
+                    "dir": folder.root(),
+                    "folder": folder.folder_id(),
+                }),
+                json,
+                || {
+                    format!(
+                        "{} follows the folder {}",
+                        folder.root().display(),
+                        folder.folder_id()
+                    )
+                },
+            )
         }
         FoldersCommand::Hydrate { dir } => {
             let folder = Folder::open(&dir, Some(named.server()?))?;
@@ -131,6 +115,9 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Push { dir } => {
             let folder = Folder::open(&dir, Some(named.server()?))?;
             let hydrated = folder.resume()?;
+            // First, so the rest of the push works on the settings the person
+            // just wrote.
+            let settings = folder.send_settings_edit()?;
             let scanned = folder.scan()?;
             let drained = folder.drain()?;
             // A folder offline still writes out the copy it holds.
@@ -152,6 +139,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(
                 &serde_json::json!({
                     "hydrated": hydrated,
+                    "settings": settings,
                     "scan": scanned,
                     "drain": drained,
                     "catch_up": caught,
@@ -163,6 +151,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     if let Some(hydrated) = &hydrated {
                         lines.push(format!("hydrated {} item(s) first", hydrated.items));
                     }
+                    lines.extend(settings_line(&settings));
                     lines.push(describe_scan(&scanned));
                     lines.push(format!(
                         "sent {}, held {}",
@@ -207,17 +196,28 @@ fn send(
 }
 
 /// Said in words, because what these edits carried went over whatever
-/// changed since their file was written (`folders.md` 17).
+/// changed since their file was written (`folders.md` 19).
 pub fn rebased_line(rebased: usize) -> String {
     format!(
         "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
     )
 }
 
+/// What became of the settings file, where anything did.
+pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
+    match (&report.flagged, report.sent) {
+        (Some(reason), _) => Some(format!(
+            "the settings file is not in force, and the settings before it are: {reason}"
+        )),
+        (None, true) => Some("the settings file's edit went through the folder door".into()),
+        (None, false) => None,
+    }
+}
+
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 22, 24, 29), named only when there are
+/// get one on this pass (`folders.md` 24, 26, 32), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
@@ -251,9 +251,13 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     let departed: Vec<String> = [
         (
             report.removed,
-            "file(s) of items that left the slice removed",
+            "file(s) of items trashed or out of the search's states removed",
         ),
         (report.kept, "kept with the person's changes"),
+        (
+            report.unmatched,
+            "file(s) left in place whose item the search no longer matches",
+        ),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
@@ -262,6 +266,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     if !departed.is_empty() {
         line.push_str("; ");
         line.push_str(&departed.join(", "));
+    }
+    if let Some(settings) = settings_line(&report.settings) {
+        line.push('\n');
+        line.push_str(&settings);
     }
     line
 }

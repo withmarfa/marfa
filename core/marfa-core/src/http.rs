@@ -21,7 +21,8 @@ pub struct Http {
 }
 
 pub struct ItemsQuery<'a> {
-    pub r#type: &'a str,
+    /// `None` lists every type the key reads.
+    pub r#type: Option<&'a str>,
     pub tier: Tier,
     pub cursor: Option<&'a str>,
 }
@@ -227,13 +228,17 @@ impl Http {
         query: &ItemsQuery<'_>,
     ) -> Result<WirePage<WireItemWithMetadata>, CoreError> {
         let limit = PAGE_LIMIT.to_string();
-        let mut params: Vec<(&str, &str)> = vec![
-            ("type", query.r#type),
+        let mut params: Vec<(&str, &str)> = query
+            .r#type
+            .map(|declared| ("type", declared))
+            .into_iter()
+            .collect();
+        params.extend([
             ("tier", query.tier.as_str()),
             ("state", "any"),
             ("include", "edges,metadata"),
             ("limit", &limit),
-        ];
+        ]);
         if let Some(cursor) = query.cursor {
             params.push(("cursor", cursor));
         }

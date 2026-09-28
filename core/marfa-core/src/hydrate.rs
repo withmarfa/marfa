@@ -31,8 +31,13 @@ pub(crate) fn hydrate(
     types: &[String],
     tier: Tier,
     edge_types: &[String],
+    every_type: bool,
 ) -> Result<HydrateReport> {
-    let types = declared_types(types)?;
+    let types = if every_type && types.is_empty() {
+        vec![store::EVERY_TYPE.to_string()]
+    } else {
+        declared_types(types)?
+    };
     let edge_types = declared_edge_types(edge_types)?;
     {
         let conn = core.conn()?;
@@ -64,7 +69,11 @@ pub(crate) fn hydrate(
     };
 
     let mut pages = 0u64;
-    for declared in &types {
+    let listings: Vec<Option<&str>> = types
+        .iter()
+        .map(|declared| (declared != store::EVERY_TYPE).then_some(declared.as_str()))
+        .collect();
+    for declared in listings {
         let mut page_cursor: Option<String> = None;
         loop {
             let page = http.items_page(&ItemsQuery {

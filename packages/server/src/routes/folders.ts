@@ -80,7 +80,7 @@ const FolderDefaultsSchema = z
       .record(z.string(), z.array(z.string()).max(MAX_DEFAULT_EDGE_TARGETS))
       .optional()
       .describe(
-        `A map from edge type to the target ids a new file takes: at most ${String(MAX_DEFAULT_EDGE_TYPES)} edge types, each with at most ${String(MAX_DEFAULT_EDGE_TARGETS)} targets.`,
+        `A map from edge type to the item ids a new file takes an edge with: at most ${String(MAX_DEFAULT_EDGE_TYPES)} edge types, each with at most ${String(MAX_DEFAULT_EDGE_TARGETS)} ids. Each edge runs from the new file to the item named, except \`parent-of\`, which runs from the item named to the new file, making the new file its child.`,
       ),
   })
   .openapi("FolderDefaults");

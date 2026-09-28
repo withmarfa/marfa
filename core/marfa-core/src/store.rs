@@ -267,8 +267,13 @@ pub fn slice_holds(
     ))
 }
 
+/// A folder's slice of every type the key reads (`folders.md` 2), which a
+/// hydration declares no other way.
+pub const EVERY_TYPE: &str = "*";
+
 /// Whether a slice of `types` at `tier` takes a row: one of its types, with
-/// the subtree, at its tier.
+/// the subtree, at its tier. `EVERY_TYPE` is what a bare listing answers,
+/// which leaves `system.*` out.
 pub fn slice_takes(
     catalog: &crate::catalog::Catalog,
     types: &[String],
@@ -277,9 +282,13 @@ pub fn slice_takes(
     row_tier: Option<Tier>,
 ) -> bool {
     row_tier == Some(tier)
-        && types
-            .iter()
-            .any(|declared| catalog.matches(declared, row_type))
+        && types.iter().any(|declared| {
+            if declared == EVERY_TYPE {
+                !row_type.starts_with("system.")
+            } else {
+                catalog.matches(declared, row_type)
+            }
+        })
 }
 
 /// The slice a hydration declared: its types and its tier, or nothing where
@@ -1127,7 +1136,7 @@ pub fn land_on_held_row(
 /// was set aside in a conflicted copy against this device's own earlier one
 /// (`queue-and-verdicts.md` 42), so what the file holds reached no row. The
 /// pull then leaves the file as it is, and the next scan sends it as an edit
-/// based on that version (`folders.md` 31). Where a later update is queued,
+/// based on that version (`folders.md` 34). Where a later update is queued,
 /// the file holds that one's bytes, and it is left to its own answer.
 pub fn untake_latest_save(
     conn: &Connection,

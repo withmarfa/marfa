@@ -25,7 +25,7 @@ pub struct Document {
 const FENCE: &str = "---";
 
 /// The frontmatter a file opens with, and the body after it (`folders.md`
-/// 6). Any condition that fails makes the whole text a body, never a refusal
+/// 8). Any condition that fails makes the whole text a body, never a refusal
 /// or a half-reading, so nothing is lost in either direction.
 fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
     // The opening fence is its own line: `----` is a horizontal rule and
@@ -118,8 +118,36 @@ pub fn write(properties: &Map<String, Value>) -> Result<String, CoreError> {
     Ok(format!("{FENCE}\n{rendered}\n{FENCE}\n{body}"))
 }
 
+/// A whole YAML document that is one map, as a folder's settings file
+/// holds it; the reason where it is not one.
+pub fn read_map(text: &str) -> Result<Map<String, Value>, String> {
+    let documents = YamlLoader::load_from_str(text).map_err(|error| error.to_string())?;
+    let Some(Yaml::Hash(hash)) = documents.first() else {
+        return Err("it is not one map of settings".into());
+    };
+    let mut map = Map::new();
+    for (key, value) in hash {
+        let key = key
+            .as_str()
+            .ok_or_else(|| format!("a key that is not text: {key:?}"))?;
+        let value =
+            from_yaml(value).ok_or_else(|| format!("{key} holds an alias or a bad value"))?;
+        map.insert(key.to_string(), value);
+    }
+    Ok(map)
+}
+
+/// A map written as one YAML document, the inverse of `read_map`.
+pub fn write_map(map: &Map<String, Value>) -> Result<String, CoreError> {
+    let mut rendered = String::new();
+    YamlEmitter::new(&mut rendered)
+        .dump(&to_yaml(&Value::Object(map.clone())))
+        .map_err(|error| CoreError::Invalid(format!("these settings will not render: {error}")))?;
+    Ok(format!("{}\n", rendered.trim_start_matches("---\n")))
+}
+
 /// A YAML value as an item's property. `None` where it cannot be carried as
-/// it is, which makes the whole file a body (`folders.md` 5).
+/// it is, which makes the whole file a body (`folders.md` 7).
 fn from_yaml(value: &Yaml) -> Option<Value> {
     Some(match value {
         Yaml::Real(text) => match text.parse::<f64>() {
@@ -227,7 +255,7 @@ mod tests {
         assert_eq!(body_of(&document), "The body.\n");
     }
 
-    /// Each opens as frontmatter does and is not frontmatter (`folders.md` 6).
+    /// Each opens as frontmatter does and is not frontmatter (`folders.md` 8).
     #[test]
     fn a_body_that_opens_with_a_horizontal_rule_is_a_body() {
         let cases = [
@@ -341,6 +369,25 @@ mod tests {
         let empty = read("---\n---\nbody\n");
         assert_eq!(body_of(&empty), "body\n");
         assert_eq!(empty.properties.len(), 1);
+    }
+
+    #[test]
+    fn a_settings_map_written_reads_back_the_same() {
+        let settings = serde_json::json!({
+            "folder": "f1",
+            "version": 3,
+            "search": { "types": ["core.note"], "filter": "tags contains \"a\"", "state": ["active"] },
+            "defaults": { "properties": { "n": 1.5, "flag": true }, "edges": { "parent-of": ["p"] } },
+            "include": ["*.md", "notes/**"],
+            "first_placement": {},
+        });
+        let Value::Object(map) = settings else {
+            unreachable!()
+        };
+        let text = write_map(&map).unwrap();
+        assert_eq!(read_map(&text).unwrap(), map, "{text}");
+        assert!(read_map("search: [open\n").is_err());
+        assert!(read_map("- a list\n").is_err());
     }
 
     #[test]

@@ -37,7 +37,9 @@ pub use blob::{file_type_for, mime_type_for};
 pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
-pub use folder::{Drained, Folder, PullReport, ScanReport, Slice};
+pub use folder::{
+    Drained, FOLDER_TYPE, Folder, PullReport, ScanReport, Settings, SettingsFileReport,
+};
 pub use lock::Handle;
 pub use model::{
     Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit,
@@ -195,7 +197,20 @@ impl Core {
         // any other (`device.md` 26).
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
-        hydrate::hydrate(self, self.http()?, types, tier, edge_types)
+        hydrate::hydrate(self, self.http()?, types, tier, edge_types, false)
+    }
+
+    /// A folder's hydration, where no types is every type the key reads
+    /// (`folders.md` 2), held as `store::EVERY_TYPE`.
+    pub(crate) fn hydrate_every_type_or(
+        &self,
+        types: &[String],
+        tier: Tier,
+        edge_types: &[String],
+    ) -> Result<HydrateReport> {
+        self.lock.refuse_unless_writer()?;
+        let _streaming = self.claim_stream()?;
+        hydrate::hydrate(self, self.http()?, types, tier, edge_types, true)
     }
 
     /// Holds `id` whatever the slice says of it (`device.md` 1), read now; one
@@ -1995,7 +2010,7 @@ mod tests {
                     .update_file_item("x", Path::new("no-such-file.png"), &edit, Based::OnHeld)
                     .unwrap_err(),
             ),
-            // The three that write the copy from the server's side. Each is
+            // The four that write the copy from the server's side. Each is
             // refused at the handle before it reaches the missing server.
             (
                 "hydrate",
@@ -2007,6 +2022,12 @@ mod tests {
                 "hydrate_with",
                 reader
                     .hydrate_with(&["core.note".into()], Tier::Library, &["parent-of".into()])
+                    .unwrap_err(),
+            ),
+            (
+                "hydrate_every_type_or",
+                reader
+                    .hydrate_every_type_or(&[], Tier::Library, &[])
                     .unwrap_err(),
             ),
             ("catch_up", reader.catch_up().unwrap_err()),
@@ -2035,7 +2056,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            29,
+            30,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -2064,6 +2085,7 @@ mod tests {
             (include_str!("folder/mod.rs"), others),
             (include_str!("folder/document.rs"), others),
             (include_str!("folder/identity.rs"), others),
+            (include_str!("folder/settings.rs"), others),
             (include_str!("folder/state.rs"), others),
             (
                 include_str!("lib.rs"),
