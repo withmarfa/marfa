@@ -4,6 +4,7 @@ import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   getTypeFilter,
+  mayReadEdgeTarget,
   requireAuth,
   requireEdgePermission,
   requireTypeAccess,
@@ -178,7 +179,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
+    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -556,12 +557,17 @@ export function edgeRoutes(storage: Storage) {
     let edge: Edge;
     try {
       edge = await storage.runInTransaction(async () => {
-        await assertEdgeCanBeCreated(storage.edges, storage.items, {
-          source_id: body.source_id,
-          target_id: body.target_id,
-          edge_type: body.edge_type,
-          properties: body.properties,
-        });
+        await assertEdgeCanBeCreated(
+          storage.edges,
+          storage.items,
+          {
+            source_id: body.source_id,
+            target_id: body.target_id,
+            edge_type: body.edge_type,
+            properties: body.properties,
+          },
+          mayReadEdgeTarget(c),
+        );
         return storage.edges.createRaw({
           id: body.id,
           source_id: body.source_id,

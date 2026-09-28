@@ -819,6 +819,9 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                   >,
                 },
               ],
+              // A restore replays every row the archive holds, so no target
+              // is one to withhold; the operator's own map reaches no type.
+              () => true,
               { replay: true },
             );
           } catch (err) {

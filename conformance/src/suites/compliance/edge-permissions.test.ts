@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type { ApiResponse, TestContext } from "../../client/types.js";
 import {
   createTestContext,
   trackItem,
@@ -9,7 +9,12 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createBookmark, createNote } from "../../generators/items.js";
+import {
+  createBookmark,
+  createNote,
+  createTask,
+  generateId,
+} from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -1030,4 +1035,148 @@ describe("the doors under an item answer only what the credential may read", () 
     ).toBe(403);
     expect(searchRefused.error?.error.code).toBe("edge_permission_denied");
   });
+});
+
+describe("an edge write says nothing of a target the credential cannot read", () => {
+  let writer: MarfaClient;
+  let source: string;
+  let unreadable: string;
+  let readable: string;
+
+  beforeAll(async () => {
+    const key = await makeKey("target-blind", {
+      type_permissions: { "core.note": "write", "core.task": "read" },
+      edge_permissions: { "*": "write" },
+    });
+    writer = new MarfaClient({ baseUrl: apiUrl, apiKey: key.key });
+    source = await scopedItem(writer, "target-blind-source");
+
+    const bookmark = await client.createItem(
+      createBookmark({ source: ctx.source }),
+    );
+    expect(bookmark.ok).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    unreadable = bookmark.data.item.id;
+    const task = await client.createItem(createTask({ source: ctx.source }));
+    expect(task.ok).toBe(true);
+    trackItem(ctx, task.data.item.id);
+    readable = task.data.item.id;
+  });
+
+  /** Every door that writes an edge, each naming one target. */
+  const doors: {
+    name: string;
+    write: (edgeType: string, target: string) => Promise<ApiResponse<unknown>>;
+  }[] = [
+    {
+      name: "POST /edges",
+      write: (edgeType, target) =>
+        writer.createEdge({
+          source_id: source,
+          target_id: target,
+          edge_type: edgeType,
+        }),
+    },
+    {
+      name: "POST /edges/bulk (atomic)",
+      write: (edgeType, target) =>
+        writer.bulkEdges({
+          edges: [
+            { source_id: source, target_id: target, edge_type: edgeType },
+          ],
+        }),
+    },
+    {
+      name: "POST /edges/bulk (not atomic)",
+      write: (edgeType, target) =>
+        writer.bulkEdges({
+          atomic: false,
+          edges: [
+            { source_id: source, target_id: target, edge_type: edgeType },
+          ],
+        }),
+    },
+    {
+      name: "POST /items with edges",
+      write: (edgeType, target) =>
+        writer.createItem(
+          createNote({
+            properties: { body: "inline edge" },
+            edges: { [edgeType]: [target] },
+          }),
+        ),
+    },
+    {
+      name: "PATCH /items/{id} with edges",
+      write: async (edgeType, target) => {
+        const current = await writer.getItem(source);
+        return writer.updateItem(source, {
+          version: current.data.item.version,
+          edges: { [edgeType]: [target] },
+        });
+      },
+    },
+    {
+      name: "POST /items/bulk with edges",
+      write: (edgeType, target) =>
+        writer.bulkItems([
+          {
+            type: "core.note",
+            properties: { body: "inline edge in bulk" },
+            edges: { [edgeType]: [target] },
+          },
+        ]),
+    },
+  ];
+
+  /** Hands whatever an accepted write created to the cleanup. */
+  function track(r: ApiResponse<unknown>, door: string): void {
+    const data = r.data as {
+      item?: { id: string };
+      edge?: { id: string };
+      results?: { id?: string }[];
+    };
+    if (data.item) trackItem(ctx, data.item.id);
+    if (data.edge) trackEdge(ctx, data.edge.id);
+    for (const { id } of data.results ?? []) {
+      if (id === undefined) continue;
+      if (door.startsWith("POST /edges")) trackEdge(ctx, id);
+      else trackItem(ctx, id);
+    }
+  }
+
+  /** The whole answer, with the target's id the only thing taken out. */
+  function answer(r: ApiResponse<unknown>, target: string): string {
+    return JSON.stringify({ status: r.status, body: r.error ?? r.data })
+      .split(target)
+      .join("<target>");
+  }
+
+  it.each(doors)(
+    "$name answers an unreadable target as a missing one, whatever its type",
+    async (door) => {
+      // The witnesses: a readable target is written, and a readable target
+      // of the wrong type meets the constraint, so both answers exist.
+      const accepted = await door.write("about", readable);
+      expect(accepted.status, answer(accepted, readable)).toBeLessThan(300);
+      track(accepted, door.name);
+      const wrongType = await door.write("in-collection", readable);
+      expect(answer(wrongType, readable)).toContain(
+        "edge_constraint_violation",
+      );
+
+      const missing = generateId();
+      const expected = answer(await door.write("about", missing), missing);
+      expect(expected).toContain("item_not_found");
+      expect(answer(await door.write("in-collection", missing), missing)).toBe(
+        expected,
+      );
+      expect(answer(await door.write("about", unreadable), unreadable)).toBe(
+        expected,
+      );
+      expect(
+        answer(await door.write("in-collection", unreadable), unreadable),
+      ).toBe(expected);
+    },
+  );
 });

@@ -52,6 +52,7 @@ import {
   requireTypeAccess,
   requireResolvedRowWrite,
   mayReadResolvedRow,
+  mayReadEdgeTarget,
   requireEdgePermission,
   mayWriteReserved,
   requireDeclaredTypeMatches,
@@ -550,6 +551,8 @@ async function processBulkItem(
      * is a delete instruction.
      */
     checkEdgeWrite: (edgeType: string) => void;
+    /** Whether the credential may read an inline edge's target type. */
+    mayReadTarget: (type: string) => boolean;
     /**
      * Where this item's inline-edge changes go, for the caller to
      * announce once its transaction has committed. A callback rather
@@ -589,6 +592,7 @@ async function processBulkItem(
     checkUpdate,
     mayRead,
     checkEdgeWrite,
+    mayReadTarget,
     recordEdgeChanges,
   } = options;
 
@@ -607,9 +611,21 @@ async function processBulkItem(
     // would describe edges a later item's failure then rolls back.
     recordEdgeChanges(
       atomic
-        ? await applyInlineEdges(storage, id, edgeSet, checkEdgeWrite)
+        ? await applyInlineEdges(
+            storage,
+            id,
+            edgeSet,
+            checkEdgeWrite,
+            mayReadTarget,
+          )
         : await storage.runInTransaction(() =>
-            applyInlineEdges(storage, id, edgeSet, checkEdgeWrite),
+            applyInlineEdges(
+              storage,
+              id,
+              edgeSet,
+              checkEdgeWrite,
+              mayReadTarget,
+            ),
           ),
     );
   };
@@ -1253,6 +1269,7 @@ export function bulkRoutes(storage: Storage) {
           checkUpdate,
           mayRead: (existing) => mayReadResolvedRow(c, existing),
           checkEdgeWrite,
+          mayReadTarget: mayReadEdgeTarget(c),
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
           enforcement,
         });

@@ -790,6 +790,17 @@ export function mayReadResolvedRow(
 }
 
 /**
+ * Whether the credential may read an edge target of this type. An edge write
+ * answers a target it may not read exactly as a missing one.
+ */
+export function mayReadEdgeTarget(
+  c: Context<AppEnv>,
+): (type: string) => boolean {
+  const key = checkAuth(c.get("apiKey"));
+  return (type) => mayReadType(key, type);
+}
+
+/**
  * The `source` an item written by this credential is keyed by and stamped
  * with, given the one the write names.
  *

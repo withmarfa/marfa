@@ -31,6 +31,7 @@ import { BulkResponseSchema } from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  mayReadEdgeTarget,
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
@@ -83,7 +84,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Bulk upsert edges",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.",
+    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -194,9 +195,11 @@ async function processBulkEdge(
      * atomic rollback.
      */
     checkEdgeWrite: (sourceType: string | null, edgeType: string) => void;
+    /** Whether the credential may read a target of this type. */
+    mayReadTarget: (type: string) => boolean;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
-  const { mode, existingByTriple, checkEdgeWrite } = options;
+  const { mode, existingByTriple, checkEdgeWrite, mayReadTarget } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -372,12 +375,17 @@ async function processBulkEdge(
   }
 
   try {
-    await assertEdgeCanBeCreated(storage.edges, storage.items, {
-      source_id: raw.source_id,
-      target_id: raw.target_id,
-      edge_type: raw.edge_type,
-      properties: raw.properties,
-    });
+    await assertEdgeCanBeCreated(
+      storage.edges,
+      storage.items,
+      {
+        source_id: raw.source_id,
+        target_id: raw.target_id,
+        edge_type: raw.edge_type,
+        properties: raw.properties,
+      },
+      mayReadTarget,
+    );
     const createInput = {
       source_id: raw.source_id,
       target_id: raw.target_id,
@@ -532,6 +540,7 @@ export function edgesBulkRoutes(storage: Storage) {
             mode,
             existingByTriple,
             checkEdgeWrite,
+            mayReadTarget: mayReadEdgeTarget(c),
           },
         );
         if (atomic && result.outcome === "errored") {

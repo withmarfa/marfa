@@ -433,7 +433,7 @@ export interface paths {
         put?: never;
         /**
          * Create an edge
-         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.
+         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -481,7 +481,7 @@ export interface paths {
         put?: never;
         /**
          * Bulk upsert edges
-         * @description Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type.
+         * @description Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
          */
         post: operations["bulkUpsertEdges"];
         delete?: never;
@@ -1544,6 +1544,16 @@ export interface components {
                 };
             };
         };
+        EdgeTypeNotFoundOrItemNotFoundRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "edge_type_not_found" | "item_not_found";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         ItemVersionConflict: {
             error: components["schemas"]["VersionConflictError"];
             current: components["schemas"]["ConflictSnapshot"];
@@ -1677,16 +1687,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "invalid_properties" | "missing_required_field" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        EdgeTypeNotFoundOrItemNotFoundRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "edge_type_not_found" | "item_not_found";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -3161,6 +3161,22 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
+                };
+            };
+            /** @description An inline edge names an edge type that does not exist, or a target that does not exist or whose type the caller may not read; the two targets answer alike. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EdgeTypeNotFoundOrItemNotFoundRefusal"];
                 };
             };
             /** @description `id_reused`: the `id` this request minted is taken by an item it is not describing, and `details.differs` names what disagrees. `POST /edges` answers the same code for an id naming a different triple. `type_mismatch`: the request resolved an existing item by the `(source, source_id)` natural key and declared a type that row is not — the id was never in question, the declaration was. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item this caller cannot read, so the server cannot tell it is a repeat of this caller's own create and will not overwrite it blind. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and its `source_id` resolved a live row: that upsert is conditional and answers exactly what the update door answers. A repeated `id` is acknowledged rather than written, so it has no precondition to fail. */

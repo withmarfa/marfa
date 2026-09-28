@@ -120,7 +120,8 @@ export interface EdgeProposal {
  * Enforces edge-creation invariants across a batch of proposed edges:
  *
  * 1. Edge type exists (core or custom registry).
- * 2. Source and target items both exist.
+ * 2. Source and target items both exist, and the caller may read the
+ *    target's type: one it may not is answered as missing.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
@@ -142,6 +143,7 @@ export async function assertEdgesCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   proposals: EdgeProposal[],
+  mayReadTarget: (type: string) => boolean,
   opts: { replay?: boolean } = {},
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
@@ -182,7 +184,9 @@ export async function assertEdgesCanBeCreated(
         `Edge source item not found: ${p.source_id}`,
       );
     }
-    if (!target) {
+    // Before every check that reads the target, so a caller cannot tell a
+    // row it may not read from no row, nor learn the type of one.
+    if (!target || !mayReadTarget(target.type)) {
       throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
         `Edge target item not found: ${p.target_id}`,
@@ -434,8 +438,14 @@ export async function assertEdgeCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   input: EdgeProposal,
+  mayReadTarget: (type: string) => boolean,
 ): Promise<EdgeTypeSchema> {
-  const schemas = await assertEdgesCanBeCreated(edgeStore, itemStore, [input]);
+  const schemas = await assertEdgesCanBeCreated(
+    edgeStore,
+    itemStore,
+    [input],
+    mayReadTarget,
+  );
   const [only] = schemas;
   if (!only) {
     throw new Error(
