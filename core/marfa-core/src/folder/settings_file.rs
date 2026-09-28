@@ -196,7 +196,7 @@ impl Folder {
             return self.flag(
                 &text,
                 format!(
-                    "the file no longer names {gone}; the folder door replaces a setting and never removes one, so write it an empty value instead"
+                    "the file no longer names {gone}; the folder door replaces a setting and never removes one, so write it empty instead, as `[]` for a list or `{{}}` for a map"
                 ),
             );
         }
@@ -255,6 +255,14 @@ impl Folder {
         if !answer.is_success() {
             let refused =
                 crate::http::refusal(answer.status, &answer.body, answer.retry_after_seconds);
+            // Only the door's own answers about this edit are a refusal; a
+            // failing server, a rate limit or a spent key is tried again.
+            if !matches!(answer.status, 400 | 403 | 404 | 409 | 422) {
+                return Ok(SettingsFileReport {
+                    flagged: Some(format!("not sent yet: {refused}")),
+                    ..Default::default()
+                });
+            }
             let back = if answer.status == 409 {
                 "; delete the file to take back the settings in force, then edit it again"
             } else {

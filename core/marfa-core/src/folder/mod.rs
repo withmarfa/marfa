@@ -586,12 +586,11 @@ impl Folder {
             {
                 continue;
             }
-            // A file item's file is its bytes, never a document naming it.
-            if self
-                .core
-                .get(id)?
-                .is_some_and(|item| bytes_of(&item, catalog).is_none())
-            {
+            // A file item's file is its bytes, never a document naming it, and
+            // no `system.*` row is a file's item.
+            if self.core.get(id)?.is_some_and(|item| {
+                bytes_of(&item, catalog).is_none() && !item.r#type.starts_with("system.")
+            }) {
                 contests.entry(id).or_default().push(at);
             }
         }
@@ -1199,12 +1198,37 @@ impl Folder {
         // Paths already taken in this pass: two items resolving to one would
         // have the second steal the first's file.
         let mut taken: HashSet<String> = HashSet::new();
-        for item in &items {
-            if !members.contains(&item.id) {
-                if item.r#type != FOLDER_TYPE {
-                    report.skipped += 1;
-                }
-                continue;
+        let bound_items: HashSet<String> = {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+                .into_iter()
+                .map(|bound| bound.item_id)
+                .collect()
+        };
+        let mut work: Vec<(Item, bool)> = Vec::new();
+        for item in items {
+            if members.contains(&item.id) {
+                work.push((item, false));
+            } else if !bound_items.contains(&item.id) && item.r#type != FOLDER_TYPE {
+                report.skipped += 1;
+            }
+        }
+        // A bound file whose item left the search, but not by state or the
+        // bin, is kept current as a member's is and flagged; it never gets a
+        // new file (`folders.md` 29).
+        let outside: Vec<String> = bound_items
+            .into_iter()
+            .filter(|id| !members.contains(id))
+            .collect();
+        let held = crate::store::items_by_ids(&*self.core.conn()?, &outside)?;
+        work.extend(
+            held.into_iter()
+                .filter(|item| settings.holds_state(item.state))
+                .map(|item| (item, true)),
+        );
+        for (item, unmatched) in &work {
+            if *unmatched {
+                report.unmatched += 1;
             }
             // This device's own create, not yet landed: the id goes back
             // only once it has (`folders.md` 10).
@@ -1481,7 +1505,6 @@ impl Folder {
                 continue;
             };
             if settings.holds_state(item.state) {
-                report.unmatched += 1;
                 continue;
             }
             let path = self.root.join(&row.path);
