@@ -12099,6 +12099,19 @@ describe("what a pull does with a file whose item stops matching", () => {
       pulled.value.removed,
       "the pull counted as removed files the person had already deleted, and cleared their journaled deletes",
     ).toBe(0);
+    expect(pulled.value.kept).toBe(0);
+    const waiting = await harness.folder.status();
+    expect(waiting.ok).toBe(true);
+    if (!waiting.ok) return;
+    const waits = Object.fromEntries(
+      waiting.value.files.map((file) => [file.path, file.waits]),
+    );
+    // The witness: the archived item's file does wait on its delete.
+    expect(waits["archived.md"]).toEqual(["delete"]);
+    expect(
+      waits["trashed.md"],
+      "the status said a delete waits for a file whose item is already in the bin, and none will be sent",
+    ).not.toContain("delete");
 
     await new Promise((resolve) => setTimeout(resolve, 6_000));
     const swept = await harness.folder.scan();
@@ -12128,6 +12141,120 @@ describe("what a pull does with a file whose item stops matching", () => {
       status.value.files.map((file) => file.path),
       "a journaled file whose item is already in the bin kept its binding",
     ).toEqual([]);
+  });
+
+  it("writes a deleted file back when another device changes its item inside the grace, and sends no delete", async () => {
+    const item = {
+      id: "01a00000-0000-7000-8000-0000000000d4",
+      properties: { title: "changed", body: "body\n" },
+    };
+    harness = await folderHarness("folder-journaled-revived", {
+      rows: { "core.note": [{ item }] },
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              ...item,
+              version: 2,
+              properties: { ...item.properties, body: "their edit\n" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    rmSync(join(harness.dir, "changed.md"));
+    const journaled = await harness.folder.scan();
+    expect(journaled.ok && journaled.value.missing).toBe(1);
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok && pulled.value.revived).toBe(1);
+    expect(read(harness, "changed.md")).toContain("their edit");
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    const swept = await harness.folder.scan();
+    expect(swept.ok && swept.value.deleted).toBe(0);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((row) => row.kind === "delete_item"),
+      "a delete was sent for an item changed elsewhere after the person deleted its file",
+    ).toEqual([]);
+  });
+
+  it("takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete", async () => {
+    harness = await folderHarness("folder-put-back-departed", {
+      settings: { search: { types: ["core.note"], state: ["active"] } },
+      rows: { "core.note": [{ item: departed }] },
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.state_changed",
+            wireItem({ ...departed, state: "archived" }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const bytes = read(harness, "going.md");
+    rmSync(join(harness.dir, "going.md"));
+    const journaled = await harness.folder.scan();
+    expect(journaled.ok && journaled.value.missing).toBe(1);
+    // The person puts the same bytes back, and the item is archived elsewhere.
+    put(harness, "going.md", bytes);
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const pulled = await harness.folder.pull();
+    // The witness: the pull took the file away as the departed item's.
+    expect(pulled.ok && pulled.value.removed).toBe(1);
+    expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((row) => row.kind === "delete_item"),
+      "the journal row of a file the person had put back outlived the pull that took the file away, and became a delete",
+    ).toEqual([]);
+  });
+
+  it("holds the file of an item that leaves by state where it cannot be read, and does not call it kept", async () => {
+    harness = await folderHarness("folder-departed-unreadable", {
+      settings: { search: { types: ["core.note"], state: ["active"] } },
+      rows: { "core.note": [{ item: departed }] },
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.state_changed",
+            wireItem({ ...departed, state: "archived" }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const path = join(harness.dir, "going.md");
+    chmodSync(path, 0o000);
+    try {
+      expect((await harness.folder.device().catchUp()).ok).toBe(true);
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok).toBe(true);
+      if (!pulled.ok) return;
+      // The witness: the file is held, not taken away.
+      expect(pulled.value.removed).toBe(0);
+      expect(existsSync(path)).toBe(true);
+      expect(
+        [pulled.value.kept, pulled.value.unwritten],
+        "a file the pull could not read was reported as kept with the person's changes",
+      ).toEqual([0, 1]);
+    } finally {
+      chmodSync(path, 0o644);
+    }
   });
 
   it("keeps an unmatched file current, so its second edit keeps another device's change", async () => {
@@ -14899,6 +15026,58 @@ describe("large removals, status and size", () => {
     ).toHaveLength(6);
     const status = await harness.folder.status();
     expect(status.ok && status.value.paused).toEqual({ disk: 0, pull: 3 });
+  });
+
+  it("lets a paused file whose item left by state go when the removal is put back, rather than journaling it again", async () => {
+    const rows = [0, 1, 2, 3, 4, 5].map(noteRow);
+    harness = await folderHarness("folder-removal-restore-departed", {
+      rows: { "core.note": rows },
+      events: [
+        replay("2", [
+          itemEvent(
+            "2",
+            "item.state_changed",
+            wireItem({ ...rows[0]!.item, state: "archived" }),
+          ),
+        ]),
+      ],
+      settings: { ...tight, search: { ...tight.search, state: ["active"] } },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    for (let n = 0; n < 3; n += 1) {
+      rmSync(join(harness.dir, `Note ${String(n)}.md`));
+    }
+    const paused = await harness.folder.scan();
+    expect(paused.ok && paused.value.paused).toBe(3);
+    // Another device archives one of the three, which the search leaves out.
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+    const restored = await harness.folder.restore();
+    expect(restored.ok, JSON.stringify(restored)).toBe(true);
+    if (!restored.ok) return;
+    // The witness: the two the search still holds are written back.
+    for (const n of [1, 2]) {
+      expect(existsSync(join(harness.dir, `Note ${String(n)}.md`))).toBe(true);
+    }
+    expect(
+      restored.value.put_back,
+      "restore counted as put back a file no pull will write, since the search no longer holds its item's state",
+    ).toBe(2);
+    expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+
+    await grace();
+    const later = await harness.folder.scan();
+    expect(later.ok).toBe(true);
+    if (!later.ok) return;
+    expect(
+      [later.value.missing, later.value.paused, later.value.deleted],
+      "the file restore put back was journaled again at the next scan",
+    ).toEqual([0, 0, 0]);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((row) => row.kind === "delete_item"),
+    ).toEqual([]);
   });
 
   it("warns of a text near the limit", async () => {

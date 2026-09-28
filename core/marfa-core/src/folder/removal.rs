@@ -109,16 +109,26 @@ impl Folder {
         for path in &disk {
             let conn = self.core.conn()?;
             state::journal_clear(&conn, path)?;
-            if let Some(bound) = state::bound_at(&conn, path)? {
-                state::bind(
-                    &conn,
-                    &state::Bound {
-                        content_hash: PUT_BACK.into(),
-                        ..bound
-                    },
-                )?;
-                put_back += 1;
+            let Some(bound) = state::bound_at(&conn, path)? else {
+                continue;
+            };
+            // No pull writes back an item the search's states no longer hold, so
+            // bound it would be journaled again (`folders.md` 46).
+            let held = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))?
+                .pop()
+                .is_some_and(|item| settings.holds_state(item.state));
+            if !held {
+                state::unbind(&conn, path)?;
+                continue;
             }
+            state::bind(
+                &conn,
+                &state::Bound {
+                    content_hash: PUT_BACK.into(),
+                    ..bound
+                },
+            )?;
+            put_back += 1;
         }
         let mut restored = 0;
         for path in &pull {

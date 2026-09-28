@@ -1566,7 +1566,7 @@ impl Folder {
         peers: &Peers<'_>,
         members: &OnceCell<HashSet<String>>,
     ) -> Result<Missing> {
-        // A row already gone is the one excuse; anything else the store
+        // Only a row gone or in the bin sends nothing; anything else the store
         // says is an error, not a reason to skip the delete.
         let (held, bound) = {
             let conn = self.core.conn()?;
@@ -3126,6 +3126,7 @@ impl Folder {
             match self.departing(&row, members, settings, lists)? {
                 Departing::No => {}
                 Departing::Kept => report.kept += 1,
+                Departing::Unread => report.unwritten += 1,
                 Departing::Yes => going.push(row),
             }
         }
@@ -3146,7 +3147,8 @@ impl Folder {
     }
 
     /// Whether a bound file goes because its item left by state or was
-    /// trashed (`folders.md` 35), or is kept because the person changed it.
+    /// trashed (`folders.md` 35): kept where the person changed it, left to
+    /// the scan where it is gone, and unread where it cannot be read.
     fn departing(
         &self,
         row: &state::Bound,
@@ -3178,13 +3180,12 @@ impl Folder {
             // journals it and sends it (`folders.md` 21).
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Departing::No,
             // Bytes it cannot read are not shown to be the folder's own.
-            Err(_) => Departing::Kept,
+            Err(_) => Departing::Unread,
         })
     }
 
-    /// Takes a departed item's file away with its binding; nothing is
-    /// journaled, since the folder was not told of a delete. A journal row
-    /// here is a file back since its scan, so it asks nothing now.
+    /// Takes a departed item's file away with its binding. A journal row here
+    /// is a file put back since its scan, so it asks for nothing now.
     fn take_away(&self, row: &state::Bound) -> Result<()> {
         let path = self.root.join(&row.path);
         if path.exists() && plainly_inside(&self.root, &row.path) {
@@ -3642,6 +3643,7 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
 enum Departing {
     No,
     Kept,
+    Unread,
     Yes,
 }
 
