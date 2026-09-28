@@ -30,8 +30,30 @@ pub fn held(item: &Item) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether the volume `dir` is on keeps a file's permission: one that keeps
+/// none, such as exFAT, shows every file as one its owner may run.
+#[cfg(unix)]
+pub fn kept(dir: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let probe = dir.join(".permission-probe");
+    let keeps = std::fs::write(&probe, b"")
+        .and_then(|()| std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o644)))
+        .and_then(|()| std::fs::symlink_metadata(&probe))
+        .is_ok_and(|metadata| !of(&metadata))
+        && std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755))
+            .and_then(|()| std::fs::symlink_metadata(&probe))
+            .is_ok_and(|metadata| of(&metadata));
+    let _ = std::fs::remove_file(&probe);
+    keeps
+}
+
+#[cfg(not(unix))]
+pub fn kept(_dir: &Path) -> bool {
+    false
+}
+
 /// Gives the file the permission, adding execute where each read bit is set,
-/// as `chmod +x` does, or taking all three away.
+/// or taking all three away.
 #[cfg(unix)]
 pub fn set(path: &Path, executable: bool) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
@@ -70,6 +92,13 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(start)).unwrap();
         set(&path, executable).unwrap();
         std::fs::metadata(&path).unwrap().permissions().mode() & 0o777
+    }
+
+    #[test]
+    fn a_volume_that_keeps_permissions_is_told_so() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(kept(dir.path()));
+        assert!(!dir.path().join(".permission-probe").exists());
     }
 
     #[test]

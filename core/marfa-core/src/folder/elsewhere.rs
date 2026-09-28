@@ -101,6 +101,7 @@ impl Peer {
                     folder,
                     core,
                     key: std::sync::OnceLock::new(),
+                    permissions: std::sync::OnceLock::new(),
                 })
             });
         Peer {

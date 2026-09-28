@@ -14256,6 +14256,7 @@ describe("a file's permission", () => {
       [String(created("run.sh")?.id)]: false,
       [String(created("data.bin")?.id)]: true,
     });
+    expect(sentUpdates(harness)).toHaveLength(2);
   });
 
   it("gives a pulled file the permission its item holds", async () => {
@@ -14291,12 +14292,20 @@ describe("a file's permission", () => {
         ],
       },
       events: [
-        liveReplay("2", [
+        liveReplay("3", [
           itemEvent(
             "2",
             "item.updated",
             wireItem({
               ...fileItem(later, "later.bin", laterBytes, { executable: true }),
+              version: 2,
+            }),
+          ),
+          itemEvent(
+            "3",
+            "item.updated",
+            wireItem({
+              ...fileItem(tool, "tool.bin", toolBytes, { executable: false }),
               version: 2,
             }),
           ),
@@ -14315,15 +14324,31 @@ describe("a file's permission", () => {
     expect(runs(harness, "plain.bin")).toBe(false);
     expect(runs(harness, "later.bin")).toBe(false);
 
-    // The push's catch-up brings the change, and its pull gives it to the
-    // file in place, sending nothing back.
+    // The push's catch-up brings the changes, and its pull gives them to
+    // the files in place, sending nothing back.
     expect((await harness.folder.push()).ok).toBe(true);
     expect(
-      runs(harness, "later.bin"),
+      [runs(harness, "later.bin"), runs(harness, "tool.bin")],
       "a permission changed elsewhere did not reach the file in place",
-    ).toBe(true);
+    ).toEqual([true, false]);
     expect(runs(harness, "plain.bin")).toBe(false);
     expect((await harness.folder.push()).ok).toBe(true);
     expect(sentUpdates(harness)).toEqual([]);
+
+    // Changed by the person since the scan read it, the permission is theirs:
+    // a pull leaves it, and the next push sends it.
+    chmodSync(join(harness.dir, "plain.bin"), 0o755);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      runs(harness, "plain.bin"),
+      "a pull undid the person's permission",
+    ).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      sentUpdates(harness).map((update) => [
+        update.id,
+        (update.body.properties as Record<string, unknown>).executable,
+      ]),
+    ).toEqual([[plain, true]]);
   });
 });
