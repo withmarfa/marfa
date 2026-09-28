@@ -13711,6 +13711,43 @@ describe("folders on one Mac", () => {
     expect(existsSync(join(harness.dir, "inner", "Placed.md"))).toBe(true);
   });
 
+  it("holds a bound file whose directory becomes a folder inside this one, and trashes nothing", async () => {
+    harness = await folderHarness("nested-later");
+    scriptFolderWrites(harness);
+    put(harness, "inner/kept.md", "---\ntitle: Kept\n---\nbound here\n");
+    put(harness, "gone.md", "---\ntitle: Gone\n---\ndeleted outright\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = (title: string): string =>
+      String(
+        sentCreates(harness!).find(
+          (sent) =>
+            (sent.properties as Record<string, unknown>).title === title,
+        )?.id,
+      );
+
+    // Another folder's state lands in the directory, and a file goes.
+    mkdirSync(join(harness.dir, "inner", ".marfa"));
+    rmSync(join(harness.dir, "gone.md"));
+    const first = await harness.folder.push();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect([first.value.scan.unreached, first.value.scan.missing]).toEqual([
+      1, 1,
+    ]);
+    await pastTheGrace();
+    const swept = await harness.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    // The witness: the file deleted outright in the same pass is trashed.
+    expect(swept.value.scan.trashed).toEqual(["gone.md"]);
+    expect(deletesOf(harness.server, id("Gone"))).toBe(1);
+    expect(
+      deletesOf(harness.server, id("Kept")),
+      "a file bound under a directory that became a folder was trashed",
+    ).toBe(0);
+    expect(swept.value.scan.unreached).toBe(1);
+  });
+
   it("refuses to remove a folder a watch holds", async () => {
     harness = await folderHarness("remove-watched");
     scriptFolderWrites(harness);

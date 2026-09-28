@@ -1234,8 +1234,11 @@ impl Folder {
                 continue;
             }
             // Not reached is not gone: the item of a file the lists stopped
-            // taking, or one the walk could not read, is not trashed.
-            if !lists.takes(&row.path) || walked.passed_over(&row.path) {
+            // taking, or one the walk could not read or passed over, is not trashed.
+            if !lists.takes(&row.path)
+                || walked.passed_over(&row.path)
+                || in_nested_folder(&self.root, &row.path)
+            {
                 if journaled.contains(&row.path) {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
