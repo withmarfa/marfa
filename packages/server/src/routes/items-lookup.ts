@@ -16,6 +16,7 @@ import {
   requireTypeAccess,
   checkTypeAccess,
   getTypeFilter,
+  itemProvenanceSource,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -167,7 +168,7 @@ const tombstonesRoute = createRoute({
   tags: ["Items"],
   summary: "Move tombstones' settled time later",
   description:
-    "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`.",
+    "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -203,10 +204,11 @@ const tombstonesRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description: "The credential does not hold write on `type`.",
+      description:
+        "`type_not_permitted`: the credential does not hold write on `type`. `forbidden`: `source` is neither the credential's own nor one its key claims, named in `details.source`.",
     },
   },
 });
@@ -389,12 +391,15 @@ export function itemsLookupRoutes(storage: Storage) {
   });
 
   router.openapi(tombstonesRoute, async (c) => {
-    requireAuth(c);
+    const apiKey = requireAuth(c);
     const body = c.req.valid("json");
     const type = registeredType(body.type);
     const selector = selectorOf(type, body, false);
     const settledAt = normalizeTimeBound(body.settled_at, "settled_at");
     requireTypeAccess(c, type, "write");
+    if (selector.kind === "source") {
+      itemProvenanceSource(apiKey, selector.source);
+    }
 
     const tombstones = inOrder(
       selector.values,

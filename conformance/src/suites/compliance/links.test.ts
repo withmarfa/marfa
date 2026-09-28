@@ -1058,6 +1058,67 @@ describe("POST /items/tombstones", () => {
     expect(moved.data.tombstones[0]?.settled_at).toBe(later);
   });
 
+  it("refuses to move a natural key's tombstone under a source the key does not claim", async () => {
+    const link = v("foreign");
+    const key = v("foreign-key");
+    await purge((await row({ vendor_id: link }, { source_id: key })).id);
+    const byKey = { type: linked, source: ctx.source, source_ids: [key] };
+    const [tombstone] = (await client.lookupItems(byKey)).data.tombstones;
+    const later = new Date(
+      Date.parse(tombstone?.purged_at ?? "") + 3_600_000,
+    ).toISOString();
+
+    const keyFor = async (
+      minter: MarfaClient,
+      label: string,
+      sources?: string[],
+    ): Promise<MarfaClient> => {
+      const minted = await minter.createKey({
+        label: `links-${label}-${ctx.runId}`,
+        source: `${ctx.source}-${label}`,
+        ...(sources !== undefined && { sources, permissions: [] }),
+        type_permissions: { [linked]: "write" },
+      });
+      expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+      trackKey(ctx, minted.data.id);
+      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+    };
+    const stranger = await keyFor(client, "stranger");
+    // The witness: it holds write on the type, and moves a link's tombstone.
+    const byLink = await stranger.settleTombstones({
+      type: linked,
+      links: [link],
+      settled_at: later,
+    });
+    expect(byLink.data.tombstones[0]?.settled_at).toBe(later);
+
+    const refused = await stranger.settleTombstones({
+      ...byKey,
+      settled_at: later,
+    });
+    expect(refused.status, JSON.stringify(refused.data)).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.error?.error.details).toEqual({ source: ctx.source });
+    const written = await stranger.createItem({
+      type: linked,
+      source: ctx.source,
+      properties: {},
+    });
+    expect(written.error?.error.code).toBe("forbidden");
+    expect((await client.lookupItems(byKey)).data.tombstones).toEqual([
+      tombstone,
+    ]);
+
+    const claimant = await keyFor(getOperatorClient(), "claimant", [
+      ctx.source,
+    ]);
+    const moved = await claimant.settleTombstones({
+      ...byKey,
+      settled_at: later,
+    });
+    expect(moved.data.tombstones[0]?.settled_at).toBe(later);
+  });
+
   it("refuses a malformed tombstone request", async () => {
     const when = new Date().toISOString();
     const post = (body: Record<string, unknown>) =>
