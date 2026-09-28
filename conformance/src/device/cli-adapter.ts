@@ -694,11 +694,25 @@ export interface PullReport {
   unmatched: number;
   /** File items whose bytes could not be had, so no file was written (`folders.md` 32). */
   absent: number;
+  /** The settings file, rewritten where the settings moved on. */
+  settings: SettingsFileReport;
+}
+
+/** What became of the folder's settings file (`folders.md` 1). */
+export interface SettingsFileReport {
+  /** An edit of the file went through the folder door and landed. */
+  sent: boolean;
+  /** The file was written from the settings the copy holds. */
+  written: boolean;
+  /** Why the file's edit is not in force, where it is not. */
+  flagged: string | null;
 }
 
 export interface PushReport {
   /** The hydration a copy that could not answer took first, if it needed one. */
   hydrated: HydrateReport | null;
+  /** The person's edit of the settings file, sent before anything else. */
+  settings: SettingsFileReport;
   scan: ScanReport;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
    *  the version the copy holds (`folders.md` 19). */

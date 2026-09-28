@@ -192,5 +192,30 @@ describe("a folder round trip", () => {
     expect(
       after.filter((row) => row.kind === "add_tag").map((row) => row.tag),
     ).toEqual(["from-elsewhere"]);
+
+    // And the other way: an edit of the settings file goes through the
+    // folder door and is the folder's settings on the server.
+    const settingsFile = join(dir, ".marfa", "folder.yaml");
+    writeFileSync(
+      settingsFile,
+      readFileSync(settingsFile, "utf8").replace(
+        "- from-elsewhere",
+        "- from-the-file",
+      ),
+    );
+    const edited = await c.cli.json<{ settings: { sent: boolean } }>([
+      "folders",
+      "push",
+      dir,
+    ]);
+    expect(edited.settings.sent).toBe(true);
+    const onServer = await c.cli.json<ItemEnvelope>([
+      "items",
+      "get",
+      settings.item.id,
+    ]);
+    expect(onServer.item.properties.defaults).toEqual({
+      tags: ["from-the-file"],
+    });
   });
 });

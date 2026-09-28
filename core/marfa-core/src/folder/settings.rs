@@ -90,6 +90,10 @@ impl Settings {
         )
     }
 
+    pub(crate) fn of_wire(item: &crate::wire::WireItem) -> Result<Settings> {
+        Settings::read(&item.id, &item.r#type, &item.state, &item.properties)
+    }
+
     pub(crate) fn read(
         id: &str,
         r#type: &str,

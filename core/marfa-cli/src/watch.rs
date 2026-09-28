@@ -159,9 +159,14 @@ fn watch_files(
                 if matches!(event.kind, EventKind::Access(_)) {
                     continue;
                 }
-                // Dot-led paths are never watched (`folders.md` 21, 22); this
-                // stops a write under `.marfa` waking a pass.
-                if event.paths.iter().all(|path| dot_led(dir, path)) {
+                // Dot-led paths are never watched (`folders.md` 21, 22), but
+                // for the settings file; this stops a write under `.marfa`
+                // waking a pass.
+                if event
+                    .paths
+                    .iter()
+                    .all(|path| dot_led(dir, path) && !settings_file(dir, path))
+                {
                     continue;
                 }
                 quiet_since = Instant::now();
@@ -211,10 +216,12 @@ struct Standing {
     absent: usize,
     kept: usize,
     unmatched: usize,
+    settings: Option<String>,
 }
 
 /// One pass: read the folder, send what it queued, write back what came in.
 fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<(), CliError> {
+    let settings = folder.send_settings_edit()?;
     let scanned = folder.scan()?;
     let drained = folder.drain()?;
     let pulled = folder.pull()?;
@@ -232,6 +239,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         + pulled.moved
         + pulled.removed
         + pulled.revived
+        + usize::from(settings.sent)
         > 0;
     let now = Standing {
         lost: scanned.lost,
@@ -241,6 +249,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         absent: pulled.absent,
         kept: pulled.kept,
         unmatched: pulled.unmatched,
+        settings: settings.flagged.clone().or(pulled.settings.flagged.clone()),
     };
     let changed = standing.as_ref() != Some(&now);
     *standing = Some(now);
@@ -248,13 +257,21 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         return Ok(());
     }
     output::report(
-        &serde_json::json!({ "scan": scanned, "drain": drained, "pull": pulled }),
+        &serde_json::json!({
+            "settings": settings,
+            "scan": scanned,
+            "drain": drained,
+            "pull": pulled,
+        }),
         json,
         || {
             // An item with no file is named, never left out of the line.
             let held = pulled.unwritten + pulled.collided + pulled.outside + pulled.absent;
+            let settings = crate::folders::settings_line(&settings)
+                .map(|line| format!("{line}\n"))
+                .unwrap_or_default();
             format!(
-                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}{}",
+                "{settings}{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
@@ -287,6 +304,14 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
             )
         },
     )
+}
+
+/// Whether a path is the folder's settings file, the one file under `.marfa`
+/// a watch wakes for (`folders.md` 22).
+fn settings_file(root: &Path, path: &Path) -> bool {
+    path == root
+        .join(marfa_core::folder::STATE_DIR)
+        .join(marfa_core::folder::SETTINGS_FILE)
 }
 
 /// Whether a path lies under a dot-led directory inside the folder.

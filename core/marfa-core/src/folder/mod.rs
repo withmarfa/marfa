@@ -7,13 +7,14 @@
 pub mod document;
 pub mod identity;
 pub mod settings;
+mod settings_file;
 pub mod state;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
@@ -22,6 +23,7 @@ use crate::model::{BlockedReason, Draft, Edit, Item, WriteKind};
 use crate::{Core, Result, Server};
 
 pub use settings::{FOLDER_TYPE, Settings};
+pub use settings_file::SettingsFileReport;
 
 /// Where a folder keeps what is its own (`folders.md` 22).
 pub const STATE_DIR: &str = ".marfa";
@@ -31,16 +33,12 @@ pub const STATE_DIR: &str = ".marfa";
 /// arrive.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
-/// The file under `.marfa/` that names the `system.folder` this directory
-/// is bound to, which is all of a folder's settings this machine keeps
-/// (`folders.md` 1).
-const RECORD: &str = "folder.json";
+/// The folder's settings written out, the one file under `.marfa/` a folder
+/// reads and watches (`folders.md` 1, 22).
+pub const SETTINGS_FILE: &str = "folder.yaml";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Record {
-    folder: String,
-}
+/// Where a folder kept its settings before they lived on the server.
+const OLD_RECORD: &str = "folder.json";
 
 /// A directory, the `system.folder` it is bound to, and the device
 /// underneath it.
@@ -82,7 +80,12 @@ impl Folder {
     pub fn add(root: impl AsRef<Path>, folder: &str, server: Option<Server>) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
-        if let Ok(bound) = read_record(&root)
+        let state = root.join(STATE_DIR);
+        std::fs::create_dir_all(&state).map_err(|error| {
+            CoreError::Store(format!("cannot make {}: {error}", state.display()))
+        })?;
+        let core = Core::open(state.join("core.sqlite"), Some(server))?;
+        if let Some(bound) = settings_file::bound(&core)?
             && bound != folder
         {
             return Err(CoreError::Invalid(format!(
@@ -90,31 +93,46 @@ impl Folder {
                 root.display()
             )));
         }
-        let state = root.join(STATE_DIR);
-        std::fs::create_dir_all(&state).map_err(|error| {
-            CoreError::Store(format!("cannot make {}: {error}", state.display()))
-        })?;
-        let core = Core::open(state.join("core.sqlite"), Some(server))?;
         let added = Folder {
             root,
             folder: folder.to_string(),
             core,
         };
-        added.settings_on_server()?;
-        let json = serde_json::to_string_pretty(&Record {
-            folder: folder.to_string(),
-        })?;
-        std::fs::write(state.join(RECORD), json).map_err(|error| {
-            CoreError::Store(format!("cannot write which folder this is: {error}"))
-        })?;
+        let row = added.row_on_server()?;
+        settings_file::bind(&added.core, folder)?;
+        added.write_settings_file(&row.item.properties, row.item.version)?;
+        let old = state.join(OLD_RECORD);
+        if old.exists() {
+            std::fs::remove_file(&old).map_err(|error| {
+                CoreError::Store(format!("cannot remove {}: {error}", old.display()))
+            })?;
+        }
         Ok(added)
     }
 
     /// Opens a directory somebody has already made a folder.
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
-        let folder = read_record(&root)?;
-        let core = Core::open(root.join(STATE_DIR).join("core.sqlite"), server)?;
+        let state = root.join(STATE_DIR);
+        // Refused, never read: settings kept on one machine are ones no other
+        // machine sees change (`folders.md` 1).
+        if state.join(OLD_RECORD).exists() {
+            return Err(CoreError::Invalid(format!(
+                "{dir} keeps its settings on this machine, and a folder's settings live in a {FOLDER_TYPE} on the server: make one with `folders create` and add the folder again with `folders add {dir} --folder <id>`",
+                dir = root.display()
+            )));
+        }
+        let not_a_folder = || {
+            CoreError::Invalid(format!(
+                "{} is not a folder; `folders add` makes one",
+                root.display()
+            ))
+        };
+        if !state.join("core.sqlite").exists() {
+            return Err(not_a_folder());
+        }
+        let core = Core::open(state.join("core.sqlite"), server)?;
+        let folder = settings_file::bound(&core)?.ok_or_else(not_a_folder)?;
         Ok(Folder { root, folder, core })
     }
 
@@ -143,8 +161,9 @@ impl Folder {
         }
     }
 
-    /// The settings as the server holds them now.
-    fn settings_on_server(&self) -> Result<Settings> {
+    /// The folder's row as the server holds it now, refused where its
+    /// settings are not ones this folder can follow.
+    fn row_on_server(&self) -> Result<crate::wire::WireItemWithMetadata> {
         let read = crate::hydrate::read_with_edges(self.core.http()?, &self.folder).map_err(
             |error| match error {
                 CoreError::Forbidden { code, .. } if code == "type_not_permitted" => {
@@ -172,13 +191,15 @@ impl Folder {
             &row.item.r#type,
             &row.item.state,
             &row.item.properties,
-        )
+        )?;
+        Ok(row)
     }
 
     /// Hydrates the slice the folder's search needs, with its settings
     /// pinned so every hydration and catch-up keeps them.
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
-        let settings = self.settings_on_server()?;
+        let row = self.row_on_server()?;
+        let settings = Settings::of_wire(&row.item)?;
         self.core.lock.refuse_unless_writer()?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         self.core.hydrate_every_type_or(
@@ -1031,26 +1052,6 @@ impl Folder {
     }
 }
 
-/// The `system.folder` a directory follows, from its record. A record of
-/// any other shape is refused, never read: settings kept on this machine
-/// are not a folder's (`folders.md` 1).
-fn read_record(root: &Path) -> Result<String> {
-    let text = std::fs::read_to_string(root.join(STATE_DIR).join(RECORD)).map_err(|error| {
-        CoreError::Invalid(format!(
-            "{} is not a folder ({error}); `folders add` makes one",
-            root.display()
-        ))
-    })?;
-    serde_json::from_str::<Record>(&text)
-        .map(|record| record.folder)
-        .map_err(|_| {
-            CoreError::Invalid(format!(
-                "{dir} keeps its settings on this machine, and a folder's settings live in a {FOLDER_TYPE} on the server: make one with `folders create` and add the folder again with `folders add {dir} --folder <id>`",
-                dir = root.display()
-            ))
-        })
-}
-
 /// The item a queued create made.
 fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
     queued
@@ -1403,6 +1404,7 @@ impl Folder {
             }
         }
         self.remove_departed(&members, &settings, &mut report)?;
+        report.settings = self.write_settings_if_moved()?;
         Ok(report)
     }
 
@@ -1693,6 +1695,9 @@ pub struct PullReport {
     /// Files whose item the search no longer matches for any other reason,
     /// left where they are (`folders.md` 29).
     pub unmatched: usize,
+    /// The settings file, rewritten where the settings moved on (`folders.md`
+    /// 1).
+    pub settings: SettingsFileReport,
 }
 
 /// A file's frontmatter as a write's properties, without `marfa_id` and

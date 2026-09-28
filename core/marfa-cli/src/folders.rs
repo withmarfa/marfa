@@ -115,6 +115,9 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Push { dir } => {
             let folder = Folder::open(&dir, Some(named.server()?))?;
             let hydrated = folder.resume()?;
+            // Before the catch-up and the pull, which would otherwise meet the
+            // person's edit of the file as a file to write over.
+            let settings = folder.send_settings_edit()?;
             let scanned = folder.scan()?;
             let drained = folder.drain()?;
             // A folder offline still writes out the copy it holds.
@@ -136,6 +139,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(
                 &serde_json::json!({
                     "hydrated": hydrated,
+                    "settings": settings,
                     "scan": scanned,
                     "drain": drained,
                     "catch_up": caught,
@@ -147,6 +151,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     if let Some(hydrated) = &hydrated {
                         lines.push(format!("hydrated {} item(s) first", hydrated.items));
                     }
+                    lines.extend(settings_line(&settings));
                     lines.push(describe_scan(&scanned));
                     lines.push(format!(
                         "sent {}, held {}",
@@ -196,6 +201,17 @@ pub fn rebased_line(rebased: usize) -> String {
     format!(
         "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
     )
+}
+
+/// What became of the settings file, where anything did.
+pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
+    match (&report.flagged, report.sent) {
+        (Some(reason), _) => Some(format!(
+            "the settings file is not in force, and the settings before it are: {reason}"
+        )),
+        (None, true) => Some("the settings file's edit went through the folder door".into()),
+        (None, false) => None,
+    }
 }
 
 /// What a pull did, for somebody who did not ask for JSON.

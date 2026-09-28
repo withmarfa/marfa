@@ -82,6 +82,37 @@ function read(harness: FolderHarness, name: string): string {
   return readFileSync(join(harness.dir, name), "utf8");
 }
 
+/** The folder's settings file. */
+function settingsFile(harness: FolderHarness): string {
+  return join(harness.dir, ".marfa", "folder.yaml");
+}
+
+/**
+ * The folder door's change, as the server takes it at the version the row
+ * is at: each named setting replaced whole. `answer` overrides, for a
+ * refusal.
+ */
+function scriptFolderChanges(
+  harness: FolderHarness,
+  answer?: Answer,
+): Array<Record<string, unknown>> {
+  const sent: Array<Record<string, unknown>> = [];
+  harness.server.answer(
+    "PATCH",
+    `/folders/${harness.settings.id}`,
+    (request) => {
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      sent.push(body);
+      if (answer !== undefined) return answer;
+      const { version: _version, ...changed } = body;
+      harness.settings.settings = { ...harness.settings.settings, ...changed };
+      harness.settings.version += 1;
+      return answers.updated(folderItem(harness.settings));
+    },
+  );
+  return sent;
+}
+
 /** The `marfa_id` a file's frontmatter carries, if any. */
 function idIn(harness: FolderHarness, name: string): string | undefined {
   return /marfa_id:\s*(\S+)/.exec(read(harness, name))?.[1];
@@ -228,13 +259,6 @@ describe("what a folder is", () => {
     });
     scriptFolderWrites(harness);
 
-    // This machine keeps which folder it follows and nothing of its settings.
-    expect(
-      JSON.parse(
-        readFileSync(join(harness.dir, ".marfa", "folder.json"), "utf8"),
-      ),
-      "the folder kept settings of its own beside the id, which no other machine would ever see change",
-    ).toEqual({ folder: harness.settings.id });
     const status = await harness.folder.device().status();
     expect(status.ok && status.value.pinned).toContain(harness.settings.id);
 
@@ -420,6 +444,215 @@ describe("what a folder is", () => {
     );
     if (pushed.ok) return;
     expect(pushed.refusal.raw).toContain("folders add");
+  });
+
+  it("writes its settings out as one file in .marfa/", async () => {
+    harness = await folderHarness("folder-settings-file", {
+      settings: {
+        search: { types: ["core.note"], filter: 'tags contains "kept"' },
+        defaults: { tags: ["inbox"] },
+        include: ["*.md"],
+      },
+    });
+    expect(
+      readdirSync(join(harness.dir, ".marfa")).filter(
+        (name) => !name.startsWith("core."),
+      ),
+      "the settings went somewhere other than one file, or a record of its own stayed beside it",
+    ).toEqual(["folder.yaml"]);
+    const text = readFileSync(settingsFile(harness), "utf8");
+    for (const line of [
+      `folder: ${harness.settings.id}`,
+      "version: 1",
+      "- core.note",
+      'filter: "tags contains \\"kept\\""',
+      "- inbox",
+      '- "*.md"',
+    ]) {
+      expect(text, `the settings file did not carry ${line}`).toContain(line);
+    }
+  });
+
+  it("sends an edit to its settings file through the folder door", async () => {
+    harness = await folderHarness("folder-settings-edit", {
+      events: [liveReplay("1", [])],
+    });
+    scriptFolderWrites(harness);
+    const sent = scriptFolderChanges(harness);
+    writeFileSync(
+      settingsFile(harness),
+      readFileSync(settingsFile(harness), "utf8") +
+        "defaults:\n  tags:\n    - edited\n",
+    );
+    put(harness, "first.md", "---\ntitle: First\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sent,
+      "the edit did not go to the folder door as the settings it changed, at the version the file was written from",
+    ).toEqual([{ version: 1, defaults: { tags: ["edited"] } }]);
+    expect(pushed.value.settings).toMatchObject({ sent: true, flagged: null });
+    expect(readFileSync(settingsFile(harness), "utf8")).toContain("version: 2");
+    // In force at once: the push's own new file took it.
+    const queued = await harness.folder.device().queue();
+    expect(queued.ok && queued.value.map((row) => row.tag)).toContain("edited");
+
+    // A watch wakes for that one file under `.marfa`.
+    const watching = harness.folder.watch();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+      writeFileSync(
+        settingsFile(harness),
+        readFileSync(settingsFile(harness), "utf8").replace(
+          "- edited",
+          "- edited again",
+        ),
+      );
+      await vi.waitFor(() => expect(sent).toHaveLength(2), {
+        timeout: 20_000,
+        interval: 100,
+      });
+    } finally {
+      await watching.stop();
+    }
+    expect(sent[1]).toEqual({
+      version: 2,
+      defaults: { tags: ["edited again"] },
+    });
+  });
+
+  it("keeps its settings in force and flags the file when an edit is refused", async () => {
+    for (const { refused, edit, why } of [
+      {
+        refused: "by the folder door",
+        edit: (text: string) => text.replace("- kept", "- refused"),
+        why: "the folder door refused it",
+      },
+      {
+        refused: "because it names a search the folder cannot answer",
+        edit: (text: string) =>
+          text.replace(
+            "search:\n",
+            "search:\n  filter: backref[parent-of] exists\n",
+          ),
+        why: "backref",
+      },
+      {
+        refused: "because it takes a setting out",
+        edit: (text: string) => text.replace("title: folder\n", ""),
+        why: "no longer names title",
+      },
+      {
+        refused: "because it does not parse",
+        edit: (text: string) => text + "include: [not closed\n",
+        why: "does not parse",
+      },
+    ]) {
+      harness = await folderHarness("folder-settings-refused", {
+        settings: {
+          search: { types: ["core.note"] },
+          defaults: { tags: ["kept"] },
+        },
+      });
+      scriptFolderWrites(harness);
+      const sent = scriptFolderChanges(
+        harness,
+        refusal(400, "validation_error", "that setting is not allowed"),
+      );
+      const edited = edit(readFileSync(settingsFile(harness), "utf8"));
+      writeFileSync(settingsFile(harness), edited);
+      put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, `${refused}: ${JSON.stringify(pushed)}`).toBe(true);
+      if (!pushed.ok) return;
+      expect(pushed.value.settings.flagged, refused).toContain(why);
+      expect(pushed.value.pull?.settings.flagged, refused).toContain(why);
+      expect(
+        readFileSync(settingsFile(harness), "utf8"),
+        `the person's edit refused ${refused} was written over`,
+      ).toBe(edited);
+      const queued = await harness.folder.device().queue();
+      expect(
+        queued.ok &&
+          queued.value
+            .filter((row) => row.kind === "add_tag")
+            .map((row) => row.tag),
+        `an edit refused ${refused} was put in force anyway`,
+      ).toEqual(["kept"]);
+      // Said in words too, and the same refused text is not sent again.
+      const text = await harness.folder.pushText();
+      expect(text.ok && text.value, refused).toContain("not in force");
+      expect(sent.length, refused).toBe(
+        refused === "by the folder door" ? 1 : 0,
+      );
+      await harness.stop();
+      harness = undefined;
+    }
+  });
+
+  it("rewrites its settings file when the settings change elsewhere", async () => {
+    let changed: Record<string, unknown> = {};
+    harness = await folderHarness("folder-settings-rewritten", {
+      events: [
+        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
+        liveReplay("2", []),
+      ],
+    });
+    scriptFolderWrites(harness);
+    harness.settings.settings = {
+      ...harness.settings.settings,
+      defaults: { tags: ["from elsewhere"] },
+    };
+    harness.settings.version = 2;
+    changed = folderItem(harness.settings);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.pull?.settings.written).toBe(true);
+    const text = readFileSync(settingsFile(harness), "utf8");
+    expect(
+      text,
+      "a change made elsewhere never reached the settings file",
+    ).toContain("version: 2");
+    expect(text).toContain("- from elsewhere");
+  });
+
+  it("does not write its settings file over the person's edit, and sends the edit", async () => {
+    let changed: Record<string, unknown> = {};
+    harness = await folderHarness("folder-settings-edit-first", {
+      events: [
+        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
+        liveReplay("2", []),
+      ],
+    });
+    scriptFolderWrites(harness);
+    const edited =
+      readFileSync(settingsFile(harness), "utf8") + "include:\n  - notes/**\n";
+    writeFileSync(settingsFile(harness), edited);
+    harness.settings.settings = {
+      ...harness.settings.settings,
+      defaults: { tags: ["from elsewhere"] },
+    };
+    harness.settings.version = 2;
+    changed = folderItem(harness.settings);
+    // A pull alone sends nothing, and leaves the edit where it is.
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok && pulled.value.settings.written).toBe(false);
+    expect(readFileSync(settingsFile(harness), "utf8")).toBe(edited);
+
+    const sent = scriptFolderChanges(harness);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sent,
+      "the edit went at a version other than the one its file was written from, so the door could not merge it",
+    ).toEqual([{ version: 1, include: ["notes/**"] }]);
+    const text = readFileSync(settingsFile(harness), "utf8");
+    expect(text).toContain("- from elsewhere");
+    expect(text).toContain("- notes/**");
   });
 
   it("fills a new file's blanks from its defaults, never an edit's", async () => {
@@ -4167,8 +4400,8 @@ describe("what a folder does not watch", () => {
     expect((await harness.folder.push()).ok).toBe(true);
 
     expect(
-      existsSync(join(harness.dir, ".marfa", "folder.json")),
-      "the folder keeps its slice somewhere other than its own directory, so the directory is not the whole of it",
+      existsSync(settingsFile(harness)),
+      "the folder keeps its settings somewhere other than its own directory, so the directory is not the whole of it",
     ).toBe(true);
     expect(
       existsSync(join(harness.dir, ".marfa", "core.sqlite")),

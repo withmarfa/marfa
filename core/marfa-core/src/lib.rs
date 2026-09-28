@@ -37,7 +37,9 @@ pub use blob::{file_type_for, mime_type_for};
 pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
-pub use folder::{Drained, FOLDER_TYPE, Folder, PullReport, ScanReport, Settings};
+pub use folder::{
+    Drained, FOLDER_TYPE, Folder, PullReport, ScanReport, Settings, SettingsFileReport,
+};
 pub use lock::Handle;
 pub use model::{
     Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit,
