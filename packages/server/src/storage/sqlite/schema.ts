@@ -137,8 +137,8 @@ export const item_links = sqliteTable(
   ],
 );
 
-// What a purge leaves of a row's link, until claimed again or the type
-// changes its link or is deleted. Never swept: it holds against a vendor that still has the item.
+// What a purge leaves of a row's link, until re-claimed or the type's link
+// changes or is dropped. Never swept: a vendor may still hold the item.
 export const link_tombstones = sqliteTable(
   "link_tombstones",
   {

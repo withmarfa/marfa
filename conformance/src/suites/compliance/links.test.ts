@@ -26,7 +26,7 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 let linked: string;
-/** A second type naming the same field as its link, for moves between the two. */
+/** A second type naming the same field as its link, for moves between them. */
 let other: string;
 /** A subtype of `linked`, which does not inherit its link. */
 let child: string;

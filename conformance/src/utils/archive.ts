@@ -154,7 +154,7 @@ export function blobHash(data: Uint8Array): string {
 
 /**
  * A minimal version 2 archive: `items`, and the `blobs` and `types` given.
- * Empty members are emitted, not omitted, so a restore can tell damaged from empty.
+ * Emitted empty, not omitted, so a restore can tell damaged from empty.
  */
 export function itemsArchive(
   items: ArchiveItem[],
