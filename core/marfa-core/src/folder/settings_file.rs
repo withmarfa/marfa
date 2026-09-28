@@ -54,7 +54,7 @@ impl Folder {
     }
 
     /// Writes the settings out, recording the text before the bytes land so
-    /// a watch never reads the write back as an edit (`folders.md` 16).
+    /// a watch never reads the write back as an edit (`folders.md` 17).
     pub(super) fn write_settings_file(
         &self,
         properties: &Map<String, Value>,
@@ -176,7 +176,7 @@ impl Folder {
             )
         };
         // Based on the file's own line, as a Markdown file's edit is
-        // (`folders.md` 19): an editor saving text older than the last write
+        // (`folders.md` 20): an editor saving text older than the last write
         // is merged against what it was written from.
         let version = edited
             .get(VERSION_KEY)

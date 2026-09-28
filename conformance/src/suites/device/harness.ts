@@ -368,8 +368,13 @@ export async function folderHarness(
      * this folder's machine holds.
      */
     sharing?: { server: ScriptedServer; key: string };
+    /** A `system.folder` the shared server already holds, for a second
+     *  machine bound to the same folder. */
+    folder?: FolderRow;
     head?: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    /** What `GET /keys/current` answers, a key placing files unless named. */
+    key?: Responder[];
     /** Skip the hydration, for the cases that are about a folder before one. */
     hydrate?: boolean;
     /**
@@ -394,10 +399,12 @@ export async function folderHarness(
     url: server.url,
     key: options.sharing?.key ?? KEY,
   });
-  const settings = scriptFolderRow(
-    server,
-    options.settings ?? { search: { types: ["core.note"] } },
-  );
+  const settings =
+    options.folder ??
+    scriptFolderRow(
+      server,
+      options.settings ?? { search: { types: ["core.note"] } },
+    );
   const stop = async (): Promise<void> => {
     const unscripted = [...server.unmatchedRequests];
     // A shared server is its owner's to stop.
@@ -417,6 +424,11 @@ export async function folderHarness(
       rows: options.rows,
       edges: options.edges,
     });
+    server.answer(
+      "GET",
+      "/keys/current",
+      ...(options.key ?? [answers.currentKey("fixture-key", { "*": "write" })]),
+    );
   }
   const added = await folder.add(settings.id);
   if (!added.ok) {

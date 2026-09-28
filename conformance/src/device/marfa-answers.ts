@@ -67,6 +67,8 @@ export interface WireEdgeOptions {
   edge_type?: string;
   version?: number;
   properties?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
 }
 
 /** An edge as the server answers one, on every door that returns an edge. */
@@ -77,8 +79,8 @@ export function wireEdge(options: WireEdgeOptions): Record<string, unknown> {
     target_id: options.target_id,
     edge_type: options.edge_type ?? "references",
     properties: options.properties ?? {},
-    created_at: EPOCH,
-    updated_at: EPOCH,
+    created_at: options.created_at ?? EPOCH,
+    updated_at: options.updated_at ?? options.created_at ?? EPOCH,
     version: options.version ?? 1,
   };
 }
@@ -497,6 +499,44 @@ export const answers = {
       ancestor,
       conflicting_fields: conflictingFields,
       merge_policy: mergePolicy,
+    },
+  }),
+  /** An edge the server already holds between the same two items under the
+   *  same type, refused rather than made twice. */
+  edgeDuplicate: (edge: {
+    source_id: string;
+    target_id: string;
+    edge_type: string;
+  }): Answer =>
+    refusal(
+      400,
+      "edge_constraint_violation",
+      `Edge "${edge.edge_type}" already exists between these items`,
+      { ...edge, constraint: "duplicate" },
+    ),
+  /** `GET /keys/current`: the key the request bears, its edge grants as
+   *  named. */
+  currentKey: (
+    id: string,
+    edgePermissions: Record<string, "read" | "write">,
+  ): Answer => ({
+    kind: "json",
+    status: 200,
+    body: {
+      id,
+      label: "device fixtures",
+      source: SERVED_SOURCE,
+      sources: [],
+      permissions: [],
+      default_tier: "library",
+      is_operator: false,
+      type_permissions: { "*": "write" },
+      extension_permissions: {},
+      edge_permissions: edgePermissions,
+      metadata_permissions: {},
+      created_at: EPOCH,
+      expires_at: null,
+      last_used_at: null,
     },
   }),
   /** A stale edge update: the edge as it now stands under `current`, and no

@@ -1136,7 +1136,7 @@ pub fn land_on_held_row(
 /// was set aside in a conflicted copy against this device's own earlier one
 /// (`queue-and-verdicts.md` 42), so what the file holds reached no row. The
 /// pull then leaves the file as it is, and the next scan sends it as an edit
-/// based on that version (`folders.md` 34). Where a later update is queued,
+/// based on that version (`folders.md` 35). Where a later update is queued,
 /// the file holds that one's bytes, and it is left to its own answer.
 pub fn untake_latest_save(
     conn: &Connection,
@@ -3028,6 +3028,22 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
             ":conflicted": Verdict::Conflicted.as_str(),
             ":refused": Verdict::Refused.as_str(),
             ":blocked": Verdict::Blocked.as_str(),
+            ":dead": Verdict::Dead.as_str(),
+        },
+    )?)
+}
+
+/// Takes back every write to an edge that has not landed, for a folder giving
+/// way to the placement the server holds (`folders.md` 16).
+pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        "DELETE FROM queue
+          WHERE edge_id = :edge
+            AND (verdict IS NULL OR verdict IN (:blocked, :refused, :dead))",
+        named_params! {
+            ":edge": edge_id,
+            ":blocked": Verdict::Blocked.as_str(),
+            ":refused": Verdict::Refused.as_str(),
             ":dead": Verdict::Dead.as_str(),
         },
     )?)

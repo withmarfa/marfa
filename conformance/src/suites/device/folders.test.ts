@@ -11,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -19,6 +20,7 @@ import {
   catchupTooOld,
   connected,
   edgeEvent,
+  edgesPage,
   headRead,
   itemEvent,
   liveReplay,
@@ -27,6 +29,7 @@ import {
   replay,
   wireEdge,
   wireItem,
+  writeAnswers,
 } from "../../device/marfa-answers.js";
 import {
   KEY,
@@ -40,7 +43,11 @@ import {
   scriptHydration,
   scriptWrites,
 } from "./harness.js";
-import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
+import {
+  CliFolder,
+  type FolderSettings,
+  type PushReport,
+} from "../../device/cli-adapter.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   CONFLICTED_COPY_TAG,
@@ -49,8 +56,17 @@ import {
   type DoorRow,
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
-import type { Answer, Responder } from "../../device/scripted-server.js";
-import type { WireItemOptions } from "../../device/marfa-answers.js";
+import type { DrainVerdict, QueuedWrite } from "../../device/protocol.js";
+import type {
+  Answer,
+  RecordedRequest,
+  Responder,
+  SseFrame,
+} from "../../device/scripted-server.js";
+import type {
+  WireEdgeOptions,
+  WireItemOptions,
+} from "../../device/marfa-answers.js";
 /**
  * "A folder is a directory bound to a `system.folder`, whose search decides
  * what it holds."
@@ -151,6 +167,8 @@ function scriptFolderWrites(
   options: {
     /** Handed the door, for a fixture that has another machine write. */
     door?: (door: FolderDoor) => void;
+    /** The edge door, for a fixture that reads what it holds. */
+    edges?: EdgeDoor;
   } = {},
 ): Map<string, DoorRow> {
   // What the hydration served, so a write to one of those rows is answered
@@ -174,40 +192,213 @@ function scriptFolderWrites(
       }),
   );
   options.door?.(door);
+  const edges = options.edges ?? new EdgeDoor();
   scriptWrites(harness.server, {
     create: [
-      (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
+      (request) => {
+        const { answer } = door.create(JSON.parse(request.body) as DoorCreate);
+        edges.logItem("item.created", answer);
+        return answer;
+      },
     ],
     update: [
-      (request) =>
-        door.update(
+      (request) => {
+        const answer = door.update(
           request.pathname.split("/").at(-1) ?? "unknown",
           JSON.parse(request.body) as {
             properties?: Record<string, unknown>;
             version: number;
           },
           { resolve: request.query.get("conflict") === "auto" },
-        ),
+        );
+        edges.logItem("item.updated", answer);
+        return answer;
+      },
     ],
     // A device reads a row by id to reconcile after a refusal.
     read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
-    // A delete, a tag and an edge all answer plainly: what a folder does with
-    // those verdicts is the queue's business and is asserted there.
+    // A delete and a tag answer plainly: what a folder does with those
+    // verdicts is the queue's business and is asserted there.
     tags: [{ kind: "json", status: 200, body: {} }],
     extensions: [{ kind: "json", status: 200, body: {} }],
-    edges: [{ kind: "json", status: 201, body: {} }],
   });
   harness.server.answer("DELETE", /^\/items\/[^/]+$/, {
     kind: "json",
     status: 204,
     body: {},
   });
-  harness.server.answer("DELETE", /^\/edges\/[^/]+$/, {
-    kind: "json",
-    status: 204,
-    body: {},
-  });
+  edges.script(harness.server);
   return door.rows;
+}
+
+/**
+ * The edge doors, holding what they are sent as the server does: a create
+ * answered at version 1 and refused where the same edge is held already, an
+ * update on the version held moving it on, and each change, with the item
+ * writes it is told of, logged as the event the stream would carry.
+ */
+class EdgeDoor {
+  readonly edges = new Map<string, WireEdgeOptions & { version: number }>();
+  /** Every change as its event, ids counting on from the head read's `1`. */
+  readonly events: SseFrame[] = [];
+  /** An answer standing in for the server's to an edge written or
+   *  changed, a refusal say; the door decides where it answers `undefined`. */
+  placing?: (edge: WireEdgeOptions) => Answer | undefined;
+  /** Listings of an item's edges still to fail, as a server failing now. */
+  failListings = 0;
+  private minted = 0;
+
+  /** An edge the server holds already, one a hydration serves. */
+  hold(edge: WireEdgeOptions): this {
+    this.edges.set(edge.id, {
+      ...edge,
+      version: edge.version ?? 1,
+      created_at: edge.created_at ?? this.stamp(),
+    });
+    return this;
+  }
+
+  script(server: ScriptedServer): void {
+    server.answer("POST", "/edges", (request) => {
+      const body = JSON.parse(request.body) as WireEdgeOptions;
+      const standIn = this.placing?.(body);
+      if (standIn !== undefined) return standIn;
+      const held = [...this.edges.values()].some(
+        (edge) =>
+          edge.source_id === body.source_id &&
+          edge.target_id === body.target_id &&
+          edge.edge_type === body.edge_type,
+      );
+      if (held) {
+        return answers.edgeDuplicate({
+          source_id: body.source_id,
+          target_id: body.target_id,
+          edge_type: body.edge_type ?? "references",
+        });
+      }
+      const edge = { ...body, version: 1, created_at: this.stamp() };
+      this.edges.set(edge.id, edge);
+      this.log("edge.created", edge);
+      return writeAnswers.edge(edge, 201);
+    });
+    server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
+      const held = this.edges.get(request.pathname.split("/").at(-1) ?? "");
+      const body = JSON.parse(request.body) as {
+        properties?: Record<string, unknown>;
+        version: number;
+      };
+      if (held === undefined) {
+        return refusal(404, "edge_not_found", "No such edge");
+      }
+      if (body.version !== held.version) {
+        return answers.edgeVersionConflict(wireEdge(held));
+      }
+      const standIn = this.placing?.({
+        ...held,
+        properties: { ...held.properties, ...body.properties },
+      });
+      if (standIn !== undefined) return standIn;
+      const edge = {
+        ...held,
+        properties: { ...held.properties, ...body.properties },
+        version: held.version + 1,
+        updated_at: this.stamp(),
+      };
+      this.edges.set(edge.id, edge);
+      this.log("edge.updated", edge);
+      return writeAnswers.edge(edge, 200);
+    });
+    // A refused edge write is reconciled by reading its source's edges.
+    server.answer("GET", /^\/items\/[^/]+\/edges$/, (request) => {
+      if (this.failListings > 0) {
+        this.failListings -= 1;
+        return refusal(503, "unavailable", "Try again");
+      }
+      const source = request.pathname.split("/").at(-2);
+      const type = request.query.get("edge_type");
+      return edgesPage(
+        [...this.edges.values()]
+          .filter(
+            (edge) =>
+              edge.source_id === source &&
+              (type === null || edge.edge_type === type),
+          )
+          .map((edge) => wireEdge(edge)),
+      );
+    });
+    server.answer("DELETE", /^\/edges\/[^/]+$/, (request) => {
+      const id = request.pathname.split("/").at(-1) ?? "";
+      const held = this.edges.get(id);
+      this.edges.delete(id);
+      if (held !== undefined) this.log("edge.deleted", held);
+      return writeAnswers.ok();
+    });
+  }
+
+  /** Another machine moving an item's placement in a folder to `path`. */
+  relocate(source: string, folderId: string, path: string): void {
+    const held = [...this.edges.values()].find(
+      (edge) =>
+        edge.edge_type === "in-folder" &&
+        edge.source_id === source &&
+        edge.target_id === folderId,
+    );
+    if (held === undefined) throw new Error(`${source} has no placement`);
+    const edge = {
+      ...held,
+      properties: { path },
+      version: held.version + 1,
+      updated_at: this.stamp(),
+    };
+    this.edges.set(edge.id, edge);
+    this.log("edge.updated", edge);
+  }
+
+  /** The folder's placements, as `path` by source. */
+  placements(folderId: string): Map<string, unknown> {
+    return new Map(
+      [...this.edges.values()]
+        .filter(
+          (edge) =>
+            edge.edge_type === "in-folder" && edge.target_id === folderId,
+        )
+        .map((edge) => [edge.source_id, edge.properties?.path]),
+    );
+  }
+
+  /** The stream as the server's log serves it: a head read where no cursor
+   *  is named, and every change after the cursor otherwise. */
+  stream(): (request: RecordedRequest) => Answer {
+    return (request) => {
+      const after = request.headers["last-event-id"];
+      const head = String(this.events.length + 1);
+      if (after === undefined) return headRead(head);
+      return liveReplay(
+        head,
+        this.events.filter((frame) => Number(frame.id) > Number(after)),
+      );
+    };
+  }
+
+  /** An item write the door's server took, logged as its event. */
+  logItem(kind: string, answer: Answer): void {
+    if (answer.kind !== "json" || answer.status >= 300) return;
+    const item = (answer.body as { item?: Record<string, unknown> }).item;
+    if (item === undefined) return;
+    this.events.push(itemEvent(String(this.events.length + 2), kind, item));
+  }
+
+  private log(kind: string, edge: WireEdgeOptions): void {
+    this.events.push(
+      edgeEvent(String(this.events.length + 2), kind, wireEdge(edge)),
+    );
+  }
+
+  /** A moment later than every one before it, so an older edge reads older. */
+  private stamp(): string {
+    this.minted += 1;
+    return new Date(Date.UTC(2026, 8, 18) + this.minted * 1000).toISOString();
+  }
 }
 
 /** What the folder sent to the items door, parsed. */
@@ -239,6 +430,24 @@ function sentUpdates(
       id: request.pathname.split("/").at(-1) ?? "",
       body: JSON.parse(request.body) as Record<string, unknown>,
     }));
+}
+
+/** A queue without the folder's placements, for a fixture about the other
+ *  writes a file makes (`folders.md` 16). */
+function withoutPlacements(
+  harness: FolderHarness,
+  rows: QueuedWrite[],
+): QueuedWrite[] {
+  return rows.filter(
+    (row) =>
+      !(row.kind.endsWith("_edge") && row.target_id === harness.settings.id),
+  );
+}
+
+/** The verdicts on writes of items, without the placements a push also
+ *  sends (`folders.md` 16). */
+function itemVerdicts(verdicts: DrainVerdict[]): DrainVerdict[] {
+  return verdicts.filter((entry) => !entry.kind.endsWith("_edge"));
 }
 
 describe("what a folder is", () => {
@@ -1034,6 +1243,7 @@ describe("what a folder is", () => {
         (request) => request.method === "POST" && request.pathname === "/edges",
       )
       .map((request) => JSON.parse(request.body) as Record<string, unknown>)
+      .filter((edge) => edge.edge_type !== "in-folder")
       .map(
         (edge) =>
           `${String(edge.source_id)} ${String(edge.edge_type)} ${String(edge.target_id)}`,
@@ -1073,10 +1283,12 @@ describe("what a folder is", () => {
     expect((await harness.folder.push()).ok).toBe(true);
     expect((await second.folder.push()).ok).toBe(true);
 
-    const one = await harness.folder.device().queue();
-    const two = await second.folder.device().queue();
-    expect(one.ok && two.ok).toBe(true);
-    if (!one.ok || !two.ok) return;
+    const queuedOne = await harness.folder.device().queue();
+    const queuedTwo = await second.folder.device().queue();
+    expect(queuedOne.ok && queuedTwo.ok).toBe(true);
+    if (!queuedOne.ok || !queuedTwo.ok) return;
+    const one = { value: withoutPlacements(harness, queuedOne.value) };
+    const two = { value: withoutPlacements(second, queuedTwo.value) };
     expect(
       one.value.length,
       "one folder's queue holds the other's writes, so a push in one sends what was written in the other",
@@ -1794,7 +2006,9 @@ describe("files and items", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     expect(
-      queued.value.filter((row) => row.kind === "delete_edge").length,
+      withoutPlacements(harness, queued.value).filter(
+        (row) => row.kind === "delete_edge",
+      ).length,
       "the edge outlived the link, so the next pull writes the line back and the person deletes it again forever",
     ).toBe(1);
 
@@ -1857,7 +2071,9 @@ describe("files and items", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     expect(
-      queued.value.filter((row) => row.kind === "delete_edge"),
+      withoutPlacements(harness, queued.value).filter(
+        (row) => row.kind === "delete_edge",
+      ),
       "one keystroke in a file destroyed an edge made somewhere else, because an edge nothing has rendered yet looks exactly like a link the person removed",
     ).toEqual([]);
   });
@@ -1879,7 +2095,9 @@ describe("files and items", () => {
     expect(before.ok).toBe(true);
     if (!before.ok) return;
     expect(
-      before.value.filter((row) => row.kind === "create_edge").length,
+      withoutPlacements(harness, before.value).filter(
+        (row) => row.kind === "create_edge",
+      ).length,
       "the link never became an edge, so there is nothing here for a later scan to remove",
     ).toBe(1);
 
@@ -1904,7 +2122,9 @@ describe("files and items", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     expect(
-      queued.value.filter((row) => row.kind === "delete_edge"),
+      withoutPlacements(harness, queued.value).filter(
+        (row) => row.kind === "delete_edge",
+      ),
       "the folder destroyed the edge because the link stopped resolving, so renaming a file while editing another quietly cuts the connection between them and the line stays in the body saying otherwise",
     ).toEqual([]);
   });
@@ -1927,7 +2147,9 @@ describe("files and items", () => {
     expect(first.ok).toBe(true);
     if (!first.ok) return;
     expect(
-      first.value.filter((row) => row.kind === "create_edge").length,
+      withoutPlacements(harness, first.value).filter(
+        (row) => row.kind === "create_edge",
+      ).length,
       "the two links never became edges, so there is nothing for a later removal to land on",
     ).toBe(2);
 
@@ -1953,7 +2175,9 @@ describe("files and items", () => {
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
     expect(
-      queued.value.filter((row) => row.kind === "delete_edge").length,
+      withoutPlacements(harness, queued.value).filter(
+        (row) => row.kind === "delete_edge",
+      ).length,
       "the stand-down dropped the link out of the folder's memory for good, so removing it later does nothing and the next pull writes it back forever",
     ).toBe(1);
   });
@@ -1974,7 +2198,9 @@ describe("files and items", () => {
     const rows = await device.queue();
     expect(rows.ok).toBe(true);
     if (!rows.ok) return;
-    const edge = rows.value.find((row) => row.kind === "create_edge");
+    const edge = withoutPlacements(harness, rows.value).find(
+      (row) => row.kind === "create_edge",
+    );
     expect(
       edge,
       "the link never became an edge, so there is nothing here of any kind to keep",
@@ -1997,7 +2223,9 @@ describe("files and items", () => {
     const queued = await device.queue();
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
-    const deleted = queued.value.filter((row) => row.kind === "delete_edge");
+    const deleted = withoutPlacements(harness, queued.value).filter(
+      (row) => row.kind === "delete_edge",
+    );
     expect(
       deleted.length,
       "the link the person removed took no edge with it, so this fixture is not looking at a removal at all",
@@ -2069,7 +2297,8 @@ describe("files and items", () => {
     });
     expect(made.ok, `the edge was refused: ${JSON.stringify(made)}`).toBe(true);
 
-    // The witness: the pull renders it as a link, as 7 says it does.
+    // The witness: the pull renders it as a link, as `folders.md` 9 says it
+    // does.
     const rendered = await harness.folder.pull();
     expect(rendered.ok).toBe(true);
     if (!rendered.ok) return;
@@ -2094,15 +2323,16 @@ describe("files and items", () => {
     expect((await harness.folder.scan()).ok).toBe(true);
     expect((await device.drain()).ok).toBe(true);
 
-    // The edge stays (25), and the link does not come back.
+    // The edge stays (`folders.md` 26), and the link does not come back. The
+    // file may be written again for its version line, once its edit has
+    // landed (`folders.md` 21).
     const again = await harness.folder.pull();
     expect(again.ok).toBe(true);
     if (!again.ok) return;
     expect(
-      again.value.rewritten,
-      "the pull wrote the removed link back, so the person is in the loop 21 was meant to end",
-    ).toBe(0);
-    expect(read(harness, "source.md")).not.toContain("[[other]]");
+      read(harness, "source.md"),
+      "the pull wrote the removed link back, so the person is in the loop `folders.md` 31 was meant to end",
+    ).not.toContain("[[other]]");
     const queued = await device.queue();
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
@@ -2111,7 +2341,9 @@ describe("files and items", () => {
       "the removal was never queued, so the queue below is not a queue this scan wrote to",
     ).toBeGreaterThan(0);
     expect(
-      queued.value.filter((row) => row.kind === "delete_edge"),
+      withoutPlacements(harness, queued.value).filter(
+        (row) => row.kind === "delete_edge",
+      ),
       "the folder removed an edge of a kind it could not have made",
     ).toEqual([]);
 
@@ -2125,15 +2357,15 @@ describe("files and items", () => {
     expect((await harness.folder.scan()).ok).toBe(true);
     expect((await device.drain()).ok).toBe(true);
     const stoodDown = await harness.folder.pull();
-    expect(stoodDown.ok && stoodDown.value.rewritten).toBe(0);
+    expect(stoodDown.ok).toBe(true);
     expect(
       read(harness, "source.md"),
       "a scan that stood down dropped the record, and the link came back",
     ).not.toContain("[[other]]");
 
     // A link of the folder's own kind taken out is not a declined target:
-    // its edge goes (25), and an edge of another kind to the same item,
-    // made afterwards, still renders.
+    // its edge goes (`folders.md` 26), and an edge of another kind to the
+    // same item, made afterwards, still renders.
     writeFileSync(
       join(harness.dir, "source.md"),
       read(harness, "source.md")
@@ -2518,7 +2750,9 @@ describe("files and items", () => {
     const queued = await harness.folder.device().queue();
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
-    const edges = queued.value.filter((row) => row.kind === "create_edge");
+    const edges = withoutPlacements(harness, queued.value).filter(
+      (row) => row.kind === "create_edge",
+    );
     const creates = sentCreates(harness);
     expect(
       creates.length,
@@ -2546,7 +2780,9 @@ describe("files and items", () => {
     const queued = await harness.folder.device().queue();
     expect(queued.ok).toBe(true);
     if (!queued.ok) return;
-    const edges = queued.value.filter((row) => row.kind === "create_edge");
+    const edges = withoutPlacements(harness, queued.value).filter(
+      (row) => row.kind === "create_edge",
+    );
     expect(
       edges.length,
       "a link in the body did not become an edge, so the connections a folder's notes carry exist only as text",
@@ -2717,7 +2953,7 @@ describe("identity", () => {
     expect(idIn(harness, "note.md")).toBe(sentCreates(harness)[0]?.id);
   });
 
-  it("follows a rename by the id the file carries, and sends nothing for it", async () => {
+  it("follows a rename by the id the file carries, and sends no edit of the item for it", async () => {
     harness = await folderHarness("folder-rename-by-id");
     scriptFolderWrites(harness);
     put(harness, "before.md", "---\ntitle: Before\n---\nsame bytes\n");
@@ -2742,7 +2978,7 @@ describe("identity", () => {
     ).toEqual([1, 0, 0]);
     expect(
       sentUpdates(harness),
-      "a move sent a write, though nothing the server holds names a file's path",
+      "a move sent an edit of the item, though only its placement moved",
     ).toEqual([]);
 
     // And the file stays where the person put it, on this pull and the next.
@@ -3526,6 +3762,7 @@ describe("identity", () => {
       ],
       read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
+    new EdgeDoor().script(harness.server);
     put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
     const refused = await harness.folder.push();
     expect(refused.ok, JSON.stringify(refused)).toBe(true);
@@ -3556,9 +3793,9 @@ describe("identity", () => {
       [pushed.value.scan.created, pushed.value.scan.requeued],
       "a file bound to a row the copy lost was not queued again once it changed",
     ).toEqual([1, 1]);
-    expect(pushed.value.drain.verdicts.map((entry) => entry.verdict)).toEqual([
-      "accepted",
-    ]);
+    expect(
+      itemVerdicts(pushed.value.drain.verdicts).map((entry) => entry.verdict),
+    ).toEqual(["accepted"]);
     const made = String(sentCreates(harness).at(-1)?.id);
     expect(door.rows.get(made)?.properties.body).toBe("allowed\n");
     expect(read(harness, "mine.md")).toContain(`marfa_id: ${made}`);
@@ -3596,6 +3833,7 @@ describe("identity", () => {
       ],
       read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
+    new EdgeDoor().script(harness.server);
     put(harness, "a.md", "---\ntitle: Lost\n---\nnot allowed\n");
     expect((await harness.folder.push()).ok).toBe(true);
     put(harness, "b.md", "---\ntitle: Live\n---\nlive\n");
@@ -3649,6 +3887,7 @@ describe("identity", () => {
       ],
       read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
+    new EdgeDoor().script(harness.server);
     put(harness, "a.md", "---\ntitle: Lost\n---\nnot allowed\n");
     expect((await harness.folder.push()).ok).toBe(true);
     put(harness, "b.md", "---\ntitle: Live\n---\nlive\n");
@@ -3687,6 +3926,7 @@ describe("identity", () => {
       ],
       read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
+    new EdgeDoor().script(harness.server);
     put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
     expect((await harness.folder.push()).ok).toBe(true);
     const stayed = await harness.folder.scan();
@@ -3721,6 +3961,7 @@ describe("identity", () => {
       ],
       read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
     });
+    new EdgeDoor().script(harness.server);
     put(harness, "mine.md", "---\ntitle: Mine\n---\nnot allowed\n");
     const lost = "bound to an item that is gone";
     const createsOf = (title: string) =>
@@ -3762,9 +4003,1079 @@ describe("identity", () => {
       later,
       `a watcher printed a pass where nothing happened: ${watching.stdout}`,
     ).toHaveLength(1);
+    // Sent 2: the later file's create and its placement.
     expect(later[0]).toMatch(
-      /^1 created, 0 updated, 0 renamed, 0 deleted; sent 1; \d+ file\(s\) written, 1 bound to an item that is gone$/,
+      /^1 created, 0 updated, 0 renamed, 0 deleted; sent 2; \d+ file\(s\) written, 1 bound to an item that is gone$/,
     );
+  });
+});
+
+describe("where a file sits", () => {
+  /** An item the server holds, a note unless typed, placed in the folder at
+   *  `path` where one is named. */
+  interface Placed {
+    id: string;
+    title: string;
+    type?: string;
+    properties?: Record<string, unknown>;
+    path?: string;
+    tags?: string[];
+  }
+
+  /**
+   * A folder whose server holds these notes, each with its `in-folder` edge
+   * to the folder where it names a path. The folder's id is minted with the
+   * harness, so the edges go on before the hydration reads them.
+   */
+  async function placedHarness(
+    label: string,
+    notes: Placed[],
+    settings?: FolderSettings,
+  ): Promise<{ harness: FolderHarness; edges: EdgeDoor }> {
+    const edges = new EdgeDoor();
+    const rows = notes.map((note) => ({
+      item: {
+        id: note.id,
+        type: note.type ?? "core.note",
+        properties: note.properties ?? {
+          title: note.title,
+          body: `${note.title}\n`,
+        },
+      } as WireItemOptions,
+      tags: note.tags,
+    }));
+    const byType: Record<string, typeof rows> = {};
+    for (const row of rows) {
+      const type = row.item.type ?? "core.note";
+      (byType[type] ??= []).push(row);
+    }
+    const made = await folderHarness(label, {
+      settings,
+      rows: byType,
+      hydrate: false,
+      events: [edges.stream()],
+    });
+    notes.forEach((note, at) => {
+      if (note.path === undefined) return;
+      const edge: WireEdgeOptions = {
+        id: randomUUID(),
+        source_id: note.id,
+        target_id: made.settings.id,
+        edge_type: "in-folder",
+        properties: { path: note.path },
+      };
+      edges.hold(edge);
+      rows[at]!.item.edges = {
+        "in-folder": {
+          data: [wireEdge(edges.edges.get(edge.id)!)],
+          next_cursor: null,
+        },
+      };
+    });
+    scriptFolderWrites(made, { edges });
+    const hydrated = await made.folder.hydrate();
+    if (!hydrated.ok) {
+      await made.stop();
+      throw new Error(
+        `the fixture could not hydrate: ${JSON.stringify(hydrated)}`,
+      );
+    }
+    return { harness: made, edges };
+  }
+
+  /** Another Mac: its own directory and store, bound to the same folder. */
+  function anotherMac(
+    harness: FolderHarness,
+    label: string,
+  ): Promise<FolderHarness> {
+    return folderHarness(label, {
+      sharing: { server: harness.server, key: "another-mac-key" },
+      folder: harness.settings,
+    });
+  }
+
+  it("places an item where its in-folder edge says, on every Mac", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016a1";
+    const placed = await placedHarness("placement-every-mac", [
+      { id, title: "Plan", path: "Projects/Plan.md" },
+    ]);
+    harness = placed.harness;
+    // Another Mac: its own directory and store, bound to the same folder.
+    second = await folderHarness("placement-other-mac", {
+      sharing: { server: harness.server, key: "another-mac-key" },
+      folder: harness.settings,
+    });
+    for (const mac of [harness, second]) {
+      expect((await mac.folder.pull()).ok).toBe(true);
+      expect(
+        existsSync(join(mac.dir, "Projects", "Plan.md")),
+        "the file is not where its item's in-folder edge says, so each Mac lays the folder out its own way",
+      ).toBe(true);
+      expect(existsSync(join(mac.dir, "Plan.md"))).toBe(false);
+    }
+
+    // Moved on one Mac, the file follows on the other.
+    mkdirSync(join(harness.dir, "Archive"));
+    renameSync(
+      join(harness.dir, "Projects", "Plan.md"),
+      join(harness.dir, "Archive", "Plan.md"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(placed.edges.placements(harness.settings.id).get(id)).toBe(
+      "Archive/Plan.md",
+    );
+    const followed = await second.folder.push();
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(followed.value.pull?.moved).toBe(1);
+    expect(
+      existsSync(join(second.dir, "Archive", "Plan.md")),
+      "a move on one Mac did not reach the other, so the two lay the folder out differently from then on",
+    ).toBe(true);
+    expect(existsSync(join(second.dir, "Projects", "Plan.md"))).toBe(false);
+  });
+
+  it("places a new item from elsewhere under its type's first placement", async () => {
+    const note = "01a00000-0000-7000-8000-0000000016b1";
+    const bookmark = "01a00000-0000-7000-8000-0000000016b2";
+    harness = await folderHarness("placement-first", {
+      settings: {
+        search: { types: ["core.note", "core.bookmark"] },
+        first_placement: { "core.note": "Notes/" },
+      },
+      rows: {
+        "core.note": [
+          { item: { id: note, properties: { title: "An idea", body: "x\n" } } },
+        ],
+        "core.bookmark": [
+          {
+            item: {
+              id: bookmark,
+              type: "core.bookmark",
+              properties: { title: "A link", body: "y\n" },
+            },
+          },
+        ],
+      },
+    });
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      existsSync(join(harness.dir, "Notes", "An idea.md")),
+      "a note made elsewhere did not go under the first placement its type names",
+    ).toBe(true);
+    expect(
+      existsSync(join(harness.dir, "A link.md")),
+      "a type with no first placement did not go at the root by its title",
+    ).toBe(true);
+    expect(pulled.value.placed).toBe(2);
+
+    // The folder then writes where it put each.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(edges.placements(harness.settings.id)).toEqual(
+      new Map([
+        [note, "Notes/An idea.md"],
+        [bookmark, "A link.md"],
+      ]),
+    );
+  });
+
+  it("sends only the placement for a rename", async () => {
+    harness = await folderHarness("placement-rename");
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    put(harness, "draft.md", "---\ntitle: Draft\n---\nwords\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "draft.md") ?? "";
+    expect(edges.placements(harness.settings.id).get(id)).toBe("draft.md");
+
+    const before = harness.server.requests.length;
+    mkdirSync(join(harness.dir, "Done"));
+    renameSync(
+      join(harness.dir, "draft.md"),
+      join(harness.dir, "Done", "draft.md"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const sent = harness.server.requests
+      .slice(before)
+      .filter((request) => request.method !== "GET");
+    expect(
+      sent.map((request) => request.method),
+      "a rename sent something other than one change to the file's placement",
+    ).toEqual(["PATCH"]);
+    expect(sent[0]?.pathname).toMatch(/^\/edges\//);
+    expect(JSON.parse(sent[0]?.body ?? "{}")).toEqual({
+      properties: { path: "Done/draft.md" },
+      version: 1,
+    });
+    expect(edges.placements(harness.settings.id).get(id)).toBe("Done/draft.md");
+    expect(existsSync(join(harness.dir, "Done", "draft.md"))).toBe(true);
+    expect(existsSync(join(harness.dir, "draft.md"))).toBe(false);
+  });
+
+  it("writes the in-folder edge for a file made in the folder", async () => {
+    harness = await folderHarness("placement-made-here");
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    put(harness, "Inbox/idea.md", "---\ntitle: Idea\n---\nfirst thought\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const [created] = sentCreates(harness);
+    const placements = harness.server.requests
+      .filter(
+        (request) => request.method === "POST" && request.pathname === "/edges",
+      )
+      .map((request) => JSON.parse(request.body) as Record<string, unknown>)
+      .filter((edge) => edge.edge_type === "in-folder");
+    expect(
+      placements,
+      "a file made in the folder went without its placement, so no other Mac knows where it sits",
+    ).toMatchObject([
+      {
+        source_id: created?.id,
+        target_id: harness.settings.id,
+        properties: { path: "Inbox/idea.md" },
+      },
+    ]);
+
+    // Never in the file: the pull has rewritten it, and it names the item
+    // and nothing of the placement.
+    const text = read(harness, "Inbox/idea.md");
+    expect(text).toContain(`marfa_id: ${String(created?.id)}`);
+    expect(
+      text,
+      "the placement was written into the file, as a link to the folder's own settings",
+    ).not.toContain(harness.settings.id);
+    expect(text).not.toContain("in-folder");
+  });
+
+  it("places a checked-out file where it sits", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016e1";
+    const placed = await placedHarness("placement-checkout", [
+      { id, title: "Plan", path: "Elsewhere/Plan.md" },
+    ]);
+    harness = placed.harness;
+    put(harness, "Plan.md", `---\nmarfa_id: ${id}\ntitle: Plan\n---\nPlan\n`);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      placed.edges.placements(harness.settings.id).get(id),
+      "a file the person put in the folder was not placed where they put it",
+    ).toBe("Plan.md");
+    expect(idIn(harness, "Plan.md")).toBe(id);
+    expect(existsSync(join(harness.dir, "Elsewhere", "Plan.md"))).toBe(false);
+  });
+
+  it("places a file whose placement another item holds beside it, and writes none where its placement is unsafe", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "marfa-folder-elsewhere-"));
+    // Placed in this order, so each edge is older than the next.
+    const notes: Placed[] = [
+      {
+        id: "01a00000-0000-7000-8000-0000000016c1",
+        title: "A",
+        path: "Shared.md",
+      },
+      {
+        id: "01a00000-0000-7000-8000-0000000016c2",
+        title: "B",
+        path: "Shared (2).md",
+      },
+      {
+        id: "01a00000-0000-7000-8000-0000000016c3",
+        title: "C",
+        path: "Shared (2).md",
+      },
+      {
+        id: "01a00000-0000-7000-8000-0000000016c4",
+        title: "D",
+        path: "Shared.md",
+      },
+      {
+        id: "01a00000-0000-7000-8000-0000000016c5",
+        title: "Hidden",
+        path: ".hidden/c.md",
+      },
+      {
+        id: "01a00000-0000-7000-8000-0000000016c6",
+        title: "Linked",
+        path: "linked/d.md",
+      },
+      {
+        id: "01a00000-0000-7000-8000-0000000016c7",
+        title: "Climbing",
+        path: "a/../e.md",
+      },
+    ];
+    const placed = await placedHarness("placement-taken", notes);
+    harness = placed.harness;
+    // A directory that leads out of the folder.
+    symlinkSync(outside, join(harness.dir, "linked"));
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    const layout = [
+      "Shared.md",
+      "Shared (2).md",
+      "Shared (3).md",
+      "Shared (4).md",
+    ].map((name) => idIn(harness!, name));
+    expect(
+      layout,
+      "items placed at one path were not each given a file, the older placement at the path and the next at the first free number beside it",
+    ).toEqual(notes.slice(0, 4).map((note) => note.id));
+    expect(existsSync(join(harness.dir, "Shared (2) (2).md"))).toBe(false);
+    expect(pulled.value.beside).toBe(2);
+    expect(
+      [pulled.value.outside, readdirSync(outside)],
+      "a placement leading out of what the folder reads was written",
+    ).toEqual([3, []]);
+    for (const name of [".hidden", "Hidden.md", "Linked.md", "e.md", "a"]) {
+      expect(existsSync(join(harness.dir, name)), name).toBe(false);
+    }
+
+    // Each one beside is placed where it now sits; an unsafe placement is
+    // left as it says.
+    expect((await harness.folder.push()).ok).toBe(true);
+    const placements = placed.edges.placements(harness.settings.id);
+    expect(
+      notes.map((note) => placements.get(note.id)),
+      "a placement moved beside was not recorded, or an unsafe one was changed",
+    ).toEqual([
+      "Shared.md",
+      "Shared (2).md",
+      "Shared (3).md",
+      "Shared (4).md",
+      ".hidden/c.md",
+      "linked/d.md",
+      "a/../e.md",
+    ]);
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  it("writes no file where its placement would make it another kind of file", async () => {
+    const bytes = Buffer.from("bytes the server holds");
+    const image = "01a00000-0000-7000-8000-0000000016h1";
+    const note = "01a00000-0000-7000-8000-0000000016h2";
+    const control = "01a00000-0000-7000-8000-0000000016h3";
+    const placed = await placedHarness(
+      "placement-unsuited",
+      [
+        {
+          id: image,
+          type: "core.file",
+          title: "photo.png",
+          properties: {
+            title: "photo.png",
+            blob_ref: hashOf(Buffer.from("not really a picture")),
+            mime_type: "image/png",
+          },
+          path: "data.md",
+        },
+        { id: note, title: "Note", path: "picture.png" },
+        { id: control, title: "Control", path: "notes/control.md" },
+        {
+          id: "01a00000-0000-7000-8000-0000000016h4",
+          type: "core.file",
+          title: "photo.png",
+          properties: {
+            title: "photo.png",
+            blob_ref: hashOf(bytes),
+            mime_type: "image/png",
+          },
+          path: "photo.data",
+        },
+        {
+          id: "01a00000-0000-7000-8000-0000000016h5",
+          type: "core.file",
+          title: "blob",
+          properties: { title: "blob", blob_ref: hashOf(bytes) },
+          path: "blob.md",
+        },
+      ],
+      { search: { types: ["core.note", "core.file"] } },
+    );
+    harness = placed.harness;
+    scriptBlob(harness.server, bytes);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    // The witness: a placement of the item's own kind is written, and so
+    // is one whose name names no MIME type, or whose item names none.
+    expect(idIn(harness, "notes/control.md")).toBe(control);
+    for (const name of ["photo.data", "blob.md"]) {
+      expect(readFileSync(join(harness.dir, name)), name).toEqual(bytes);
+    }
+    expect(
+      [
+        pulled.value.unsuited,
+        existsSync(join(harness.dir, "data.md")),
+        existsSync(join(harness.dir, "picture.png")),
+      ],
+      "a placement wrote an item as another kind of file, which its next edit would send as that kind",
+    ).toEqual([2, false, false]);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const placements = placed.edges.placements(harness.settings.id);
+    expect([placements.get(image), placements.get(note)]).toEqual([
+      "data.md",
+      "picture.png",
+    ]);
+  });
+
+  it("gives a path two Macs made a file at to the item placed there first, the same on every Mac", async () => {
+    const edges = new EdgeDoor();
+    harness = await folderHarness("placement-race-first", {
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    second = await anotherMac(harness, "placement-race-second");
+    put(harness, "Shared.md", "---\ntitle: Shared\n---\nfrom the first Mac\n");
+    put(second, "Shared.md", "---\ntitle: Shared\n---\nfrom the second Mac\n");
+    const layout = (mac: FolderHarness) =>
+      readdirSync(mac.dir)
+        .filter((name) => name.endsWith(".md"))
+        .sort()
+        .map((name) => [name, idIn(mac, name)]);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const met = await second.folder.push();
+    expect(met.ok, JSON.stringify(met)).toBe(true);
+    if (!met.ok) return;
+    // The second Mac's file moves beside, and the first Mac's item takes
+    // the path it left in the same pull.
+    expect([met.value.pull?.unwritten, met.value.pull?.beside]).toEqual([0, 1]);
+    expect(layout(second).map(([name]) => name)).toEqual([
+      "Shared (2).md",
+      "Shared.md",
+    ]);
+    for (let round = 0; round < 3; round += 1) {
+      for (const mac of [harness, second]) {
+        const pushed = await mac.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      }
+    }
+    const first = sentCreates(harness).find(
+      (sent) =>
+        (sent.properties as Record<string, unknown>).body ===
+        "from the first Mac\n",
+    )?.id;
+    expect(
+      layout(harness),
+      "the two Macs did not settle on one file per item, the first placed at the path and the other beside it",
+    ).toEqual([
+      ["Shared (2).md", expect.any(String)],
+      ["Shared.md", first],
+    ]);
+    expect(
+      layout(second),
+      "the two Macs lay the folder out differently",
+    ).toEqual(layout(harness));
+
+    // Settled: another round writes nothing anywhere.
+    const before = harness.server.requests.filter(
+      (request) => request.method !== "GET",
+    ).length;
+    for (const mac of [harness, second]) {
+      expect((await mac.folder.push()).ok).toBe(true);
+    }
+    expect(
+      harness.server.requests.filter((request) => request.method !== "GET")
+        .length,
+      "the Macs went on writing after they agreed",
+    ).toBe(before);
+    expect(layout(second)).toEqual(layout(harness));
+  });
+
+  it("follows another Mac's move of the same file, giving its own way", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016f1";
+    const placed = await placedHarness("placement-moves-race", [
+      { id, title: "Plan", path: "Plan.md" },
+    ]);
+    harness = placed.harness;
+    second = await anotherMac(harness, "placement-moves-race-second");
+    for (const mac of [harness, second]) {
+      expect((await mac.folder.pull()).ok).toBe(true);
+    }
+    mkdirSync(join(harness.dir, "First"));
+    renameSync(
+      join(harness.dir, "Plan.md"),
+      join(harness.dir, "First", "Plan.md"),
+    );
+    mkdirSync(join(second.dir, "Second"));
+    renameSync(
+      join(second.dir, "Plan.md"),
+      join(second.dir, "Second", "Plan.md"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The second Mac hears of the first's move before its own is answered,
+    // so its copy shows its own move over the server's.
+    expect((await second.folder.scan()).ok).toBe(true);
+    expect((await second.folder.device().catchUp()).ok).toBe(true);
+    const late = await second.folder.push();
+    expect(late.ok, JSON.stringify(late)).toBe(true);
+    if (!late.ok) return;
+    expect((await harness.folder.push()).ok).toBe(true);
+    for (const mac of [harness, second]) {
+      expect(
+        idIn(mac, "First/Plan.md"),
+        "the Mac whose move came second kept its own, so the two stay apart",
+      ).toBe(id);
+      expect(existsSync(join(mac.dir, "Second", "Plan.md"))).toBe(false);
+    }
+    const queued = await second.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((row) => row.verdict === "blocked"),
+    ).toEqual([]);
+    expect(placed.edges.placements(harness.settings.id).get(id)).toBe(
+      "First/Plan.md",
+    );
+    expect(late.value.drain.gave_way).toBe(1);
+  });
+
+  it("follows the placement another Mac made first, and leaves no refusal behind", async () => {
+    const id = "01a00000-0000-7000-8000-0000000016g1";
+    const placed = await placedHarness("placement-duplicate", [
+      { id, title: "Idea" },
+    ]);
+    harness = placed.harness;
+    second = await anotherMac(harness, "placement-duplicate-second");
+    // Both Macs write the new item and queue its placement.
+    for (const mac of [harness, second]) {
+      expect((await mac.folder.pull()).ok).toBe(true);
+    }
+    expect((await harness.folder.push()).ok).toBe(true);
+    mkdirSync(join(harness.dir, "Kept"));
+    renameSync(
+      join(harness.dir, "Idea.md"),
+      join(harness.dir, "Kept", "Idea.md"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // Before its own placement is answered, the second Mac follows the
+    // older one the server holds.
+    expect((await second.folder.device().catchUp()).ok).toBe(true);
+    expect((await second.folder.pull()).ok).toBe(true);
+    expect(
+      idIn(second, "Kept/Idea.md"),
+      "a Mac followed its own waiting placement over the older one another Mac made",
+    ).toBe(id);
+    // The drain's own read of the edges fails; giving way reads them again.
+    placed.edges.failListings = 1;
+    const late = await second.folder.push();
+    expect(late.ok, JSON.stringify(late)).toBe(true);
+    if (!late.ok) return;
+    // The witness: the server refused the second Mac's placement as one it
+    // already holds.
+    expect(
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "in-folder",
+      ).length,
+    ).toBe(2);
+    expect(
+      late.value.drain.verdicts.filter((entry) => entry.verdict === "refused"),
+    ).toEqual([]);
+    const queued = await second.folder.device().queue();
+    expect(
+      queued.ok && queued.value.filter((row) => row.verdict === "refused"),
+      "a placement another Mac made first was left behind as a refusal",
+    ).toEqual([]);
+    expect(
+      idIn(second, "Kept/Idea.md"),
+      "the second Mac did not follow the placement the server holds",
+    ).toBe(id);
+    expect(existsSync(join(second.dir, "Idea.md"))).toBe(false);
+    expect(late.value.drain.gave_way).toBe(1);
+    const held = await second.folder.device().edgesFrom(id);
+    expect(
+      held.ok &&
+        held.value.filter((edge) => edge.edge_type === "in-folder").length,
+      "the copy holds this Mac's refused placement beside the server's",
+    ).toBe(1);
+  });
+
+  it("sends a placement the server refused once, until the settings or the key change", async () => {
+    let keyId = "narrowed-key";
+    let refusing = true;
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      refusing && edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-refused", {
+      key: [() => answers.currentKey(keyId, { "*": "write" })],
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    for (const name of ["one.md", "two.md"]) {
+      put(harness, name, `---\ntitle: ${name}\n---\nwords\n`);
+    }
+    const placings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "in-folder",
+      ).length;
+    const push = async (passes: number): Promise<PushReport | undefined> => {
+      let last: PushReport | undefined;
+      for (let pass = 0; pass < passes; pass += 1) {
+        const pushed = await harness!.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+        if (pushed.ok) last = pushed.value;
+      }
+      return last;
+    };
+    await push(1);
+    // Refused in a later pass than the first two.
+    put(harness, "three.md", "---\ntitle: three.md\n---\nwords\n");
+    const refused = await push(4);
+    expect(
+      placings(),
+      "a placement the server refused was sent again pass after pass",
+    ).toBe(3);
+    expect(refused?.pull?.unplaced).toBe(3);
+
+    // Moved after its refusal, a file is tried where it now sits, once.
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, "moved.md"));
+    await push(3);
+    expect(
+      placings(),
+      "a file moved after its placement was refused was not tried at its new path, or was tried again and again",
+    ).toBe(4);
+
+    // The settings change elsewhere: the placements go once more. A pull
+    // queues them, and the push after it sends them.
+    harness.settings.version += 1;
+    harness.settings.settings = {
+      ...harness.settings.settings,
+      defaults: { tags: ["changed"] },
+    };
+    edges.logItem(
+      "item.updated",
+      answers.updated(folderItem(harness.settings)),
+    );
+    await push(4);
+    expect(placings()).toBe(7);
+
+    // Another key: they go again, and land.
+    keyId = "another-key";
+    refusing = false;
+    await push(2);
+    expect(placings()).toBe(10);
+    expect(edges.placements(harness.settings.id).size).toBe(3);
+  });
+
+  it("keeps a file where the person moved it when the server refuses the move", async () => {
+    let refusing = false;
+    const edges = new EdgeDoor();
+    edges.placing = () =>
+      refusing
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-move-refused");
+    scriptFolderWrites(harness, { edges });
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "one.md") ?? "";
+    expect(edges.placements(harness.settings.id).get(id)).toBe("one.md");
+
+    refusing = true;
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, "renamed.md"));
+    for (let pass = 0; pass < 3; pass += 1) {
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    // The witness: the move was sent, and refused.
+    expect(
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname.startsWith("/edges/"),
+      ).length,
+    ).toBe(1);
+    expect(edges.placements(harness.settings.id).get(id)).toBe("one.md");
+    expect(
+      idIn(harness, "renamed.md"),
+      "a move the server refused took the file back to the path the server holds, undoing the rename",
+    ).toBe(id);
+    expect(existsSync(join(harness.dir, "one.md"))).toBe(false);
+  });
+
+  it("skips a placement the filesystem refuses, and keeps the file where it was", async () => {
+    const [blocker, victim, long, moving] = [
+      "01a00000-0000-7000-8000-0000000016i1",
+      "01a00000-0000-7000-8000-0000000016i2",
+      "01a00000-0000-7000-8000-0000000016i3",
+      "01a00000-0000-7000-8000-0000000016i4",
+    ];
+    const placed = await placedHarness("placement-unwritable", [
+      { id: blocker, title: "Blocker", path: "Blocker.md" },
+      { id: victim, title: "Victim", path: "Victim.md" },
+      { id: long, title: "Long", path: "Long.md" },
+      { id: moving, title: "Moving", path: "moving.md" },
+    ]);
+    harness = placed.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // Another machine places one under a file, one at a name longer than
+    // any filesystem takes, and moves a third.
+    const folderId = harness.settings.id;
+    placed.edges.relocate(victim, folderId, "Blocker.md/Victim.md");
+    placed.edges.relocate(long, folderId, `${"x".repeat(300)}.md`);
+    placed.edges.relocate(moving, folderId, "moved/moving.md");
+    const pushed = await harness.folder.push();
+    expect(
+      pushed.ok,
+      `a placement the filesystem refused stopped the pull: ${JSON.stringify(pushed)}`,
+    ).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.pull?.unwritten).toBe(2);
+    expect(
+      [idIn(harness, "Victim.md"), idIn(harness, "Long.md")],
+      "a file whose new placement could not be written was taken from where it was",
+    ).toEqual([victim, long]);
+    // The witness: every other file is pulled, a move among them.
+    expect(idIn(harness, "moved/moving.md")).toBe(moving);
+    expect(existsSync(join(harness.dir, "moving.md"))).toBe(false);
+    // And the next pass goes on, sending nothing for them.
+    const again = await harness.folder.push();
+    expect(again.ok && again.value.drain.sent).toBe(0);
+  });
+
+  it("reads no other edge to the folder as a placement", async () => {
+    const edges = new EdgeDoor();
+    // One file's default edge is refused, the other's already held.
+    let answered = 0;
+    edges.placing = (edge) => {
+      if (edge.edge_type !== "references") return undefined;
+      answered += 1;
+      return answered === 1
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : answers.edgeDuplicate({
+            source_id: edge.source_id,
+            target_id: edge.target_id,
+            edge_type: "references",
+          });
+    };
+    harness = await folderHarness("placement-other-edges", {
+      hydrate: false,
+      events: [edges.stream()],
+    });
+    const folderId = harness.settings.id;
+    harness.settings.settings = {
+      ...harness.settings.settings,
+      defaults: { edges: { references: [folderId] } },
+    };
+    harness.settings.version = 2;
+    expect((await harness.folder.hydrate()).ok).toBe(true);
+    scriptFolderWrites(harness, { edges });
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    put(harness, "two.md", "---\ntitle: Two\n---\nwords\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    // The witness: both default edges were refused.
+    expect(answered).toBe(2);
+    expect(
+      [pushed.value.drain.gave_way, pushed.value.pull?.unplaced],
+      "a refusal of another edge to the folder was read as one of its placements",
+    ).toEqual([0, 0]);
+
+    // Another machine moves both files: this one follows, and sends nothing.
+    const [one, two] = [idIn(harness, "one.md"), idIn(harness, "two.md")];
+    edges.relocate(one ?? "", folderId, "moved/one.md");
+    edges.relocate(two ?? "", folderId, "moved/two.md");
+    const before = harness.server.requests.length;
+    const followed = await harness.folder.push();
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    expect([
+      idIn(harness, "moved/one.md"),
+      idIn(harness, "moved/two.md"),
+    ]).toEqual([one, two]);
+    expect(
+      harness.server.requests
+        .slice(before)
+        .filter((request) => request.pathname.startsWith("/edges")),
+      "the folder pushed its own placement back over another machine's move",
+    ).toEqual([]);
+  });
+
+  it("sends a refused placement again once the key's grant is restored, and not while the key cannot be read", async () => {
+    let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
+    let refusing = false;
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      refusing && edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-grant", { key: [() => key] });
+    scriptFolderWrites(harness, { edges });
+    const placings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "in-folder",
+      ).length;
+    const push = async (passes: number) => {
+      for (let pass = 0; pass < passes; pass += 1) {
+        const pushed = await harness!.folder.push();
+        expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      }
+    };
+    // The same key, its grant narrowed.
+    key = answers.currentKey("fixture-key", { references: "write" });
+    refusing = true;
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    await push(3);
+    expect(placings()).toBe(1);
+
+    // The key cannot be read: not a change.
+    key = refusal(503, "unavailable", "Try again");
+    await push(3);
+    expect(
+      placings(),
+      "a key that could not be read was taken for another key",
+    ).toBe(1);
+
+    // The grant restored: the placement goes again, and lands.
+    key = answers.currentKey("fixture-key", { "*": "write" });
+    refusing = false;
+    await push(2);
+    expect(
+      placings(),
+      "a placement refused under a narrowed grant was not sent once the grant was restored",
+    ).toBe(2);
+    expect(edges.placements(harness.settings.id).size).toBe(1);
+  });
+
+  it("gives a contested path to a placed item before an unplaced one, and to a file already there before a new one", async () => {
+    const [placedId, fresh] = [
+      "01a00000-0000-7000-8000-0000000016j1",
+      "01a00000-0000-7000-8000-0000000016j2",
+    ];
+    const placed = await placedHarness("placement-ranks", [
+      { id: placedId, title: "Placed", path: "Shared.md" },
+      { id: fresh, title: "Note" },
+    ]);
+    harness = placed.harness;
+    // Files made here whose placements the server refuses, so they sit at
+    // their paths with none.
+    const known = new Set([placedId, fresh]);
+    placed.edges.placing = (edge) =>
+      edge.edge_type === "in-folder" && !known.has(edge.source_id)
+        ? refusal(400, "validation_error", "Not now")
+        : undefined;
+    put(harness, "Shared.md", "---\ntitle: Mine\n---\nmade here\n");
+    put(harness, "Note.md", "---\ntitle: Also mine\n---\nmade here\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const made = (title: string) =>
+      String(
+        sentCreates(harness!).find(
+          (sent) =>
+            (sent.properties as Record<string, unknown>).title === title,
+        )?.id,
+      );
+    const mine = [made("Mine"), made("Also mine")];
+    expect(
+      [idIn(harness, "Shared.md"), idIn(harness, "Note.md")],
+      "an unplaced item kept a path over a placed one, or a new item took a path over the file already there",
+    ).toEqual([placedId, mine[1]]);
+    expect([
+      idIn(harness, "Shared (2).md"),
+      idIn(harness, "Note (2).md"),
+    ]).toEqual([mine[0], fresh]);
+  });
+
+  it("counts the free number past a file on disk, a path another item is placed at, and its own file", async () => {
+    const [first, second_, third] = [
+      "01a00000-0000-7000-8000-0000000016k1",
+      "01a00000-0000-7000-8000-0000000016k2",
+      "01a00000-0000-7000-8000-0000000016k3",
+    ];
+    const placed = await placedHarness("placement-free", [
+      { id: first, title: "First", path: "Shared.md" },
+      { id: second_, title: "Second", path: "Shared.md" },
+      { id: third, title: "Third", path: "Shared (2).md" },
+    ]);
+    harness = placed.harness;
+    // A file nothing has scanned yet.
+    put(harness, "Shared (3).md", "the person's own\n");
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(
+      [
+        idIn(harness, "Shared.md"),
+        idIn(harness, "Shared (2).md"),
+        idIn(harness, "Shared (4).md"),
+      ],
+      "the free number took a path another item is placed at, or a file on disk",
+    ).toEqual([first, third, second_]);
+    expect(read(harness, "Shared (3).md")).toBe("the person's own\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    // Another machine puts it back at the path it lost: it stays in its own
+    // file, and once settled nothing more is written.
+    placed.edges.relocate(second_, harness.settings.id, "Shared.md");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      idIn(harness, "Shared (4).md"),
+      "an item left its own file for another number",
+    ).toBe(second_);
+    expect(existsSync(join(harness.dir, "Shared (5).md"))).toBe(false);
+    expect(placed.edges.placements(harness.settings.id).get(second_)).toBe(
+      "Shared (4).md",
+    );
+    const before = harness.server.requests.filter(
+      (request) => request.method !== "GET",
+    ).length;
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      harness.server.requests.filter((request) => request.method !== "GET")
+        .length,
+    ).toBe(before);
+  });
+
+  it("places a new item under the most specific first placement naming its type", async () => {
+    const image = Buffer.from("an image the server holds");
+    const plain = Buffer.from("a file the server holds");
+    harness = await folderHarness("placement-first-specific", {
+      settings: {
+        search: { types: ["core.file"] },
+        first_placement: {
+          "core.file": "Files/",
+          "core.file.image": "Images/",
+        },
+      },
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000016l1",
+              type: "core.file.image",
+              properties: {
+                title: "photo.png",
+                blob_ref: hashOf(image),
+                mime_type: "image/png",
+              },
+            },
+          },
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000016l2",
+              type: "core.file",
+              properties: {
+                title: "data.bin",
+                blob_ref: hashOf(plain),
+                mime_type: "application/octet-stream",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    scriptBlob(harness.server, image);
+    scriptBlob(harness.server, plain);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      existsSync(join(harness.dir, "Images", "photo.png")),
+      "an image went under its parent type's first placement over its own",
+    ).toBe(true);
+    expect(existsSync(join(harness.dir, "Files", "data.bin"))).toBe(true);
+  });
+
+  it("names the permission a key without in-folder write lacks, when it is added", async () => {
+    // Each grant, and whether it writes `in-folder` as the server resolves it.
+    const grants: Array<[Record<string, "read" | "write">, boolean]> = [
+      [{ references: "write" }, false],
+      [{ "*": "write", "in-folder": "read" }, false],
+      [{ "*": "write", "in-folder.*": "read" }, false],
+      [{ "in-folder.*": "write" }, true],
+      [{ "*": "read", "in-folder.*": "write" }, true],
+      [{ "*": "write" }, true],
+    ];
+    for (const [grant, places] of grants) {
+      const server = await ScriptedServer.start();
+      scriptHydration(server, { head: "1" });
+      const row = scriptFolderRow(server, {
+        search: { types: ["core.note"] },
+      });
+      server.answer("GET", "/keys/current", answers.currentKey("k", grant));
+      const dir = join(
+        mkdtempSync(join(tmpdir(), "marfa-folder-no-placement-")),
+        "notes",
+      );
+      const folder = new CliFolder(dir, {
+        binary: requireBinary(),
+        url: server.url,
+        key: KEY,
+      });
+      try {
+        const added = await folder.add(row.id);
+        expect(added.ok, JSON.stringify(grant)).toBe(places);
+        if (added.ok) continue;
+        expect(added.refusal.raw).toContain("edge.in-folder:write");
+        expect(
+          existsSync(dir),
+          "a refused add left its working copy behind",
+        ).toBe(false);
+      } finally {
+        await server.stop();
+      }
+    }
+  });
+
+  it("does not let placement decide what it holds", async () => {
+    const kept = "01a00000-0000-7000-8000-0000000016d1";
+    const left = "01a00000-0000-7000-8000-0000000016d2";
+    const unplaced = "01a00000-0000-7000-8000-0000000016d3";
+    const placed = await placedHarness(
+      "placement-not-membership",
+      [
+        { id: kept, title: "Kept", path: "Kept/one.md", tags: ["keep"] },
+        { id: left, title: "Left", path: "Kept/out.md" },
+        { id: unplaced, title: "Unplaced", tags: ["keep"] },
+      ],
+      { search: { types: ["core.note"], filter: 'tags contains "keep"' } },
+    );
+    harness = placed.harness;
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    // The witness: a placement is followed for an item the search holds.
+    expect(idIn(harness, "Kept/one.md")).toBe(kept);
+    expect(
+      existsSync(join(harness.dir, "Kept", "out.md")) ||
+        existsSync(join(harness.dir, "Left.md")),
+      "an item the search does not hold got a file because it has a placement here",
+    ).toBe(false);
+    expect(
+      idIn(harness, "Unplaced.md"),
+      "an item the search holds got no file because it has no placement here",
+    ).toBe(unplaced);
+    expect(pulled.value.written).toBe(2);
   });
 });
 
@@ -3915,7 +5226,7 @@ describe("writing", () => {
     if (!pushed.ok) return;
 
     const verdicts = (itemId: string) =>
-      pushed.value.drain.verdicts
+      itemVerdicts(pushed.value.drain.verdicts)
         .filter((entry) => entry.item_id === itemId)
         .map((entry) => entry.verdict);
     // The control: what the other machine changed is nothing the file
@@ -4003,7 +5314,7 @@ describe("writing", () => {
     // The witness: the second save was set aside in a copy, and the row
     // kept the first save's body.
     expect(
-      pushed.value.drain.verdicts
+      itemVerdicts(pushed.value.drain.verdicts)
         .filter((entry) => entry.item_id === id)
         .map((entry) => entry.verdict),
     ).toEqual(["accepted", "conflicted"]);
@@ -4018,7 +5329,7 @@ describe("writing", () => {
     expect(again.ok, JSON.stringify(again)).toBe(true);
     if (!again.ok) return;
     expect(
-      again.value.drain.verdicts
+      itemVerdicts(again.value.drain.verdicts)
         .filter((entry) => entry.item_id === id)
         .map((entry) => entry.verdict),
     ).toEqual(["accepted"]);
@@ -5175,7 +6486,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
-    // path becomes a delete once the grace runs out (`folders.md` 17), so
+    // path becomes a delete once the grace runs out (`folders.md` 18), so
     // the absence is asserted after it: the grace is the folder's five
     // seconds, and nothing shorter can show a delete not being sent.
     await new Promise((resolve) => setTimeout(resolve, 6_000));
@@ -5385,6 +6696,7 @@ describe("what a pull does with a file whose item stops matching", () => {
       create: [refusal(400, "invalid_properties", "the body is not allowed")],
       read: [refusal(404, "item_not_found", "no such item")],
     });
+    new EdgeDoor().script(harness.server);
     put(harness, "mine.md", "---\ntitle: Mine\n---\nthe person's own words\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -5395,11 +6707,19 @@ describe("what a pull does with a file whose item stops matching", () => {
       "the pull took away a file the folder never wrote, and the person's words with it",
     ).toBe(0);
     expect(read(harness, "mine.md")).toContain("the person's own words");
+    // Its placement was refused with the create, not by an answer of its own.
+    expect(
+      pushed.value.drain.verdicts.some((entry) => entry.kind === "create_edge"),
+    ).toBe(true);
+    expect(
+      pushed.value.pull?.unplaced,
+      "a placement refused with the create it waited on was held back as refused itself",
+    ).toBe(0);
 
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders.md` 33).
+    // again (`folders.md` 34).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();
@@ -5444,7 +6764,8 @@ describe("a file that is not a document", () => {
 
   it("pushes a file that is not a document as a file item, its bytes uploaded first", async () => {
     harness = await folderHarness("folder-file-push", { settings });
-    scriptFolderWrites(harness);
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
     acceptUploads(harness.server);
     writeFileSync(join(harness.dir, "photo.png"), photo);
     put(harness, "note.md", "---\ntitle: A note\n---\nbeside a photo\n");
@@ -5504,6 +6825,10 @@ describe("a file that is not a document", () => {
       "no item was created for the photo under its path",
     ).toBeDefined();
     expect(file?.type).toBe("core.file.image");
+    expect(
+      edges.placements(harness.settings.id).get(String(file?.id)),
+      "a file item made in the folder went without its placement",
+    ).toBe("photo.png");
     const fileId = String(file?.id);
     expect(
       [typeof file?.id, file?.source_id],
@@ -5668,7 +6993,7 @@ describe("a file that is not a document", () => {
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
     expect(existsSync(join(harness.dir, "broken.txt"))).toBe(false);
 
-    // Its own write is not read back as a change (`folders.md` 16).
+    // Its own write is not read back as a change (`folders.md` 17).
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;
@@ -5821,13 +7146,16 @@ describe("a file that is not a document", () => {
       ],
     });
     scriptBlob(harness.server, photo);
-    scriptFolderWrites(harness);
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
     expect((await harness.folder.pull()).ok).toBe(true);
     const caught = await harness.folder.device().catchUp();
     expect(caught.ok ? caught.value.applied : 0).toBe(1);
     expect((await harness.folder.pull()).ok).toBe(true);
     // The file keeps its name, which is no longer the item's title.
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(photo);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(edges.placements(harness.settings.id).get(id)).toBe("photo.png");
     renameSync(join(harness.dir, "photo.png"), join(harness.dir, "moved.png"));
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
@@ -5838,6 +7166,10 @@ describe("a file that is not a document", () => {
       sentUpdates(harness),
       "a move wrote the file's name over a title somebody gave the item",
     ).toEqual([]);
+    expect(
+      edges.placements(harness.settings.id).get(id),
+      "a file item's move did not move its placement",
+    ).toBe("moved.png");
   });
 
   it("keeps the file of an item whose new bytes cannot be had", async () => {

@@ -160,13 +160,20 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     if drained.rebased > 0 {
                         lines.push(rebased_line(drained.rebased));
                     }
+                    if drained.gave_way > 0 {
+                        lines.push(gave_way_line(drained.gave_way));
+                    }
                     if let Some(error) = &failed {
                         lines.push(format!("could not catch up: {error}"));
                     }
                     lines.push(match &pulled {
-                        Some(pulled) => {
-                            format!("{} file(s) written", pulled.written + pulled.rewritten)
-                        }
+                        Some(pulled) => format!(
+                            "{} file(s) written{}",
+                            pulled.written + pulled.rewritten,
+                            unplaced_line(pulled.unplaced)
+                                .map(|line| format!("; {line}"))
+                                .unwrap_or_default()
+                        ),
                         None => "nothing written: the copy could not be hydrated, and the next push tries again".into(),
                     });
                     lines.join("\n")
@@ -196,11 +203,26 @@ fn send(
 }
 
 /// Said in words, because what these edits carried went over whatever
-/// changed since their file was written (`folders.md` 19).
+/// changed since their file was written (`folders.md` 20).
 pub fn rebased_line(rebased: usize) -> String {
     format!(
         "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
     )
+}
+
+/// Placements another machine made first, followed rather than sent
+/// (`folders.md` 16).
+pub fn gave_way_line(gave_way: usize) -> String {
+    format!("{gave_way} placement(s) another machine made first, followed instead")
+}
+
+/// Placements the server refused, said so the person can mend the key.
+pub fn unplaced_line(unplaced: usize) -> Option<String> {
+    (unplaced > 0).then(|| {
+        format!(
+            "{unplaced} placement(s) the server refused, not sent again until the key or the settings change"
+        )
+    })
 }
 
 /// What became of the settings file, where anything did.
@@ -217,7 +239,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 24, 26, 32), named only when there are
+/// get one on this pass (`folders.md` 25, 27, 33), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
@@ -229,8 +251,11 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.unwritten,
             "the folder did not write and would not write over",
         ),
-        (report.collided, "wanting a path another item took"),
         (report.outside, "wanting a path outside the folder"),
+        (
+            report.unsuited,
+            "whose placement would make them another kind of file",
+        ),
         (report.absent, "whose bytes could not be fetched"),
     ]
     .into_iter()
@@ -240,6 +265,16 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     if !held.is_empty() {
         line.push_str("; not written: ");
         line.push_str(&held.join(", "));
+    }
+    if let Some(unplaced) = unplaced_line(report.unplaced) {
+        line.push_str("; ");
+        line.push_str(&unplaced);
+    }
+    if report.beside > 0 {
+        line.push_str(&format!(
+            "; {} placed beside a path another item holds",
+            report.beside
+        ));
     }
     // A file the person deleted and the pull wrote back.
     if report.revived > 0 {
