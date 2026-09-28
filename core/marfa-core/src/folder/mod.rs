@@ -1182,12 +1182,13 @@ impl Folder {
                 let held = outcome.held;
                 let mut writes = bound.writes.clone();
                 let save = writes.save;
-                writes.queued.extend(
-                    outcome
-                        .queued
-                        .into_iter()
-                        .map(|id| state::Queued { id, save }),
-                );
+                writes
+                    .queued
+                    .extend(outcome.queued.into_iter().map(|id| state::Queued {
+                        id,
+                        save,
+                        line: None,
+                    }));
                 // A refused edge the file no longer asks for holds it no longer.
                 writes.refused.retain(|refused| match &refused.change {
                     state::Change::Edge { line, shown } => outcome.lines.contains(line) == *shown,
@@ -1687,7 +1688,11 @@ impl Folder {
         };
         if read.lines.state == Some(ItemState::Archived) {
             let id = self.core.transition_item(&item_id, ItemState::Archived)?.id;
-            writes.queued.push(state::Queued { id, save: 1 });
+            writes.queued.push(state::Queued {
+                id,
+                save: 1,
+                line: None,
+            });
         }
         // Before the links, so a link naming a default's target adds no
         // second edge; a line the file writes fills that blank itself.
@@ -1820,7 +1825,7 @@ impl Folder {
         }
         let document = file.document();
         let read = fields::read(&document.front, edge_types).unwrap_or_default();
-        let mut edit_line = bound.and_then(|bound| bound.edit_line);
+        let spent = bound.and_then(state::Bound::spent);
         // Bytes set aside in a conflicted copy against this device's own
         // earlier save go on the version they were read at (`folders.md` 39).
         let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
@@ -1848,7 +1853,7 @@ impl Folder {
             _ if untaken.is_some() => Standing::Spent,
             Some(line) if line == held.version || current_but_line => Standing::Current,
             // Behind only by the file's own edit, which it holds (`folders.md` 23).
-            Some(line) if line < held.version && edit_line.is_some_and(|spent| line <= spent) => {
+            Some(line) if line < held.version && spent.is_some_and(|spent| line <= spent) => {
                 Standing::Spent
             }
             Some(line) if line < held.version => Standing::Behind(line),
@@ -1903,7 +1908,7 @@ impl Folder {
             writes.save += 1;
         }
         let save = writes.save;
-        let mut queued = Vec::new();
+        let mut queued: Vec<(String, Option<i64>)> = Vec::new();
         if !in_step {
             if let Some(reason) = changes
                 .r#type
@@ -1930,26 +1935,28 @@ impl Folder {
                     replace_properties: whole,
                     ..Edit::default()
                 };
-                queued.push(if read_at.is_some() {
+                let id = if read_at.is_some() {
                     self.core.update_item_as_read(item_id, &edit)?.id
                 } else {
                     self.core.update_item(item_id, &edit)?.id
-                });
-                edit_line = Some(edit_line.unwrap_or(0).max(file.line.unwrap_or(0)));
+                };
+                queued.push((id, Some(file.line.unwrap_or(0))));
             }
             for tag in &changes.added {
-                queued.push(self.core.add_tag(item_id, tag)?.id);
+                queued.push((self.core.add_tag(item_id, tag)?.id, None));
             }
             for tag in &changes.removed {
-                queued.push(self.core.remove_tag(item_id, tag)?.id);
+                queued.push((self.core.remove_tag(item_id, tag)?.id, None));
             }
             if let Some(state) = changes.state {
-                queued.push(self.core.transition_item(item_id, state)?.id);
+                queued.push((self.core.transition_item(item_id, state)?.id, None));
             }
         }
-        writes
-            .queued
-            .extend(queued.into_iter().map(|id| state::Queued { id, save }));
+        writes.queued.extend(
+            queued
+                .into_iter()
+                .map(|(id, line)| state::Queued { id, save, line }),
+        );
         // A refused change the file no longer carries holds it no longer.
         let agrees = unchanged && changes.r#type.is_none() && changes.tier.is_none();
         writes.refused.retain(|refused| match &refused.change {
@@ -1971,7 +1978,7 @@ impl Folder {
             links,
             lines,
             Kept {
-                edit_line,
+                edit_line: bound.and_then(|bound| bound.edit_line),
                 own: own.base,
                 held: None,
                 writes,
@@ -2295,7 +2302,7 @@ impl Folder {
         let queue = self.core.queue()?;
         let conn = self.core.conn()?;
         for mut bound in state::every_bound(&conn)? {
-            let was = (bound.writes.clone(), bound.lines.clone());
+            let was = (bound.writes.clone(), bound.lines.clone(), bound.edit_line);
             for verdict in &queue {
                 let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
                     continue;
@@ -2353,10 +2360,6 @@ impl Folder {
                             .and_then(|answer| {
                                 answer["error"]["message"].as_str().map(str::to_string)
                             });
-                        // A refused edit landed nothing its line could be current with.
-                        if change == state::Change::Edit && save == bound.writes.save {
-                            bound.edit_line = None;
-                        }
                         // A refused move left the edge where it was, so the record names it there again.
                         if let Some(moved) = &moved {
                             for line in &mut bound.lines {
@@ -2389,9 +2392,16 @@ impl Folder {
                     Some(crate::model::Verdict::Dead) => {}
                     _ => continue,
                 }
-                bound.writes.queued.remove(at);
+                // A refused edit spends no line; a dead one may have landed, so
+                // its line stays spent (`folders.md` 23).
+                let spent = bound.writes.queued.remove(at).line;
+                if verdict.verdict != Some(crate::model::Verdict::Refused)
+                    && let Some(line) = spent
+                {
+                    bound.edit_line = Some(bound.edit_line.unwrap_or(0).max(line));
+                }
             }
-            if (&bound.writes, &bound.lines) != (&was.0, &was.1) {
+            if (&bound.writes, &bound.lines, bound.edit_line) != (&was.0, &was.1, was.2) {
                 state::bind(&conn, &bound)?;
             }
         }
@@ -2920,14 +2930,28 @@ impl Folder {
 
         // Written over an edit still waiting, the line it writes is spent
         // too, since the file holds that edit (`folders.md` 23, 24).
-        let spent = bound.as_ref().and_then(|bound| bound.edit_line);
-        let edit_line = if carries_frontmatter(Path::new(&want))
+        let mut writes = bound
+            .as_ref()
+            .map(|bound| bound.writes.clone())
+            .unwrap_or_default();
+        let mut edit_line = bound.as_ref().and_then(|bound| bound.edit_line);
+        if carries_frontmatter(Path::new(&want))
             && crate::store::item_waits(&*self.core.conn()?, &item.id)?
         {
-            Some(spent.unwrap_or(0).max(item.version))
-        } else {
-            spent
-        };
+            let mut lifted = false;
+            for line in writes
+                .queued
+                .iter_mut()
+                .filter_map(|queued| queued.line.as_mut())
+            {
+                *line = (*line).max(item.version);
+                lifted = true;
+            }
+            // An edit queued outside this file has no entry here to carry it.
+            if !lifted {
+                edit_line = Some(edit_line.unwrap_or(0).max(item.version));
+            }
+        }
         let binding = |identity: Option<String>| state::Bound {
             path: want.clone(),
             item_id: item.id.clone(),
@@ -2939,10 +2963,7 @@ impl Folder {
             edit_line,
             held: None,
             own: own.clone(),
-            writes: bound
-                .as_ref()
-                .map(|bound| bound.writes.clone())
-                .unwrap_or_default(),
+            writes: writes.clone(),
         };
         // Bound before the write, so the scan never reads it back; a path the
         // filesystem refuses leaves the old file, and every other, as it was.
@@ -3259,7 +3280,7 @@ impl Folder {
         // A line no newer than the one its own edit spent is rewritten once
         // that edit lands.
         if bound
-            .edit_line
+            .spent()
             .is_some_and(|spent| line.unwrap_or(0) <= spent)
             && !crate::store::item_waits(&*self.core.conn()?, &item.id)?
         {

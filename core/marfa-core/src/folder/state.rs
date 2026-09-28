@@ -28,8 +28,9 @@ pub struct Bound {
     /// The edges this file's lines named when last read or written: what tells
     /// a line taken out from an edge no pull has written yet (`folders.md` 11).
     pub lines: Vec<Line>,
-    /// The newest version line an edit of this device's has spent, 0 where
-    /// its file carried none; `None` where no edit went.
+    /// The newest version line this device's answered edits have spent, a
+    /// refused one's aside; 0 where its file carried none, `None` where none
+    /// has. A waiting edit's line is its queued entry's until it is answered.
     pub edit_line: Option<i64>,
     /// Why this copy did not send the bytes at `content_hash`, where it did
     /// not: a pull leaves such a file as it is (`folders.md` 9, 10).
@@ -55,6 +56,23 @@ pub struct Writes {
 pub struct Queued {
     pub id: String,
     pub save: i64,
+    /// The version line an edit spends, kept apart until it is answered so a
+    /// refusal takes back only its own (`folders.md` 23).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<i64>,
+}
+
+impl Bound {
+    /// The newest version line an edit of this device's has spent, landed or
+    /// still waiting.
+    pub fn spent(&self) -> Option<i64> {
+        self.writes
+            .queued
+            .iter()
+            .filter_map(|queued| queued.line)
+            .chain(self.edit_line)
+            .max()
+    }
 }
 
 /// A change the server refused, which holds its file until a later save of

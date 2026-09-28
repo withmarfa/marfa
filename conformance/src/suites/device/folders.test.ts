@@ -10953,6 +10953,92 @@ describe("writing", () => {
     expect(door!.conflictedCopies()).toEqual([]);
   });
 
+  it("keeps the line a pull wrote over a waiting edit spent, once that edit lands", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000bd";
+    const properties = { title: "Note", body: "as read\n" };
+    harness = await folderHarness("folder-version-pulled-over-waiting", {
+      rows: { "core.note": [{ item: { id, version: 1, properties } }] },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { ...properties, extra: "theirs" },
+            }),
+          ),
+        ]),
+        liveReplay("2", []),
+        liveReplay("4", [
+          itemEvent(
+            "4",
+            "item.updated",
+            wireItem({
+              id,
+              version: 4,
+              properties: {
+                ...properties,
+                body: "mine\n",
+                extra: "theirs",
+                later: "theirs too",
+              },
+            }),
+          ),
+        ]),
+      ],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const written = read(harness, "Note.md");
+    door!.update(id, { properties: { extra: "theirs" }, version: 1 });
+    const update = door!.update.bind(door!);
+    let failed = false;
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) => {
+      if (failed) return update(...args);
+      failed = true;
+      return refusal(503, "service_unavailable", "later");
+    }) as FolderDoor["update"];
+
+    put(harness, "Note.md", written.replace("as read", "mine"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The pull wrote the file over the waiting edit, and an editor holds
+    // that buffer.
+    const buffer = read(harness, "Note.md");
+    expect(buffer).toContain("mine");
+    expect(buffer).toContain("marfa_version: 2");
+
+    const landed = await harness.folder.push();
+    expect(landed.ok, JSON.stringify(landed)).toBe(true);
+    expect(rows.get(id)?.version).toBe(3);
+    // Another machine adds a property, and the pull writes the file past
+    // the buffer's line.
+    door!.update(id, { properties: { later: "theirs too" }, version: 3 });
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the file on disk no longer shows the buffer's line.
+    expect(read(harness, "Note.md")).toContain("marfa_version: 4");
+
+    // The editor saves on from the buffer the pull wrote, without reloading.
+    put(harness, "Note.md", buffer.replace("mine", "mine, more"));
+    const more = await harness.folder.push();
+    expect(more.ok, JSON.stringify(more)).toBe(true);
+    expect(
+      sentUpdates(harness).at(-1)?.body.version,
+      "a save from the buffer the pull wrote over the waiting edit went on the line before that edit landed, and was merged against it as though another machine wrote it",
+    ).toBe(4);
+    expect(door!.conflictedCopies()).toEqual([]);
+    expect(rows.get(id)?.properties).toMatchObject({
+      body: "mine, more\n",
+      later: "theirs too",
+    });
+  });
+
   it("keeps a line an edit spent spent after the pull rewrites it", async () => {
     const id = "01a00000-0000-7000-8000-0000000000b5";
     harness = await folderHarness("folder-version-spent-rewritten", {
@@ -10991,6 +11077,61 @@ describe("writing", () => {
       sentUpdates(harness).map((update) => update.body.version),
       "the second save went on the line the first already spent, and was merged against the first as though another machine wrote it",
     ).toEqual([1, 2]);
+    expect(rows.get(id)?.properties.body).toBe("first, then more\n");
+    expect(door!.conflictedCopies()).toEqual([]);
+  });
+
+  it("keeps the line a landed edit spent when a later edit from the same buffer is refused", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000bc";
+    harness = await folderHarness("folder-version-spent-refused", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [liveReplay("1", [])],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Note.md");
+
+    // An agent writes from what it read, and does not read the file again.
+    put(harness, "Note.md", held.replace("as read", "first"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2");
+
+    const update = door!.update.bind(door!);
+    let refused = false;
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) => {
+      if (refused) return update(...args);
+      refused = true;
+      return refusal(422, "validation_failed", "not this");
+    }) as FolderDoor["update"];
+    put(harness, "Note.md", held.replace("as read", "first, then wrong"));
+    const wrong = await harness.folder.push();
+    // The witness: the second save reached the server and was refused.
+    expect(
+      wrong.ok && wrong.value.drain.verdicts.map((entry) => entry.reason),
+    ).toEqual(["validation_failed"]);
+
+    put(harness, "Note.md", held.replace("as read", "first, then more"));
+    const mended = await harness.folder.push();
+    expect(mended.ok, JSON.stringify(mended)).toBe(true);
+    expect(
+      sentUpdates(harness).map((sent) => sent.body.version),
+      "the refused save took away the line the landed first save spent, so the third went on the first's base and was merged against it as though another machine wrote it",
+    ).toEqual([1, 2, 2]);
     expect(rows.get(id)?.properties.body).toBe("first, then more\n");
     expect(door!.conflictedCopies()).toEqual([]);
   });
