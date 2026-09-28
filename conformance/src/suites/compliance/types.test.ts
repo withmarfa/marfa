@@ -74,6 +74,20 @@ describe("type registration and listing", () => {
     }
   });
 
+  it("declares executable on core.file, which every file type inherits", async () => {
+    // A folder keeps a file's executable permission there (`folders.md` 50).
+    for (const id of ["core.file", "core.file.image"]) {
+      const r = await client.getType(id);
+      expect(r.ok, `GET /types/${id}`).toBe(true);
+      // The witness: the field beside it that every file carries.
+      expect(r.data.fields.mime_type?.type).toBe("string");
+      expect(
+        r.data.fields.executable?.type,
+        `${id} does not declare executable, so a file's permission has nowhere to go`,
+      ).toBe("boolean");
+    }
+  });
+
   it("items of a custom type follow the universal lifecycle", async () => {
     // Lifecycle is metadata-layer and universal (active | archived | trashed).
     // Custom types inherit the same states; a schema declares none of its own.

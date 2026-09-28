@@ -90,6 +90,7 @@ const coreFile: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
+    executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
   },
   display_hints: { title_field: "title" },
   merge_policy: { default: "last_writer_wins" },
@@ -266,6 +267,7 @@ const coreFileAudio: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code (for spoken content)", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
+    executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
     duration: { type: "number", description: "Length in seconds (server enrichment: derived from the file when the client does not supply it)" },
   },
   display_hints: { title_field: "title" },
@@ -289,6 +291,7 @@ const coreFileImage: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
+    executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
     width: { type: "integer", description: "Width in pixels (server enrichment: derived from the file when the client does not supply it)" },
     height: { type: "integer", description: "Height in pixels (server enrichment: derived from the file when the client does not supply it)" },
     latitude: { type: "number", description: "Subject latitude" },
@@ -316,6 +319,7 @@ const coreFileVideo: TypeSchema = {
     language: { type: "string", description: "BCP 47 language code (for spoken content)", format: "bcp47" },
     notes: { type: "string", description: "Personal annotations" },
     extracted_text: { type: "string", description: "Machine-extracted text content of the referenced blob (server enrichment: document text or image OCR)" },
+    executable: { type: "boolean", description: "Whether the file may be run as a program; absent means it may not" },
     width: { type: "integer", description: "Width in pixels (server enrichment: derived from the file when the client does not supply it)" },
     height: { type: "integer", description: "Height in pixels (server enrichment: derived from the file when the client does not supply it)" },
     duration: { type: "number", description: "Length in seconds (server enrichment: derived from the file when the client does not supply it)" },
@@ -988,6 +992,9 @@ export const SHIPPED_TYPE_SHAPES = {
       "description": {
         "type": "string"
       },
+      "executable": {
+        "type": "boolean"
+      },
       "extracted_text": {
         "type": "string"
       },
@@ -1034,6 +1041,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "duration": {
         "type": "number"
+      },
+      "executable": {
+        "type": "boolean"
       },
       "extracted_text": {
         "type": "string"
@@ -1082,6 +1092,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "description": {
         "type": "string"
+      },
+      "executable": {
+        "type": "boolean"
       },
       "extracted_text": {
         "type": "string"
@@ -1145,6 +1158,9 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "duration": {
         "type": "number"
+      },
+      "executable": {
+        "type": "boolean"
       },
       "extracted_text": {
         "type": "string"
