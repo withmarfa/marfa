@@ -1,5 +1,5 @@
 //! Where a file sits: its item's `in-folder` edge to the folder's
-//! `system.folder` (`folders.md` 16).
+//! `system.folder` (`folders.md` 18).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -343,7 +343,7 @@ pub(super) fn path_of(edge: &Edge) -> Option<&str> {
 }
 
 /// A path with empty and `.` names taken out, or `None` where a name climbs
-/// out or is dot-led, which the walk never reads back (`folders.md` 22).
+/// out or is dot-led, which the walk never reads back (`folders.md` 24).
 pub(super) fn cleaned(path: &str) -> Option<String> {
     let names: Vec<&str> = path
         .split('/')

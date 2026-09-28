@@ -198,9 +198,44 @@ export const SCRIPTED_TYPES: ReadonlyArray<Record<string, unknown>> = [
       default: "last_writer_wins",
     },
   }),
+  // A body kept in a property other than `body`, as `core.event`'s is.
+  wireType("core.event", {
+    bodyField: "description",
+    fields: {
+      title: { type: "string", description: "Event name", required: true },
+      description: { type: "string", description: "Event details" },
+      starts_at: { type: "string", format: "datetime" },
+    },
+    mergePolicy: {
+      fields: { notes: "keep_both_copies" },
+      default: "last_writer_wins",
+    },
+  }),
+  // A title kept in a property other than `title`, as `core.highlight`'s is.
+  wireType("core.highlight", {
+    titleField: "text",
+    bodyField: "note",
+    fields: {
+      text: {
+        type: "string",
+        description: "The highlighted passage",
+        required: true,
+      },
+      note: { type: "string", description: "User annotation on the highlight" },
+    },
+  }),
   wireType("core.file", { titleField: "title" }),
   wireType("core.file.image", { parent: "core.file", titleField: "title" }),
-  wireType("core.bookmark", { titleField: "title" }),
+  wireType("core.bookmark", {
+    titleField: "title",
+    bodyField: "body",
+    fields: {
+      url: { type: "string", format: "url" },
+      body: { type: "string" },
+      title: { type: "string" },
+      description: { type: "string" },
+    },
+  }),
 ];
 
 /**

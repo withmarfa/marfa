@@ -216,6 +216,9 @@ export interface Edit {
   type?: string;
   /** The tier to move the row to. */
   tier?: "library" | "feed";
+  /** The properties are the row's whole properties, so one left out is
+   *  cleared (`queue-and-verdicts.md` 45). */
+  replace?: boolean;
 }
 
 /** An edge, before it is queued. */

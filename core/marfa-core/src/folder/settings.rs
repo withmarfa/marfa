@@ -165,7 +165,7 @@ impl Settings {
         Ok(())
     }
 
-    fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
+    pub(crate) fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
         self.search.types.is_empty()
             || self
                 .search

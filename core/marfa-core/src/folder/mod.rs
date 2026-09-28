@@ -5,6 +5,7 @@
 //! file and an item, and the state that translation keeps across a restart.
 
 pub mod document;
+pub mod fields;
 pub mod identity;
 mod placement;
 pub mod settings;
@@ -20,24 +21,25 @@ use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::model::{BlockedReason, Draft, Edit, Item, WriteKind};
+use crate::model::{BlockedReason, Draft, Edit, Item, ItemState, WriteKind};
 use crate::{Core, Result, Server};
 
+pub use fields::{ID_FIELD, Uncarried, VERSION_FIELD};
 pub use placement::PLACEMENT_EDGE;
 use placement::{beside, cleaned, path_of, suited};
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
 
-/// Where a folder keeps what is its own (`folders.md` 23).
+/// Where a folder keeps what is its own (`folders.md` 25).
 pub const STATE_DIR: &str = ".marfa";
 
 /// How long a missing file is journaled before it becomes a delete
-/// (`folders.md` 18): the window in which the other half of a rename can
+/// (`folders.md` 20): the window in which the other half of a rename can
 /// arrive.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
 /// The folder's settings written out, the one file under `.marfa/` a folder
-/// reads and watches (`folders.md` 1, 23).
+/// reads and watches (`folders.md` 1, 25).
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
 /// A record of settings kept on this machine alone, which a folder refuses
@@ -72,11 +74,37 @@ pub struct ScanReport {
     /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
     /// Files bound to a row the copy lost, queued again as new items because
-    /// they changed or moved (`folders.md` 34); counted in `created` too.
+    /// they changed or moved (`folders.md` 36); counted in `created` too.
     pub requeued: usize,
     /// Files bound to a row the copy no longer holds and unchanged since, so
-    /// nothing is sent for them (`folders.md` 34).
+    /// nothing is sent for them (`folders.md` 36).
     pub lost: usize,
+    /// Files this scan read and holds rather than sends (`folders.md` 9, 10).
+    pub flagged: Vec<Flagged>,
+}
+
+/// A file the folder holds rather than sends, and why.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Flagged {
+    pub path: String,
+    /// `unreadable` for frontmatter that does not parse as an item's, and
+    /// `refused` for an edit the server or this copy would not take.
+    pub flag: &'static str,
+    pub reason: String,
+}
+
+impl Flagged {
+    fn of(path: &str, held: &str) -> Flagged {
+        let (flag, reason) = match held.strip_prefix(state::UNREADABLE) {
+            Some(reason) => ("unreadable", reason),
+            None => ("refused", held.strip_prefix(state::REFUSED).unwrap_or(held)),
+        };
+        Flagged {
+            path: path.to_string(),
+            flag,
+            reason: reason.to_string(),
+        }
+    }
 }
 
 impl Folder {
@@ -318,7 +346,7 @@ impl Folder {
     }
 
     /// Every file the folder watches, in a stable order. Dot-led directories
-    /// are excluded at any depth, `.marfa/` with them (`folders.md` 22, 23).
+    /// are excluded at any depth, `.marfa/` with them (`folders.md` 24, 25).
     pub fn files(&self) -> Result<Vec<PathBuf>> {
         let mut found = Vec::new();
         walk(&self.root, &mut found)?;
@@ -369,7 +397,7 @@ struct Scanned {
     text: String,
     hash: String,
     /// Device, inode and birth time, where the filesystem gave a usable
-    /// three (`folders.md` 14).
+    /// three (`folders.md` 16).
     mark: Option<String>,
     born: Option<u128>,
     /// The `marfa_id` a Markdown file's frontmatter carries.
@@ -377,6 +405,8 @@ struct Scanned {
     /// The version its `marfa_version` line names, where that is one the
     /// server could have minted.
     line: Option<i64>,
+    /// Why its frontmatter cannot be read as an item's, where it cannot.
+    unreadable: Option<String>,
 }
 
 impl Scanned {
@@ -398,7 +428,7 @@ struct Claim {
 
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
-    /// too, so one rule decides identity (`folders.md` 15).
+    /// too, so one rule decides identity (`folders.md` 17).
     pub fn scan(&self) -> Result<ScanReport> {
         let mut report = ScanReport::default();
         let settings = self.settings()?;
@@ -429,20 +459,32 @@ impl Folder {
             let Ok(bytes) = std::fs::read(&path) else {
                 continue;
             };
-            // No blob the server holds is empty (`folders.md` 32).
+            // No blob the server holds is empty (`folders.md` 34).
             if bytes.is_empty() && !is_document(&path) {
                 report.skipped += 1;
                 continue;
             }
             let text = String::from_utf8_lossy(&bytes).into_owned();
-            let header = carries_frontmatter(&path).then(|| document::read(&text).properties);
-            let id = header.as_ref().and_then(|header| {
-                header
+            let read = carries_frontmatter(&path).then(|| document::read(&text));
+            let unreadable = read.as_ref().and_then(|read| {
+                read.unreadable
+                    .clone()
+                    .or_else(|| fields::read(&read.front).err())
+            });
+            // An unreadable file still names its item, so a move keeps it.
+            let id = match &read {
+                Some(read) if read.unreadable.is_some() => document::id_line(&text),
+                Some(read) => read
+                    .front
                     .get(ID_FIELD)
                     .and_then(Value::as_str)
-                    .map(str::to_string)
-            });
-            let line = header.as_ref().and_then(line_of);
+                    .map(str::to_string),
+                None => None,
+            };
+            let line = read
+                .as_ref()
+                .filter(|read| read.unreadable.is_none())
+                .and_then(|read| line_of(&read.front));
             files.push(Scanned {
                 key: identity::relative(&self.root, &path)?,
                 mark: identities.get(&path).map(|found| found.key()),
@@ -453,6 +495,7 @@ impl Folder {
                 text,
                 id,
                 line,
+                unreadable,
                 path,
             });
         }
@@ -465,8 +508,16 @@ impl Folder {
         let mut unresolved: Vec<Unresolved> = Vec::new();
 
         for (file, claim) in files.iter().zip(claims) {
+            if let Some(reason) = &file.unreadable {
+                self.hold_unreadable(file, claim.as_ref(), reason, &withheld)?;
+                report.flagged.push(Flagged::of(
+                    &file.key,
+                    &format!("{}{reason}", state::UNREADABLE),
+                ));
+                continue;
+            }
             // A binding to a row the copy no longer holds binds nothing
-            // (`folders.md` 34).
+            // (`folders.md` 36).
             let claim = match claim {
                 Some(Claim {
                     item_id,
@@ -485,14 +536,29 @@ impl Folder {
             };
             match claim {
                 None => {
-                    self.queue_create(file, &settings, &catalog, &withheld, &mut unresolved)?;
-                    report.created += 1;
+                    match self.queue_create(
+                        file,
+                        &settings,
+                        &catalog,
+                        &withheld,
+                        &mut unresolved,
+                    )? {
+                        Some(flagged) => report.flagged.push(flagged),
+                        None => report.created += 1,
+                    }
                 }
                 Some(Claim {
                     item_id,
                     bound: None,
                 }) => {
-                    if self.queue_update(&item_id, None, file, &catalog, &mut unresolved)? {
+                    if self.queue_update(
+                        &item_id,
+                        None,
+                        file,
+                        &catalog,
+                        &mut unresolved,
+                        &mut report.flagged,
+                    )? {
                         report.updated += 1;
                     } else {
                         report.unchanged += 1;
@@ -519,7 +585,14 @@ impl Folder {
                         report.unchanged += 1;
                         continue;
                     }
-                    if self.queue_update(&item_id, Some(&bound), file, &catalog, &mut unresolved)? {
+                    if self.queue_update(
+                        &item_id,
+                        Some(&bound),
+                        file,
+                        &catalog,
+                        &mut unresolved,
+                        &mut report.flagged,
+                    )? {
                         report.updated += 1;
                     } else {
                         report.unchanged += 1;
@@ -530,7 +603,14 @@ impl Folder {
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
-                    self.queue_update(&item_id, Some(&bound), file, &catalog, &mut unresolved)?;
+                    self.queue_update(
+                        &item_id,
+                        Some(&bound),
+                        file,
+                        &catalog,
+                        &mut unresolved,
+                        &mut report.flagged,
+                    )?;
                     self.place(&item_id, &file.key, &withheld)?;
                     report.renamed += 1;
                 }
@@ -538,7 +618,7 @@ impl Folder {
         }
 
         // Every file is bound now, so a link naming one that arrived in the
-        // same scan resolves (`folders.md` 28).
+        // same scan resolves (`folders.md` 30).
         for pending in unresolved {
             let (named, declined, _) = self.queue_links(
                 &pending.item_id,
@@ -560,7 +640,7 @@ impl Folder {
         }
 
         // Journaled rather than deleted: the first half of a rename looks
-        // exactly like a delete (`folders.md` 18, 19).
+        // exactly like a delete (`folders.md` 20, 21).
         let bound = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -589,8 +669,8 @@ impl Folder {
         Ok(report)
     }
 
-    /// Which item each file is, or `None` for a new one (`folders.md` 10 to
-    /// 14). Held ids decide first; then the binding by identity across every
+    /// Which item each file is, or `None` for a new one (`folders.md` 12 to
+    /// 16). Held ids decide first; then the binding by identity across every
     /// file before any by path, so a path never takes an item another file is
     /// by identity.
     fn claim(
@@ -624,7 +704,7 @@ impl Folder {
                 continue;
             };
             // A copy bound to its own item before its id line was rewritten
-            // stays that item's file (`folders.md` 12).
+            // stays that item's file (`folders.md` 14).
             if by_path
                 .get(file.key.as_str())
                 .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
@@ -709,6 +789,40 @@ impl Folder {
         Ok(claims)
     }
 
+    /// Keeps an unreadable file bound where it now is, sending only a move's
+    /// placement, so a pull leaves it and a move keeps its item (`folders.md` 10).
+    fn hold_unreadable(
+        &self,
+        file: &Scanned,
+        claim: Option<&Claim>,
+        reason: &str,
+        withheld: &placement::Withheld,
+    ) -> Result<()> {
+        let Some(Claim {
+            bound: Some(bound), ..
+        }) = claim
+        else {
+            return Ok(());
+        };
+        if bound.path != file.key {
+            self.unbind_if_still(bound)?;
+            self.place(&bound.item_id, &file.key, withheld)?;
+        }
+        let conn = self.core.conn()?;
+        state::bind(
+            &conn,
+            &state::Bound {
+                path: file.key.clone(),
+                identity: file.mark.clone(),
+                content_hash: file.hash.clone(),
+                written_hash: None,
+                held: Some(format!("{}{reason}", state::UNREADABLE)),
+                ..bound.clone()
+            },
+        )?;
+        state::journal_clear(&conn, &file.key)
+    }
+
     /// Takes a binding's old path away, unless another file has been bound
     /// there earlier in this scan.
     fn unbind_if_still(&self, bound: &state::Bound) -> Result<()> {
@@ -749,14 +863,14 @@ impl Folder {
         Ok(sent)
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 24, 32): a
+    /// Whether this path is one the folder pushes (`folders.md` 26, 34): a
     /// document, or a file whose type the search holds.
     fn pushes(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> bool {
         is_document(path) || self.file_type_of(path, settings, catalog).is_some()
     }
 
     /// The type a file that is not a document becomes, where the search
-    /// holds it (`folders.md` 32).
+    /// holds it (`folders.md` 34).
     fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
         if is_document(path) {
             return None;
@@ -775,9 +889,8 @@ impl Folder {
         .then_some(file_type)
     }
 
-    /// Queues a file as a new item under an id the device mints, with no
-    /// natural key (`folders.md` 10), its blanks filled from the defaults
-    /// (`folders.md` 3).
+    /// Queues a file as a new item under an id the device mints (`folders.md`
+    /// 12); one naming a type no document can be is flagged instead.
     fn queue_create(
         &self,
         file: &Scanned,
@@ -785,26 +898,54 @@ impl Folder {
         catalog: &Catalog,
         withheld: &placement::Withheld,
         unresolved: &mut Vec<Unresolved>,
-    ) -> Result<()> {
+    ) -> Result<Option<Flagged>> {
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
-            return self.queue_create_file(file, file_type, settings, withheld);
+            self.queue_create_file(file, file_type, settings, catalog, withheld)?;
+            return Ok(None);
         }
         let document = file.document();
-        let mut properties = sendable(document.properties);
+        let read = fields::read(&document.front).unwrap_or_default();
+        let r#type = read
+            .lines
+            .r#type
+            .clone()
+            .unwrap_or_else(|| settings.new_type(catalog));
+        if let Some(reason) = unsuited_type(&r#type, catalog) {
+            return Ok(Some(Flagged::of(
+                &file.key,
+                &format!("{}{reason}", state::REFUSED),
+            )));
+        }
+        let mut properties = read.properties;
+        properties.insert(
+            fields::body_field(catalog, &r#type).into(),
+            Value::String(document.body.clone()),
+        );
         for (field, value) in &settings.defaults.properties {
             properties.entry(field.clone()).or_insert(value.clone());
         }
         properties
-            .entry(document::TITLE_FIELD)
+            .entry(fields::title_field(catalog, &r#type))
             .or_insert(Value::String(title_of(&file.key)));
         let draft = Draft {
-            r#type: settings.new_type(catalog),
+            r#type,
             properties,
-            tags: settings.defaults.tags.clone(),
-            tier: Some(settings.new_tier()),
+            tags: read
+                .lines
+                .tags
+                .unwrap_or_else(|| settings.defaults.tags.clone()),
+            tier: Some(read.lines.tier.unwrap_or_else(|| settings.new_tier())),
             ..Default::default()
         };
         let item_id = named_item(self.core.create_item(&draft)?, &file.key)?;
+        let mut writes = state::Writes {
+            save: 1,
+            ..state::Writes::default()
+        };
+        if read.lines.state == Some(ItemState::Archived) {
+            let id = self.core.transition_item(&item_id, ItemState::Archived)?.id;
+            writes.queued.push(state::Queued { id, save: 1 });
+        }
         // Before the links, so a link naming a default's target adds no
         // second edge.
         self.queue_default_edges(&item_id, settings)?;
@@ -819,22 +960,33 @@ impl Folder {
                 declined: Vec::new(),
             });
         }
-        self.bind_scanned(file, &item_id, named, declined, None)
+        self.bind_scanned(
+            file,
+            &item_id,
+            named,
+            declined,
+            Kept {
+                writes,
+                ..Kept::default()
+            },
+        )?;
+        Ok(None)
     }
 
     /// A file that is not a document, as a file item: its bytes' upload, and
-    /// the create waiting on it (`folders.md` 32). Its type is its bytes', so
+    /// the create waiting on it (`folders.md` 34). Its type is its bytes', so
     /// of the defaults it takes the tier, the tags and the edges.
     fn queue_create_file(
         &self,
         file: &Scanned,
         file_type: String,
         settings: &Settings,
+        catalog: &Catalog,
         withheld: &placement::Withheld,
     ) -> Result<()> {
         let mut properties = Map::new();
         properties.insert(
-            document::TITLE_FIELD.into(),
+            fields::title_field(catalog, &file_type).into(),
             Value::String(name_of(&file.key).into()),
         );
         let draft = Draft {
@@ -847,7 +999,7 @@ impl Folder {
         let item_id = named_item(self.core.create_file_item(&file.path, &draft)?, &file.key)?;
         self.queue_default_edges(&item_id, settings)?;
         self.place(&item_id, &file.key, withheld)?;
-        self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), None)
+        self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), Kept::default())
     }
 
     /// The defaults' edges for a new item. A `parent-of` default names the
@@ -872,8 +1024,8 @@ impl Folder {
         Ok(())
     }
 
-    /// Queues what a file holds as an edit of its item, and answers whether
-    /// anything went. `bound` is `None` for an id this folder has no file for.
+    /// Queues what a file holds as an edit of its item, whole only where its
+    /// version line is the copy's (`folders.md` 7); `bound` is `None` if unbound.
     fn queue_update(
         &self,
         item_id: &str,
@@ -881,6 +1033,7 @@ impl Folder {
         file: &Scanned,
         catalog: &Catalog,
         unresolved: &mut Vec<Unresolved>,
+        flagged: &mut Vec<Flagged>,
     ) -> Result<bool> {
         let Some(held) = self.core.get(item_id)? else {
             return Err(CoreError::Invalid(format!(
@@ -894,50 +1047,146 @@ impl Folder {
         if bytes_of(&held, catalog).is_some()
             && let Some(bound) = bound
         {
-            return self.queue_update_file(bound, file, &held);
+            return self.queue_update_file(bound, file, &held, catalog);
         }
         let had = bound.map(|bound| bound.links.clone()).unwrap_or_default();
         let declined = bound
             .map(|bound| bound.declined.clone())
             .unwrap_or_default();
         let document = file.document();
-        let properties = sendable(document.properties);
-        // A save that changed only lines never sent, the id or the version,
-        // changes nothing.
-        let in_step = match bound {
-            Some(bound) => {
-                bound.content_hash == file.hash
-                    || file.id.is_none() && properties == held.properties
-                    || carries_frontmatter(&file.path)
-                        && self.render(&held, &declined, true, file.line)?.0 == file.text
-            }
-            None => properties
-                .iter()
-                .all(|(field, value)| held.properties.get(field) == Some(value)),
-        };
+        let read = fields::read(&document.front).unwrap_or_default();
         let mut edit_line = bound.and_then(|bound| bound.edit_line);
-        if !in_step {
-            // Bytes set aside in a conflicted copy against this device's own
-            // earlier save go on the version they were read at (`folders.md` 35).
-            let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
-            // A line no newer than one an earlier edit went on is spent: this
-            // edit was made against that one (`folders.md` 20).
-            let line = file
-                .line
-                .filter(|line| *line < held.version && edit_line.is_none_or(|spent| *line > spent));
-            let read_at = untaken.or(line);
-            let edit = Edit {
-                properties,
-                base_version: Some(read_at.unwrap_or(held.version)),
-                ..Edit::default()
+        // Bytes set aside in a conflicted copy against this device's own
+        // earlier save go on the version they were read at (`folders.md` 37).
+        let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
+        // The file's last bytes showed the item as the server last answered
+        // it, but for their line: a version step no file shows, or its own edit.
+        let current_but_line = untaken.is_none()
+            && file.line.is_some_and(|line| line != held.version)
+            && !crate::store::item_waits(&*self.core.conn()?, item_id)?
+            && match bound {
+                Some(bound) => {
+                    let (text, _) = self.render(&held, &declined, true, file.line, catalog)?;
+                    state::hash(text.as_bytes()) == bound.content_hash
+                }
+                None => false,
             };
-            if read_at.is_some() {
-                self.core.update_item_as_read(item_id, &edit)?;
-            } else {
-                self.core.update_item(item_id, &edit)?;
+        let standing = match file.line {
+            _ if untaken.is_some() => Standing::Spent,
+            Some(line) if line == held.version || current_but_line => Standing::Current,
+            // Behind only by the file's own edit, which it holds (`folders.md` 22).
+            Some(line) if line < held.version && edit_line.is_some_and(|spent| line <= spent) => {
+                Standing::Spent
             }
-            edit_line = Some(edit_line.unwrap_or(0).max(file.line.unwrap_or(0)));
+            Some(line) if line < held.version => Standing::Behind(line),
+            _ => Standing::Lineless,
+        };
+        let whole = standing == Standing::Current;
+        let own = own_changes(&read.lines, standing, &held, bound, file.line);
+        if let Some(reason) = &own.flag {
+            flagged.push(Flagged {
+                path: file.key.clone(),
+                flag: "behind",
+                reason: reason.clone(),
+            });
         }
+        let changes = own.changes;
+        let mut properties = read.properties;
+        let body = Value::String(document.body.clone());
+        let into = fields::body_field(catalog, changes.r#type.as_deref().unwrap_or(&held.r#type));
+        let from = fields::body_field(catalog, &held.r#type);
+        if into != from {
+            // A retype drops no text: the file's line for the new body field
+            // wins where it holds any, and the old body field keeps the body.
+            if properties.get(into).is_none_or(blank) {
+                properties.insert(into.into(), body.clone());
+            }
+            properties.insert(from.into(), body);
+        } else {
+            properties.insert(into.into(), body);
+        }
+        if whole {
+            // No file can carry these, so leaving them out is no clear.
+            for (field, value) in &held.properties {
+                if fields::reserved(field) {
+                    properties.insert(field.clone(), value.clone());
+                }
+            }
+        }
+        let unchanged = if whole {
+            properties == held.properties
+        } else {
+            properties
+                .iter()
+                .all(|(field, value)| held.properties.get(field) == Some(value))
+        };
+        // A save that changes nothing the item holds, a reformatting or only
+        // the id or version line, sends nothing.
+        let in_step = unchanged && changes.is_empty()
+            || bound.is_some_and(|bound| bound.content_hash == file.hash);
+        let mut writes = bound.map(|bound| bound.writes.clone()).unwrap_or_default();
+        let fresh = bound.is_none_or(|bound| bound.content_hash != file.hash);
+        if fresh {
+            writes.save += 1;
+        }
+        let save = writes.save;
+        let mut queued = Vec::new();
+        if !in_step {
+            if let Some(reason) = changes
+                .r#type
+                .as_deref()
+                .and_then(|to| unsuited_type(to, catalog))
+            {
+                let held_for = format!("{}{reason}", state::REFUSED);
+                flagged.push(Flagged::of(&file.key, &held_for));
+                return self
+                    .bind_held(file, item_id, bound, held_for)
+                    .map(|()| false);
+            }
+            // Tags and a state are writes of their own, and need no edit.
+            if !unchanged || changes.r#type.is_some() || changes.tier.is_some() {
+                let read_at = untaken.or(match standing {
+                    Standing::Behind(line) => Some(line),
+                    _ => None,
+                });
+                let edit = Edit {
+                    properties,
+                    base_version: Some(read_at.unwrap_or(held.version)),
+                    r#type: changes.r#type.clone(),
+                    tier: changes.tier,
+                    replace_properties: whole,
+                    ..Edit::default()
+                };
+                queued.push(if read_at.is_some() {
+                    self.core.update_item_as_read(item_id, &edit)?.id
+                } else {
+                    self.core.update_item(item_id, &edit)?.id
+                });
+                edit_line = Some(edit_line.unwrap_or(0).max(file.line.unwrap_or(0)));
+            }
+            for tag in &changes.added {
+                queued.push(self.core.add_tag(item_id, tag)?.id);
+            }
+            for tag in &changes.removed {
+                queued.push(self.core.remove_tag(item_id, tag)?.id);
+            }
+            if let Some(state) = changes.state {
+                queued.push(self.core.transition_item(item_id, state)?.id);
+            }
+        }
+        writes
+            .queued
+            .extend(queued.into_iter().map(|id| state::Queued { id, save }));
+        // A refused change the file no longer carries holds it no longer.
+        let agrees = unchanged && changes.r#type.is_none() && changes.tier.is_none();
+        writes.refused.retain(|refused| match &refused.change {
+            state::Change::Edit => !agrees,
+            state::Change::AddTag(tag) => own.tags.as_ref().is_none_or(|tags| tags.contains(tag)),
+            state::Change::RemoveTag(tag) => {
+                own.tags.as_ref().is_none_or(|tags| !tags.contains(tag))
+            }
+            state::Change::State(state) => own.state.is_none_or(|shown| shown == *state),
+        });
         let (named, declined, resolved) =
             self.queue_links(item_id, &document.links, &had, &declined)?;
         if !resolved {
@@ -949,13 +1198,51 @@ impl Folder {
                 declined: declined.clone(),
             });
         }
-        self.bind_scanned(file, item_id, named, declined, edit_line)?;
+        self.bind_scanned(
+            file,
+            item_id,
+            named,
+            declined,
+            Kept {
+                edit_line,
+                own: own.base,
+                held: None,
+                writes,
+            },
+        )?;
         Ok(!in_step)
     }
 
+    /// Binds a file whose bytes are held rather than sent, where it sits.
+    fn bind_held(
+        &self,
+        file: &Scanned,
+        item_id: &str,
+        bound: Option<&state::Bound>,
+        held: String,
+    ) -> Result<()> {
+        let links = bound.map(|bound| bound.links.clone()).unwrap_or_default();
+        let declined = bound
+            .map(|bound| bound.declined.clone())
+            .unwrap_or_default();
+        let kept = Kept {
+            edit_line: bound.and_then(|bound| bound.edit_line),
+            own: bound.and_then(|bound| bound.own.clone()),
+            held: Some(held),
+            writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
+        };
+        self.bind_scanned(file, item_id, links, declined, kept)
+    }
+
     /// New bytes are an upload and an update naming them; a move carries the
-    /// new name as the title where the old name was it (`folders.md` 32).
-    fn queue_update_file(&self, bound: &state::Bound, file: &Scanned, held: &Item) -> Result<bool> {
+    /// new name as the title where the old name was it (`folders.md` 34).
+    fn queue_update_file(
+        &self,
+        bound: &state::Bound,
+        file: &Scanned,
+        held: &Item,
+        catalog: &Catalog,
+    ) -> Result<bool> {
         let read_at = state::untaken_read_version(&bound.content_hash);
         let based = if read_at.is_some() {
             crate::Based::AsRead
@@ -968,15 +1255,12 @@ impl Folder {
             ..Edit::default()
         };
         let (old_name, new_name) = (name_of(&bound.path), name_of(&file.key));
+        let title = fields::title_field(catalog, &held.r#type);
         if old_name != new_name
-            && held
-                .properties
-                .get(document::TITLE_FIELD)
-                .and_then(Value::as_str)
-                == Some(old_name)
+            && held.properties.get(title).and_then(Value::as_str) == Some(old_name)
         {
             edit.properties
-                .insert(document::TITLE_FIELD.into(), Value::String(new_name.into()));
+                .insert(title.into(), Value::String(new_name.into()));
         }
         let queued = if bound.content_hash != file.hash {
             self.core
@@ -991,7 +1275,11 @@ impl Folder {
         } else {
             false
         };
-        self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), None)?;
+        let kept = Kept {
+            writes: bound.writes.clone(),
+            ..Kept::default()
+        };
+        self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), kept)?;
         Ok(queued)
     }
 
@@ -1002,7 +1290,7 @@ impl Folder {
         item_id: &str,
         links: Vec<String>,
         declined: Vec<String>,
-        edit_line: Option<i64>,
+        kept: Kept,
     ) -> Result<()> {
         let conn = self.core.conn()?;
         state::bind(
@@ -1015,14 +1303,17 @@ impl Folder {
                 written_hash: None,
                 links,
                 declined,
-                edit_line,
+                edit_line: kept.edit_line,
+                held: kept.held,
+                own: kept.own,
+                writes: kept.writes,
             },
         )
     }
 
     /// Links in the body become edges, and a lost link takes its edge
-    /// (`folders.md` 9, 26). Answers the targets named, the targets declined
-    /// (`folders.md` 31), and whether every link resolved.
+    /// (`folders.md` 11, 28). Answers the targets named, the targets declined
+    /// (`folders.md` 33), and whether every link resolved.
     fn queue_links(
         &self,
         item_id: &str,
@@ -1169,16 +1460,16 @@ pub struct Drained {
     #[serde(flatten)]
     pub report: crate::DrainReport,
     /// Edits the server refused `ancestor_unavailable`, sent again on the
-    /// version the copy holds (`folders.md` 20).
+    /// version the copy holds (`folders.md` 22).
     pub rebased: usize,
     /// Placements another machine made first, withdrawn for the server's
-    /// (`folders.md` 16).
+    /// (`folders.md` 18).
     pub gave_way: usize,
 }
 
 impl Folder {
     /// Sends what the queue holds, and each edit whose base the server no
-    /// longer holds again on the version the copy holds (`folders.md` 20).
+    /// longer holds again on the version the copy holds (`folders.md` 22).
     pub fn drain(&self) -> Result<Drained> {
         let mut report = self.core.drain()?;
         let mut rebased = 0;
@@ -1201,11 +1492,83 @@ impl Folder {
             report.retry_after_seconds = report.retry_after_seconds.max(again.retry_after_seconds);
         }
         let gave_way = self.settle_placements(&mut report)?;
+        self.hold_refused(&report)?;
         Ok(Drained {
             report,
             rebased,
             gave_way,
         })
+    }
+
+    /// Holds a file while the server refused a change it carries, until a later
+    /// save of it lands one in its place (`folders.md` 9).
+    fn hold_refused(&self, report: &crate::DrainReport) -> Result<()> {
+        let queue = self.core.queue()?;
+        let conn = self.core.conn()?;
+        for mut bound in state::every_bound(&conn)? {
+            let was = bound.writes.clone();
+            for verdict in &report.verdicts {
+                let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
+                    continue;
+                };
+                let save = bound.writes.queued[at].save;
+                let Some(row) = queue.iter().find(|row| row.id == verdict.id) else {
+                    continue;
+                };
+                let change = match row.kind {
+                    WriteKind::UpdateItem => state::Change::Edit,
+                    WriteKind::AddTag => state::Change::AddTag(row.tag.clone().unwrap_or_default()),
+                    WriteKind::RemoveTag => {
+                        state::Change::RemoveTag(row.tag.clone().unwrap_or_default())
+                    }
+                    WriteKind::TransitionItem => {
+                        let body: Value =
+                            serde_json::from_str(&crate::store::payload_of(&conn, &row.id)?)?;
+                        match body["state"].as_str().and_then(|state| state.parse().ok()) {
+                            Some(state) => state::Change::State(state),
+                            None => continue,
+                        }
+                    }
+                    _ => continue,
+                };
+                match verdict.verdict {
+                    Some(crate::model::Verdict::Refused) => {
+                        let code = verdict.reason.clone().unwrap_or_default();
+                        let message = row
+                            .answer
+                            .as_deref()
+                            .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
+                            .and_then(|answer| {
+                                answer["error"]["message"].as_str().map(str::to_string)
+                            });
+                        // A refused edit landed nothing its line could be current with.
+                        if change == state::Change::Edit && save == bound.writes.save {
+                            bound.edit_line = None;
+                        }
+                        bound.writes.refused.push(state::Refused {
+                            change,
+                            save,
+                            reason: match message {
+                                Some(message) => format!("{code}: {message}"),
+                                None => code,
+                            },
+                        });
+                    }
+                    Some(crate::model::Verdict::Accepted | crate::model::Verdict::Merged) => {
+                        bound.writes.refused.retain(|refused| {
+                            refused.save >= save || !change.supersedes(&refused.change)
+                        });
+                    }
+                    Some(crate::model::Verdict::Dead) => {}
+                    _ => continue,
+                }
+                bound.writes.queued.remove(at);
+            }
+            if bound.writes != was {
+                state::bind(&conn, &bound)?;
+            }
+        }
+        Ok(())
     }
 
     /// Moves the first such edit of each row: the next was made against it,
@@ -1234,8 +1597,8 @@ impl Folder {
 
 impl Folder {
     /// Writes what the search matches out as files (`folders.md` 2 and 6),
-    /// each where its placement says (`folders.md` 16) and bound before its
-    /// bytes land so the scan never reads it back (`folders.md` 17).
+    /// each where its placement says (`folders.md` 18) and bound before its
+    /// bytes land so the scan never reads it back (`folders.md` 19).
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
         let settings = self.settings()?;
@@ -1269,7 +1632,7 @@ impl Folder {
         }
         // A bound file whose item left the search, but not by state or the
         // bin, is kept current as a member's is and flagged; it never gets a
-        // new file (`folders.md` 30).
+        // new file (`folders.md` 32).
         let outside: Vec<String> = bound_items
             .into_iter()
             .filter(|id| !members.contains(id))
@@ -1288,7 +1651,7 @@ impl Folder {
                 report.unmatched += 1;
             }
             // This device's own create, not yet landed: the id goes back
-            // only once it has (`folders.md` 10).
+            // only once it has (`folders.md` 12).
             if item.version == 0 {
                 continue;
             }
@@ -1296,6 +1659,14 @@ impl Folder {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &item.id)?
             };
+            // Bytes the server or this copy did not take are the person's to
+            // mend, so the file stays as they wrote it (`folders.md` 9, 10).
+            if bound
+                .as_ref()
+                .is_some_and(|bound| bound.held.is_some() || !bound.writes.refused.is_empty())
+            {
+                continue;
+            }
             let placed = self.placement(&item.id)?;
             let Some(want) = self
                 .path_for(
@@ -1369,6 +1740,26 @@ impl Folder {
             self.write_placed(&entry, &catalog, &withheld, None, &mut report)?;
         }
         self.remove_departed(&members, &settings, &mut report)?;
+        report.flagged = {
+            let conn = self.core.conn()?;
+            state::every_bound(&conn)?
+                .into_iter()
+                .filter_map(|bound| {
+                    let refused = bound.writes.refused.last();
+                    match (&bound.held, refused) {
+                        (Some(held), _) => Some(Flagged::of(&bound.path, held)),
+                        (None, Some(refused)) => Some(Flagged {
+                            path: bound.path.clone(),
+                            flag: "refused",
+                            reason: refused.reason.clone(),
+                        }),
+                        (None, None) => None,
+                    }
+                })
+                .collect()
+        };
+        report.uncarried =
+            fields::uncarried(&catalog, |r#type| settings.holds_type(&catalog, r#type));
         report.settings = self.write_settings_if_moved()?;
         Ok(report)
     }
@@ -1427,6 +1818,7 @@ impl Folder {
                     &declined,
                     carries_frontmatter(Path::new(&want)),
                     Some(item.version),
+                    catalog,
                 )?;
                 (text.into_bytes(), wrote)
             }
@@ -1435,22 +1827,33 @@ impl Folder {
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
 
         // The bytes on the disk, not the mapping's memory of them: a file
-        // changed since the scan read it is the person's (`folders.md` 27).
+        // changed since the scan read it is the person's (`folders.md` 29).
         let changed = |bound: &state::Bound| {
             std::fs::read(self.root.join(&bound.path))
                 .is_ok_and(|found| state::hash(&found) != bound.content_hash)
         };
+        // What this file's own-field lines say at this version, for an old
+        // buffer of it saved later.
+        let own = carries_frontmatter(Path::new(&want)).then(|| {
+            fields::OwnBase::written(
+                bound.as_ref().and_then(|bound| bound.own.as_ref()),
+                item.version,
+                fields::Own::of(item),
+            )
+        });
         let in_place = match &bound {
             Some(bound) if ours && bound.content_hash == hash => true,
             Some(bound) if changed(bound) => {
                 report.unwritten += 1;
                 return Ok(false);
             }
-            Some(bound) if ours => self.behind_by_its_line_alone(item, bound, &declined)?,
+            Some(bound) if ours => {
+                self.behind_by_its_line_alone(item, bound, &declined, catalog)?
+            }
             _ => false,
         };
         // Something at the destination that is not this item's own file
-        // (`folders.md` 27), unless it is byte for byte this item's render.
+        // (`folders.md` 29), unless it is byte for byte this item's render.
         let occupied = !in_place && !ours && path.exists();
         let rebound =
             occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
@@ -1474,6 +1877,9 @@ impl Folder {
                     links: wrote,
                     declined,
                     edit_line: None,
+                    held: None,
+                    own,
+                    writes: state::Writes::default(),
                 },
             )?;
             state::journal_clear(&conn, &want)?;
@@ -1487,7 +1893,7 @@ impl Folder {
         }
 
         // Written over an edit still waiting, the line it writes is spent
-        // too, since the file holds that edit (`folders.md` 20, 21).
+        // too, since the file holds that edit (`folders.md` 22, 23).
         let spent = bound.as_ref().and_then(|bound| bound.edit_line);
         let edit_line = if carries_frontmatter(Path::new(&want))
             && crate::store::item_waits(&*self.core.conn()?, &item.id)?
@@ -1505,6 +1911,12 @@ impl Folder {
             links: wrote.clone(),
             declined: declined.clone(),
             edit_line,
+            held: None,
+            own: own.clone(),
+            writes: bound
+                .as_ref()
+                .map(|bound| bound.writes.clone())
+                .unwrap_or_default(),
         };
         // Bound before the write, so the scan never reads it back; a path the
         // filesystem refuses leaves the old file, and every other, as it was.
@@ -1591,7 +2003,7 @@ impl Folder {
         Ok(members)
     }
 
-    /// A file whose item the search no longer matches (`folders.md` 30). One
+    /// A file whose item the search no longer matches (`folders.md` 32). One
     /// that left by state or was trashed is taken away where its bytes are the
     /// folder's own, and nothing is journaled; any other stays, flagged
     /// `unmatched`.
@@ -1613,7 +2025,7 @@ impl Folder {
                 let conn = self.core.conn()?;
                 crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
             };
-            // A row the copy lost is the scan's to report (`folders.md` 34).
+            // A row the copy lost is the scan's to report (`folders.md` 36).
             let Some(item) = held else {
                 continue;
             };
@@ -1644,12 +2056,13 @@ impl Folder {
     }
 
     /// Whether a file differs from its item's render in its version line
-    /// alone, with no edit of its own landed since (`folders.md` 21).
+    /// alone, with no edit of its own landed since (`folders.md` 23).
     fn behind_by_its_line_alone(
         &self,
         item: &Item,
         bound: &state::Bound,
         declined: &[String],
+        catalog: &Catalog,
     ) -> Result<bool> {
         if !carries_frontmatter(Path::new(&bound.path)) {
             return Ok(false);
@@ -1657,7 +2070,7 @@ impl Folder {
         let Ok(found) = std::fs::read_to_string(self.root.join(&bound.path)) else {
             return Ok(false);
         };
-        let line = line_of(&document::read(&found).properties);
+        let line = line_of(&document::read(&found).front);
         // A line no newer than the one its own edit spent is rewritten once
         // that edit lands.
         if bound
@@ -1667,11 +2080,11 @@ impl Folder {
         {
             return Ok(false);
         }
-        let (text, _) = self.render(item, declined, true, line)?;
+        let (text, _) = self.render(item, declined, true, line, catalog)?;
         Ok(state::hash(text.as_bytes()) == bound.content_hash)
     }
 
-    /// Where an item's file goes (`folders.md` 16): where its placement says,
+    /// Where an item's file goes (`folders.md` 18): where its placement says,
     /// or else the file it has, or else by its title under its type's first
     /// placement. `None` for a path the folder does not write.
     fn path_for(
@@ -1697,7 +2110,7 @@ impl Folder {
         }
         let title = item
             .properties
-            .get(document::TITLE_FIELD)
+            .get(fields::title_field(catalog, &item.r#type))
             .and_then(Value::as_str)
             .filter(|title| !title.trim().is_empty())
             .unwrap_or(&item.id);
@@ -1713,24 +2126,26 @@ impl Folder {
         }
     }
 
-    /// An item as a file's bytes and its body's link targets, with the id and
-    /// version line where the file carries frontmatter (`folders.md` 10, 20).
+    /// An item as a file's bytes and its body's link targets (`folders.md` 7,
+    /// 12, 22); a property no file can carry is left out.
     fn render(
         &self,
         item: &Item,
         declined: &[String],
         frontmatter: bool,
         line: Option<i64>,
+        catalog: &Catalog,
     ) -> Result<(String, Vec<String>)> {
+        let body_field = fields::body_field(catalog, &item.r#type);
         let mut body = item
             .properties
-            .get(document::BODY_FIELD)
+            .get(body_field)
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_string();
         let held = document::links(&body);
         // The targets of the links in the file, whether the body carried them
-        // already or this adds them, for `folders.md` 26.
+        // already or this adds them, for `folders.md` 28.
         let mut wrote = Vec::new();
         for edge in self.core.edges_from(&item.id)? {
             if edge.edge_type == PLACEMENT_EDGE {
@@ -1764,14 +2179,229 @@ impl Folder {
         if !frontmatter {
             return Ok((body, wrote));
         }
-        let mut properties = item.properties.clone();
-        properties.insert(ID_FIELD.into(), Value::String(item.id.clone()));
-        if let Some(line) = line {
-            properties.insert(VERSION_FIELD.into(), Value::from(line));
+        let mut front = fields::lines_of(item);
+        for (field, value) in &item.properties {
+            if field != body_field && !fields::reserved(field) {
+                front.insert(field.clone(), value.clone());
+            }
         }
-        properties.insert(document::BODY_FIELD.into(), Value::String(body));
-        Ok((document::write(&properties)?, wrote))
+        front.insert(ID_FIELD.into(), Value::String(item.id.clone()));
+        if let Some(line) = line {
+            front.insert(VERSION_FIELD.into(), Value::from(line));
+        }
+        Ok((document::write(&front, &body)?, wrote))
     }
+}
+
+/// What a scan keeps on a file's binding beside its bytes.
+#[derive(Default)]
+struct Kept {
+    edit_line: Option<i64>,
+    own: Option<fields::OwnBase>,
+    held: Option<String>,
+    writes: state::Writes,
+}
+
+/// What a file's own-field lines ask of its item, each already told apart
+/// from what the copy holds.
+#[derive(Debug, Default)]
+struct OwnChanges {
+    r#type: Option<String>,
+    tier: Option<crate::model::Tier>,
+    added: Vec<String>,
+    removed: Vec<String>,
+    state: Option<ItemState>,
+}
+
+impl OwnChanges {
+    fn is_empty(&self) -> bool {
+        self.r#type.is_none()
+            && self.tier.is_none()
+            && self.added.is_empty()
+            && self.removed.is_empty()
+            && self.state.is_none()
+    }
+}
+
+/// How a file's version line stands against the copy's (`folders.md` 7, 22).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Standing {
+    /// The version the copy holds: sent whole, own lines and all.
+    Current,
+    /// Behind only by an edit of its own, which it holds.
+    Spent,
+    /// An older version: merged against it, with no own-field change.
+    Behind(i64),
+    /// No version line, or one the copy never held.
+    Lineless,
+}
+
+/// A file's own-field changes, what the folder then holds as the file's own
+/// fields, and why a change went unsent, where one did.
+struct OwnRead {
+    changes: OwnChanges,
+    base: Option<fields::OwnBase>,
+    flag: Option<String>,
+    /// The tags and state the file shows, where it shows any.
+    tags: Option<Vec<String>>,
+    state: Option<ItemState>,
+}
+
+/// Reads a file's own-field lines three-way against the folder's own last
+/// write of the file (`folders.md` 7).
+fn own_changes(
+    lines: &fields::Lines,
+    standing: Standing,
+    held: &Item,
+    bound: Option<&state::Bound>,
+    file_line: Option<i64>,
+) -> OwnRead {
+    let now = fields::Own::of(held);
+    let was = bound.and_then(|bound| bound.own.as_ref());
+    let written = was.filter(|was| Some(was.line) == file_line);
+    // An own line is told from an old buffer's only against a write of this
+    // line, or where the line is the copy's own.
+    let unknown = match standing {
+        Standing::Current => false,
+        Standing::Spent => written.is_none(),
+        Standing::Behind(_) | Standing::Lineless => true,
+    };
+    if unknown {
+        let shown = was.map_or(&now, |was| &was.agreed);
+        let differ = differing(lines, shown);
+        return OwnRead {
+            changes: OwnChanges::default(),
+            base: was.cloned(),
+            tags: lines.tags.clone(),
+            state: lines.state,
+            flag: (!differ.is_empty()).then(|| {
+                let why = match file_line {
+                    None => "the file has no version line",
+                    Some(line) if line > held.version => {
+                        "its version line names a version this copy does not hold"
+                    }
+                    Some(_) => "the file is behind the item",
+                };
+                format!(
+                    "{} not sent: {why}, so its own-field lines cannot be told from an old buffer's; reload it",
+                    differ.join(", ")
+                )
+            }),
+        };
+    }
+    let base = written.map_or_else(|| now.clone(), |written| written.agreed.clone());
+    let moved = written
+        .map(|written| written.moved.clone())
+        .unwrap_or_default();
+    // Only where the folder wrote this line's own lines is an absent one empty.
+    let clears = written.is_some();
+    let mut changes = OwnChanges::default();
+    let mut agreed = base.clone();
+    let mut unsent = Vec::new();
+    if let Some(named) = lines.r#type.clone().filter(|named| *named != base.r#type) {
+        agreed.r#type = named.clone();
+        changes.r#type = (named != now.r#type).then_some(named);
+    }
+    if let Some(tier) = lines.tier.filter(|tier| Some(*tier) != base.tier) {
+        agreed.tier = Some(tier);
+        changes.tier = (Some(tier) != now.tier).then_some(tier);
+    }
+    let tags = lines.tags.clone().or_else(|| clears.then(Vec::new));
+    if let Some(tags) = &tags {
+        for tag in tags.iter().filter(|tag| !base.tags.contains(tag)) {
+            if moved.tags_removed.contains(tag) {
+                unsent.push(format!("tag {tag}"));
+            } else {
+                agreed.tags.push(tag.clone());
+                if !now.tags.contains(tag) {
+                    changes.added.push(tag.clone());
+                }
+            }
+        }
+        for tag in base.tags.iter().filter(|tag| !tags.contains(tag)) {
+            if moved.tags_added.contains(tag) {
+                unsent.push(format!("tag {tag}"));
+            } else {
+                agreed.tags.retain(|held| held != tag);
+                if now.tags.contains(tag) {
+                    changes.removed.push(tag.clone());
+                }
+            }
+        }
+        agreed.tags.sort();
+    }
+    let state = lines.state.or_else(|| clears.then_some(ItemState::Active));
+    if let Some(state) = state.filter(|state| *state != base.state) {
+        if moved.states.contains(&state) {
+            unsent.push("state".into());
+        } else {
+            agreed.state = state;
+            changes.state = (state != now.state
+                && matches!(now.state, ItemState::Active | ItemState::Archived))
+            .then_some(state);
+        }
+    }
+    OwnRead {
+        changes,
+        tags,
+        state,
+        base: match written {
+            Some(written) => Some(fields::OwnBase {
+                line: written.line,
+                agreed,
+                moved,
+            }),
+            None => was.cloned(),
+        },
+        flag: (!unsent.is_empty()).then(|| {
+            format!(
+                "{} not sent: changed elsewhere at this file's version, so it cannot be told from an old buffer's; reload it",
+                unsent.join(", ")
+            )
+        }),
+    }
+}
+
+/// The own fields whose lines a file shows other than `shown`.
+fn differing(lines: &fields::Lines, shown: &fields::Own) -> Vec<String> {
+    let mut differ = Vec::new();
+    if lines
+        .r#type
+        .as_ref()
+        .is_some_and(|named| *named != shown.r#type)
+    {
+        differ.push("type".to_string());
+    }
+    if lines.tier.is_some_and(|tier| Some(tier) != shown.tier) {
+        differ.push("tier".into());
+    }
+    if lines.tags.as_ref().is_some_and(|tags| {
+        let mut tags = tags.clone();
+        tags.sort();
+        tags != shown.tags
+    }) {
+        differ.push("tags".into());
+    }
+    if lines.state.is_some_and(|state| state != shown.state) {
+        differ.push("state".into());
+    }
+    differ
+}
+
+/// Whether a frontmatter value holds nothing.
+fn blank(value: &Value) -> bool {
+    value.is_null() || value.as_str().is_some_and(|text| text.trim().is_empty())
+}
+
+/// Why a document cannot be of a type, where it cannot: one the copy does
+/// not hold, or a file type, whose items are bytes.
+fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
+    if !catalog.known(r#type) {
+        return Some(format!("{type} is not a type this copy holds"));
+    }
+    catalog
+        .matches(FILE_TYPE, r#type)
+        .then(|| format!("{type} is a file type, whose items are bytes rather than documents"))
 }
 
 /// An item a pull writes, with the path it settled on.
@@ -1783,7 +2413,7 @@ struct Placing<'a> {
 }
 
 /// A file whose links the scan could not all resolve on the way past,
-/// asked again once every file is bound (`folders.md` 28).
+/// asked again once every file is bound (`folders.md` 30).
 struct Unresolved {
     path: String,
     item_id: String,
@@ -1800,13 +2430,13 @@ fn extension_of(path: &Path) -> Option<String> {
 }
 
 /// Whether a file carries frontmatter, and with it a `marfa_id`: a Markdown
-/// file (`folders.md` 10).
+/// file (`folders.md` 12).
 fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
 /// Whether a file is a document, which a folder reads as an item's fields
-/// rather than sending as bytes (`folders.md` 24).
+/// rather than sending as bytes (`folders.md` 26).
 fn is_document(path: &Path) -> bool {
     carries_frontmatter(path) || extension_of(path).as_deref() == Some("txt")
 }
@@ -1826,20 +2456,17 @@ const FILE_TYPE: &str = "core.file";
 /// The kind of edge a link becomes, and the only kind a folder removes.
 pub const LINK_EDGE: &str = "references";
 
-/// The frontmatter field that names the item a Markdown file is.
-pub const ID_FIELD: &str = "marfa_id";
-
-/// The frontmatter field that names the version a Markdown file was written
-/// from, which an edit from it is based on (`folders.md` 20).
-pub const VERSION_FIELD: &str = "marfa_version";
-
 /// The version a file's line names, where it is one the server could have
 /// minted (`versions.md` 18).
-fn line_of(header: &Map<String, Value>) -> Option<i64> {
-    header
-        .get(VERSION_FIELD)
-        .and_then(Value::as_i64)
-        .filter(|line| *line > 0)
+fn line_of(front: &Map<String, Value>) -> Option<i64> {
+    // An editor typing the line as text writes it quoted.
+    let line = front.get(VERSION_FIELD)?;
+    let number = match line {
+        Value::String(text) => text.trim().parse::<f64>().ok()?,
+        other => other.as_f64()?,
+    };
+    // `1.0` is the version 1; `1.5` names none.
+    (number.fract() == 0.0 && number >= 1.0 && number <= i64::MAX as f64).then_some(number as i64)
 }
 
 /// What a folder's catch-up did: a catch-up from the cursor or, where the
@@ -1858,7 +2485,7 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// File items whose bytes could not be had (`folders.md` 33).
+    /// File items whose bytes could not be had (`folders.md` 35).
     pub absent: usize,
     /// Files the pull would not write over: one the person changed since
     /// the folder last wrote it, and one at a path the mapping does not hold.
@@ -1866,45 +2493,41 @@ pub struct PullReport {
     /// Journal rows cleared by writing the file back, a person's own delete
     /// inside its grace among them.
     pub revived: usize,
-    /// Items whose file would land outside the folder (`folders.md` 25).
+    /// Items whose file would land outside the folder (`folders.md` 27).
     pub outside: usize,
     /// Items whose placement another item holds, written at a free path
-    /// beside it, which becomes their placement (`folders.md` 16).
+    /// beside it, which becomes their placement (`folders.md` 18).
     pub beside: usize,
     /// Items whose placement would make them another kind of file, left
-    /// unwritten (`folders.md` 16).
+    /// unwritten (`folders.md` 18).
     pub unsuited: usize,
     /// Placements the server refused, not sent again until the key or the
-    /// settings change (`folders.md` 16).
+    /// settings change (`folders.md` 18).
     pub unplaced: usize,
     /// Placements written: an `in-folder` edge made, or its `path` moved to
-    /// where the file is (`folders.md` 16).
+    /// where the file is (`folders.md` 18).
     pub placed: usize,
     /// Files of items that left by state or were trashed, taken away
-    /// (`folders.md` 30).
+    /// (`folders.md` 32).
     pub removed: usize,
     /// The same, kept because the person changed them.
     pub kept: usize,
     /// Files whose item the search no longer matches for any other reason,
-    /// left where they are (`folders.md` 30).
+    /// left where they are (`folders.md` 32).
     pub unmatched: usize,
     /// The settings file, rewritten where the settings moved on (`folders.md`
     /// 1).
     pub settings: SettingsFileReport,
-}
-
-/// A file's frontmatter as a write's properties, without `marfa_id` and
-/// `marfa_version`, which name the item and version rather than fields.
-fn sendable(mut properties: Map<String, Value>) -> Map<String, Value> {
-    // `shift_remove`: `remove` moves the last field into the hole, which
-    // reorders the frontmatter (`folders.md` 7).
-    properties.shift_remove(ID_FIELD);
-    properties.shift_remove(VERSION_FIELD);
-    properties
+    /// Files the pull left as the person wrote them, because their bytes
+    /// were not taken (`folders.md` 9, 10).
+    pub flagged: Vec<Flagged>,
+    /// Properties the types this folder holds declare under a name a file
+    /// reads as something else, so no file carries them (`folders.md` 7).
+    pub uncarried: Vec<Uncarried>,
 }
 
 /// Whether every component of a path is a plain name inside the folder, with
-/// no symlink on the way (`folders.md` 25). A guard, not a boundary: the write
+/// no symlink on the way (`folders.md` 27). A guard, not a boundary: the write
 /// resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();

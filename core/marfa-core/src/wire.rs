@@ -87,6 +87,8 @@ pub struct WirePage<T> {
 pub struct WireDisplayHints {
     #[serde(default)]
     pub title_field: Option<String>,
+    #[serde(default)]
+    pub body_field: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

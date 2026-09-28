@@ -377,6 +377,8 @@ export async function folderHarness(
     key?: Responder[];
     /** Skip the hydration, for the cases that are about a folder before one. */
     hydrate?: boolean;
+    /** The type catalog the server serves, the scripted one unless named. */
+    catalog?: Answer;
     /**
      * Event-stream answers for the catch-ups after the hydration.
      *
@@ -423,6 +425,7 @@ export async function folderHarness(
       head: options.head ?? "1",
       rows: options.rows,
       edges: options.edges,
+      catalog: options.catalog,
     });
     server.answer(
       "GET",
