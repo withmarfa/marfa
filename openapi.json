@@ -22572,7 +22572,7 @@
                       "maxLength": 1024
                     },
                     "maxItems": 1000,
-                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path."
+                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name."
                   },
                   "ignore": {
                     "type": "array",
@@ -22582,7 +22582,7 @@
                       "maxLength": 1024
                     },
                     "maxItems": 1000,
-                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone."
+                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says."
                   },
                   "first_placement": {
                     "type": "object",
@@ -22965,7 +22965,7 @@
                       "maxLength": 1024
                     },
                     "maxItems": 1000,
-                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path."
+                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name."
                   },
                   "ignore": {
                     "type": "array",
@@ -22975,7 +22975,7 @@
                       "maxLength": 1024
                     },
                     "maxItems": 1000,
-                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone."
+                    "description": "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says."
                   },
                   "first_placement": {
                     "type": "object",
