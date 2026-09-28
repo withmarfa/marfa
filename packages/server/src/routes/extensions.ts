@@ -1,10 +1,12 @@
 /**
  * Extension routes — namespaced metadata on items.
  *
- * Namespace ownership: a key can always write to the namespace matching its
- * label (e.g. a key with label "noter" can write to the "noter" namespace).
- * This coupling is intentional — the key label IS the namespace identity.
- * Additional access can be granted via extension_permissions on the key.
+ * Every door first asks the key's type map for the item's type, at `read` or
+ * `write` as the item doors do, and nothing about the namespace skips it.
+ *
+ * The namespace is the second gate. A key's label names a namespace it holds
+ * write on (a key labeled "noter" writes "noter"), because the label is the
+ * namespace's identity; `extension_permissions` grants any other.
  *
  * **Reserved namespaces (core, marfa, system) are closed to every
  * credential.** What writes them is the platform's own machinery, through
@@ -24,7 +26,7 @@ import {
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -56,7 +58,7 @@ const listExtensionsRoute = createRoute({
   tags: ["Extensions"],
   summary: "List extension namespaces for an item",
   description:
-    "Returns every extension namespace attached to the item that the caller has permission to read. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
+    "Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -88,6 +90,14 @@ const listExtensionsRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description: "No read access to the item's type",
+    },
     404: {
       content: {
         "application/json": {
@@ -106,7 +116,7 @@ const getExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Get an extension namespace",
   description:
-    "Returns the JSON payload for one extension namespace on the item. Missing `read` permission on the namespace returns `403 forbidden`, regardless of the caller's type access to the parent item.",
+    "Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -142,10 +152,11 @@ const getExtensionRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description: "No read access to namespace",
+      description:
+        "`type_not_permitted` without read on the item's type; `forbidden` without read on the namespace",
     },
     404: {
       content: {
@@ -165,7 +176,7 @@ const setExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Replace an extension namespace",
   description:
-    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.",
+    "Replaces the JSON payload for one extension namespace on the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it, and then `write` on that namespace, refused `403 forbidden`. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -212,10 +223,11 @@ const setExtensionRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description: "No write access to namespace",
+      description:
+        "`type_not_permitted` without write on the item's type; `forbidden` without write on the namespace",
     },
     404: {
       content: {
@@ -235,7 +247,7 @@ const deleteExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
   description:
-    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
+    "Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it, and then `write` on that namespace, refused `403 forbidden`. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -271,10 +283,11 @@ const deleteExtensionRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description: "No write access to namespace",
+      description:
+        "`type_not_permitted` without write on the item's type; `forbidden` without write on the namespace",
     },
     404: {
       content: {
@@ -306,6 +319,7 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
+    requireTypeAccess(c, item.type, "read");
 
     const extensions = await storage.metadata.getExtensions(id);
     const filtered = filterExtensionsByPermission(
@@ -329,6 +343,7 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
+    requireTypeAccess(c, item.type, "read");
 
     const perm = resolveExtensionPermission(
       namespace,
@@ -360,6 +375,9 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
+    // An extension is part of the item's row, so the item's type gate runs
+    // first, as it does on the tag doors, whatever the namespace grants.
+    requireTypeAccess(c, item.type, "write");
 
     if (RESERVED_NAMESPACES.has(namespace)) {
       throw new MarfaError(
@@ -431,6 +449,9 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
+    // An extension is part of the item's row, so the item's type gate runs
+    // first, as it does on the tag doors, whatever the namespace grants.
+    requireTypeAccess(c, item.type, "write");
 
     if (RESERVED_NAMESPACES.has(namespace)) {
       throw new MarfaError(

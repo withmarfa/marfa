@@ -86,7 +86,7 @@ pub enum ReplaceItemExtensionSuccess {
 pub enum DeleteItemExtensionError {
     Status400(models::InvalidIdRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenRefusal),
+    Status403(models::ForbiddenOrTypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -100,7 +100,7 @@ pub enum DeleteItemExtensionError {
 pub enum GetItemExtensionError {
     Status400(models::InvalidIdRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenRefusal),
+    Status403(models::ForbiddenOrTypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -113,6 +113,7 @@ pub enum GetItemExtensionError {
 pub enum ListItemExtensionsError {
     Status400(models::InvalidIdRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -125,7 +126,7 @@ pub enum ListItemExtensionsError {
 pub enum ReplaceItemExtensionError {
     Status400(models::InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenRefusal),
+    Status403(models::ForbiddenOrTypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -133,7 +134,7 @@ pub enum ReplaceItemExtensionError {
     UnknownValue(serde_json::Value),
 }
 
-/// Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.
+/// Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it, and then `write` on that namespace, refused `403 forbidden`. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.
 pub fn delete_item_extension(
     configuration: &configuration::Configuration,
     params: DeleteItemExtensionParams,
@@ -179,7 +180,7 @@ pub fn delete_item_extension(
     }
 }
 
-/// Returns the JSON payload for one extension namespace on the item. Missing `read` permission on the namespace returns `403 forbidden`, regardless of the caller's type access to the parent item.
+/// Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.
 pub fn get_item_extension(
     configuration: &configuration::Configuration,
     params: GetItemExtensionParams,
@@ -223,7 +224,7 @@ pub fn get_item_extension(
     }
 }
 
-/// Returns every extension namespace attached to the item that the caller has permission to read. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
+/// Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
 pub fn list_item_extensions(
     configuration: &configuration::Configuration,
     params: ListItemExtensionsParams,
@@ -266,7 +267,7 @@ pub fn list_item_extensions(
     }
 }
 
-/// Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.
+/// Replaces the JSON payload for one extension namespace on the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it, and then `write` on that namespace, refused `403 forbidden`. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.
 pub fn replace_item_extension(
     configuration: &configuration::Configuration,
     params: ReplaceItemExtensionParams,

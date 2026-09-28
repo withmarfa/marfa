@@ -161,8 +161,9 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
 describe("extensions — the reserved namespaces are nobody's", () => {
   it("refuses a working credential writing a reserved namespace", async () => {
     const boundCaller = await mintKey({
-      // Granted the namespace outright, so the refusal below can only be the
-      // reserved-namespace gate rather than a missing map entry.
+      // Granted the item's type and the namespace outright, so the refusal
+      // below can only be the reserved-namespace gate.
+      type_permissions: { "core.note": "write" },
       extension_permissions: { "*": "write" },
     });
     const item = await ctx.storage.items.create({
@@ -191,10 +192,8 @@ describe("extensions — the reserved namespaces are nobody's", () => {
       type: "core.note",
       properties: { body: "reserved-control" },
     });
-    // The operator key holds no map at all, so a gate that admitted its tier
-    // and then asked the namespace map would answer from nothing. The
-    // namespace is closed to every credential anyway: the platform writes it
-    // through the storage layer as it writes a `system.*` row.
+    // The operator key's type map reaches no type, so the item's type gate
+    // refuses it before the namespace is asked; either way nothing lands.
     const res = await request(
       ctx.app,
       "PUT",
@@ -202,10 +201,9 @@ describe("extensions — the reserved namespaces are nobody's", () => {
       { key: ctx.operatorKey, body: { ok: true } },
     );
     expect(res.status).toBe(403);
-    // The namespace refusal rather than the permission map's, which would
-    // also be a 403 and would leave this green if the fence came back.
-    expect(
-      ((await res.json()) as { error: { message: string } }).error.message,
-    ).toContain('Namespace "system" is reserved');
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "type_not_permitted",
+    );
+    expect(await ctx.storage.metadata.getExtensions(item.id)).toEqual({});
   });
 });

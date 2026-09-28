@@ -225,11 +225,12 @@ export function firstUncoveredScope(
  * The clamp works by turning each requested entry into a scope literal and
  * asking whether the grant covers it. Extensions have no literal, so the only
  * honest answers are "refuse" and "let it through unchecked" — and unchecked
- * is real reach: `GET /items/{id}/extensions/{ns}` consults the extension map
- * alone, with no type-permission check beside it, so `{"*":"read"}` reads
- * every namespace on every item stored from a grant that conferred
- * nothing. Every namespace, reserved ones included: `RESERVED_NAMESPACES` is
- * consulted on the write and delete doors and on neither read door.
+ * is real reach: past the type check on the item, `GET
+ * /items/{id}/extensions/{ns}` asks the extension map alone, so `{"*":"read"}`
+ * reads every namespace on every item the grant's types reach, which the
+ * grant never conferred. Every namespace, reserved ones included:
+ * `RESERVED_NAMESPACES` is consulted on the write and delete doors and on
+ * neither read door.
  *
  * An empty object is accepted, because it asks for nothing.
  */
