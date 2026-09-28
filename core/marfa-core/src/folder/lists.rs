@@ -99,7 +99,7 @@ impl Lists {
             .cloned()
             .collect();
         let mut dotted_names = Vec::new();
-        // A `!` line naming a dot-led directory keeps the walk out of it.
+        // A `!` line names no directory to enter.
         for name in include
             .iter()
             .filter(|line| !line.trim_start().starts_with('!'))

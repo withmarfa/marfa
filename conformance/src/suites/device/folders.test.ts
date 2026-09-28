@@ -11054,6 +11054,24 @@ describe("what a folder takes", () => {
     ).toEqual([0, 0]);
   });
 
+  it("takes nothing under a dot-led directory a negated include line names", async () => {
+    harness = await folderHarness("folder-include-negated", {
+      settings: {
+        search: { types: ["core.note"] },
+        include: ["*", "!.git/"],
+      },
+    });
+    scriptFolderWrites(harness);
+    put(harness, ".git/notes.md", "---\ntitle: Hidden\n---\nbody\n");
+    put(harness, "plain.md", "---\ntitle: Plain\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the file beside it is taken.
+    expect(
+      sentTitles(harness),
+      "a file under a directory a `!` line names was taken",
+    ).toEqual(["Plain"]);
+  });
+
   it("writes nothing under a dot-led directory its walk does not enter", async () => {
     const id = "01a00000-0000-7000-8000-0000000018a1";
     const placed = (include: string[]) => ({
