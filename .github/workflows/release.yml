@@ -55,10 +55,13 @@ env:
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
 
+permissions:
+  contents: read
+
 jobs:
   require-green-ci:
     name: Require green CI
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -93,13 +96,7 @@ jobs:
   build:
     name: Build the artifacts
     needs: require-green-ci
-    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # The local pool runs two queues, so at most two jobs share the machine:
-    # Rust and Apple builds in this one, booted-server suites in the other.
-    concurrency:
-      group: marfa-mac-build
-      cancel-in-progress: false
-      queue: max
+    runs-on: macos-26
     timeout-minutes: 60
     permissions:
       contents: read
@@ -204,11 +201,6 @@ jobs:
           echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
-      # Homebrew rustup can be on PATH while its compiler proxies are not.
-      - name: Put Rust executables on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

@@ -1,4 +1,4 @@
-/** Literal routing prevents an accidental return to paid hosted macOS. */
+/** Literal routing keeps public pull requests off personal and paid runners. */
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -12,13 +12,12 @@ const WORKFLOWS = resolve(
   "workflows",
 );
 
-// Two queues, so the local pool never runs more than two jobs at once.
-const MAC_JOBS = new Map([
-  ["ci.yml:core-checks", "marfa-mac-build"],
-  ["ci.yml:conformance", "marfa-mac-suite"],
-  ["ci.yml:cli-scenarios", "marfa-mac-suite"],
-  ["core.yml:core", "marfa-mac-build"],
-  ["release.yml:build", "marfa-mac-build"],
+const MAC_JOBS = new Set([
+  "ci.yml:core-checks",
+  "ci.yml:conformance",
+  "ci.yml:cli-scenarios",
+  "core.yml:core",
+  "release.yml:build",
 ]);
 
 interface Workflow {
@@ -32,7 +31,7 @@ function jobsOf(text: string): Workflow["jobs"] {
 
 const files = readdirSync(WORKFLOWS).filter((f) => /\.ya?ml$/.test(f));
 
-describe("jobs use local macOS and Blacksmith, with hosted release publishing", () => {
+describe("jobs use standard GitHub-hosted runners", () => {
   it("finds workflows and jobs rather than passing over an empty tree", () => {
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
@@ -47,21 +46,10 @@ describe("jobs use local macOS and Blacksmith, with hosted release publishing", 
       jobsOf(readFileSync(join(WORKFLOWS, file), "utf8")),
     )) {
       const expected = MAC_JOBS.has(`${file}:${job}`)
-        ? ["self-hosted", "macOS", "ARM64", "withmarfa", "aic-mbp"]
-        : file === "release.yml" && job === "publish"
-          ? "ubuntu-latest"
-          : "blacksmith-2vcpu-ubuntu-2404";
+        ? "macos-26"
+        : "ubuntu-latest";
       expect(config["runs-on"], `${file}: ${job}`).toEqual(expected);
-      const queue = MAC_JOBS.get(`${file}:${job}`);
-      if (queue) {
-        expect(config.concurrency, `${file}: ${job}`).toEqual({
-          group: queue,
-          "cancel-in-progress": false,
-          queue: "max",
-        });
-      } else {
-        expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
-      }
+      expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
     }
   });
 
