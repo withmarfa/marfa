@@ -119,6 +119,20 @@ impl Lists {
         })
     }
 
+    /// Lists as wide as the built-in ones, and entering the dot-led
+    /// directories `include` names, for a look into another folder that is
+    /// never narrower than that folder's own walk.
+    pub(super) fn wider(include: &[String]) -> Result<Lists> {
+        let mut lines = vec!["*".to_string()];
+        lines.extend(
+            include
+                .iter()
+                .filter(|line| !line.trim_start().starts_with('!') && !dot_names(line).is_empty())
+                .cloned(),
+        );
+        Lists::new(&lines, &[])
+    }
+
     /// Whether the folder takes the file at `relative`, a path inside it
     /// with `/` between its names.
     pub fn takes(&self, relative: &str) -> bool {
@@ -132,7 +146,19 @@ impl Lists {
         if !self.include.is_empty() && !hit(&self.include, &path, false) {
             return false;
         }
-        !path.split('/').any(|name| name.starts_with('.')) || hit(&self.dotted, &path, false)
+        // Every dot-led directory on the way is one the walk enters, or a
+        // pull would write where no scan looks.
+        let (name, directories) = path
+            .rsplit_once('/')
+            .map_or((path.as_str(), ""), |(dirs, name)| (name, dirs));
+        if directories
+            .split('/')
+            .filter(|dir| dir.starts_with('.'))
+            .any(|dir| !self.dotted_names.iter().any(|glob| glob.is_match(dir)))
+        {
+            return false;
+        }
+        !name.starts_with('.') || hit(&self.dotted, &path, false)
     }
 
     /// Whether the built-in secrets list refuses the file at `relative`.
@@ -325,6 +351,28 @@ mod tests {
         assert!(!dotted.takes(".git/a.md"));
         assert!(!dotted.enters(".marfa"));
         assert!(!lists(&[".marfa/"], &[]).takes(".marfa/folder.yaml"));
+    }
+
+    #[test]
+    fn takes_nothing_under_a_dot_led_directory_the_walk_does_not_enter() {
+        let named = lists(&[".notes/"], &[]);
+        assert!(named.takes(".notes/plan.md"));
+        assert!(named.enters(".notes"));
+        assert!(!named.enters(".notes/.hidden"));
+        assert!(!named.takes(".notes/.hidden/plan.md"));
+        let both = lists(&[".notes/", ".hidden/"], &[]);
+        assert!(both.enters(".notes/.hidden"));
+        assert!(both.takes(".notes/.hidden/plan.md"));
+    }
+
+    #[test]
+    fn a_wider_look_enters_what_the_folder_includes_and_everything_else() {
+        let wider = Lists::wider(&["*.md".into(), ".notes/".into(), "!.notes/x".into()]).unwrap();
+        assert!(wider.enters(".notes"));
+        assert!(wider.takes(".notes/plan.md"));
+        assert!(wider.takes("photo.png"));
+        assert!(!wider.enters(".git"));
+        assert!(!wider.takes(".env"));
     }
 
     #[test]

@@ -230,6 +230,7 @@ struct Standing {
     lost: usize,
     unreached: usize,
     directories: Vec<String>,
+    secrets: Vec<String>,
     unwritten: usize,
     outside: usize,
     unsuited: usize,
@@ -289,6 +290,7 @@ fn step(
         lost: scanned.lost,
         unreached: scanned.unreached,
         directories: crate::folders::directory_lines(&scanned.directories),
+        secrets: crate::folders::secret_lines(&scanned.secrets),
         unwritten: pulled.unwritten,
         outside: pulled.outside,
         unsuited: pulled.unsuited,
@@ -336,6 +338,7 @@ fn step(
                 .map(|file| format!("{}: {}", file.path, file.reason)),
         )
         .chain(now.directories.iter().cloned())
+        .chain(now.secrets.iter().cloned())
         .chain(crate::folders::flagged_lines(&now.flagged))
         .chain(now.embeds.iter().cloned())
         .collect();
