@@ -259,8 +259,8 @@ CREATE TABLE IF NOT EXISTS folder_files (
   item_id TEXT NOT NULL,
   -- Device, inode and birth time, joined. Null where the filesystem gave no
   -- usable identity, which is not the same as a file nobody has seen: a null
-  -- here means a rename cannot be followed and the file becomes a new item
-  -- rather than a guess (`folders.md` 17).
+  -- here means a rename within the folder cannot be followed, rather than
+  -- guessed (`folders.md` 17).
   identity TEXT,
   -- The bytes the folder last agreed with, hashed. What makes echo
   -- suppression have no gap (`folders.md` 20): a change whose content the

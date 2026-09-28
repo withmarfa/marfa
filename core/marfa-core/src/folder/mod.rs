@@ -542,10 +542,30 @@ impl Folder {
     }
 
     /// Whether a pull writes a file at `path`: plainly inside the folder,
-    /// where the lists take it and no package holds it.
+    /// where the lists take it and no package or folder inside it holds it.
     fn writes_at(&self, lists: &Lists, path: &str) -> bool {
-        plainly_inside(&self.root, path) && lists.takes(path) && !in_package(&self.root, path)
+        plainly_inside(&self.root, path)
+            && lists.takes(path)
+            && !in_package(&self.root, path)
+            && !in_nested_folder(&self.root, path)
     }
+}
+
+/// Whether a directory on the way to `relative` holds another folder's
+/// `.marfa/`, whose files the walk passes over (`folders.md` 41).
+fn in_nested_folder(root: &Path, relative: &str) -> bool {
+    let mut here = root.to_path_buf();
+    let mut names = relative.split('/').peekable();
+    while let Some(name) = names.next() {
+        if names.peek().is_none() {
+            break;
+        }
+        here.push(name);
+        if here.join(STATE_DIR).is_dir() {
+            return true;
+        }
+    }
+    false
 }
 
 /// The edge types a folder's copy holds whole, since their other ends may lie
@@ -2771,17 +2791,12 @@ impl Folder {
                     });
                 match on_disk {
                     Some(found) => (found, Vec::new(), Vec::new()),
-                    None => match self.core.blob(blob) {
-                        Ok(held) => (
-                            std::fs::read(&held).map_err(|error| {
-                                CoreError::Store(format!("cannot read {}: {error}", held.display()))
-                            })?,
-                            Vec::new(),
-                            Vec::new(),
-                        ),
+                    None => match self.core.blob(blob).map(std::fs::read) {
+                        Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
                         // A refused credential refuses every file alike.
                         Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
-                        Err(_) => {
+                        // A held copy that cannot be read is one file's failure too.
+                        Ok(Err(_)) | Err(_) => {
                             report.absent += 1;
                             return Ok(false);
                         }
@@ -3440,7 +3455,7 @@ enum Standing {
     Spent,
     /// An older version: merged against it, with no own-field change.
     Behind(i64),
-    /// No version line, or one the copy never held.
+    /// No version line, or one newer than the copy's.
     Lineless,
 }
 
