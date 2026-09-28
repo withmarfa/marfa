@@ -47,6 +47,12 @@ export interface StatusReport {
   unexplained: string[];
   undeclared: UndeclaredStatus[];
   /**
+   * `METHOD /path status code` for a refusal code drawn on a declared
+   * status that declares other codes and not this one: a caller switching
+   * on the declared set meets a code it was never told of.
+   */
+  undeclaredCodes: string[];
+  /**
    * Declared statuses no request drew, by operation, less the ones the
    * harness cannot reach by construction. Only meaningful over a run that
    * reaches every door; see {@link unreachedDebt}.
@@ -353,6 +359,22 @@ export function reportStatuses(
   );
 
   const codes = declaredCodes(document);
+  const undeclaredCodes: string[] = [];
+  for (const [operation, byStatus] of observed) {
+    for (const [status, seen] of byStatus) {
+      const declaredHere = codes.get(operation)?.get(status);
+      // A status with no code of its own, a success or a shape outside the
+      // envelope, has no set for a code to be missing from.
+      if (declaredHere === undefined || declaredHere.size === 0) continue;
+      for (const code of seen) {
+        if (!declaredHere.has(code)) {
+          undeclaredCodes.push(`${operation} ${String(status)} ${code}`);
+        }
+      }
+    }
+  }
+  undeclaredCodes.sort();
+
   const unanswered: string[] = [];
   for (const [operation, statuses] of declared) {
     const drawn = observed.get(operation);
@@ -382,6 +404,7 @@ export function reportStatuses(
     unpublished,
     unexplained,
     undeclared,
+    undeclaredCodes,
     unanswered,
     staleCodes,
     recorded: recorded.sort(),

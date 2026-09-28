@@ -12,7 +12,7 @@ Status values:
 
 **Two gates hold this table to the server, one from each side.** Those two read the document and ask what the server does with it, which cannot see a door the document never mentioned: a route added without an entry is invisible to anything that starts from the document. The server's own `openapi-routes.test.ts` asks the reverse, walking the router's table and failing on a door that is neither published nor named unpublished there. An **unpublished** row above is a door that walk has classified.
 
-`pnpm check:statuses` is the third, and it is about statuses rather than doors: after a suite it reads the server's request log against the served document and fails on a status an operation answered and does not declare. It runs after `test:conformance` and after `test:cli`, each against its own server's log.
+`pnpm check:statuses` is the third, and it is about statuses rather than doors: after a suite it reads the server's request log against the served document and fails on a status an operation answered and does not declare, and on a refusal code a declared status answered and does not list among its codes. It runs after `test:conformance` and after `test:cli`, each against its own server's log.
 
 Fixture paths are under `src/suites/`.
 

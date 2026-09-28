@@ -6,8 +6,9 @@
  *
  * The document is fetched from the server that wrote the log, so the two
  * describe one process. The observed table it prints is the record of what
- * the fixtures reach. Exit 1 names every status with no declaration and every
- * served route the document leaves out without a reason. `--complete` is for
+ * the fixtures reach. Exit 1 names every status with no declaration, every
+ * refusal code a declared status does not list, and every served route the
+ * document leaves out without a reason. `--complete` is for
  * the run that reaches every door: it also holds the declared statuses no
  * request drew to the list of the ones nothing can draw.
  */
@@ -110,6 +111,14 @@ if (report.undeclared.length > 0) {
   console.log(
     "\nEvery status observed is declared on the operation that answered it.",
   );
+}
+
+if (report.undeclaredCodes.length > 0) {
+  console.error(
+    "\nRefusal codes answered on a declared status that does not declare them:\n" +
+      report.undeclaredCodes.join("\n"),
+  );
+  process.exitCode = 1;
 }
 
 if (report.recorded.length > 0) {
