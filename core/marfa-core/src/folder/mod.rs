@@ -383,9 +383,8 @@ impl Folder {
     }
 }
 
-/// The edge types a folder's copy holds whole: its search's, those a child's
-/// file writes, and a host's attachments, whose sources the slice may not hold
-/// (`folders.md` 11, 12).
+/// The edge types a folder's copy holds whole, since their other ends may lie
+/// outside the slice: its search's, `child-of`'s and attachments' (`folders.md` 11, 12).
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = settings.whole_edge_types();
     whole.extend(edge_types.written_at_targets());
@@ -494,6 +493,7 @@ impl Folder {
         let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
         let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
         let mut embedded: HashSet<String> = HashSet::new();
+        let index = embeds::Files::of(&keys);
         for (path, key) in paths.iter().zip(&keys) {
             if !carries_frontmatter(path) {
                 continue;
@@ -504,7 +504,7 @@ impl Folder {
             let body = document::read(&String::from_utf8_lossy(&bytes)).body;
             let mut found = Vec::new();
             for embed in document::embeds(&body) {
-                if let Some(target) = embeds::on_disk(key, &embed, &keys) {
+                if let Some(target) = embeds::on_disk(key, &embed, &index) {
                     if let embeds::Target::At(at) = &target {
                         embedded.insert(at.clone());
                     }
@@ -1947,10 +1947,12 @@ impl Folder {
         for (item, unmatched) in &mut work {
             *unmatched &= !embedded.at.contains_key(&item.id);
         }
+        // Held by the file embedding it whatever state the search narrows to;
+        // a trashed one's file goes as any trashed item's does.
         work.extend(
             found
                 .into_iter()
-                .filter(|item| settings.holds_state(item.state))
+                .filter(|item| matches!(item.state, ItemState::Active | ItemState::Archived))
                 .map(|item| (item, false)),
         );
         members.extend(

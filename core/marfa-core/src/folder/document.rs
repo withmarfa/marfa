@@ -356,48 +356,84 @@ pub fn embeds(body: &str) -> Vec<Embed> {
     found
 }
 
-/// A body with its code blanked, fenced blocks and inline spans, each byte
-/// where it was, since Obsidian shows an embed in code as text.
+/// A body with its code and comments blanked, byte for byte, since Obsidian
+/// shows an embed in either as text: fenced blocks, inline spans, `%%` and `<!-- -->`.
 fn without_code(body: &str) -> String {
-    let mut out: Vec<u8> = Vec::with_capacity(body.len());
-    let mut fence: Option<&str> = None;
+    let mut out = body.as_bytes().to_vec();
+    let blank = |out: &mut [u8]| {
+        out.iter_mut()
+            .filter(|byte| **byte != b'\n')
+            .for_each(|byte| *byte = b' ');
+    };
+    // A fence closes on a run of its own mark at least as long as it opened with.
+    let mut fence: Option<(u8, usize)> = None;
+    let mut comment: Option<&[u8]> = None;
+    let mut from = 0;
     for line in body.split_inclusive('\n') {
-        let opens = ["```", "~~~"]
-            .into_iter()
-            .find(|mark| line.trim_start().starts_with(mark));
-        let in_code = match (fence, opens) {
-            (Some(held), Some(mark)) if held == mark => {
+        let (start, end) = (from, from + line.len());
+        from = end;
+        let lead = line.len() - line.trim_start_matches([' ', '\t']).len();
+        let mark = line.as_bytes().get(lead).copied();
+        let run = |of: u8| line[lead..].bytes().take_while(|byte| *byte == of).count();
+        if let Some((of, length)) = fence {
+            if mark == Some(of) && run(of) >= length && line[lead + run(of)..].trim().is_empty() {
                 fence = None;
-                true
             }
-            (Some(_), _) => true,
-            (None, Some(mark)) => {
-                fence = Some(mark);
-                true
-            }
-            (None, None) => false,
-        };
+            blank(&mut out[start..end]);
+            continue;
+        }
+        if comment.is_none()
+            && let Some(of) = mark.filter(|of| matches!(of, b'`' | b'~'))
+            && run(of) >= 3
+        {
+            fence = Some((of, run(of)));
+            blank(&mut out[start..end]);
+            continue;
+        }
         let bytes = line.as_bytes();
-        let mut masked = vec![in_code; bytes.len()];
-        let run_at = |from: usize| {
-            bytes[from..]
-                .iter()
-                .take_while(|byte| **byte == b'`')
-                .count()
-        };
         let mut at = 0;
-        while !in_code && at < bytes.len() {
+        while at < bytes.len() {
+            if let Some(close) = comment {
+                match bytes[at..]
+                    .windows(close.len())
+                    .position(|window| window == close)
+                {
+                    Some(found) => {
+                        blank(&mut out[start + at..start + at + found + close.len()]);
+                        at += found + close.len();
+                        comment = None;
+                    }
+                    None => {
+                        blank(&mut out[start + at..end]);
+                        at = bytes.len();
+                    }
+                }
+                continue;
+            }
+            if bytes[at..].starts_with(b"%%") || bytes[at..].starts_with(b"<!--") {
+                comment = Some(if bytes[at] == b'%' { b"%%" } else { b"-->" });
+                let opened = if bytes[at] == b'%' { 2 } else { 4 };
+                blank(&mut out[start + at..start + at + opened]);
+                at += opened;
+                continue;
+            }
             if bytes[at] != b'`' {
                 at += 1;
                 continue;
             }
-            let run = run_at(at);
-            let mut next = at + run;
+            let ticks = |from: usize| {
+                bytes[from..]
+                    .iter()
+                    .take_while(|byte| **byte == b'`')
+                    .count()
+            };
+            let opened = ticks(at);
+            let mut next = at + opened;
             let mut closed = None;
             while next < bytes.len() {
                 if bytes[next] == b'`' {
-                    let found = run_at(next);
-                    if found == run {
+                    let found = ticks(next);
+                    if found == opened {
                         closed = Some(next + found);
                         break;
                     }
@@ -407,20 +443,13 @@ fn without_code(body: &str) -> String {
                 }
             }
             match closed {
-                Some(end) => {
-                    masked[at..end].iter_mut().for_each(|mask| *mask = true);
-                    at = end;
+                Some(close) => {
+                    blank(&mut out[start + at..start + close]);
+                    at = close;
                 }
-                None => at += run,
+                None => at += opened,
             }
         }
-        out.extend(bytes.iter().zip(masked).map(|(byte, masked)| {
-            if masked && *byte != b'\n' {
-                b' '
-            } else {
-                *byte
-            }
-        }));
     }
     // Only whole characters were blanked, each byte to a space.
     String::from_utf8(out).unwrap_or_default()
@@ -720,6 +749,13 @@ mod tests {
             ),
             vec![path("![](d.png)", "d.png"), named("![[é.png]]", "é.png"),],
             "an embed shown in code was read as one, or one after the code was missed"
+        );
+        assert_eq!(
+            embeds(
+                "````\n```\n![](in.png)\n````\n%% ![](a.png)\n![](b.png) %% <!-- ![[c.png]]\n--> ![](seen.png)"
+            ),
+            vec![path("![](seen.png)", "seen.png")],
+            "an embed in a comment, or in a fence a shorter run did not close, was read"
         );
         assert_eq!(
             embeds("![](raw x.png) and ![](y.png 'title')"),

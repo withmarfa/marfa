@@ -1,7 +1,7 @@
 //! Files a document's body embeds (`folders.md` 12): each an `attached-to`
 //! edge from the file's item to the document's, written where its link says.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use serde_json::Value;
@@ -78,9 +78,8 @@ fn answers(path: &str, name: &str) -> bool {
     path == name || path.ends_with(&format!("/{name}"))
 }
 
-/// The file `![[name]]` names among `files`, as Obsidian resolves it: the
-/// path from the folder's root, else the nearest file of that name, in the
-/// embedding file's own directory, then the shallowest, then path order.
+/// The file `![[name]]` names among `files`: the root path, else the nearest,
+/// then the shallowest, then path order, so every machine resolves it alike.
 fn named<'f>(host: &str, name: &str, files: impl IntoIterator<Item = &'f str>) -> Option<String> {
     files
         .into_iter()
@@ -105,9 +104,43 @@ fn read_as(embed: &Embed) -> Option<(&str, bool)> {
     }
 }
 
+/// The files a scan walked, indexed once so resolving an embed costs a lookup;
+/// both keys lowercased, since macOS and Obsidian compare names without case.
+pub(super) struct Files {
+    by_path: HashMap<String, String>,
+    by_name: HashMap<String, Vec<String>>,
+}
+
+impl Files {
+    pub fn of(paths: &[String]) -> Files {
+        let mut files = Files {
+            by_path: HashMap::new(),
+            by_name: HashMap::new(),
+        };
+        for path in paths {
+            files.by_path.insert(path.to_lowercase(), path.clone());
+            files
+                .by_name
+                .entry(name_of(path).to_lowercase())
+                .or_default()
+                .push(path.clone());
+        }
+        files
+    }
+
+    fn at(&self, path: &str) -> Option<String> {
+        self.by_path.get(&path.to_lowercase()).cloned()
+    }
+
+    fn named(&self, host: &str, name: &str) -> Option<String> {
+        let found = self.by_name.get(&name_of(name).to_lowercase())?;
+        named(host, name, found.iter().map(String::as_str))
+    }
+}
+
 /// Where an embed in the file at `host` points among the files the walk
 /// found; `None` for an embed of a note, which is text in the body.
-pub(super) fn on_disk(host: &str, embed: &Embed, files: &[String]) -> Option<Target> {
+pub(super) fn on_disk(host: &str, embed: &Embed, files: &Files) -> Option<Target> {
     let Some((name, by_name)) = read_as(embed) else {
         let Embed::Spaced { path, .. } = embed else {
             return None;
@@ -118,11 +151,11 @@ pub(super) fn on_disk(host: &str, embed: &Embed, files: &[String]) -> Option<Tar
         return None;
     }
     let found = if by_name {
-        named(host, name, files.iter().map(String::as_str))
+        files.named(host, name)
     } else {
         match joined(host, name) {
             None => return Some(Target::Outside),
-            Some(at) => files.contains(&at).then_some(at),
+            Some(at) => files.at(&at),
         }
     };
     match found {
@@ -185,6 +218,20 @@ pub(super) fn reported(path: &str, reason: String) -> Flagged {
 }
 
 impl Folder {
+    /// Where an item's placement puts it.
+    fn placed_at(&self, id: &str) -> Result<Option<String>> {
+        Ok(self
+            .placement(id)?
+            .and_then(|edge| path_of(&edge).and_then(cleaned)))
+    }
+
+    /// The paths an item already goes by here: its placement and its file.
+    fn own_paths(&self, id: &str) -> Result<Vec<String>> {
+        let mut paths: Vec<String> = self.placed_at(id)?.into_iter().collect();
+        paths.extend(state::bound_to_item(&*self.core.conn()?, id)?.map(|bound| bound.path));
+        Ok(paths)
+    }
+
     /// The file items attached to `host` that the copy holds.
     fn attachments(&self, host: &str, catalog: &Catalog) -> Result<Vec<Attachment>> {
         let mut found: Vec<Attachment> = Vec::new();
@@ -274,7 +321,11 @@ impl Folder {
                     Some(at) => (
                         attachments
                             .iter()
-                            .find(|held| held.path.as_deref() == Some(at.as_str()))
+                            .find(|held| {
+                                held.path
+                                    .as_deref()
+                                    .is_some_and(|path| path.to_lowercase() == at.to_lowercase())
+                            })
                             .map(|held| held.id.clone())
                             .or_else(|| by_name(&at)),
                         Target::At(at),
@@ -311,11 +362,20 @@ impl Folder {
                 .unwrap_or_default();
             for shown in self.shown_in(host, host_path, body, catalog)? {
                 match (shown.item, shown.target) {
-                    (Some(id), Target::At(path)) => links.entry(id).or_default().push(Link {
-                        path,
-                        host: host_path.clone(),
-                        raw: shown.raw,
-                    }),
+                    (Some(id), Target::At(path)) => {
+                        // A link differing from the file only in case names it,
+                        // and the file keeps its own name.
+                        let path = self
+                            .own_paths(&id)?
+                            .into_iter()
+                            .find(|own| own.to_lowercase() == path.to_lowercase())
+                            .unwrap_or(path);
+                        links.entry(id).or_default().push(Link {
+                            path,
+                            host: host_path.clone(),
+                            raw: shown.raw,
+                        });
+                    }
                     (Some(id), Target::Named(name)) => {
                         by_name.push((host_path.clone(), shown.raw, id, name));
                     }
@@ -336,10 +396,7 @@ impl Folder {
         // where the file already sits, and otherwise a file of that name here.
         by_name.sort();
         for (host, raw, id, name) in by_name {
-            let placed = self
-                .placement(&id)?
-                .and_then(|edge| path_of(&edge).and_then(cleaned))
-                .filter(|path| answers(path, &name));
+            let placed = self.placed_at(&id)?.filter(|path| answers(path, &name));
             let path = match placed {
                 Some(path) => path,
                 None => {
@@ -369,7 +426,7 @@ impl Folder {
             found.sort_by(|a, b| a.path.cmp(&b.path));
             let first = found[0].path.clone();
             for link in &found {
-                if link.path != first {
+                if link.path.to_lowercase() != first.to_lowercase() {
                     embedded.reports.push(reported(
                         &link.host,
                         format!(

@@ -488,6 +488,20 @@ impl Folder {
                 }
                 None => None,
             };
+            // Where the copy cannot tell who writes it, only the person's own
+            // line shows it; an embed's record alone never becomes a line.
+            if as_typed.is_none()
+                && !self
+                    .writer_of(&edge, types, catalog)?
+                    .is_some_and(|(writer, _)| writer == item.id)
+            {
+                written.push(Line {
+                    edge_type: def.id.clone(),
+                    end,
+                    other,
+                });
+                continue;
+            }
             let shown = match as_typed {
                 Some(text) => text,
                 None => self.shown_as(&other, catalog, names)?,
@@ -557,8 +571,7 @@ impl Folder {
     }
 
     /// Queues what a file's links, embeds and lines change (`folders.md` 11,
-    /// 12, 29); a line that cannot be read as written changes nothing of its
-    /// type.
+    /// 12, 29); a line read no way it was written changes nothing of its type.
     pub(super) fn queue_edges(
         &self,
         work: &EdgeWork,
