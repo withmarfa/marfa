@@ -237,9 +237,7 @@ const seeds: Record<string, () => Promise<Read>> = {
       await client.registerConnector({ name: `full-last-page ${ctx.runId}` }),
     );
     if (!connectors.includes(connector.id)) connectors.push(connector.id);
-    const endpoint = answered(
-      await client.createInboundEndpoint(connector.id),
-    );
+    const endpoint = answered(await client.createInboundEndpoint(connector.id));
     for (let i = 0; i < LIMIT; i++) {
       const sent = await fetch(`${apiUrl}${endpoint.path}`, {
         method: "POST",
@@ -248,9 +246,7 @@ const seeds: Record<string, () => Promise<Read>> = {
       expect(sent.status).toBe(202);
     }
     return async (page) =>
-      answered(
-        await client.listInboundDeliveries(connector.id, page),
-      ) as Page;
+      answered(await client.listInboundDeliveries(connector.id, page)) as Page;
   },
 };
 
