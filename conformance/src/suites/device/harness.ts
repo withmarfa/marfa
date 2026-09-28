@@ -373,6 +373,8 @@ export async function folderHarness(
     folder?: FolderRow;
     head?: string;
     rows?: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
+    /** What `GET /keys/current` answers, a key placing files unless named. */
+    key?: Responder[];
     /** Skip the hydration, for the cases that are about a folder before one. */
     hydrate?: boolean;
     /**
@@ -422,6 +424,11 @@ export async function folderHarness(
       rows: options.rows,
       edges: options.edges,
     });
+    server.answer(
+      "GET",
+      "/keys/current",
+      ...(options.key ?? [answers.currentKey("fixture-key", { "*": "write" })]),
+    );
   }
   const added = await folder.add(settings.id);
   if (!added.ok) {

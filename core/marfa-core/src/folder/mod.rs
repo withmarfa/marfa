@@ -6,6 +6,7 @@
 
 pub mod document;
 pub mod identity;
+mod placement;
 pub mod settings;
 mod settings_file;
 pub mod state;
@@ -19,9 +20,11 @@ use serde_json::{Map, Value};
 
 use crate::catalog::Catalog;
 use crate::error::CoreError;
-use crate::model::{BlockedReason, Draft, Edge, EdgeDraft, EdgeEdit, Edit, Item, WriteKind};
+use crate::model::{BlockedReason, Draft, Edit, Item, WriteKind};
 use crate::{Core, Result, Server};
 
+pub use placement::PLACEMENT_EDGE;
+use placement::{beside, cleaned, path_of, suited};
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
 
@@ -47,6 +50,8 @@ pub struct Folder {
     root: PathBuf,
     folder: String,
     core: Core,
+    /// The id of the key the credential is, once asked.
+    key_id: std::sync::OnceLock<Option<String>>,
 }
 
 /// What a scan did.
@@ -98,6 +103,7 @@ impl Folder {
             root,
             folder: folder.to_string(),
             core,
+            key_id: std::sync::OnceLock::new(),
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -107,6 +113,18 @@ impl Folder {
             let conn = added.core.conn()?;
             crate::store::replace_types(&conn, &types)?;
             Settings::of_wire(&row.item)?.check_types(&Catalog::load(&conn)?)?;
+        }
+        // A key that cannot place its files would lay the folder out on this
+        // machine alone; a credential that is not a key is not asked.
+        if let Some(key) = added.core.http()?.current_key()?
+            && !placement::places(&key)
+        {
+            return Err(CoreError::Forbidden {
+                code: "edge_permission_denied".into(),
+                message: format!(
+                    "this key cannot write the {PLACEMENT_EDGE} edges that say where each file sits, so the folder cannot place its files: it needs `edge.{PLACEMENT_EDGE}:write`"
+                ),
+            });
         }
         settings_file::bind(&added.core, folder)?;
         added.write_settings_file(&row.item.properties, row.item.version)?;
@@ -142,7 +160,12 @@ impl Folder {
         }
         let core = Core::open(state.join("core.sqlite"), server)?;
         let folder = settings_file::bound(&core)?.ok_or_else(not_a_folder)?;
-        Ok(Folder { root, folder, core })
+        Ok(Folder {
+            root,
+            folder,
+            core,
+            key_id: std::sync::OnceLock::new(),
+        })
     }
 
     /// The id of the `system.folder` this directory follows.
@@ -419,6 +442,7 @@ impl Folder {
             state::every_bound(&conn)?
         };
         let claims = self.claim(&files, &snapshot, &catalog)?;
+        let withheld = self.withheld()?;
         let mut unresolved: Vec<Unresolved> = Vec::new();
 
         for (file, claim) in files.iter().zip(claims) {
@@ -442,7 +466,7 @@ impl Folder {
             };
             match claim {
                 None => {
-                    self.queue_create(file, &settings, &catalog, &mut unresolved)?;
+                    self.queue_create(file, &settings, &catalog, &withheld, &mut unresolved)?;
                     report.created += 1;
                 }
                 Some(Claim {
@@ -454,7 +478,7 @@ impl Folder {
                     } else {
                         report.unchanged += 1;
                     }
-                    self.place(&item_id, &file.key)?;
+                    self.place(&item_id, &file.key, &withheld)?;
                 }
                 Some(Claim {
                     item_id,
@@ -488,7 +512,7 @@ impl Folder {
                 }) => {
                     self.unbind_if_still(&bound)?;
                     self.queue_update(&item_id, Some(&bound), file, &catalog, &mut unresolved)?;
-                    self.place(&item_id, &file.key)?;
+                    self.place(&item_id, &file.key, &withheld)?;
                     report.renamed += 1;
                 }
             }
@@ -740,10 +764,11 @@ impl Folder {
         file: &Scanned,
         settings: &Settings,
         catalog: &Catalog,
+        withheld: &placement::Withheld,
         unresolved: &mut Vec<Unresolved>,
     ) -> Result<()> {
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
-            return self.queue_create_file(file, file_type, settings);
+            return self.queue_create_file(file, file_type, settings, withheld);
         }
         let document = file.document();
         let mut properties = sendable(document.properties);
@@ -764,7 +789,7 @@ impl Folder {
         // Before the links, so a link naming a default's target adds no
         // second edge.
         self.queue_default_edges(&item_id, settings)?;
-        self.place(&item_id, &file.key)?;
+        self.place(&item_id, &file.key, withheld)?;
         let (named, declined, resolved) = self.queue_links(&item_id, &document.links, &[], &[])?;
         if !resolved {
             unresolved.push(Unresolved {
@@ -786,6 +811,7 @@ impl Folder {
         file: &Scanned,
         file_type: String,
         settings: &Settings,
+        withheld: &placement::Withheld,
     ) -> Result<()> {
         let mut properties = Map::new();
         properties.insert(
@@ -801,7 +827,7 @@ impl Folder {
         };
         let item_id = named_item(self.core.create_file_item(&file.path, &draft)?, &file.key)?;
         self.queue_default_edges(&item_id, settings)?;
-        self.place(&item_id, &file.key)?;
+        self.place(&item_id, &file.key, withheld)?;
         self.bind_scanned(file, &item_id, Vec::new(), Vec::new(), None)
     }
 
@@ -1066,81 +1092,6 @@ impl Folder {
         }
         Ok(None)
     }
-
-    /// The item's placement in this folder (`folders.md` 16): of several, the
-    /// first by id, so every machine reads the same one.
-    fn placement(&self, item_id: &str) -> Result<Option<Edge>> {
-        Ok(self
-            .core
-            .edges_from(item_id)?
-            .into_iter()
-            .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder)
-            .min_by(|a, b| a.id.cmp(&b.id)))
-    }
-
-    /// Records that the item's file sits at `path`, as an edge create or an
-    /// update of its `path` alone. Answers whether anything was queued.
-    fn place(&self, item_id: &str, path: &str) -> Result<bool> {
-        let mut properties = Map::new();
-        properties.insert(PATH_PROPERTY.into(), Value::String(path.into()));
-        match self.placement(item_id)? {
-            Some(edge) if path_of(&edge) == Some(path) => return Ok(false),
-            Some(edge) => {
-                self.core.update_edge(
-                    &edge.id,
-                    &EdgeEdit {
-                        properties,
-                        base_version: Some(edge.version),
-                    },
-                )?;
-            }
-            None => {
-                self.core.create_edge(&EdgeDraft {
-                    source_id: item_id.to_string(),
-                    target_id: self.folder.clone(),
-                    edge_type: PLACEMENT_EDGE.into(),
-                    properties,
-                    id: None,
-                })?;
-            }
-        }
-        Ok(true)
-    }
-}
-
-/// The path a placement names.
-fn path_of(edge: &Edge) -> Option<&str> {
-    edge.properties.get(PATH_PROPERTY).and_then(Value::as_str)
-}
-
-/// A path inside the folder with empty and `.` names taken out, or `None`
-/// where a name climbs out or is dot-led, which the walk never reads back
-/// (`folders.md` 22).
-fn cleaned(path: &str) -> Option<String> {
-    let names: Vec<&str> = path
-        .split('/')
-        .filter(|name| !name.is_empty() && *name != ".")
-        .collect();
-    if names.is_empty() || names.iter().any(|name| name.starts_with('.')) {
-        return None;
-    }
-    Some(names.join("/"))
-}
-
-/// The first free path beside `path`: `Name (2).md`, then `(3)`.
-fn beside(path: &str, taken: impl Fn(&str) -> bool) -> String {
-    let (dir, name) = match path.rsplit_once('/') {
-        Some((dir, name)) => (format!("{dir}/"), name),
-        None => (String::new(), path),
-    };
-    let (stem, extension) = match name.rsplit_once('.') {
-        Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
-        _ => (name, String::new()),
-    };
-    (2u64..)
-        .map(|n| format!("{dir}{stem} ({n}){extension}"))
-        .find(|candidate| !taken(candidate))
-        .unwrap_or_else(|| path.to_string())
 }
 
 /// The item a queued create made.
@@ -1201,6 +1152,9 @@ pub struct Drained {
     /// Edits the server refused `ancestor_unavailable`, sent again on the
     /// version the copy holds (`folders.md` 20).
     pub rebased: usize,
+    /// Placements another machine made first, withdrawn for the server's
+    /// (`folders.md` 16).
+    pub gave_way: usize,
 }
 
 impl Folder {
@@ -1208,6 +1162,7 @@ impl Folder {
     /// longer holds again on the version the copy holds (`folders.md` 20).
     pub fn drain(&self) -> Result<Drained> {
         let mut report = self.core.drain()?;
+        let mut gave_way = self.settle_placements(&mut report)?;
         let mut rebased = 0;
         while report.stopped.is_none() {
             let now = self.rebase_thinned()?;
@@ -1215,7 +1170,8 @@ impl Folder {
                 break;
             }
             rebased += now;
-            let again = self.core.drain()?;
+            let mut again = self.core.drain()?;
+            gave_way += self.settle_placements(&mut again)?;
             report.sent += again.sent;
             report.held = again.held;
             report.verdicts.extend(again.verdicts);
@@ -1227,7 +1183,11 @@ impl Folder {
             }
             report.retry_after_seconds = report.retry_after_seconds.max(again.retry_after_seconds);
         }
-        Ok(Drained { report, rebased })
+        Ok(Drained {
+            report,
+            rebased,
+            gave_way,
+        })
     }
 
     /// Moves the first such edit of each row: the next was made against it,
@@ -1274,9 +1234,6 @@ impl Folder {
             let conn = self.core.conn()?;
             Catalog::load(&conn)?
         };
-        // Paths already taken in this pass: two items resolving to one would
-        // have the second steal the first's file.
-        let mut taken: HashSet<String> = HashSet::new();
         let bound_items: HashSet<String> = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -1305,7 +1262,9 @@ impl Folder {
                 .filter(|item| settings.holds_state(item.state))
                 .map(|item| (item, true)),
         );
-        let mut placing: Vec<(&Item, Option<state::Bound>, Option<String>)> = Vec::new();
+        let withheld = self.withheld()?;
+        report.unplaced = withheld.len();
+        let mut placing: Vec<Placing> = Vec::new();
         for (item, unmatched) in &work {
             if *unmatched {
                 report.unmatched += 1;
@@ -1319,170 +1278,174 @@ impl Folder {
                 let conn = self.core.conn()?;
                 state::bound_to_item(&conn, &item.id)?
             };
-            let want = self.path_for(item, bound.as_ref(), &settings, &catalog)?;
-            placing.push((item, bound, want));
-        }
-        // A file already at its path keeps it; after that the listing's
-        // order, which every copy of the same rows shares, decides.
-        placing.sort_by_key(|(_, bound, want)| {
-            !bound
-                .as_ref()
-                .is_some_and(|bound| Some(&bound.path) == want.as_ref())
-        });
-        let wanted: HashSet<String> = placing
-            .iter()
-            .filter_map(|(_, _, want)| want.clone())
-            .collect();
-        for (item, bound, want) in placing {
-            let Some(mut want) = want.filter(|want| plainly_inside(&self.root, want)) else {
+            let placed = self.placement(&item.id)?;
+            let Some(want) = self
+                .path_for(
+                    item,
+                    placed.as_ref(),
+                    bound.as_ref(),
+                    &withheld,
+                    &settings,
+                    &catalog,
+                )
+                .filter(|want| plainly_inside(&self.root, want))
+            else {
                 report.outside += 1;
                 continue;
             };
-            if taken.contains(&want) {
-                let own = bound.as_ref().map(|bound| bound.path.as_str());
+            if !suited(item, &want, &catalog) {
+                report.unsuited += 1;
+                continue;
+            }
+            let rank = match &placed {
+                Some(edge) => placement::rank_of(edge),
+                None => {
+                    placement::unplaced_rank(bound.as_ref().is_some_and(|bound| bound.path == want))
+                }
+            };
+            placing.push(Placing {
+                item,
+                bound,
+                want,
+                rank,
+            });
+        }
+        // Ranked by what the server holds, so every machine gives a shared
+        // path to the same item; stable, so the listing orders the rest.
+        placing.sort_by(|a, b| a.rank.cmp(&b.rank));
+        let wanted: HashSet<String> = placing.iter().map(|entry| entry.want.clone()).collect();
+        let mut taken: HashSet<String> = HashSet::new();
+        for entry in &mut placing {
+            if taken.contains(&entry.want) {
+                let own = entry.bound.as_ref().map(|bound| bound.path.as_str());
                 let free = |candidate: &str| {
                     !taken.contains(candidate)
                         && plainly_inside(&self.root, candidate)
                         && (own == Some(candidate)
                             || !wanted.contains(candidate) && !self.root.join(candidate).exists())
                 };
-                want = beside(&want, |candidate| !free(candidate));
+                entry.want = beside(&entry.want, |candidate| !free(candidate));
                 report.beside += 1;
             }
-            taken.insert(want.clone());
-            let path = self.root.join(&want);
-            let declined: Vec<String> = bound
-                .as_ref()
-                .map(|bound| bound.declined.clone())
-                .unwrap_or_default();
-            let (bytes, wrote) = match bytes_of(item, &catalog) {
-                Some(blob) => {
-                    // A file already holding these bytes needs no fetch, a
-                    // file moving to its placement included.
-                    let on_disk = bound
-                        .as_ref()
-                        .and_then(|bound| std::fs::read(self.root.join(&bound.path)).ok())
-                        .filter(|found| {
-                            crate::blob::named(blob)
-                                .is_ok_and(|named| crate::blob::name_of(found) == named)
-                        });
-                    match on_disk {
-                        Some(found) => (found, Vec::new()),
-                        None => match self.core.blob(blob) {
-                            Ok(held) => (
-                                std::fs::read(&held).map_err(|error| {
-                                    CoreError::Store(format!(
-                                        "cannot read {}: {error}",
-                                        held.display()
-                                    ))
-                                })?,
-                                Vec::new(),
-                            ),
-                            // A refused credential refuses every file alike.
-                            Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
-                            Err(_) => {
-                                report.absent += 1;
-                                continue;
-                            }
-                        },
-                    }
-                }
-                None => {
-                    let (text, wrote) = self.render(
-                        item,
-                        &declined,
-                        carries_frontmatter(Path::new(&want)),
-                        Some(item.version),
-                    )?;
-                    (text.into_bytes(), wrote)
-                }
-            };
-            let hash = state::hash(&bytes);
-            let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
-
-            if ours
-                && bound
+            taken.insert(entry.want.clone());
+        }
+        // Paths whose file moves away in this pass: an item wanting one waits
+        // until it has.
+        let leaving: HashSet<String> = placing
+            .iter()
+            .filter_map(|entry| {
+                entry
+                    .bound
                     .as_ref()
-                    .is_some_and(|bound| bound.content_hash == hash)
-            {
-                report.placed += usize::from(self.place(&item.id, &want)?);
-                report.unchanged += 1;
-                continue;
+                    .filter(|bound| bound.path != entry.want)
+            })
+            .map(|bound| bound.path.clone())
+            .collect();
+        let mut waiting = Vec::new();
+        for entry in placing {
+            if self.write_placed(&entry, &catalog, &withheld, Some(&leaving), &mut report)? {
+                waiting.push(entry);
             }
-            // The bytes on the disk, not the mapping's memory of them: a file
-            // changed since the scan read it is the person's (`folders.md` 27).
-            if let Some(bound) = &bound
-                && std::fs::read(self.root.join(&bound.path))
-                    .is_ok_and(|found| state::hash(&found) != bound.content_hash)
-            {
-                report.unwritten += 1;
-                continue;
-            }
-            if ours
-                && let Some(bound) = &bound
-                && self.behind_by_its_line_alone(item, bound, &declined)?
-            {
-                report.placed += usize::from(self.place(&item.id, &want)?);
-                report.unchanged += 1;
-                continue;
-            }
-            // Something at the destination that is not this item's own file
-            // (`folders.md` 27), unless it is byte for byte this item's render.
-            if !ours && path.exists() {
-                if bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes) {
-                    let conn = self.core.conn()?;
-                    state::bind(
-                        &conn,
-                        &state::Bound {
-                            path: want.clone(),
-                            item_id: item.id.clone(),
-                            identity: None,
-                            content_hash: hash.clone(),
-                            written_hash: Some(hash),
-                            links: wrote,
-                            declined,
-                            edit_line: None,
-                        },
-                    )?;
-                    state::journal_clear(&conn, &want)?;
-                    drop(conn);
-                    report.placed += usize::from(self.place(&item.id, &want)?);
-                    report.unchanged += 1;
-                    continue;
-                }
-                report.unwritten += 1;
-                continue;
-            }
-            if let Some(bound) = &bound
-                && bound.path != want
-            {
-                // Unbound even where not removed: a bound path the walk cannot
-                // reach is journaled and deleted.
-                if plainly_inside(&self.root, &bound.path) {
-                    let _ = std::fs::remove_file(self.root.join(&bound.path));
-                }
-                let conn = self.core.conn()?;
-                state::unbind(&conn, &bound.path)?;
-                state::journal_clear(&conn, &bound.path)?;
-                report.moved += 1;
-            }
+        }
+        for entry in waiting {
+            self.write_placed(&entry, &catalog, &withheld, None, &mut report)?;
+        }
+        self.remove_departed(&members, &settings, &mut report)?;
+        report.settings = self.write_settings_if_moved()?;
+        Ok(report)
+    }
 
-            // Written over an edit still waiting, the line it writes is spent
-            // too, since the file holds that edit (`folders.md` 20, 21).
-            let spent = bound.as_ref().and_then(|bound| bound.edit_line);
-            let edit_line = if carries_frontmatter(Path::new(&want))
-                && crate::store::item_waits(&*self.core.conn()?, &item.id)?
-            {
-                Some(spent.unwrap_or(0).max(item.version))
-            } else {
-                spent
-            };
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    CoreError::Store(format!("cannot make {}: {error}", parent.display()))
-                })?;
+    /// Writes one item's file where its pull placed it, and answers whether
+    /// it waits for the file at that path to move away first.
+    fn write_placed(
+        &self,
+        entry: &Placing<'_>,
+        catalog: &Catalog,
+        withheld: &placement::Withheld,
+        leaving: Option<&HashSet<String>>,
+        report: &mut PullReport,
+    ) -> Result<bool> {
+        let Placing {
+            item, bound, want, ..
+        } = entry;
+        let (item, want) = (*item, want.clone());
+        let path = self.root.join(&want);
+        let declined: Vec<String> = bound
+            .as_ref()
+            .map(|bound| bound.declined.clone())
+            .unwrap_or_default();
+        let (bytes, wrote) = match bytes_of(item, catalog) {
+            Some(blob) => {
+                // A file already holding these bytes needs no fetch, a
+                // file moving to its placement included.
+                let on_disk = bound
+                    .as_ref()
+                    .and_then(|bound| std::fs::read(self.root.join(&bound.path)).ok())
+                    .filter(|found| {
+                        crate::blob::named(blob)
+                            .is_ok_and(|named| crate::blob::name_of(found) == named)
+                    });
+                match on_disk {
+                    Some(found) => (found, Vec::new()),
+                    None => match self.core.blob(blob) {
+                        Ok(held) => (
+                            std::fs::read(&held).map_err(|error| {
+                                CoreError::Store(format!("cannot read {}: {error}", held.display()))
+                            })?,
+                            Vec::new(),
+                        ),
+                        // A refused credential refuses every file alike.
+                        Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
+                        Err(_) => {
+                            report.absent += 1;
+                            return Ok(false);
+                        }
+                    },
+                }
             }
-            {
+            None => {
+                let (text, wrote) = self.render(
+                    item,
+                    &declined,
+                    carries_frontmatter(Path::new(&want)),
+                    Some(item.version),
+                )?;
+                (text.into_bytes(), wrote)
+            }
+        };
+        let hash = state::hash(&bytes);
+        let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
+
+        if ours
+            && bound
+                .as_ref()
+                .is_some_and(|bound| bound.content_hash == hash)
+        {
+            report.placed += usize::from(self.place(&item.id, &want, withheld)?);
+            report.unchanged += 1;
+            return Ok(false);
+        }
+        // The bytes on the disk, not the mapping's memory of them: a file
+        // changed since the scan read it is the person's (`folders.md` 27).
+        if let Some(bound) = &bound
+            && std::fs::read(self.root.join(&bound.path))
+                .is_ok_and(|found| state::hash(&found) != bound.content_hash)
+        {
+            report.unwritten += 1;
+            return Ok(false);
+        }
+        if ours
+            && let Some(bound) = &bound
+            && self.behind_by_its_line_alone(item, bound, &declined)?
+        {
+            report.placed += usize::from(self.place(&item.id, &want, withheld)?);
+            report.unchanged += 1;
+            return Ok(false);
+        }
+        // Something at the destination that is not this item's own file
+        // (`folders.md` 27), unless it is byte for byte this item's render.
+        if !ours && path.exists() {
+            if bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes) {
                 let conn = self.core.conn()?;
                 state::bind(
                     &conn,
@@ -1491,61 +1454,114 @@ impl Folder {
                         item_id: item.id.clone(),
                         identity: None,
                         content_hash: hash.clone(),
-                        written_hash: Some(hash.clone()),
-                        links: wrote.clone(),
-                        declined: declined.clone(),
-                        edit_line,
-                    },
-                )?;
-                // Counted, because one row this clears can be a person's own
-                // delete still inside its grace.
-                if state::journaled(&conn)?
-                    .iter()
-                    .any(|(path, _, _)| path == &want)
-                {
-                    report.revived += 1;
-                }
-                state::journal_clear(&conn, &want)?;
-            }
-            if let Err(error) = std::fs::write(&path, &bytes) {
-                // Bound first, so it must come out again, or the scan would
-                // take bytes that never landed as the folder's own.
-                let conn = self.core.conn()?;
-                state::unbind(&conn, &want)?;
-                return Err(CoreError::Store(format!(
-                    "cannot write {}: {error}",
-                    path.display()
-                )));
-            }
-            report.placed += usize::from(self.place(&item.id, &want)?);
-            // Read after the write, because the file did not exist until now.
-            if let Ok(metadata) = std::fs::symlink_metadata(&path)
-                && let Some(found) = identity::of(&metadata)
-            {
-                let conn = self.core.conn()?;
-                state::bind(
-                    &conn,
-                    &state::Bound {
-                        path: want,
-                        item_id: item.id.clone(),
-                        identity: Some(found.key()),
-                        content_hash: hash.clone(),
                         written_hash: Some(hash),
                         links: wrote,
                         declined,
-                        edit_line,
+                        edit_line: None,
                     },
                 )?;
+                state::journal_clear(&conn, &want)?;
+                drop(conn);
+                report.placed += usize::from(self.place(&item.id, &want, withheld)?);
+                report.unchanged += 1;
+                return Ok(false);
             }
-            if bound.is_none() {
-                report.written += 1;
-            } else {
-                report.rewritten += 1;
+            if leaving.is_some_and(|leaving| leaving.contains(&want)) {
+                return Ok(true);
             }
+            report.unwritten += 1;
+            return Ok(false);
         }
-        self.remove_departed(&members, &settings, &mut report)?;
-        report.settings = self.write_settings_if_moved()?;
-        Ok(report)
+        if let Some(bound) = &bound
+            && bound.path != want
+        {
+            // Unbound even where not removed: a bound path the walk cannot
+            // reach is journaled and deleted.
+            if plainly_inside(&self.root, &bound.path) {
+                let _ = std::fs::remove_file(self.root.join(&bound.path));
+            }
+            let conn = self.core.conn()?;
+            state::unbind(&conn, &bound.path)?;
+            state::journal_clear(&conn, &bound.path)?;
+            report.moved += 1;
+        }
+
+        // Written over an edit still waiting, the line it writes is spent
+        // too, since the file holds that edit (`folders.md` 20, 21).
+        let spent = bound.as_ref().and_then(|bound| bound.edit_line);
+        let edit_line = if carries_frontmatter(Path::new(&want))
+            && crate::store::item_waits(&*self.core.conn()?, &item.id)?
+        {
+            Some(spent.unwrap_or(0).max(item.version))
+        } else {
+            spent
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                CoreError::Store(format!("cannot make {}: {error}", parent.display()))
+            })?;
+        }
+        {
+            let conn = self.core.conn()?;
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: want.clone(),
+                    item_id: item.id.clone(),
+                    identity: None,
+                    content_hash: hash.clone(),
+                    written_hash: Some(hash.clone()),
+                    links: wrote.clone(),
+                    declined: declined.clone(),
+                    edit_line,
+                },
+            )?;
+            // Counted, because one row this clears can be a person's own
+            // delete still inside its grace.
+            if state::journaled(&conn)?
+                .iter()
+                .any(|(path, _, _)| path == &want)
+            {
+                report.revived += 1;
+            }
+            state::journal_clear(&conn, &want)?;
+        }
+        if let Err(error) = std::fs::write(&path, &bytes) {
+            // Bound first, so it must come out again, or the scan would
+            // take bytes that never landed as the folder's own.
+            let conn = self.core.conn()?;
+            state::unbind(&conn, &want)?;
+            return Err(CoreError::Store(format!(
+                "cannot write {}: {error}",
+                path.display()
+            )));
+        }
+        report.placed += usize::from(self.place(&item.id, &want, withheld)?);
+        // Read after the write, because the file did not exist until now.
+        if let Ok(metadata) = std::fs::symlink_metadata(&path)
+            && let Some(found) = identity::of(&metadata)
+        {
+            let conn = self.core.conn()?;
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: want,
+                    item_id: item.id.clone(),
+                    identity: Some(found.key()),
+                    content_hash: hash.clone(),
+                    written_hash: Some(hash),
+                    links: wrote,
+                    declined,
+                    edit_line,
+                },
+            )?;
+        }
+        if bound.is_none() {
+            report.written += 1;
+        } else {
+            report.rewritten += 1;
+        }
+        Ok(false)
     }
 
     /// The ids the search matches in the copy (`folders.md` 2), answered by
@@ -1667,15 +1683,23 @@ impl Folder {
     fn path_for(
         &self,
         item: &Item,
+        placed: Option<&crate::model::Edge>,
         bound: Option<&state::Bound>,
+        withheld: &placement::Withheld,
         settings: &Settings,
         catalog: &Catalog,
-    ) -> Result<Option<String>> {
-        if let Some(placed) = self.placement(&item.id)? {
-            return Ok(path_of(&placed).and_then(cleaned));
+    ) -> Option<String> {
+        // A placement the server refused never moved the file away from it.
+        if let Some(bound) = bound
+            && withheld.contains_key(&item.id)
+        {
+            return Some(bound.path.clone());
+        }
+        if let Some(placed) = placed {
+            return path_of(placed).and_then(cleaned);
         }
         if let Some(bound) = bound {
-            return Ok(Some(bound.path.clone()));
+            return Some(bound.path.clone());
         }
         let title = item
             .properties
@@ -1689,10 +1713,10 @@ impl Folder {
         } else {
             format!("{}.md", safe_name(title))
         };
-        Ok(match settings.first_placement_for(&item.r#type, catalog) {
+        match settings.first_placement_for(&item.r#type, catalog) {
             Some(dir) => cleaned(&format!("{dir}/{name}")),
             None => Some(name),
-        })
+        }
     }
 
     /// An item as a file's bytes and its body's link targets, with the id and
@@ -1756,6 +1780,14 @@ impl Folder {
     }
 }
 
+/// An item a pull writes, with the path it settled on.
+struct Placing<'a> {
+    item: &'a Item,
+    bound: Option<state::Bound>,
+    want: String,
+    rank: placement::Rank,
+}
+
 /// A file whose links the scan could not all resolve on the way past,
 /// asked again once every file is bound (`folders.md` 28).
 struct Unresolved {
@@ -1799,12 +1831,6 @@ const FILE_TYPE: &str = "core.file";
 
 /// The kind of edge a link becomes, and the only kind a folder removes.
 pub const LINK_EDGE: &str = "references";
-
-/// The edge that says where an item's file sits in a folder, never written
-/// in a file (`folders.md` 16).
-pub const PLACEMENT_EDGE: &str = "in-folder";
-
-const PATH_PROPERTY: &str = "path";
 
 /// The frontmatter field that names the item a Markdown file is.
 pub const ID_FIELD: &str = "marfa_id";
@@ -1851,6 +1877,12 @@ pub struct PullReport {
     /// Items whose placement another item holds, written at a free path
     /// beside it, which becomes their placement (`folders.md` 16).
     pub beside: usize,
+    /// Items whose placement would make them another kind of file, left
+    /// unwritten (`folders.md` 16).
+    pub unsuited: usize,
+    /// Placements the server refused, not sent again until the key or the
+    /// settings change (`folders.md` 16).
+    pub unplaced: usize,
     /// Placements written: an `in-folder` edge made, or its `path` moved to
     /// where the file is (`folders.md` 16).
     pub placed: usize,

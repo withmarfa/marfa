@@ -212,6 +212,8 @@ struct Standing {
     lost: usize,
     unwritten: usize,
     outside: usize,
+    unsuited: usize,
+    unplaced: usize,
     absent: usize,
     kept: usize,
     unmatched: usize,
@@ -233,6 +235,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         + scanned.deleted
         + scanned.requeued
         + drained.report.verdicts.len()
+        + drained.gave_way
         + pulled.written
         + pulled.rewritten
         + pulled.moved
@@ -244,6 +247,8 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         lost: scanned.lost,
         unwritten: pulled.unwritten,
         outside: pulled.outside,
+        unsuited: pulled.unsuited,
+        unplaced: pulled.unplaced,
         absent: pulled.absent,
         kept: pulled.kept,
         unmatched: pulled.unmatched,
@@ -264,7 +269,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         json,
         || {
             // An item with no file is named, never left out of the line.
-            let held = pulled.unwritten + pulled.outside + pulled.absent;
+            let held = pulled.unwritten + pulled.outside + pulled.unsuited + pulled.absent;
             let settings = crate::folders::settings_line(&settings)
                 .map(|line| format!("{line}\n"))
                 .unwrap_or_default();
@@ -294,11 +299,15 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
                 } else {
                     String::new()
                 },
-                if drained.rebased > 0 {
-                    format!("; {}", crate::folders::rebased_line(drained.rebased))
-                } else {
-                    String::new()
-                }
+                [
+                    (drained.rebased > 0).then(|| crate::folders::rebased_line(drained.rebased)),
+                    (drained.gave_way > 0).then(|| crate::folders::gave_way_line(drained.gave_way)),
+                    crate::folders::unplaced_line(pulled.unplaced),
+                ]
+                .into_iter()
+                .flatten()
+                .map(|line| format!("; {line}"))
+                .collect::<String>()
             )
         },
     )

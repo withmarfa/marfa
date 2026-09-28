@@ -3033,6 +3033,22 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     )?)
 }
 
+/// Takes back every write to an edge that has not landed, for a folder giving
+/// way to the placement the server holds (`folders.md` 16).
+pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        "DELETE FROM queue
+          WHERE edge_id = :edge
+            AND (verdict IS NULL OR verdict IN (:blocked, :refused, :dead))",
+        named_params! {
+            ":edge": edge_id,
+            ":blocked": Verdict::Blocked.as_str(),
+            ":refused": Verdict::Refused.as_str(),
+            ":dead": Verdict::Dead.as_str(),
+        },
+    )?)
+}
+
 /// Drops a row the server holds nothing for, with its pin.
 ///
 /// What reconciling a refused create means (`queue-and-verdicts.md` 12): the

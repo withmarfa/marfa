@@ -3,6 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { FieldDefinition, TestContext } from "../../client/types.js";
 import {
   createTestContext,
+  trackFolder,
   trackItem,
   trackKey,
   cleanup,
@@ -1566,6 +1567,80 @@ describe("the scripted answers match the server's", () => {
           "data.0.version",
           "data.0.created_at",
           "data.0.updated_at",
+        ],
+      },
+    );
+  });
+
+  it("matches the refusal of a second placement of one item in one folder", async () => {
+    const made = await client.rawRequest("/folders", {
+      method: "POST",
+      body: { title: "fidelity", search: { types: ["core.note"] } },
+    });
+    expect(
+      made.ok,
+      `the fixture could not make a folder: ${JSON.stringify(made.error)}`,
+    ).toBe(true);
+    const folderId = String(at(made.data, "item.id"));
+    trackFolder(ctx, folderId);
+    const placed = await note({ title: "placed", body: "placed" });
+    const place = (path: string) =>
+      client.rawRequest("/edges", {
+        method: "POST",
+        body: {
+          source_id: placed.id,
+          target_id: folderId,
+          edge_type: "in-folder",
+          properties: { path },
+        },
+      });
+    const first = await place("placed.md");
+    expect(first.ok, JSON.stringify(first.error)).toBe(true);
+    const again = await place("elsewhere/placed.md");
+    expect(
+      again.status,
+      "a second placement of one item in one folder was taken, so there is no refusal to compare",
+    ).toBe(400);
+    expectFidelity(
+      "a second placement",
+      { status: again.status, body: again.error },
+      answers.edgeDuplicate({
+        source_id: placed.id,
+        target_id: folderId,
+        edge_type: "in-folder",
+      }),
+      {
+        same: [
+          "error.code",
+          "error.details.constraint",
+          "error.details.source_id",
+          "error.details.target_id",
+          "error.details.edge_type",
+        ],
+        shape: ["error.message"],
+      },
+    );
+  });
+
+  it("matches the key a folder asks about when it is added", async () => {
+    const current = await client.rawRequest("/keys/current");
+    expect(current.ok, JSON.stringify(current.error)).toBe(true);
+    expectFidelity(
+      "the calling key",
+      { status: current.status, body: current.data },
+      answers.currentKey("fixture-key", { "*": "write" }),
+      {
+        shape: ["id", "is_operator", "edge_permissions"],
+        // Grants differ by key, so each map is compared by its kind above,
+        // and its entries are not.
+        absent: [
+          "type_permissions",
+          "edge_permissions",
+          "extension_permissions",
+          "metadata_permissions",
+          "profile_permissions",
+          "permissions",
+          "sources",
         ],
       },
     );

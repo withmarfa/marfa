@@ -160,13 +160,20 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     if drained.rebased > 0 {
                         lines.push(rebased_line(drained.rebased));
                     }
+                    if drained.gave_way > 0 {
+                        lines.push(gave_way_line(drained.gave_way));
+                    }
                     if let Some(error) = &failed {
                         lines.push(format!("could not catch up: {error}"));
                     }
                     lines.push(match &pulled {
-                        Some(pulled) => {
-                            format!("{} file(s) written", pulled.written + pulled.rewritten)
-                        }
+                        Some(pulled) => format!(
+                            "{} file(s) written{}",
+                            pulled.written + pulled.rewritten,
+                            unplaced_line(pulled.unplaced)
+                                .map(|line| format!("; {line}"))
+                                .unwrap_or_default()
+                        ),
                         None => "nothing written: the copy could not be hydrated, and the next push tries again".into(),
                     });
                     lines.join("\n")
@@ -203,6 +210,21 @@ pub fn rebased_line(rebased: usize) -> String {
     )
 }
 
+/// Placements another machine made first, followed rather than sent
+/// (`folders.md` 16).
+pub fn gave_way_line(gave_way: usize) -> String {
+    format!("{gave_way} placement(s) another machine made first, followed instead")
+}
+
+/// Placements the server refused, said so the person can mend the key.
+pub fn unplaced_line(unplaced: usize) -> Option<String> {
+    (unplaced > 0).then(|| {
+        format!(
+            "{unplaced} placement(s) the server refused, not sent again until the key or the settings change"
+        )
+    })
+}
+
 /// What became of the settings file, where anything did.
 pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
     match (&report.flagged, report.sent) {
@@ -230,6 +252,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             "the folder did not write and would not write over",
         ),
         (report.outside, "wanting a path outside the folder"),
+        (
+            report.unsuited,
+            "whose placement would make them another kind of file",
+        ),
         (report.absent, "whose bytes could not be fetched"),
     ]
     .into_iter()
@@ -239,6 +265,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     if !held.is_empty() {
         line.push_str("; not written: ");
         line.push_str(&held.join(", "));
+    }
+    if let Some(unplaced) = unplaced_line(report.unplaced) {
+        line.push_str("; ");
+        line.push_str(&unplaced);
     }
     if report.beside > 0 {
         line.push_str(&format!(

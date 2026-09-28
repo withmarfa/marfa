@@ -687,6 +687,12 @@ export interface PullReport {
   /** Placements written: an `in-folder` edge made, or its path moved to
    *  where the file is (`folders.md` 16). */
   placed: number;
+  /** Items whose placement would make them another kind of file, left
+   *  unwritten (`folders.md` 16). */
+  unsuited: number;
+  /** Placements the server refused, not sent again until the key or the
+   *  settings change (`folders.md` 16). */
+  unplaced: number;
   outside: number;
   /** Files of items trashed or out of the search's states, taken away
    *  (`folders.md` 30). */
@@ -720,7 +726,12 @@ export interface PushReport {
   scan: ScanReport;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
    *  the version the copy holds (`folders.md` 20). */
-  drain: DrainReport & { rebased: number };
+  drain: DrainReport & {
+    rebased: number;
+    /** Placements another machine made first, withdrawn for the server's
+     *  (`folders.md` 16). */
+    gave_way: number;
+  };
   /** A catch-up from the copy's cursor, a hydration where the log had aged
    *  past it, or the reason the server could not be reached for either. */
   catch_up: {
