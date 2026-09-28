@@ -4088,6 +4088,8 @@ describe("what frontmatter says", () => {
   it("reads a quoted version line as the version, and a removed one as no version", async () => {
     const quoted = "01a00000-0000-7000-8000-000000001521";
     const removed = "01a00000-0000-7000-8000-000000001522";
+    const decimal = "01a00000-0000-7000-8000-000000001523";
+    const ahead = "01a00000-0000-7000-8000-000000001524";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-quoted-version", {
       settings: { search: { types: ["core.note", "core.bookmark"] } },
@@ -4101,6 +4103,15 @@ describe("what frontmatter says", () => {
               id: removed,
               properties: { title: "R", body: "as read\n" },
             },
+          },
+          {
+            item: {
+              id: decimal,
+              properties: { title: "D", body: "as read\n" },
+            },
+          },
+          {
+            item: { id: ahead, properties: { title: "A", body: "as read\n" } },
           },
         ],
       },
@@ -4121,6 +4132,15 @@ describe("what frontmatter says", () => {
       ),
       "R.md": read(harness, "R.md").replace(/^marfa_version: \d+\n/m, ""),
     };
+    const own = {
+      "D.md": read(harness, "D.md").replace(
+        /^marfa_version: (\d+)$/m,
+        "marfa_version: $1.0",
+      ),
+      "A.md": read(harness, "A.md")
+        .replace(/^marfa_version: \d+$/m, "marfa_version: 7")
+        .replace("type: core.note", "type: core.bookmark"),
+    };
     for (const id of [quoted, removed]) {
       edges.logItem(
         "item.updated",
@@ -4133,7 +4153,7 @@ describe("what frontmatter says", () => {
       );
     }
     expect((await harness.folder.push()).ok).toBe(true);
-    for (const [name, text] of Object.entries(buffers)) {
+    for (const [name, text] of Object.entries({ ...buffers, ...own })) {
       put(harness, name, text.replace("as read", "my edit"));
     }
     const pushed = await harness.folder.push();
@@ -4150,6 +4170,16 @@ describe("what frontmatter says", () => {
       sentUpdates(harness).find((sent) => sent.id === quoted)?.body.version,
       "a quoted version line was not read as the version the edit was based on",
     ).toBe(1);
+    expect(
+      sentUpdates(harness).find((sent) => sent.id === decimal)?.body
+        .properties_mode,
+      "a version line written 1.0 was not read as the version the copy holds",
+    ).toBe("replace");
+    expect(
+      pushed.ok &&
+        pushed.value.scan.flagged.find((file) => file.path === "A.md")?.reason,
+      "a line ahead of the copy was not said to be one",
+    ).toMatch(/names a version this copy does not hold/);
   });
 
   it("lets a file go once a later save lands after a refused one", async () => {
@@ -4195,6 +4225,293 @@ describe("what frontmatter says", () => {
     ).toEqual([]);
     expect(door!.rows.get(id)?.properties.body).toBe("my edit\n");
     expect(read(harness, "T.md")).toMatch(/^marfa_version: 2$/m);
+  });
+
+  describe("a refused change holds its file", () => {
+    const refusingStatus = (made: FolderDoor): void => {
+      const update = made.update.bind(made);
+      made.update = ((...args: Parameters<FolderDoor["update"]>) =>
+        (args[1].properties as Record<string, unknown> | undefined)?.status ===
+        "bad"
+          ? refusal(422, "validation_failed", "status is draft or done")
+          : update(...args)) as FolderDoor["update"];
+    };
+    async function refused(
+      label: string,
+      tags: string[] = [],
+    ): Promise<{ id: string; bad: string; door: FolderDoor }> {
+      const id = "01a00000-0000-7000-8000-000000001541";
+      harness = await folderHarness(label, {
+        rows: {
+          "core.note": [
+            {
+              item: {
+                id,
+                properties: { title: "T", body: "as read\n", status: "draft" },
+              },
+              tags,
+            },
+          ],
+        },
+      });
+      let door: FolderDoor | undefined;
+      scriptFolderWrites(harness, {
+        door: (made) => {
+          door = made;
+          refusingStatus(made);
+        },
+        tagging: (request) =>
+          request.method === "POST" && request.body.includes("forbidden")
+            ? refusal(422, "validation_failed", "no such tag")
+            : undefined,
+      });
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const bad = read(harness, "T.md").replace("status: draft", "status: bad");
+      put(harness, "T.md", bad);
+      expect((await harness.folder.scan()).ok).toBe(true);
+      return { id, bad, door: door! };
+    }
+    const heldAs = (pushed: Awaited<ReturnType<CliFolder["push"]>>) =>
+      pushed.ok
+        ? pushed.value.pull?.flagged.map((file) => [file.path, file.flag])
+        : [];
+
+    it("through a rename before the drain", async () => {
+      const { bad } = await refused("folder-refused-renamed-before");
+      renameSync(join(harness!.dir, "T.md"), join(harness!.dir, "Renamed.md"));
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        heldAs(pushed),
+        "a rename cut the file off from its refused edit",
+      ).toEqual([["Renamed.md", "refused"]]);
+      expect(read(harness!, "Renamed.md")).toBe(bad);
+    });
+
+    it("through a save that only reformats it before the drain", async () => {
+      const { bad } = await refused("folder-refused-reformatted");
+      const reformatted = bad.replace("title: T", 'title: "T"');
+      put(harness!, "T.md", reformatted);
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        heldAs(pushed),
+        "a reformat cut the file off from its refused edit",
+      ).toEqual([["T.md", "refused"]]);
+      expect(read(harness!, "T.md")).toBe(reformatted);
+    });
+
+    it("through a later save that only adds a tag", async () => {
+      const { bad } = await refused("folder-refused-then-tag", ["a"]);
+      const tagged = bad.replace("  - a\n", "  - a\n  - t\n");
+      put(harness!, "T.md", tagged);
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        heldAs(pushed),
+        "a tag that landed let go of a refused property it does not touch",
+      ).toEqual([["T.md", "refused"]]);
+      expect(read(harness!, "T.md")).toBe(tagged);
+    });
+
+    it("through a later save that only edits the body, where a tag was refused", async () => {
+      const id = "01a00000-0000-7000-8000-000000001542";
+      harness = await folderHarness("folder-refused-tag-then-body", {
+        rows: {
+          "core.note": [
+            {
+              item: { id, properties: { title: "T", body: "as read\n" } },
+              tags: ["a"],
+            },
+          ],
+        },
+      });
+      scriptFolderWrites(harness, {
+        tagging: (request) =>
+          request.method === "POST" && request.body.includes("forbidden")
+            ? refusal(422, "validation_failed", "no such tag")
+            : undefined,
+      });
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const tagged = read(harness, "T.md").replace(
+        "  - a\n",
+        "  - a\n  - forbidden\n",
+      );
+      put(harness, "T.md", tagged);
+      expect((await harness.folder.scan()).ok).toBe(true);
+      const edited = tagged.replace("as read", "second save");
+      put(harness, "T.md", edited);
+      const pushed = await harness.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(
+        heldAs(pushed),
+        "a body edit that landed let go of a refused tag it does not touch",
+      ).toEqual([["T.md", "refused"]]);
+      expect(read(harness, "T.md")).toBe(edited);
+    });
+
+    it("through a rename after the refusal", async () => {
+      const { bad } = await refused("folder-refused-renamed-after");
+      expect(heldAs(await harness!.folder.push())).toEqual([
+        ["T.md", "refused"],
+      ]);
+      renameSync(join(harness!.dir, "T.md"), join(harness!.dir, "Renamed.md"));
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      expect(heldAs(pushed), "a rename let go of the refused edit").toEqual([
+        ["Renamed.md", "refused"],
+      ]);
+      expect(read(harness!, "Renamed.md")).toBe(bad);
+    });
+  });
+
+  it("sends a mended tag from a file whose edit landed beside the refused one", async () => {
+    const id = "01a00000-0000-7000-8000-000000001551";
+    harness = await folderHarness("folder-refused-tag-mended", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "T", body: "as read\n" } },
+            tags: ["a"],
+          },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+      tagging: (request) =>
+        request.method === "POST" && request.body.includes("forbidden")
+          ? refusal(422, "validation_failed", "no such tag")
+          : undefined,
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const first = read(harness, "T.md")
+      .replace("  - a\n", "  - a\n  - forbidden\n")
+      .replace("as read", "edited");
+    put(harness, "T.md", first);
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "T.md", first.replace("forbidden", "good"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      door!.rows.get(id)?.tags,
+      "the mended tag went unsent, the file read as behind although its body edit landed",
+    ).toEqual(["a", "good"]);
+    expect(pushed.ok && pushed.value.scan.flagged).toEqual([]);
+    expect(pushed.ok && pushed.value.pull?.flagged).toEqual([]);
+  });
+
+  it("sends a save right after its own edit lands as current", async () => {
+    const id = "01a00000-0000-7000-8000-000000001561";
+    harness = await folderHarness("folder-save-after-landing", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              properties: { title: "T", body: "as read\n", lang: "en" },
+            },
+          },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const one = read(harness, "T.md").replace("as read", "one");
+    put(harness, "T.md", one);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    expect((await harness.folder.device().drain()).ok).toBe(true);
+    // Saved again before any pull has written the new line.
+    put(harness, "T.md", one.replace("lang: en\n", ""));
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      door!.rows.get(id)?.properties,
+      "a line taken out right after the file's own edit landed was not cleared",
+    ).toEqual({ title: "T", body: "one\n" });
+  });
+
+  it("takes an own-field change after a version step no file shows", async () => {
+    const id = "01a00000-0000-7000-8000-000000001571";
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-invisible-step", {
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "T", body: "as read\n" } },
+            tags: ["a"],
+          },
+        ],
+      },
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // An edit whose values the file already shows: the version moves, and
+    // the file is not written again for its line alone (`folders.md` 23).
+    edges.logItem(
+      "item.updated",
+      door!.update(id, { properties: { title: "T" }, version: 1 }),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    const shown = read(harness, "T.md");
+    expect(shown).toMatch(/^marfa_version: 1$/m);
+    put(harness, "T.md", shown.replace("  - a\n", "  - a\n  - n\n"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTags(harness),
+      "the person's tag, in a file only its line kept from current, was flagged behind rather than sent",
+    ).toEqual([`add ${id} n`]);
+    expect(pushed.ok && pushed.value.scan.flagged).toEqual([]);
+  });
+
+  it("does not re-archive from the buffer of an archive restored elsewhere", async () => {
+    const id = "01a00000-0000-7000-8000-000000001581";
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-restored-single-buffer", {
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "T", body: "as read\n" } } },
+        ],
+      },
+      events: [edges.stream()],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      edges,
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    edges.logItem("item.state_changed", door!.transition(id, "archived"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    const archived = read(harness, "T.md");
+    expect(archived).toMatch(/^state: archived$/m);
+    edges.logItem("item.state_changed", door!.transition(id, "active"));
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "T.md", archived.replace("as read", "edit"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTransitions(harness),
+      "the one buffer, written while the item was archived, archived it again after a restore elsewhere",
+    ).toEqual([]);
+    expect(door!.rows.get(id)?.state).toBe("active");
   });
 
   it("keeps an unreadable file's item when it moves with no identity", async () => {
@@ -6955,14 +7272,19 @@ describe("writing", () => {
     expect(read(harness!, "Note.md")).toMatch(/^status: draft$/m);
   });
 
-  it("sends a save after a refused edit as behind, keeping what another machine added", async () => {
+  it("sends a save after a refused edit as behind, keeping what another machine changed or added", async () => {
     const id = "01a00000-0000-7000-8000-000000001492";
     const edges = new EdgeDoor();
     harness = await folderHarness("folder-refused-then-behind", {
       settings: { search: { types: ["core.note", "core.bookmark"] } },
       rows: {
         "core.note": [
-          { item: { id, properties: { title: "T", body: "as read\n" } } },
+          {
+            item: {
+              id,
+              properties: { title: "T", body: "as read\n", status: "draft" },
+            },
+          },
         ],
       },
       events: [edges.stream()],
@@ -6989,7 +7311,10 @@ describe("writing", () => {
     // Another machine adds a property this file never showed.
     edges.logItem(
       "item.updated",
-      update(id, { properties: { extra: "theirs" }, version: 1 }),
+      update(id, {
+        properties: { status: "done", extra: "theirs" },
+        version: 1,
+      }),
     );
     expect((await harness.folder.push()).ok).toBe(true);
     writeFileSync(
@@ -7002,8 +7327,13 @@ describe("writing", () => {
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
       door!.rows.get(id)?.properties,
-      "the save after the refusal went whole on a version the file never saw, clearing another machine's property",
-    ).toEqual({ title: "T", body: "my edit\n", extra: "theirs" });
+      "the save after the refusal went on a version the file never saw, reverting or clearing another machine's change",
+    ).toEqual({
+      title: "T",
+      body: "my edit\n",
+      status: "done",
+      extra: "theirs",
+    });
   });
 
   it("says in words that an edit went over a thinned version", async () => {

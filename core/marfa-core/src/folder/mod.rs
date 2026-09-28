@@ -817,7 +817,6 @@ impl Folder {
                 content_hash: file.hash.clone(),
                 written_hash: None,
                 held: Some(format!("{}{reason}", state::UNREADABLE)),
-                queued: Vec::new(),
                 ..bound.clone()
             },
         )?;
@@ -939,9 +938,13 @@ impl Folder {
             ..Default::default()
         };
         let item_id = named_item(self.core.create_item(&draft)?, &file.key)?;
-        let mut queued = Vec::new();
+        let mut writes = state::Writes {
+            save: 1,
+            ..state::Writes::default()
+        };
         if read.lines.state == Some(ItemState::Archived) {
-            queued.push(self.core.transition_item(&item_id, ItemState::Archived)?.id);
+            let id = self.core.transition_item(&item_id, ItemState::Archived)?.id;
+            writes.queued.push(state::Queued { id, save: 1 });
         }
         // Before the links, so a link naming a default's target adds no
         // second edge.
@@ -963,7 +966,7 @@ impl Folder {
             named,
             declined,
             Kept {
-                queued,
+                writes,
                 ..Kept::default()
             },
         )?;
@@ -1056,9 +1059,21 @@ impl Folder {
         // Bytes set aside in a conflicted copy against this device's own
         // earlier save go on the version they were read at (`folders.md` 37).
         let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
+        // The file's last bytes showed the item as the server last answered
+        // it, but for their line: a version step no file shows, or its own edit.
+        let current_but_line = untaken.is_none()
+            && file.line.is_some_and(|line| line != held.version)
+            && !crate::store::item_waits(&*self.core.conn()?, item_id)?
+            && match bound {
+                Some(bound) => {
+                    let (text, _) = self.render(&held, &declined, true, file.line, catalog)?;
+                    state::hash(text.as_bytes()) == bound.content_hash
+                }
+                None => false,
+            };
         let standing = match file.line {
             _ if untaken.is_some() => Standing::Spent,
-            Some(line) if line == held.version => Standing::Current,
+            Some(line) if line == held.version || current_but_line => Standing::Current,
             // Behind only by the file's own edit, which it holds (`folders.md` 22).
             Some(line) if line < held.version && edit_line.is_some_and(|spent| line <= spent) => {
                 Standing::Spent
@@ -1109,6 +1124,12 @@ impl Folder {
         // the id or version line, sends nothing.
         let in_step = unchanged && changes.is_empty()
             || bound.is_some_and(|bound| bound.content_hash == file.hash);
+        let mut writes = bound.map(|bound| bound.writes.clone()).unwrap_or_default();
+        let fresh = bound.is_none_or(|bound| bound.content_hash != file.hash);
+        if fresh {
+            writes.save += 1;
+        }
+        let save = writes.save;
         let mut queued = Vec::new();
         if !in_step {
             if let Some(reason) = changes
@@ -1153,6 +1174,19 @@ impl Folder {
                 queued.push(self.core.transition_item(item_id, state)?.id);
             }
         }
+        writes
+            .queued
+            .extend(queued.into_iter().map(|id| state::Queued { id, save }));
+        // A refused change the file no longer carries holds it no longer.
+        let agrees = unchanged && changes.r#type.is_none() && changes.tier.is_none();
+        writes.refused.retain(|refused| match &refused.change {
+            state::Change::Edit => !agrees,
+            state::Change::AddTag(tag) => own.tags.as_ref().is_none_or(|tags| tags.contains(tag)),
+            state::Change::RemoveTag(tag) => {
+                own.tags.as_ref().is_none_or(|tags| !tags.contains(tag))
+            }
+            state::Change::State(state) => own.state.is_none_or(|shown| shown == *state),
+        });
         let (named, declined, resolved) =
             self.queue_links(item_id, &document.links, &had, &declined)?;
         if !resolved {
@@ -1173,7 +1207,7 @@ impl Folder {
                 edit_line,
                 own: own.base,
                 held: None,
-                queued,
+                writes,
             },
         )?;
         Ok(!in_step)
@@ -1195,7 +1229,7 @@ impl Folder {
             edit_line: bound.and_then(|bound| bound.edit_line),
             own: bound.and_then(|bound| bound.own.clone()),
             held: Some(held),
-            queued: Vec::new(),
+            writes: bound.map(|bound| bound.writes.clone()).unwrap_or_default(),
         };
         self.bind_scanned(file, item_id, links, declined, kept)
     }
@@ -1241,7 +1275,11 @@ impl Folder {
         } else {
             false
         };
-        self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), Kept::default())?;
+        let kept = Kept {
+            writes: bound.writes.clone(),
+            ..Kept::default()
+        };
+        self.bind_scanned(file, &held.id, Vec::new(), Vec::new(), kept)?;
         Ok(queued)
     }
 
@@ -1268,7 +1306,7 @@ impl Folder {
                 edit_line: kept.edit_line,
                 held: kept.held,
                 own: kept.own,
-                queued: kept.queued,
+                writes: kept.writes,
             },
         )
     }
@@ -1462,35 +1500,73 @@ impl Folder {
         })
     }
 
-    /// Holds a file whose bytes made a write the server refused, so the pull
-    /// leaves the person's text as it is (`folders.md` 9).
+    /// Holds a file while the server refused a change it carries, until a later
+    /// save of it lands one in its place (`folders.md` 9).
     fn hold_refused(&self, report: &crate::DrainReport) -> Result<()> {
         let queue = self.core.queue()?;
-        for verdict in &report.verdicts {
-            let from_file = matches!(
-                verdict.kind,
-                WriteKind::UpdateItem
-                    | WriteKind::TransitionItem
-                    | WriteKind::AddTag
-                    | WriteKind::RemoveTag
-            );
-            let reason = match verdict.verdict {
-                Some(crate::model::Verdict::Refused) if from_file => {
-                    let code = verdict.reason.clone().unwrap_or_default();
-                    let message = queue
-                        .iter()
-                        .find(|row| row.id == verdict.id)
-                        .and_then(|row| row.answer.as_deref())
-                        .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
-                        .and_then(|answer| answer["error"]["message"].as_str().map(str::to_string));
-                    match message {
-                        Some(message) => format!("{}{code}: {message}", state::REFUSED),
-                        None => format!("{}{code}", state::REFUSED),
+        let conn = self.core.conn()?;
+        for mut bound in state::every_bound(&conn)? {
+            let was = bound.writes.clone();
+            for verdict in &report.verdicts {
+                let Some(at) = bound.writes.queued.iter().position(|q| q.id == verdict.id) else {
+                    continue;
+                };
+                let save = bound.writes.queued[at].save;
+                let Some(row) = queue.iter().find(|row| row.id == verdict.id) else {
+                    continue;
+                };
+                let change = match row.kind {
+                    WriteKind::UpdateItem => state::Change::Edit,
+                    WriteKind::AddTag => state::Change::AddTag(row.tag.clone().unwrap_or_default()),
+                    WriteKind::RemoveTag => {
+                        state::Change::RemoveTag(row.tag.clone().unwrap_or_default())
                     }
+                    WriteKind::TransitionItem => {
+                        let body: Value =
+                            serde_json::from_str(&crate::store::payload_of(&conn, &row.id)?)?;
+                        match body["state"].as_str().and_then(|state| state.parse().ok()) {
+                            Some(state) => state::Change::State(state),
+                            None => continue,
+                        }
+                    }
+                    _ => continue,
+                };
+                match verdict.verdict {
+                    Some(crate::model::Verdict::Refused) => {
+                        let code = verdict.reason.clone().unwrap_or_default();
+                        let message = row
+                            .answer
+                            .as_deref()
+                            .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
+                            .and_then(|answer| {
+                                answer["error"]["message"].as_str().map(str::to_string)
+                            });
+                        // A refused edit landed nothing its line could be current with.
+                        if change == state::Change::Edit && save == bound.writes.save {
+                            bound.edit_line = None;
+                        }
+                        bound.writes.refused.push(state::Refused {
+                            change,
+                            save,
+                            reason: match message {
+                                Some(message) => format!("{code}: {message}"),
+                                None => code,
+                            },
+                        });
+                    }
+                    Some(crate::model::Verdict::Accepted | crate::model::Verdict::Merged) => {
+                        bound.writes.refused.retain(|refused| {
+                            refused.save >= save || !change.supersedes(&refused.change)
+                        });
+                    }
+                    Some(crate::model::Verdict::Dead) => {}
+                    _ => continue,
                 }
-                _ => continue,
-            };
-            state::hold_for(&*self.core.conn()?, &verdict.id, &reason)?;
+                bound.writes.queued.remove(at);
+            }
+            if bound.writes != was {
+                state::bind(&conn, &bound)?;
+            }
         }
         Ok(())
     }
@@ -1585,7 +1661,10 @@ impl Folder {
             };
             // Bytes the server or this copy did not take are the person's to
             // mend, so the file stays as they wrote it (`folders.md` 9, 10).
-            if bound.as_ref().is_some_and(|bound| bound.held.is_some()) {
+            if bound
+                .as_ref()
+                .is_some_and(|bound| bound.held.is_some() || !bound.writes.refused.is_empty())
+            {
                 continue;
             }
             let placed = self.placement(&item.id)?;
@@ -1665,7 +1744,18 @@ impl Folder {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
                 .into_iter()
-                .filter_map(|bound| Some(Flagged::of(&bound.path, bound.held.as_deref()?)))
+                .filter_map(|bound| {
+                    let refused = bound.writes.refused.last();
+                    match (&bound.held, refused) {
+                        (Some(held), _) => Some(Flagged::of(&bound.path, held)),
+                        (None, Some(refused)) => Some(Flagged {
+                            path: bound.path.clone(),
+                            flag: "refused",
+                            reason: refused.reason.clone(),
+                        }),
+                        (None, None) => None,
+                    }
+                })
                 .collect()
         };
         report.uncarried =
@@ -1789,7 +1879,7 @@ impl Folder {
                     edit_line: None,
                     held: None,
                     own,
-                    queued: Vec::new(),
+                    writes: state::Writes::default(),
                 },
             )?;
             state::journal_clear(&conn, &want)?;
@@ -1823,7 +1913,10 @@ impl Folder {
             edit_line,
             held: None,
             own: own.clone(),
-            queued: Vec::new(),
+            writes: bound
+                .as_ref()
+                .map(|bound| bound.writes.clone())
+                .unwrap_or_default(),
         };
         // Bound before the write, so the scan never reads it back; a path the
         // filesystem refuses leaves the old file, and every other, as it was.
@@ -2106,7 +2199,7 @@ struct Kept {
     edit_line: Option<i64>,
     own: Option<fields::OwnBase>,
     held: Option<String>,
-    queued: Vec<String>,
+    writes: state::Writes,
 }
 
 /// What a file's own-field lines ask of its item, each already told apart
@@ -2149,6 +2242,9 @@ struct OwnRead {
     changes: OwnChanges,
     base: Option<fields::OwnBase>,
     flag: Option<String>,
+    /// The tags and state the file shows, where it shows any.
+    tags: Option<Vec<String>>,
+    state: Option<ItemState>,
 }
 
 /// Reads a file's own-field lines three-way against the folder's own last
@@ -2176,9 +2272,18 @@ fn own_changes(
         return OwnRead {
             changes: OwnChanges::default(),
             base: was.cloned(),
+            tags: lines.tags.clone(),
+            state: lines.state,
             flag: (!differ.is_empty()).then(|| {
+                let why = match file_line {
+                    None => "the file has no version line",
+                    Some(line) if line > held.version => {
+                        "its version line names a version this copy does not hold"
+                    }
+                    Some(_) => "the file is behind the item",
+                };
                 format!(
-                    "{} not sent: the file is behind the item, so its own-field lines cannot be told from an old buffer's; reload it",
+                    "{} not sent: {why}, so its own-field lines cannot be told from an old buffer's; reload it",
                     differ.join(", ")
                 )
             }),
@@ -2201,7 +2306,8 @@ fn own_changes(
         agreed.tier = Some(tier);
         changes.tier = (Some(tier) != now.tier).then_some(tier);
     }
-    if let Some(tags) = lines.tags.clone().or_else(|| clears.then(Vec::new)) {
+    let tags = lines.tags.clone().or_else(|| clears.then(Vec::new));
+    if let Some(tags) = &tags {
         for tag in tags.iter().filter(|tag| !base.tags.contains(tag)) {
             if moved.tags_removed.contains(tag) {
                 unsent.push(format!("tag {tag}"));
@@ -2237,6 +2343,8 @@ fn own_changes(
     }
     OwnRead {
         changes,
+        tags,
+        state,
         base: match written {
             Some(written) => Some(fields::OwnBase {
                 line: written.line,
@@ -2353,9 +2461,12 @@ pub const LINK_EDGE: &str = "references";
 fn line_of(front: &Map<String, Value>) -> Option<i64> {
     // An editor typing the line as text writes it quoted.
     let line = front.get(VERSION_FIELD)?;
-    line.as_i64()
-        .or_else(|| line.as_str().and_then(|text| text.trim().parse().ok()))
-        .filter(|line| *line > 0)
+    let number = match line {
+        Value::String(text) => text.trim().parse::<f64>().ok()?,
+        other => other.as_f64()?,
+    };
+    // `1.0` is the version 1; `1.5` names none.
+    (number.fract() == 0.0 && number >= 1.0 && number <= i64::MAX as f64).then_some(number as i64)
 }
 
 /// What a folder's catch-up did: a catch-up from the cursor or, where the

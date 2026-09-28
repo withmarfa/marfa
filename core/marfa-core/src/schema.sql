@@ -291,8 +291,8 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The own fields the folder last wrote or read in the file, as JSON, and
   -- what another machine moved at that version line without a version step.
   own TEXT,
-  -- The queue ids of the writes these bytes made, as a JSON array.
-  queued TEXT NOT NULL DEFAULT '[]',
+  -- The file's unanswered writes and refused changes, by save, as JSON.
+  writes TEXT NOT NULL DEFAULT '{}',
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);

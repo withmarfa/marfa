@@ -384,8 +384,17 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         .map(|(count, what)| format!("; {count} {what}"))
         .collect::<String>()
     );
-    if !report.flagged.is_empty() {
-        line.push_str(&format!("; {} held, not sent", report.flagged.len()));
+    let behind = report
+        .flagged
+        .iter()
+        .filter(|file| file.flag == "behind")
+        .count();
+    let held = report.flagged.len() - behind;
+    if held > 0 {
+        line.push_str(&format!("; {held} held, not sent"));
+    }
+    if behind > 0 {
+        line.push_str(&format!("; {behind} behind: own-field lines not sent"));
     }
     line
 }
