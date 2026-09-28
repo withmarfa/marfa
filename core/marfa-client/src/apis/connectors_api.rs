@@ -336,7 +336,7 @@ pub enum ListInboundEndpointsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MarkInboundDeliveriesHandledError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
     Status404(models::ConnectorNotFoundOrDeliveryNotFoundRefusal),
@@ -350,7 +350,7 @@ pub enum MarkInboundDeliveriesHandledError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RegisterConnectorError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
     Status413(models::RequestTooLargeRefusal),
@@ -363,7 +363,7 @@ pub enum RegisterConnectorError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ReportConnectorRunError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
     Status404(models::ConnectorNotFoundRefusal),

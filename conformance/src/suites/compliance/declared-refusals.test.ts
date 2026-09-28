@@ -449,6 +449,143 @@ describe("a credential without write on the type", () => {
       "type_not_permitted",
     );
   });
+
+  it("is refused 403 on every metadata, tag and version door, and on an inline edge it does not hold", async () => {
+    const id = await seedItem("type-blind");
+    const blind = await client.createKey({
+      label: `${ctx.source}-type-blind`,
+      source: `${ctx.source}-type-blind`,
+      permissions: [],
+      type_permissions: { "core.bookmark": "read" },
+    });
+    expect(blind.ok).toBe(true);
+    trackKey(ctx, blind.data.id);
+    const key = blind.data.key;
+    const doors: [string, string, string, unknown][] = [
+      ["GET", "/items/{id}/metadata", `/items/${id}/metadata`, undefined],
+      ["PUT", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
+      ["PATCH", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
+      ["POST", "/items/{id}/tags", `/items/${id}/tags`, { tags: ["x"] }],
+      ["DELETE", "/items/{id}/tags/{tag}", `/items/${id}/tags/x`, undefined],
+      ["GET", "/items/{id}/versions", `/items/${id}/versions`, undefined],
+    ];
+    for (const [method, template, path, body] of doors) {
+      await expectRefusal(
+        method,
+        template,
+        await call(method, path, { key, body }),
+        403,
+        "type_not_permitted",
+      );
+    }
+
+    // Write on the note, nothing on any edge type.
+    const edgeless = await client.createKey({
+      label: `${ctx.source}-edgeless`,
+      source: `${ctx.source}-edgeless`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+    });
+    expect(edgeless.ok).toBe(true);
+    trackKey(ctx, edgeless.data.id);
+    await expectRefusal(
+      "PATCH",
+      "/items/{id}",
+      await call("PATCH", `/items/${id}`, {
+        key: edgeless.data.key,
+        body: { version: 1, edges: { about: [await seedItem("edgeless")] } },
+      }),
+      403,
+      "edge_permission_denied",
+    );
+  });
+});
+
+describe("an item door given a malformed id", () => {
+  it("is refused 400 invalid_id on the metadata, tag, lifecycle and edge doors", async () => {
+    const doors: [string, string, string, unknown][] = [
+      ["GET", "/items/{id}/metadata", "/metadata", undefined],
+      ["DELETE", "/items/{id}/tags/{tag}", "/tags/x", undefined],
+      ["DELETE", "/items/{id}", "", undefined],
+      ["DELETE", "/items/{id}/purge", "/purge", undefined],
+      ["POST", "/items/{id}/restore", "/restore", undefined],
+      ["GET", "/items/{id}/edges", "/edges", undefined],
+      ["GET", "/items/{id}/backrefs", "/backrefs", undefined],
+    ];
+    for (const [method, template, suffix, body] of doors) {
+      await expectRefusal(
+        method,
+        template,
+        await call(method, `/items/${MALFORMED}${suffix}`, { body }),
+        400,
+        "invalid_id",
+      );
+    }
+  });
+});
+
+describe("a body without a field the door requires", () => {
+  it("is refused 400 missing_required_field, naming the field", async () => {
+    const doors: [string, string, string][] = [
+      ["POST", "/keys", "/keys"],
+      ["POST", "/connectors", "/connectors"],
+      ["POST", "/connectors/{id}/runs", `/connectors/${UNKNOWN}/runs`],
+      [
+        "POST",
+        "/connectors/{id}/deliveries/handled",
+        `/connectors/${UNKNOWN}/deliveries/handled`,
+      ],
+      ["POST", "/items/bulk-get", "/items/bulk-get"],
+    ];
+    for (const [method, template, path] of doors) {
+      const answer = await call(method, path, { body: {} });
+      await expectRefusal(
+        method,
+        template,
+        answer,
+        400,
+        "missing_required_field",
+      );
+      expect(
+        (answer.body as { error: { details?: { field?: string } } }).error
+          .details?.field,
+      ).toBeTruthy();
+    }
+  });
+});
+
+describe("client registration given a key", () => {
+  it("is refused 401 invalid_token in the RFC's shape, and registers with no credential", async () => {
+    const registration = {
+      redirect_uris: ["https://example.com/callback"],
+      client_name: `${ctx.source}-registration`,
+    };
+    const refused = await fetch(`${apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(registration),
+    });
+    const refusedBody = (await refused.json()) as { error?: string };
+    expect(refused.status, JSON.stringify(refusedBody)).toBe(401);
+    expect(refusedBody.error).toBe("invalid_token");
+    await expectMatchesSchema(
+      "POST",
+      "/auth/oauth2/register",
+      401,
+      refusedBody,
+    );
+
+    // The witness: the same body with no credential registers.
+    const accepted = await fetch(`${apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(registration),
+    });
+    expect(accepted.status).toBe(201);
+  });
 });
 
 describe("a deployment that caps live viewers", () => {

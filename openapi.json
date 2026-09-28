@@ -623,6 +623,37 @@
           "error"
         ]
       },
+      "EdgePermissionDeniedOrTypeNotPermittedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "edge_permission_denied",
+                  "type_not_permitted"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
       "ItemDetail": {
         "type": "object",
         "properties": {
@@ -873,7 +904,7 @@
           "ok"
         ]
       },
-      "ValidationErrorRefusal": {
+      "EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -882,6 +913,8 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "edge_constraint_violation",
+                  "invalid_id",
                   "validation_error"
                 ]
               },
@@ -903,7 +936,7 @@
           "error"
         ]
       },
-      "InvalidTransitionOrValidationErrorRefusal": {
+      "InvalidIdOrInvalidTransitionOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -912,6 +945,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "invalid_id",
                   "invalid_transition",
                   "validation_error"
                 ]
@@ -1451,6 +1485,21 @@
           "error"
         ]
       },
+      "ExtensionsResponse": {
+        "type": "object",
+        "properties": {
+          "extensions": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          }
+        },
+        "required": [
+          "extensions"
+        ]
+      },
       "InvalidIdOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
@@ -1482,19 +1531,34 @@
           "error"
         ]
       },
-      "ExtensionsResponse": {
+      "ValidationErrorRefusal": {
         "type": "object",
         "properties": {
-          "extensions": {
+          "error": {
             "type": "object",
-            "additionalProperties": {
-              "type": "object",
-              "additionalProperties": {}
-            }
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
           }
         },
         "required": [
-          "extensions"
+          "error"
         ]
       },
       "EdgeResponse": {
@@ -1522,37 +1586,6 @@
                   "invalid_id",
                   "missing_required_field",
                   "validation_error"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
-      "EdgePermissionDeniedOrTypeNotPermittedRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "edge_permission_denied",
-                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -2625,37 +2658,6 @@
           "item",
           "metadata",
           "relevance_score"
-        ]
-      },
-      "UnknownTypeOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "unknown_type",
-                  "validation_error"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
         ]
       },
       "OccurrencePage": {
@@ -4323,6 +4325,37 @@
         ],
         "additionalProperties": false
       },
+      "InvalidPropertiesOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid_properties",
+                  "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
       "DriftedPlatformTypePage": {
         "type": "object",
         "properties": {
@@ -4466,6 +4499,37 @@
                 "type": "string",
                 "enum": [
                   "owner_exists"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "UnknownTypeOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "unknown_type",
+                  "validation_error"
                 ]
               },
               "message": {
@@ -5709,11 +5773,11 @@
             }
           },
           "403": {
-            "description": "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+            "description": "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read, or when a `backref` term is anchored on an item whose type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -6465,11 +6529,11 @@
             }
           },
           "403": {
-            "description": "The credential does not hold write on the item's type.",
+            "description": "`type_not_permitted` when the credential does not hold write on the item's type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -6767,11 +6831,11 @@
             }
           },
           "400": {
-            "description": "The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+            "description": "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -7118,11 +7182,11 @@
             }
           },
           "400": {
-            "description": "`invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed.",
+            "description": "`invalid_id` for a malformed id. `invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidTransitionOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrValidationErrorRefusal"
                 }
               }
             },
@@ -7888,6 +7952,36 @@
               }
             }
           },
+          "403": {
+            "description": "The credential's type permissions do not reach the item's type with read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
             "description": "Item not found",
             "content": {
@@ -8037,12 +8131,72 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid item ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "The credential's type permissions do not reach the item's type with read.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
                 }
               }
             },
@@ -8292,6 +8446,36 @@
               }
             }
           },
+          "403": {
+            "description": "The credential's type permissions do not reach the item's type with write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
             "description": "Item not found",
             "content": {
@@ -8513,6 +8697,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "The credential's type permissions do not reach the item's type with write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
                 }
               }
             },
@@ -8788,6 +9002,36 @@
               }
             }
           },
+          "403": {
+            "description": "The credential's type permissions do not reach the item's type with write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
             "description": "Item not found",
             "content": {
@@ -8972,11 +9216,11 @@
             }
           },
           "400": {
-            "description": "`invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+            "description": "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidTransitionOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrValidationErrorRefusal"
                 }
               }
             },
@@ -9319,12 +9563,72 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid item ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvalidIdRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "401": {
             "description": "Unauthorized",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "The credential's type permissions do not reach the item's type with write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
                 }
               }
             },
@@ -10758,11 +11062,11 @@
             }
           },
           "400": {
-            "description": "Validation error (too many ids, or a malformed id)",
+            "description": "Validation error: `ids` absent (`missing_required_field`), too many ids, or a malformed id",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -12070,11 +12374,11 @@
             }
           },
           "400": {
-            "description": "An unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place.",
+            "description": "`invalid_id` for a malformed item id; `validation_error` for an unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -12341,11 +12645,11 @@
             }
           },
           "400": {
-            "description": "An unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place.",
+            "description": "`invalid_id` for a malformed item id; `validation_error` for an unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
                 }
               }
             },
@@ -16486,11 +16790,11 @@
             }
           },
           "400": {
-            "description": "An invalid type pattern, a time bound that is not an instant, a `state` that is neither a lifecycle state nor the widening sentinel, or an unrecognized query parameter.",
+            "description": "`missing_required_field` when `q` is absent. An invalid type pattern, a time bound that is not an instant, a `state` that is neither a lifecycle state nor the widening sentinel, or an unrecognized query parameter.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnknownTypeOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -16715,11 +17019,11 @@
             }
           },
           "400": {
-            "description": "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be.",
+            "description": "`missing_required_field` when `from` or `to` is absent; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -19140,11 +19444,11 @@
             }
           },
           "400": {
-            "description": "Invalid registration",
+            "description": "`missing_required_field` for a body without `name`; `validation_error` for any other invalid registration",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -20186,11 +20490,11 @@
             }
           },
           "400": {
-            "description": "Invalid run",
+            "description": "`missing_required_field` for a body without `outcome`, `started_at` or `finished_at`; `validation_error` for any other invalid run",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -21984,11 +22288,11 @@
             }
           },
           "400": {
-            "description": "An invalid body or query",
+            "description": "`missing_required_field` for a body without `ids` or `outcome`; `validation_error` for any other invalid body",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -23452,11 +23756,11 @@
             }
           },
           "400": {
-            "description": "Body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused.",
+            "description": "`missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -25113,11 +25417,11 @@
             }
           },
           "400": {
-            "description": "Invalid archive or unsupported version",
+            "description": "`validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; the whole archive is refused before anything is written.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidPropertiesOrValidationErrorRefusal"
                 }
               }
             },
@@ -28590,6 +28894,50 @@
                         "invalid_client_metadata",
                         "invalid_redirect_uri",
                         "invalid_scope"
+                      ]
+                    },
+                    "error_description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "The request carried an `Authorization` bearer the sign-in library does not accept, an API key among them: the door reads the header as an initial access token (RFC 7591 section 3) and refuses it. An RFC 6750 error object rather than this server's envelope, for the reason the `400` gives. Register with no credential.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string",
+                      "enum": [
+                        "invalid_token"
                       ]
                     },
                     "error_description": {

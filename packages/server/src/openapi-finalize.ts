@@ -747,6 +747,22 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
             },
           },
         },
+        "401": {
+          description:
+            "The request carried an `Authorization` bearer the sign-in library does not accept, an API key among them: the door reads the header as an initial access token (RFC 7591 section 3) and refuses it. An RFC 6750 error object rather than this server's envelope, for the reason the `400` gives. Register with no credential.",
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  error: { type: "string", enum: ["invalid_token"] },
+                  error_description: { type: "string" },
+                },
+                required: ["error"],
+              },
+            },
+          },
+        },
       },
     },
   },

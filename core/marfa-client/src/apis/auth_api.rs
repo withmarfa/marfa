@@ -32,6 +32,7 @@ pub enum RegisterOAuthClientSuccess {
 #[serde(untagged)]
 pub enum RegisterOAuthClientError {
     Status400(models::RegisterOAuthClient400Response),
+    Status401(models::RegisterOAuthClient401Response),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
     UnknownValue(serde_json::Value),

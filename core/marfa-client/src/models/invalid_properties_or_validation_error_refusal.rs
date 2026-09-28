@@ -12,16 +12,16 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InvalidTransitionOrValidationErrorRefusal {
+pub struct InvalidPropertiesOrValidationErrorRefusal {
     #[serde(rename = "error")]
-    pub error: Box<models::InvalidTransitionOrValidationErrorRefusalError>,
+    pub error: Box<models::InvalidPropertiesOrValidationErrorRefusalError>,
 }
 
-impl InvalidTransitionOrValidationErrorRefusal {
+impl InvalidPropertiesOrValidationErrorRefusal {
     pub fn new(
-        error: models::InvalidTransitionOrValidationErrorRefusalError,
-    ) -> InvalidTransitionOrValidationErrorRefusal {
-        InvalidTransitionOrValidationErrorRefusal {
+        error: models::InvalidPropertiesOrValidationErrorRefusalError,
+    ) -> InvalidPropertiesOrValidationErrorRefusal {
+        InvalidPropertiesOrValidationErrorRefusal {
             error: Box::new(error),
         }
     }

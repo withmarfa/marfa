@@ -1638,6 +1638,16 @@ export interface components {
                 };
             };
         };
+        EdgePermissionDeniedOrTypeNotPermittedRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "edge_permission_denied" | "type_not_permitted";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         ItemDetail: {
             item: components["schemas"]["Item"];
             metadata: components["schemas"]["Metadata"];
@@ -1716,20 +1726,20 @@ export interface components {
             /** @enum {boolean} */
             ok: true;
         };
-        ValidationErrorRefusal: {
+        EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "validation_error";
+                code: "edge_constraint_violation" | "invalid_id" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
-        InvalidTransitionOrValidationErrorRefusal: {
+        InvalidIdOrInvalidTransitionOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "invalid_transition" | "validation_error";
+                code: "invalid_id" | "invalid_transition" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -1888,6 +1898,13 @@ export interface components {
                 };
             };
         };
+        ExtensionsResponse: {
+            extensions: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         InvalidIdOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
@@ -1898,9 +1915,12 @@ export interface components {
                 };
             };
         };
-        ExtensionsResponse: {
-            extensions: {
-                [key: string]: {
+        ValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "validation_error";
+                message: string;
+                details?: {
                     [key: string]: unknown;
                 };
             };
@@ -1912,16 +1932,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "missing_required_field" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        EdgePermissionDeniedOrTypeNotPermittedRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "edge_permission_denied" | "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2256,16 +2266,6 @@ export interface components {
             metadata: components["schemas"]["Metadata"];
             relevance_score: number;
             snippet_html?: string;
-        };
-        UnknownTypeOrValidationErrorRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "unknown_type" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         OccurrencePage: {
             data: components["schemas"]["Occurrence"][];
@@ -2718,6 +2718,16 @@ export interface components {
             types: string[];
             sources: string[];
         };
+        InvalidPropertiesOrValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "invalid_properties" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         DriftedPlatformTypePage: {
             data: components["schemas"]["DriftedPlatformType"][];
             /** @description Pass as `cursor` for the next page; `null` on the last. A page can be short, or empty, with a cursor still to follow, so a walk stops on `null` and never on a short page. */
@@ -2760,6 +2770,16 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "owner_exists";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        UnknownTypeOrValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "unknown_type" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -3003,7 +3023,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. */
+            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read, or when a `backref` term is anchored on an item whose type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3015,7 +3035,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -3501,7 +3521,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner. */
+            /** @description `invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3514,7 +3534,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -3735,7 +3755,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold write on the item's type. */
+            /** @description `type_not_permitted` when the credential does not hold write on the item's type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3747,7 +3767,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Item not found */
@@ -3875,7 +3895,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description `invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed. */
+            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not trashed: there is nothing to restore it from. `validation_error` when `Idempotency-Key` is malformed. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3888,7 +3908,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidTransitionOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -4250,6 +4270,21 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
+            /** @description The credential's type permissions do not reach the item's type with read. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
             /** @description Item not found */
             404: {
                 headers: {
@@ -4324,6 +4359,21 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
+            /** @description Invalid item ID */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                };
+            };
             /** @description Unauthorized */
             401: {
                 headers: {
@@ -4337,6 +4387,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description The credential's type permissions do not reach the item's type with read. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
             /** @description Item not found */
@@ -4448,6 +4513,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description The credential's type permissions do not reach the item's type with write. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
             /** @description Item not found */
@@ -4572,6 +4652,21 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
+            /** @description The credential's type permissions do not reach the item's type with write. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
             /** @description Item not found */
             404: {
                 headers: {
@@ -4694,6 +4789,21 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
+            /** @description The credential's type permissions do not reach the item's type with write. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
             /** @description Item not found */
             404: {
                 headers: {
@@ -4784,7 +4894,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner. */
+            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4797,7 +4907,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidTransitionOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -4953,6 +5063,21 @@ export interface operations {
                     "application/json": components["schemas"]["MetadataResponse"];
                 };
             };
+            /** @description Invalid item ID */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                };
+            };
             /** @description Unauthorized */
             401: {
                 headers: {
@@ -4966,6 +5091,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description The credential's type permissions do not reach the item's type with write. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
             /** @description Item not found */
@@ -5609,7 +5749,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Validation error (too many ids, or a malformed id) */
+            /** @description Validation error: `ids` absent (`missing_required_field`), too many ids, or a malformed id */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5621,7 +5761,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -6249,7 +6389,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePage"];
                 };
             };
-            /** @description An unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place. */
+            /** @description `invalid_id` for a malformed item id; `validation_error` for an unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6261,7 +6401,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -6375,7 +6515,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePage"];
                 };
             };
-            /** @description An unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place. */
+            /** @description `invalid_id` for a malformed item id; `validation_error` for an unrecognized query parameter. Declared because this door answers it: a refusal a caller cannot find in the reference is the same silence in a different place. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6387,7 +6527,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -8374,7 +8514,7 @@ export interface operations {
                     "application/json": components["schemas"]["SearchResultPage"];
                 };
             };
-            /** @description An invalid type pattern, a time bound that is not an instant, a `state` that is neither a lifecycle state nor the widening sentinel, or an unrecognized query parameter. */
+            /** @description `missing_required_field` when `q` is absent. An invalid type pattern, a time bound that is not an instant, a `state` that is neither a lifecycle state nor the widening sentinel, or an unrecognized query parameter. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8386,7 +8526,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -8482,7 +8622,7 @@ export interface operations {
                     "application/json": components["schemas"]["OccurrencePage"];
                 };
             };
-            /** @description A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
+            /** @description `missing_required_field` when `from` or `to` is absent; otherwise `validation_error`: an unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. When expansion had already been truncated before the ceiling was crossed, the details also carry `expansion_incomplete` and `series_unexpanded`, because narrowing the window returns a calendar that is partial for that second reason and the caller would otherwise not learn it until after acting on this one. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a read from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a window holding both enough broken rules to cap the list and enough events to fill it is refused on the second, exactly as a window with no broken rules would be. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8494,7 +8634,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -9754,7 +9894,7 @@ export interface operations {
                     "application/json": components["schemas"]["Connector"];
                 };
             };
-            /** @description Invalid registration */
+            /** @description `missing_required_field` for a body without `name`; `validation_error` for any other invalid registration */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9766,7 +9906,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -10313,7 +10453,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorRun"];
                 };
             };
-            /** @description Invalid run */
+            /** @description `missing_required_field` for a body without `outcome`, `started_at` or `finished_at`; `validation_error` for any other invalid run */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10325,7 +10465,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -11064,7 +11204,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description An invalid body or query */
+            /** @description `missing_required_field` for a body without `ids` or `outcome`; `validation_error` for any other invalid body */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11076,7 +11216,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -11836,7 +11976,7 @@ export interface operations {
                     "application/json": components["schemas"]["KeyResponse"];
                 };
             };
-            /** @description Body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused. */
+            /** @description `missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11848,7 +11988,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -12571,7 +12711,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description Invalid archive or unsupported version */
+            /** @description `validation_error` for an invalid archive or an unsupported version. `invalid_properties` when a row carries a property its type does not declare and the strict-mode lever names that type; the whole archive is refused before anything is written. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12583,7 +12723,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidPropertiesOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -14242,6 +14382,25 @@ export interface operations {
                     "application/json": {
                         /** @enum {string} */
                         error: "invalid_client_metadata" | "invalid_redirect_uri" | "invalid_scope";
+                        error_description?: string;
+                    };
+                };
+            };
+            /** @description The request carried an `Authorization` bearer the sign-in library does not accept, an API key among them: the door reads the header as an initial access token (RFC 7591 section 3) and refuses it. An RFC 6750 error object rather than this server's envelope, for the reason the `400` gives. Register with no credential. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        error: "invalid_token";
                         error_description?: string;
                     };
                 };

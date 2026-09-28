@@ -232,7 +232,7 @@ pub enum ListEdgesError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListItemBackrefsError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::InvalidIdOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
@@ -245,7 +245,7 @@ pub enum ListItemBackrefsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListItemEdgesError {
-    Status400(models::ValidationErrorRefusal),
+    Status400(models::InvalidIdOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),

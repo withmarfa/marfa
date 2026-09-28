@@ -72,7 +72,9 @@ pub enum ReplaceItemMetadataSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetItemMetadataError {
+    Status400(models::InvalidIdRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -96,6 +98,7 @@ pub enum ListTagsError {
 pub enum MergeItemMetadataError {
     Status400(models::InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -109,6 +112,7 @@ pub enum MergeItemMetadataError {
 pub enum ReplaceItemMetadataError {
     Status400(models::InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
