@@ -7,15 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A branch cancels a superseded run outright. On `main` a started run always
-# finishes, and a newer commit replaces only a run still waiting, so merges in
-# quick succession verify their newest commit rather than queueing one run each.
-#
-# `release.yml` refuses a tag unless a successful `ci.yml` run exists at that
-# exact SHA, so tag a commit whose run finished: one superseded while waiting
-# has none.
+# Superseded PR runs cancel; each main commit keeps its own validation.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:

@@ -36,10 +36,9 @@ on:
   # A path-gated workflow has no other way to be started by hand.
   workflow_dispatch:
 
-# As in `ci.yml`: a branch cancels a superseded run, and on `main` a started
-# run finishes while a newer commit replaces one still waiting.
+# Superseded PR runs cancel; each main commit keeps its own validation.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
