@@ -279,11 +279,8 @@ export function typeCatalog(): Answer {
   };
 }
 
-/**
- * The shipped edge types, as `GET /edge-types` lists each: what a folder
- * reads a frontmatter line by. `fidelity.test.ts` holds every entry to the
- * real listing's.
- */
+/** The shipped edge types as `GET /edge-types` lists them, which
+ *  `fidelity.test.ts` holds to the real listing. */
 export const SCRIPTED_EDGE_TYPES: ReadonlyArray<{
   id: string;
   cardinality: string;

@@ -91,9 +91,8 @@ pub struct ScanReport {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Flagged {
     pub path: String,
-    /// `unreadable` for frontmatter that does not parse as an item's,
-    /// `refused` for an edit the server or this copy would not take, and
-    /// `edges` for edge lines that change nothing (`folders.md` 11).
+    /// `unreadable`, `refused`, or `edges` for lines that change nothing
+    /// (`folders.md` 9, 10, 11).
     pub flag: &'static str,
     pub reason: String,
 }
@@ -695,16 +694,7 @@ impl Folder {
                 if let Some(held) = &outcome.held {
                     report.flagged.push(Flagged::of(&pending.path, held));
                 }
-                // A file held for another reason keeps it.
-                let held = match &bound.held {
-                    Some(held)
-                        if !held.starts_with(state::EDGES)
-                            && !held.starts_with(state::EDGES_WAITING) =>
-                    {
-                        Some(held.clone())
-                    }
-                    _ => outcome.held,
-                };
+                let held = outcome.held;
                 let mut writes = bound.writes.clone();
                 let save = writes.save;
                 writes.queued.extend(
@@ -1954,17 +1944,18 @@ impl Folder {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
                 .into_iter()
-                .filter_map(|bound| {
-                    let refused = bound.writes.refused.last();
-                    match (&bound.held, refused) {
-                        (Some(held), _) => Some(Flagged::of(&bound.path, held)),
-                        (None, Some(refused)) => Some(Flagged {
-                            path: bound.path.clone(),
-                            flag: "refused",
-                            reason: refused.reason.clone(),
-                        }),
-                        (None, None) => None,
-                    }
+                // A file held and refused both says both.
+                .flat_map(|bound| {
+                    let held = bound
+                        .held
+                        .as_deref()
+                        .map(|held| Flagged::of(&bound.path, held));
+                    let refused = bound.writes.refused.last().map(|refused| Flagged {
+                        path: bound.path.clone(),
+                        flag: "refused",
+                        reason: refused.reason.clone(),
+                    });
+                    held.into_iter().chain(refused)
                 })
                 .collect()
         };
@@ -2422,37 +2413,43 @@ impl Folder {
                 wanted.extend(self.written_ends(item, edge_types, catalog, &recorded)?);
             }
         }
-        let recorded: HashSet<String> =
+        let recorded: HashMap<String, bool> =
             state::edge_ends(&*self.core.conn()?)?.into_iter().collect();
-        let mut kept = Vec::new();
-        for id in wanted {
+        for id in &wanted {
+            if recorded.contains_key(id) {
+                continue;
+            }
             let (held, pinned) = {
                 let conn = self.core.conn()?;
                 (
-                    crate::store::item_held(&conn, &id)?,
-                    crate::store::pinned(&conn, &id)?,
+                    crate::store::item_held(&conn, id)?,
+                    crate::store::pinned(&conn, id)?,
                 )
             };
-            if held || pinned {
-                crate::store::pin(&*self.core.conn()?, &id)?;
-                kept.push(id);
-                continue;
-            }
-            // Unreadable now, offline or gone: the line names it by id.
-            match self.core.pin(&id) {
-                Ok(_) => kept.push(id),
-                Err(
-                    CoreError::NoServer | CoreError::NotFound { .. } | CoreError::Forbidden { .. },
-                ) => {}
-                Err(error) if error.is_environmental() => {}
-                Err(error) => return Err(error),
-            }
+            // Another holder's pin is held, never taken as the folder's own.
+            let made = if pinned {
+                false
+            } else if held {
+                crate::store::pin(&*self.core.conn()?, id)?
+            } else {
+                // Unreadable now, offline or gone: the line names it by id.
+                match self.core.pin(id) {
+                    Ok(_) => true,
+                    Err(
+                        CoreError::NoServer
+                        | CoreError::NotFound { .. }
+                        | CoreError::Forbidden { .. },
+                    ) => continue,
+                    Err(error) if error.is_environmental() => continue,
+                    Err(error) => return Err(error),
+                }
+            };
+            state::hold_edge_end(&*self.core.conn()?, id, made)?;
         }
         let conn = self.core.conn()?;
-        state::set_edge_ends(&conn, &kept)?;
-        for id in recorded {
-            if !kept.contains(&id) {
-                state::unpin_if_unheld(&conn, &id)?;
+        for (id, made) in recorded {
+            if !wanted.contains(&id) {
+                state::release_edge_end(&conn, &id, made)?;
             }
         }
         Ok(())

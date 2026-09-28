@@ -185,18 +185,22 @@ pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// A pin is held by a binding or by an edge a bound file shows; either can
-/// let it go while the other still needs the row (`folders.md` 11).
+/// A binding lets its pin go unless a line still holds the row, which then
+/// holds the pin as its own (`folders.md` 11).
 pub fn unpin_if_unheld(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
-    let end = crate::store::meta_get(conn, &format!("{EDGE_END}{item_id}"))?;
-    if bound_to_item(conn, item_id)?.is_none() && end.is_none() {
-        crate::store::unpin(conn, item_id)?;
+    if bound_to_item(conn, item_id)?.is_some() {
+        return Ok(());
     }
-    Ok(())
+    match crate::store::meta_get(conn, &format!("{EDGE_END}{item_id}"))? {
+        Some(_) => crate::store::meta_set(conn, &format!("{EDGE_END}{item_id}"), MADE),
+        None => crate::store::unpin(conn, item_id).map(|_| ()),
+    }
 }
 
-/// One `meta` row per pinned edge end, so a bind asks for one by key.
+/// One `meta` row per edge end a line holds, so a bind asks for one by key;
+/// `MADE` where the folder made the pin, which only then is its to let go.
 const EDGE_END: &str = "folder_edge_end:";
+const MADE: &str = "made";
 
 /// A replacement whose create the drain has not settled, keyed by that
 /// create's queue id, so a pass that ends first leaves it to the next.
@@ -217,21 +221,28 @@ fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreE
     Ok(found)
 }
 
-pub fn edge_ends(conn: &Connection) -> Result<Vec<String>, CoreError> {
+/// The edge ends lines hold, each with whether the folder made its pin.
+pub fn edge_ends(conn: &Connection) -> Result<Vec<(String, bool)>, CoreError> {
     Ok(under(conn, EDGE_END)?
         .into_iter()
-        .map(|(id, _)| id)
+        .map(|(id, made)| (id, made == MADE))
         .collect())
 }
 
-pub fn set_edge_ends(conn: &Connection, ends: &[String]) -> Result<(), CoreError> {
-    for (id, _) in under(conn, EDGE_END)? {
-        if !ends.contains(&id) {
-            crate::store::meta_delete(conn, &format!("{EDGE_END}{id}"))?;
-        }
-    }
-    for id in ends {
-        crate::store::meta_set(conn, &format!("{EDGE_END}{id}"), "")?;
+pub fn hold_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), CoreError> {
+    crate::store::meta_set(
+        conn,
+        &format!("{EDGE_END}{id}"),
+        if made { MADE } else { "" },
+    )
+}
+
+/// Lets a line's hold go, and the pin with it where the folder made it and
+/// no binding holds it.
+pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{EDGE_END}{id}"))?;
+    if made && bound_to_item(conn, id)?.is_none() {
+        crate::store::unpin(conn, id)?;
     }
     Ok(())
 }
@@ -386,14 +397,13 @@ mod tests {
     fn a_pin_is_held_while_a_binding_or_a_line_holds_it() {
         let conn = crate::store::open_in_memory().unwrap();
         bind(&conn, &bound("target.md", "target")).unwrap();
-        set_edge_ends(&conn, &["target".to_string()]).unwrap();
+        hold_edge_end(&conn, "target", false).unwrap();
         unbind(&conn, "target.md").unwrap();
         assert!(
             crate::store::pinned(&conn, "target").unwrap(),
             "the binding took the pin a line still holds"
         );
-        set_edge_ends(&conn, &[]).unwrap();
-        unpin_if_unheld(&conn, "target").unwrap();
+        release_edge_end(&conn, "target", true).unwrap();
         assert!(!crate::store::pinned(&conn, "target").unwrap());
     }
 }

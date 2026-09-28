@@ -116,6 +116,34 @@ enum Resolved {
     Unanswered(String),
 }
 
+impl Resolved {
+    /// The item found, or `None` with the reason a line names nothing.
+    fn settled(
+        self,
+        raw: &str,
+        name: &str,
+        reasons: &mut Vec<String>,
+        waiting: &mut bool,
+    ) -> Option<(String, Option<String>)> {
+        let why = match self {
+            Resolved::Found { id, r#type } => return Some((id, r#type)),
+            Resolved::Unmatched => "matches no item".to_string(),
+            Resolved::Ambiguous => {
+                "matches more than one item; name one by its id, [[<id>]]".to_string()
+            }
+            Resolved::Waiting => {
+                *waiting = true;
+                "is looked up once the server can be asked".to_string()
+            }
+            Resolved::Unanswered(why) => {
+                format!("could not be looked up ({why}); name it by its id, [[<id>]]")
+            }
+        };
+        reasons.push(format!("[[{raw}]] in its {name} line {why}"));
+        None
+    }
+}
+
 /// Lookup pages read for one name and title field: a name more common than
 /// this is named by id instead.
 const LOOKUP_PAGES: usize = 5;
@@ -248,8 +276,7 @@ impl<'a> Resolver<'a> {
             more |= capped;
             for row in rows {
                 let item = row.item;
-                if item.r#type.starts_with("system.")
-                    || !matches!(item.state.as_str(), "active" | "archived")
+                if !matches!(item.state.as_str(), "active" | "archived")
                     || fields::title_field(self.catalog, &item.r#type) != field
                 {
                     continue;
@@ -275,7 +302,7 @@ struct Group<'t> {
     name: String,
     edge_type: &'t EdgeType,
     end: End,
-    typed: Option<std::result::Result<Vec<String>, String>>,
+    typed: Option<std::result::Result<Vec<edge_types::Typed>, String>>,
 }
 
 impl Folder {
@@ -432,9 +459,9 @@ impl Folder {
             let as_typed = match typed.and_then(|typed| typed.get(name)) {
                 Some(value) => {
                     let mut kept = None;
-                    for text in edge_types::targets(value).unwrap_or_default() {
-                        if self.answers_to(&text, &other, catalog)? {
-                            kept = Some(text);
+                    for typed in edge_types::typed(value).unwrap_or_default() {
+                        if self.answers_to(&typed.name, &other, catalog)? {
+                            kept = Some(typed.raw);
                             break;
                         }
                     }
@@ -552,7 +579,7 @@ impl Folder {
                     name: key.clone(),
                     edge_type: def,
                     end,
-                    typed: Some(edge_types::targets(value)),
+                    typed: Some(edge_types::typed(value)),
                 },
             );
         }
@@ -767,64 +794,47 @@ impl Folder {
             }
             Some(Ok(texts)) => texts,
         };
-        if group.edge_type.one_at(group.end) && texts.len() > 1 {
-            reasons.push(format!(
-                "its {name} line names {} items, and an item is {name} one at most",
-                texts.len()
-            ));
-            return Ok(None);
-        }
         let mut found: Vec<(String, Option<String>)> = Vec::new();
         let mut stood_down = false;
-        for text in texts {
-            let mut resolved = None;
-            for edge in current {
-                let other = other_of(edge);
-                if self.answers_to(text, &other, catalog)? {
-                    let r#type = self.core.get(&other)?.map(|item| item.r#type);
-                    resolved = Some((other, r#type));
-                    break;
-                }
-            }
-            let resolved = match resolved {
-                Some(found) => Some(found),
-                None => match resolver.resolve(text)? {
-                    Resolved::Found { id, r#type } => Some((id, r#type)),
-                    Resolved::Unmatched => {
-                        reasons.push(format!("[[{text}]] in its {name} line matches no item"));
-                        None
-                    }
-                    Resolved::Ambiguous => {
-                        reasons.push(format!(
-                            "[[{text}]] in its {name} line matches more than one item; name one by its id, [[<id>]]"
-                        ));
-                        None
-                    }
-                    Resolved::Waiting => {
-                        *waiting = true;
-                        reasons.push(format!(
-                            "[[{text}]] in its {name} line is looked up once the server can be asked"
-                        ));
-                        None
-                    }
-                    Resolved::Unanswered(why) => {
-                        reasons.push(format!(
-                            "[[{text}]] in its {name} line could not be looked up ({why}); name it by its id, [[<id>]]"
-                        ));
-                        None
-                    }
-                },
+        for typed in texts {
+            let raw = &typed.raw;
+            let Some((id, r#type)) = self
+                .resolve_typed(&typed.name, current, other_of, catalog, resolver)?
+                .settled(raw, name, reasons, waiting)
+            else {
+                stood_down = true;
+                continue;
             };
-            match resolved {
-                Some((id, _)) if id == item_id => {
-                    reasons.push(format!("its {name} line names this file's own item"));
-                    stood_down = true;
-                }
-                Some(found_one) => found.push(found_one),
-                None => stood_down = true,
+            // `[[C# notes]]` read as `[[C]]` would guess; a whole name that
+            // names something else says the text is ambiguous.
+            if raw != &typed.name
+                && let Resolved::Found { id: whole, .. } =
+                    self.resolve_typed(raw, current, other_of, catalog, resolver)?
+                && whole != id
+            {
+                reasons.push(format!(
+                    "[[{raw}]] in its {name} line names one item whole and another before its | or #; name one by its id, [[<id>]]"
+                ));
+                stood_down = true;
+                continue;
+            }
+            if id == item_id {
+                reasons.push(format!("its {name} line names this file's own item"));
+                stood_down = true;
+                continue;
+            }
+            if !found.iter().any(|(held, _)| held == &id) {
+                found.push((id, r#type));
             }
         }
         if stood_down {
+            return Ok(None);
+        }
+        if group.edge_type.one_at(group.end) && found.len() > 1 {
+            reasons.push(format!(
+                "its {name} line names {} items, and an item is {name} one at most",
+                found.len()
+            ));
             return Ok(None);
         }
         // At the end its type does not name, a line is the fallback for an
@@ -847,12 +857,26 @@ impl Folder {
                 }
             }
         }
-        let mut ids: Vec<String> = Vec::new();
-        for (id, _) in found {
-            if !ids.contains(&id) {
-                ids.push(id);
+        Ok(Some(found.into_iter().map(|(id, _)| id).collect()))
+    }
+
+    /// A typed name as the edge it already names, or else as the resolver
+    /// reads it.
+    fn resolve_typed(
+        &self,
+        text: &str,
+        current: &[&Edge],
+        other_of: &dyn Fn(&Edge) -> String,
+        catalog: &Catalog,
+        resolver: &mut Resolver<'_>,
+    ) -> Result<Resolved> {
+        for edge in current {
+            let other = other_of(edge);
+            if self.answers_to(text, &other, catalog)? {
+                let r#type = self.core.get(&other)?.map(|item| item.r#type);
+                return Ok(Resolved::Found { id: other, r#type });
             }
         }
-        Ok(Some(ids))
+        resolver.resolve(text)
     }
 }

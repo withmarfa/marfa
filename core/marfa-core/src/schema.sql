@@ -277,9 +277,8 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- (`folders.md` 28): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
-  -- The edges the file's frontmatter lines named, each its type, the end the
-  -- file is and the other end's id, as a JSON array: what tells a line the
-  -- person took out from an edge no pull has written yet (`folders.md` 11).
+  -- The edges the file's lines last named, as JSON: what tells a line taken
+  -- out from an edge no pull has written yet (`folders.md` 11).
   edge_lines TEXT NOT NULL,
   -- The newest version line an edit of this device's has spent, 0 where its
   -- file carried none; null where no edit went (`folders.md` 22, 23).
