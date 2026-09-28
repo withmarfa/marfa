@@ -1,4 +1,4 @@
-import { and, eq, desc, lt, ne, or, sql } from "drizzle-orm";
+import { and, eq, desc, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult, WebhookDelivery } from "@withmarfa/shared";
 import {
@@ -17,6 +17,15 @@ import type { DrizzleDb } from "./connection.js";
 // Only a retry reads these, and kept on a settled row the secret and the
 // address would outlive their subscription.
 const SETTLED = { payload: null, webhook_url: null, webhook_secret: null };
+
+// The first outcome stands: an attempt whose claim lapsed and was taken
+// again must not reopen, or unsettle, what the other attempt settled.
+function stillPending(id: string) {
+  return and(
+    eq(outboundWebhookDeliveries.id, id),
+    eq(outboundWebhookDeliveries.status, "pending"),
+  );
+}
 
 function rowToDelivery(
   row: typeof outboundWebhookDeliveries.$inferSelect,
@@ -198,7 +207,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         attempt,
         ...SETTLED,
       })
-      .where(eq(outboundWebhookDeliveries.id, id))
+      .where(stillPending(id))
       .run();
   }
 
@@ -219,7 +228,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         status: nextAttemptAt === null ? "dead_letter" : "pending",
         ...(nextAttemptAt === null ? SETTLED : {}),
       })
-      .where(eq(outboundWebhookDeliveries.id, id))
+      .where(stillPending(id))
       .run();
   }
 
@@ -227,7 +236,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     await this.db
       .update(outboundWebhookDeliveries)
       .set({ status: "dead_letter", ...SETTLED })
-      .where(eq(outboundWebhookDeliveries.id, id))
+      .where(stillPending(id))
       .run();
   }
 
@@ -240,7 +249,11 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .where(
         and(
           lt(outboundWebhookDeliveries.created_at, cutoff),
-          ne(outboundWebhookDeliveries.status, "pending"),
+          // A pending row with no next attempt is one no claim can reach.
+          or(
+            ne(outboundWebhookDeliveries.status, "pending"),
+            isNull(outboundWebhookDeliveries.next_attempt_at),
+          ),
         ),
       )
       .run();

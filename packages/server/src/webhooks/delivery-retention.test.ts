@@ -3,6 +3,7 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
 import { registerHousekeepingJobs } from "../housekeeping/registrations.js";
+import { writeInstanceConfig } from "../storage/instance-config.js";
 
 let ctx: TestContext;
 
@@ -142,5 +143,99 @@ describe("outbound delivery history", () => {
         webhook_secret: null,
       });
     }
+  });
+});
+
+describe("settling an outbound delivery", () => {
+  it("retries with the payload, address and secret it was scheduled with", async () => {
+    const id = await schedule("retry-subscription");
+    await ctx.storage.outboundWebhookDeliveries.markFailed(
+      id,
+      503,
+      "unavailable",
+      1,
+      new Date(Date.now() - 1_000).toISOString(),
+    );
+    const due = await ctx.storage.outboundWebhookDeliveries.getPending(
+      new Date().toISOString(),
+    );
+    expect(due.find((row) => row.id === id)).toMatchObject({
+      payload: '{"event_type":"item.created"}',
+      webhook_url: "https://example.com/hook",
+      webhook_secret: "a".repeat(64),
+      attempt: 1,
+    });
+  });
+
+  it("keeps the first outcome when an attempt whose claim lapsed reports after it", async () => {
+    const id = await schedule("lapsed-subscription");
+    await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
+    await ctx.storage.outboundWebhookDeliveries.markFailed(
+      id,
+      503,
+      "unavailable",
+      2,
+      new Date(Date.now() - 1_000).toISOString(),
+    );
+    await ctx.storage.outboundWebhookDeliveries.markDeadLetter(id);
+    const [row] = await raw().all(
+      `SELECT status, succeeded, attempt, status_code FROM outbound_webhook_deliveries WHERE id = '${id}'`,
+    );
+    expect(row).toEqual({
+      status: "success",
+      succeeded: 1,
+      attempt: 1,
+      status_code: 200,
+    });
+    const due = await ctx.storage.outboundWebhookDeliveries.getPending(
+      new Date().toISOString(),
+    );
+    expect(due.map((d) => d.id)).not.toContain(id);
+  });
+});
+
+describe("the retention outbound delivery history leaves with", () => {
+  it("is the instance's /config override when one is set", async () => {
+    const webhookId = "override-subscription";
+    const older = await schedule(webhookId);
+    const newer = await schedule(webhookId);
+    for (const id of [older, newer]) {
+      await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
+    }
+    await age(older, 8);
+    await age(newer, 6);
+    await writeInstanceConfig(ctx.storage.settings, {
+      audit_retention_days: 7,
+    });
+    try {
+      await runAuditCleanup();
+    } finally {
+      await writeInstanceConfig(ctx.storage.settings, {});
+    }
+    const left = await ctx.storage.outboundWebhookDeliveries.list(webhookId, {
+      limit: 50,
+    });
+    expect(left.data.map((d) => d.id)).toEqual([newer]);
+  });
+
+  it("takes a pending row no claim can reach", async () => {
+    const webhookId = "unreachable-subscription";
+    const unreachable = await schedule(webhookId);
+    const retrying = await schedule(
+      webhookId,
+      new Date(Date.now() + DAY_MS).toISOString(),
+    );
+    await raw().run(
+      "UPDATE outbound_webhook_deliveries SET next_attempt_at = NULL WHERE id = ?",
+      [unreachable],
+    );
+    for (const id of [unreachable, retrying]) {
+      await age(id, ctx.config.auditRetentionDays + 1);
+    }
+    await runAuditCleanup();
+    const left = await ctx.storage.outboundWebhookDeliveries.list(webhookId, {
+      limit: 50,
+    });
+    expect(left.data.map((d) => d.id)).toEqual([retrying]);
   });
 });

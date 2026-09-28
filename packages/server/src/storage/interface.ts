@@ -1318,7 +1318,8 @@ export interface WebhookDeliveryStore {
   ): Promise<void>;
   markDeadLetter(id: string): Promise<void>;
   /** Removes settled deliveries older than the retention; one still
-   *  retrying stays whatever its age. Answers how many went. */
+   *  retrying stays whatever its age, and one no claim can reach does not.
+   *  Answers how many went. */
   cleanup(retentionDays: number): Promise<number>;
 }
 
