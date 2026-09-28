@@ -100,10 +100,10 @@ const settingsShape = {
     "What a new file takes where its frontmatter leaves a blank.",
   ),
   include: PatternListSchema.describe(
-    "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path.",
+    "Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name.",
   ),
   ignore: PatternListSchema.describe(
-    "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone.",
+    "Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says.",
   ),
   first_placement: z
     .record(z.string(), z.string().min(1).max(1024))

@@ -146,7 +146,7 @@ pub struct Typed {
     pub name: String,
 }
 
-/// The targets a line names, once each whatever their case; unquoted
+/// The targets a line names, once each whatever their case or form; unquoted
 /// `[[name]]` is YAML for a list inside a list.
 pub fn typed(value: &Value) -> Result<Vec<Typed>, String> {
     let named: Vec<&Value> = match value {
@@ -175,7 +175,7 @@ pub fn typed(value: &Value) -> Result<Vec<Typed>, String> {
         }
         if !found
             .iter()
-            .any(|held| held.raw.to_lowercase() == raw.trim().to_lowercase())
+            .any(|held| super::names::same(&held.raw, raw.trim()))
         {
             found.push(Typed {
                 raw: raw.trim().to_string(),

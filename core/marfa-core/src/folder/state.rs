@@ -20,7 +20,7 @@ pub struct Bound {
     pub content_hash: String,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
     /// where the last agreement was a scan's read. A pull removes only a
-    /// file it wrote (`folders.md` 33).
+    /// file it wrote (`folders.md` 35).
     pub written_hash: Option<String>,
     /// The item ids the links in those bytes named, as the folder last read
     /// or wrote them. Empty where the file named none.
@@ -117,7 +117,7 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 /// A content hash no bytes have, for a save set aside in a conflicted copy
-/// against this device's own (`folders.md` 37): the file reads as changed,
+/// against this device's own (`folders.md` 39): the file reads as changed,
 /// and its next edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
@@ -133,7 +133,7 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
 }
 
 /// Binds a file, and pins its row so the copy keeps it whatever the search
-/// says of it (`device.md` 1, `folders.md` 33).
+/// says of it (`device.md` 1, `folders.md` 35).
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
@@ -261,6 +261,14 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
             read_bound,
         )
         .optional()?)
+}
+
+/// Every bound path and its item, in path order, without the rest of the
+/// binding.
+pub fn bound_paths(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    let mut statement = conn.prepare("SELECT path, item_id FROM folder_files ORDER BY path")?;
+    let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {

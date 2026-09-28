@@ -7,6 +7,8 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::document::{self, Embed};
+use super::lists::Lists;
+use super::names::{folded, same};
 use super::placement::{cleaned, path_of};
 use super::{Flagged, Folder, bytes_of, carries_frontmatter, fields, is_document, name_of, state};
 use crate::Result;
@@ -69,12 +71,9 @@ fn file_like(name: &str) -> bool {
 }
 
 /// Whether `path` answers to `name`: the whole path, or its ending at a
-/// directory's edge, ignoring case.
+/// directory's edge, as a folder compares names (`folders.md` 27).
 fn answers(path: &str, name: &str) -> bool {
-    let (path, name) = (
-        path.to_lowercase(),
-        name.trim_start_matches('/').to_lowercase(),
-    );
+    let (path, name) = (folded(path), folded(name.trim_start_matches('/')));
     path == name || path.ends_with(&format!("/{name}"))
 }
 
@@ -85,8 +84,8 @@ fn named<'f>(host: &str, name: &str, files: impl IntoIterator<Item = &'f str>) -
         .into_iter()
         .filter(|file| answers(file, name))
         .min_by_key(|file| {
-            let exact = file.to_lowercase() == name.trim_start_matches('/').to_lowercase();
-            let beside = dir_of(file).to_lowercase() == dir_of(host).to_lowercase();
+            let exact = same(file, name.trim_start_matches('/'));
+            let beside = same(dir_of(file), dir_of(host));
             (!exact, !beside, file.matches('/').count(), file.to_string())
         })
         .map(str::to_string)
@@ -105,7 +104,7 @@ fn read_as(embed: &Embed) -> Option<(&str, bool)> {
 }
 
 /// The files a scan walked, indexed once so resolving an embed costs a lookup;
-/// both keys lowercased, since macOS and Obsidian compare names without case.
+/// both keys folded, as macOS and Obsidian compare names (`folders.md` 27).
 pub(super) struct Files {
     by_path: HashMap<String, String>,
     by_name: HashMap<String, Vec<String>>,
@@ -118,10 +117,10 @@ impl Files {
             by_name: HashMap::new(),
         };
         for path in paths {
-            files.by_path.insert(path.to_lowercase(), path.clone());
+            files.by_path.insert(folded(path), path.clone());
             files
                 .by_name
-                .entry(name_of(path).to_lowercase())
+                .entry(folded(name_of(path)))
                 .or_default()
                 .push(path.clone());
         }
@@ -129,11 +128,11 @@ impl Files {
     }
 
     fn at(&self, path: &str) -> Option<String> {
-        self.by_path.get(&path.to_lowercase()).cloned()
+        self.by_path.get(&folded(path)).cloned()
     }
 
     fn named(&self, host: &str, name: &str) -> Option<String> {
-        let found = self.by_name.get(&name_of(name).to_lowercase())?;
+        let found = self.by_name.get(&folded(name_of(name)))?;
         named(host, name, found.iter().map(String::as_str))
     }
 }
@@ -248,16 +247,13 @@ impl Folder {
                 continue;
             }
             let path = state::bound_to_item(&*self.core.conn()?, &item.id)?.map(|bound| bound.path);
-            let mut names: Vec<String> = path
-                .iter()
-                .map(|path| name_of(path).to_lowercase())
-                .collect();
+            let mut names: Vec<String> = path.iter().map(|path| folded(name_of(path))).collect();
             if let Some(title) = item
                 .properties
                 .get(fields::title_field(catalog, &item.r#type))
                 .and_then(Value::as_str)
             {
-                names.push(title.trim().to_lowercase());
+                names.push(folded(title.trim()));
             }
             found.push(Attachment {
                 id: item.id,
@@ -286,7 +282,7 @@ impl Folder {
         }
         let attachments = self.attachments(&host.id, catalog)?;
         let by_name = |name: &str| {
-            let wanted = name_of(name).to_lowercase();
+            let wanted = folded(name_of(name));
             let mut matching = attachments
                 .iter()
                 .filter(|held| held.names.contains(&wanted));
@@ -321,11 +317,7 @@ impl Folder {
                     Some(at) => (
                         attachments
                             .iter()
-                            .find(|held| {
-                                held.path
-                                    .as_deref()
-                                    .is_some_and(|path| path.to_lowercase() == at.to_lowercase())
-                            })
+                            .find(|held| held.path.as_deref().is_some_and(|path| same(path, &at)))
                             .map(|held| held.id.clone())
                             .or_else(|| by_name(&at)),
                         Target::At(at),
@@ -345,6 +337,7 @@ impl Folder {
         &self,
         hosts: &[(&Item, String)],
         catalog: &Catalog,
+        lists: &Lists,
     ) -> Result<Embedded> {
         struct Link {
             path: String,
@@ -363,12 +356,12 @@ impl Folder {
             for shown in self.shown_in(host, host_path, body, catalog)? {
                 match (shown.item, shown.target) {
                     (Some(id), Target::At(path)) => {
-                        // A link differing from the file only in case names it,
-                        // and the file keeps its own name.
+                        // A link differing from the file only in case or form
+                        // names it, and the file keeps its own name.
                         let path = self
                             .own_paths(&id)?
                             .into_iter()
-                            .find(|own| own.to_lowercase() == path.to_lowercase())
+                            .find(|own| same(own, &path))
                             .unwrap_or(path);
                         links.entry(id).or_default().push(Link {
                             path,
@@ -426,7 +419,7 @@ impl Folder {
             found.sort_by(|a, b| a.path.cmp(&b.path));
             let first = found[0].path.clone();
             for link in &found {
-                if link.path.to_lowercase() != first.to_lowercase() {
+                if !same(&link.path, &first) {
                     embedded.reports.push(reported(
                         &link.host,
                         format!(
@@ -436,7 +429,7 @@ impl Folder {
                     ));
                 }
             }
-            match cleaned(&first) {
+            match cleaned(&first).filter(|path| self.writes_at(lists, path)) {
                 Some(path) => {
                     embedded.at.insert(id, path);
                 }

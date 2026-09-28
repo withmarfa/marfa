@@ -1,11 +1,12 @@
 //! The other folders on this machine, read as they stand and never waited
-//! on (`folders.md` 39 to 43).
+//! on (`folders.md` 41 to 45).
 
 use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+use super::lists::Lists;
 use super::registry::{Registered, Registry, gone, resolved};
 use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::{Core, Result, store};
@@ -150,18 +151,29 @@ impl Peer {
 
     fn walked(&self) -> &Walked {
         self.walked.get_or_init(|| {
-            let mut found = Vec::new();
+            let mut walked = super::Walked::default();
             let partial = if self.root.is_dir() {
-                super::walk(&self.root, &mut found)
-                    .err()
-                    .map(|error| error.to_string())
+                // The built-in lists alone: a look for a moved file may look
+                // wider than that folder's own lists, never narrower.
+                match Lists::new(&[], &[]) {
+                    Ok(lists) => {
+                        super::walk(&self.root, &self.root, &lists, &mut walked);
+                        walked
+                            .directories
+                            .iter()
+                            .find(|dir| dir.flag == "unreadable")
+                            .map(|dir| format!("{} {}", dir.path, dir.reason))
+                    }
+                    Err(error) => Some(error.to_string()),
+                }
             } else {
                 Some(format!(
                     "the folder {} cannot be reached; if it is gone, `folders remove` it",
                     self.root.display()
                 ))
             };
-            let files = found
+            let files = walked
+                .files
                 .into_iter()
                 .filter_map(|path| {
                     let key = identity::relative(&self.root, &path).ok()?;
@@ -209,7 +221,7 @@ fn id_of(path: &Path) -> Option<String> {
     None
 }
 
-/// What the look for a missing file found (`folders.md` 41).
+/// What the look for a missing file found (`folders.md` 43).
 pub(super) enum Look {
     Moved,
     Nowhere,
@@ -287,7 +299,7 @@ impl<'a> Peers<'a> {
         self.loaded().1.as_deref()
     }
 
-    /// Whether a file in another folder carries the id (`folders.md` 40).
+    /// Whether a file in another folder carries the id (`folders.md` 42).
     pub(super) fn carry(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.files()
@@ -297,7 +309,7 @@ impl<'a> Peers<'a> {
     }
 
     /// Whether another folder holds, unbound, a file carrying the id: a move
-    /// its next scan takes (`folders.md` 41).
+    /// its next scan takes (`folders.md` 43).
     pub(super) fn arriving(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.folder.is_some()
@@ -326,7 +338,7 @@ impl<'a> Peers<'a> {
     }
 
     /// Another folder's binding of an id-less file gone from it, by identity
-    /// or unique bytes (`folders.md` 41), its path given whole.
+    /// or unique bytes (`folders.md` 43), its path given whole.
     pub(super) fn left_behind(&self, mark: Option<&str>, hash: &str) -> Option<state::Bound> {
         let mut same_bytes = Vec::new();
         for peer in self.all() {
@@ -362,7 +374,7 @@ impl<'a> Peers<'a> {
     }
 
     /// Whether a file this folder lost sits in another folder
-    /// (`folders.md` 41, 43).
+    /// (`folders.md` 43, 45).
     pub(super) fn moved_to(&self, lost: &state::Bound, held_here: bool) -> Look {
         if let Some(why) = self.doubt.as_deref().or(self.unreadable()) {
             return Look::Unsure(why.to_string());
@@ -381,7 +393,7 @@ impl<'a> Peers<'a> {
             return Look::Moved;
         }
         // Where both folders hold the item, the other's file of it is its
-        // own, not this one moved (`folders.md` 43).
+        // own, not this one moved (`folders.md` 45).
         let theirs = |peer: &Peer, file: &OnDisk| {
             held_here
                 && peer.holds(item) == Some(true)
@@ -430,7 +442,7 @@ impl<'a> Peers<'a> {
     }
 
     /// Whether another folder holds the item with a file of it already
-    /// (`folders.md` 42).
+    /// (`folders.md` 44).
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.holds(item_id) == Some(true)
@@ -441,7 +453,7 @@ impl<'a> Peers<'a> {
     }
 
     /// A file another folder let go of, holding the bytes it wrote, to take
-    /// in (`folders.md` 42).
+    /// in (`folders.md` 44).
     pub(super) fn let_go(&self, item_id: &str) -> Option<(PathBuf, state::Bound)> {
         for peer in self.all() {
             let Some(bound) = peer.bound_to(item_id) else {

@@ -19,12 +19,12 @@
     "include": {
       "type": "array",
       "items_type": "string",
-      "description": "Paths the folder takes, as gitignore patterns relative to its root; empty or absent takes every path"
+      "description": "Paths the folder takes, as gitignore patterns relative to its root; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name"
     },
     "ignore": {
       "type": "array",
       "items_type": "string",
-      "description": "Paths the folder leaves alone, as gitignore patterns relative to its root, on top of the built-in ignores"
+      "description": "Paths the folder leaves alone, as gitignore patterns relative to its root, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says"
     },
     "first_placement": {
       "type": "object",

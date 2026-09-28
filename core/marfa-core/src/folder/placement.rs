@@ -79,7 +79,11 @@ impl Folder {
         let mut properties = Map::new();
         properties.insert(PATH_PROPERTY.into(), Value::String(path.into()));
         match self.placement(item_id)? {
-            Some(edge) if path_of(&edge) == Some(path) => return Ok(false),
+            // A path differing only in case or form is the same place, so each
+            // machine keeps its file's own name (`folders.md` 27).
+            Some(edge) if path_of(&edge).is_some_and(|held| super::names::same(held, path)) => {
+                return Ok(false);
+            }
             Some(edge) => {
                 self.core.update_edge(
                     &edge.id,
@@ -344,13 +348,13 @@ pub(super) fn path_of(edge: &Edge) -> Option<&str> {
 }
 
 /// A path with empty and `.` names taken out, or `None` where a name climbs
-/// out or is dot-led, which the walk never reads back (`folders.md` 25).
+/// out; whether the folder takes it is its lists' to say (`folders.md` 25).
 pub(super) fn cleaned(path: &str) -> Option<String> {
     let names: Vec<&str> = path
         .split('/')
         .filter(|name| !name.is_empty() && *name != ".")
         .collect();
-    if names.is_empty() || names.iter().any(|name| name.starts_with('.')) {
+    if names.is_empty() || names.contains(&"..") {
         return None;
     }
     Some(names.join("/"))

@@ -6,6 +6,7 @@ use serde_json::{Map, Value};
 
 use super::edge_types::{self, EdgeType, EdgeTypes, End};
 use super::embeds::{self, ATTACHMENT_EDGE, Target};
+use super::names::{folded, forms};
 use super::state::{self, Line};
 use super::{
     FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, document, fields, name_of, title_of,
@@ -15,7 +16,7 @@ use crate::catalog::Catalog;
 use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
 
 /// A file's links and lines, read once every file in the scan is bound
-/// (`folders.md` 31).
+/// (`folders.md` 33).
 pub(super) struct EdgeWork {
     pub path: String,
     pub item_id: String,
@@ -39,8 +40,8 @@ pub(super) struct Outcome {
     pub embeds: Vec<String>,
 }
 
-/// Every name an item answers to in this copy, lowercased: its title, and
-/// its file's path and name here with and without the extension.
+/// Every name an item answers to in this copy, folded (`folders.md` 27): its
+/// title, and its file's path and name here with and without the extension.
 pub(super) struct Names {
     ids: HashMap<String, BTreeSet<String>>,
 }
@@ -69,7 +70,7 @@ impl Names {
                 .map(str::trim)
                 .filter(|title| !title.is_empty())
             {
-                ids.entry(title.to_lowercase()).or_default().insert(id);
+                ids.entry(folded(title)).or_default().insert(id);
             }
         }
         for bound in state::every_bound(&conn)? {
@@ -81,11 +82,11 @@ impl Names {
     }
 
     fn of(&self, name: &str) -> Option<&BTreeSet<String>> {
-        self.ids.get(&name.trim().to_lowercase())
+        self.ids.get(&folded(name.trim()))
     }
 }
 
-/// A file's path and name, each with and without its extension, lowercased.
+/// A file's path and name, each with and without its extension, folded.
 fn file_names(path: &str) -> Vec<String> {
     let stem = |text: &str| match text.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() && !stem.ends_with('/') => stem.to_string(),
@@ -97,9 +98,7 @@ fn file_names(path: &str) -> Vec<String> {
         name_of(path).to_string(),
         title_of(path),
     ];
-    names
-        .iter_mut()
-        .for_each(|name| *name = name.to_lowercase());
+    names.iter_mut().for_each(|name| *name = folded(name));
     names.sort();
     names.dedup();
     names
@@ -184,7 +183,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve(&mut self, text: &str) -> Result<Resolved> {
-        let key = text.trim().to_lowercase();
+        let key = folded(text.trim());
         if let Some(held) = self.cache.get(&key) {
             return Ok(held.clone());
         }
@@ -275,11 +274,21 @@ impl<'a> Resolver<'a> {
             .collect();
         title_fields.sort();
         title_fields.dedup();
-        let wanted = name.trim().to_lowercase();
+        let wanted = folded(name.trim());
         let mut found = BTreeMap::new();
         let mut more = false;
-        for field in title_fields {
-            let (rows, capped) = http.items_containing(field, name.trim(), LOOKUP_PAGES)?;
+        // The server compares the text it is sent as it is, so each form a
+        // title can be held in is asked.
+        let asked: Vec<(&str, String)> = title_fields
+            .iter()
+            .flat_map(|field| {
+                forms(name.trim())
+                    .into_iter()
+                    .map(move |form| (*field, form))
+            })
+            .collect();
+        for (field, form) in asked {
+            let (rows, capped) = http.items_containing(field, &form, LOOKUP_PAGES)?;
             more |= capped;
             for row in rows {
                 let item = row.item;
@@ -289,7 +298,7 @@ impl<'a> Resolver<'a> {
                     continue;
                 }
                 let title = item.properties.get(field).and_then(Value::as_str);
-                if title.is_some_and(|title| title.trim().to_lowercase() == wanted) {
+                if title.is_some_and(|title| folded(title.trim()) == wanted) {
                     found.insert(item.id, Some(item.r#type));
                 }
             }
@@ -314,19 +323,19 @@ struct Group<'t> {
 
 impl Folder {
     /// Whether `text` names the item `id` in this copy: by its id, its
-    /// title, or its file here, ignoring case.
+    /// title, or its file here, as a folder compares names.
     fn answers_to(&self, text: &str, id: &str, catalog: &Catalog) -> Result<bool> {
         let text = text.trim();
         if text == id {
             return Ok(true);
         }
-        let wanted = text.to_lowercase();
+        let wanted = folded(text);
         if let Some(item) = self.core.get(id)?
             && item
                 .properties
                 .get(fields::title_field(catalog, &item.r#type))
                 .and_then(Value::as_str)
-                .is_some_and(|title| title.trim().to_lowercase() == wanted)
+                .is_some_and(|title| folded(title.trim()) == wanted)
         {
             return Ok(true);
         }
@@ -571,7 +580,7 @@ impl Folder {
     }
 
     /// Queues what a file's links, embeds and lines change (`folders.md` 11,
-    /// 12, 29); a line read no way it was written changes nothing of its type.
+    /// 12, 31); a line read no way it was written changes nothing of its type.
     pub(super) fn queue_edges(
         &self,
         work: &EdgeWork,

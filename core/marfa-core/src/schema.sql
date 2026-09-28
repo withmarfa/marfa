@@ -247,7 +247,7 @@ CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
 -- is equality on the whole string, which misses every row waiting on two
 -- creates. An index here would say the lookup was cheap without making it so.
 
--- A folder's own state (`folders.md` 26). In this file rather than beside it
+-- A folder's own state (`folders.md` 28). In this file rather than beside it
 -- because the mapping, the journal and the queue have to move together: a
 -- file bound to an item whose create did not queue is a file the folder
 -- thinks it has pushed, and one transaction is what stops that.
@@ -269,12 +269,12 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- The bytes the folder itself last wrote at this path, hashed; null where
   -- the last agreement was a scan's read of the person's bytes. A pull takes
   -- away the file of an item that left the slice only when the file still
-  -- holds these bytes (`folders.md` 33): a file the folder never wrote, or
+  -- holds these bytes (`folders.md` 35): a file the folder never wrote, or
   -- the person changed since, is theirs and stays.
   written_hash TEXT,
   -- The item ids the links in those bytes named, as a JSON array. What tells
   -- a link the person removed from an edge that has not been rendered yet
-  -- (`folders.md` 29): both are an edge the copy holds that the body does not
+  -- (`folders.md` 31): both are an edge the copy holds that the body does not
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
   -- The edges the file's lines last named, as JSON: what tells a line taken

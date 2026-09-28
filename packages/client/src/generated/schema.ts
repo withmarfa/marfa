@@ -11344,9 +11344,9 @@ export interface operations {
                     title: string;
                     search?: components["schemas"]["FolderSearch"];
                     defaults?: components["schemas"]["FolderDefaults"];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. */
+                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name. */
                     include?: string[];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone. */
+                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says. */
                     ignore?: string[];
                     /** @description A map from type identifier to the directory, relative to the folder's root, where a new item of that type made elsewhere first appears. */
                     first_placement?: {
@@ -11518,9 +11518,9 @@ export interface operations {
                     title?: string;
                     search?: components["schemas"]["FolderSearch"];
                     defaults?: components["schemas"]["FolderDefaults"];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. */
+                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name. */
                     include?: string[];
-                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone. */
+                    /** @description Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says. */
                     ignore?: string[];
                     /** @description A map from type identifier to the directory, relative to the folder's root, where a new item of that type made elsewhere first appears. */
                     first_placement?: {

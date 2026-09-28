@@ -22,10 +22,10 @@ pub struct UpdateFolderRequest {
     pub search: Option<Box<models::FolderSearch>>,
     #[serde(rename = "defaults", skip_serializing_if = "Option::is_none")]
     pub defaults: Option<Box<models::FolderDefaults>>,
-    /// Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path.
+    /// Gitignore patterns, relative to the folder's root, naming the paths the folder takes; empty or absent takes every path. A dot-led path is taken only where a line names a dot-led name on its way, and no line reaches what the built-in lists name.
     #[serde(rename = "include", skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<String>>,
-    /// Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone.
+    /// Gitignore patterns, relative to the folder's root, naming the paths the folder leaves alone, winning over `include`; the built-in lists, of files a machine or an editor writes for itself and of secrets, apply whatever either list says.
     #[serde(rename = "ignore", skip_serializing_if = "Option::is_none")]
     pub ignore: Option<Vec<String>>,
     /// A map from type identifier to the directory, relative to the folder's root, where a new item of that type made elsewhere first appears.
