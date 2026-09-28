@@ -5625,9 +5625,8 @@ describe("an edit behind an edit of the same row", () => {
     if (!keyed.ok) return;
     await edit(device, keyed.value.item_id ?? "k", { body: "edited" }, 0);
     const door = scriptDoor(harness);
-    // Before anything is sent, another device sets the row's notes, which
-    // neither the create nor the edit carries. The create is merged over
-    // that and answered accepted, a version past the one after its base.
+    // A write the edit does not touch, so the answer to the create still holds
+    // what the edit was made against.
     elsewhere(door, KEYED.id, { notes: "elsewhere" });
     const report = await drained(device);
 
