@@ -303,11 +303,10 @@ impl Folder {
         self.core.lock.refuse_unless_writer()?;
         let edge_types = EdgeTypes::refresh(self.core.http()?, &*self.core.conn()?)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
-        self.core.hydrate_every_type_or(
-            settings.types(),
-            settings.tier(),
-            &whole_edge_types(&settings, &edge_types),
-        )
+        let catalog = Catalog::load(&*self.core.conn()?)?;
+        let whole = whole_edge_types(&settings, &edge_types, &catalog);
+        self.core
+            .hydrate_every_type_or(settings.types(), settings.tier(), &whole)
     }
 
     /// Hydrates where the copy cannot answer: never hydrated, cut short, or
@@ -341,9 +340,10 @@ impl Folder {
             return Ok(true);
         };
         let whole: HashSet<String> = crate::store::whole_edge_types(&conn)?.into_iter().collect();
-        let wanted: HashSet<String> = whole_edge_types(&settings, &edge_types)
-            .into_iter()
-            .collect();
+        let wanted: HashSet<String> =
+            whole_edge_types(&settings, &edge_types, &Catalog::load(&conn)?)
+                .into_iter()
+                .collect();
         Ok(held != asked || tier != settings.tier() || whole != wanted)
     }
 
@@ -386,10 +386,16 @@ impl Folder {
 /// The edge types a folder's copy holds whole: its search's, those a child's
 /// file writes, and a host's attachments, whose sources the slice may not hold
 /// (`folders.md` 11, 12).
-fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes) -> Vec<String> {
+fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = settings.whole_edge_types();
     whole.extend(edge_types.written_at_targets());
-    if edge_types.get(ATTACHMENT_EDGE).is_some() {
+    // A search of files alone holds no document to embed one.
+    let documents = settings.types().is_empty()
+        || settings
+            .types()
+            .iter()
+            .any(|named| !catalog.matches(FILE_TYPE, named.trim()));
+    if documents && edge_types.get(ATTACHMENT_EDGE).is_some() {
         whole.push(ATTACHMENT_EDGE.into());
     }
     whole.sort();

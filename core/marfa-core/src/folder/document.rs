@@ -276,32 +276,36 @@ pub fn render_link(target: &str) -> String {
     format!("[[{target}]]")
 }
 
-/// A body embed that names a file in the folder rather than an address.
+/// A body embed, which names a file in the folder or a note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Embed {
     /// `![[name]]`, the name before any `|` or `#`.
     Named { raw: String, name: String },
     /// `![alt](path)`, the path decoded and without its query or fragment.
     Path { raw: String, path: String },
+    /// `![alt](a b.png)`: a raw space, which ends a Markdown path, so what
+    /// the parentheses hold is kept whole to say so.
+    Spaced { raw: String, path: String },
 }
 
 impl Embed {
     /// The embed as the body writes it.
     pub fn raw(&self) -> &str {
         match self {
-            Embed::Named { raw, .. } | Embed::Path { raw, .. } => raw,
+            Embed::Named { raw, .. } | Embed::Path { raw, .. } | Embed::Spaced { raw, .. } => raw,
         }
     }
 }
 
 /// The embeds a body carries, in order and once each: `![[name]]` and
-/// `![alt](path)`, an address such as `https://` aside.
+/// `![alt](path)`, an address such as `https://` and anything in code aside.
 pub fn embeds(body: &str) -> Vec<Embed> {
+    let text = without_code(body);
     let mut found: Vec<Embed> = Vec::new();
     let mut at = 0usize;
-    while let Some(start) = body[at..].find("![") {
+    while let Some(start) = text[at..].find("![") {
         let open = at + start;
-        let rest = &body[open + 2..];
+        let rest = &text[open + 2..];
         let (embed, used) = match rest.strip_prefix('[') {
             Some(inner) => match inner.find("]]") {
                 Some(end) if !inner[..end].contains('\n') => {
@@ -319,19 +323,28 @@ pub fn embeds(body: &str) -> Vec<Embed> {
                 }
                 _ => (None, 3),
             },
-            None => {
-                match image(rest) {
-                    Some((path, length)) => {
-                        let used = 2 + length;
-                        let embed = (!is_address(&path)).then(|| Embed::Path {
+            None => match image(rest) {
+                Some(Image::Path(path, length)) => {
+                    let used = 2 + length;
+                    let path = (!is_address(&path)).then(|| local(&path));
+                    let embed = path
+                        .filter(|path| !path.is_empty())
+                        .map(|path| Embed::Path {
                             raw: body[open..open + used].to_string(),
-                            path: local(&path),
+                            path,
                         });
-                        (embed.filter(|embed| !matches!(embed, Embed::Path { path, .. } if path.is_empty())), used)
-                    }
-                    None => (None, 2),
+                    (embed, used)
                 }
-            }
+                Some(Image::Spaced(path, length)) => {
+                    let used = 2 + length;
+                    let embed = (!is_address(&path)).then(|| Embed::Spaced {
+                        raw: body[open..open + used].to_string(),
+                        path: local(&path),
+                    });
+                    (embed, used)
+                }
+                None => (None, 2),
+            },
         };
         if let Some(embed) = embed
             && !found.contains(&embed)
@@ -343,9 +356,86 @@ pub fn embeds(body: &str) -> Vec<Embed> {
     found
 }
 
-/// A Markdown image's destination and how much of `rest`, the text after
-/// its `![`, it takes.
-fn image(rest: &str) -> Option<(String, usize)> {
+/// A body with its code blanked, fenced blocks and inline spans, each byte
+/// where it was, since Obsidian shows an embed in code as text.
+fn without_code(body: &str) -> String {
+    let mut out: Vec<u8> = Vec::with_capacity(body.len());
+    let mut fence: Option<&str> = None;
+    for line in body.split_inclusive('\n') {
+        let opens = ["```", "~~~"]
+            .into_iter()
+            .find(|mark| line.trim_start().starts_with(mark));
+        let in_code = match (fence, opens) {
+            (Some(held), Some(mark)) if held == mark => {
+                fence = None;
+                true
+            }
+            (Some(_), _) => true,
+            (None, Some(mark)) => {
+                fence = Some(mark);
+                true
+            }
+            (None, None) => false,
+        };
+        let bytes = line.as_bytes();
+        let mut masked = vec![in_code; bytes.len()];
+        let run_at = |from: usize| {
+            bytes[from..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count()
+        };
+        let mut at = 0;
+        while !in_code && at < bytes.len() {
+            if bytes[at] != b'`' {
+                at += 1;
+                continue;
+            }
+            let run = run_at(at);
+            let mut next = at + run;
+            let mut closed = None;
+            while next < bytes.len() {
+                if bytes[next] == b'`' {
+                    let found = run_at(next);
+                    if found == run {
+                        closed = Some(next + found);
+                        break;
+                    }
+                    next += found;
+                } else {
+                    next += 1;
+                }
+            }
+            match closed {
+                Some(end) => {
+                    masked[at..end].iter_mut().for_each(|mask| *mask = true);
+                    at = end;
+                }
+                None => at += run,
+            }
+        }
+        out.extend(bytes.iter().zip(masked).map(|(byte, masked)| {
+            if masked && *byte != b'\n' {
+                b' '
+            } else {
+                *byte
+            }
+        }));
+    }
+    // Only whole characters were blanked, each byte to a space.
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// What a Markdown image's parentheses hold.
+enum Image {
+    /// A destination, and how much of the text after `![` the image takes.
+    Path(String, usize),
+    /// Text a raw space runs through, which is no destination.
+    Spaced(String, usize),
+}
+
+/// A Markdown image's destination, read from `rest`, the text after its `![`.
+fn image(rest: &str) -> Option<Image> {
     let close = rest.find(']')?;
     if rest[..close].contains('\n') || !rest[close + 1..].starts_with('(') {
         return None;
@@ -366,12 +456,26 @@ fn image(rest: &str) -> Option<(String, usize)> {
             (&tail[..end], end)
         }
     };
-    // What follows is a title, if anything, and then the closing parenthesis.
     let paren = tail[after..].find(')')?;
-    if tail[after..after + paren].contains('\n') {
+    let between = &tail[after..after + paren];
+    if between.contains('\n') {
         return None;
     }
-    Some((destination.to_string(), from + skipped + after + paren + 1))
+    let length = from + skipped + after + paren + 1;
+    // A title is quoted; anything else after a space is the path going on.
+    let title = between.trim();
+    if title.is_empty()
+        || title.len() >= 2
+            && (title.starts_with('"') && title.ends_with('"')
+                || title.starts_with('\'') && title.ends_with('\''))
+    {
+        Some(Image::Path(destination.to_string(), length))
+    } else {
+        Some(Image::Spaced(
+            tail[..after + paren].trim().to_string(),
+            length,
+        ))
+    }
 }
 
 /// Whether a destination is an address rather than a path: a scheme, a
@@ -609,6 +713,24 @@ mod tests {
         assert!(
             embeds("![alt\ntext](x.png) and ![unclosed](x.png").is_empty(),
             "an image split across lines, or never closed, was read as an embed"
+        );
+        assert_eq!(
+            embeds(
+                "```md\n![](a.png)\n```\n`![](b.png)` and ``![[c.png]]`` ~~~\n![](d.png) ![[é.png]]"
+            ),
+            vec![path("![](d.png)", "d.png"), named("![[é.png]]", "é.png"),],
+            "an embed shown in code was read as one, or one after the code was missed"
+        );
+        assert_eq!(
+            embeds("![](raw x.png) and ![](y.png 'title')"),
+            vec![
+                Embed::Spaced {
+                    raw: "![](raw x.png)".into(),
+                    path: "raw x.png".into()
+                },
+                path("![](y.png 'title')", "y.png"),
+            ],
+            "a raw space was read as ending the path, or a title as part of it"
         );
     }
 }

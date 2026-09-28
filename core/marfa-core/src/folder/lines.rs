@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde_json::{Map, Value};
 
 use super::edge_types::{self, EdgeType, EdgeTypes, End};
-use super::embeds::{ATTACHMENT_EDGE, Target};
+use super::embeds::{self, ATTACHMENT_EDGE, Target};
 use super::state::{self, Line};
 use super::{
     FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, document, fields, name_of, title_of,
@@ -582,24 +582,24 @@ impl Folder {
             }
         }
 
-        // An embed of a file is its item's `attached-to` edge to this one.
+        // An embed of a file is its item's `attached-to` edge to this one; one
+        // naming no file here stands removals down, as a link does, and says so.
         let mut attached: Vec<String> = Vec::new();
         let mut embeds_resolved = true;
         let mut embed_reasons: Vec<String> = Vec::new();
         for (raw, target) in &work.embeds {
-            match target {
-                Target::At(path) => match self.embedded_item(path, catalog)? {
-                    Some(Some(id)) if !attached.contains(&id) => attached.push(id),
-                    Some(_) => {}
-                    None => embeds_resolved = false,
-                },
-                Target::Outside => {
+            let item = match target {
+                Target::At(path) => self.embedded_item(path, catalog)?,
+                _ => None,
+            };
+            match (item, target) {
+                (Some(Some(id)), _) if !attached.contains(&id) => attached.push(id),
+                (Some(_), _) => {}
+                (None, Target::Outside) => embed_reasons.push(embeds::reason(raw, target)),
+                (None, _) => {
                     embeds_resolved = false;
-                    embed_reasons.push(format!(
-                        "{raw} leads out of the folder, so the folder neither sends nor writes the file it shows"
-                    ));
+                    embed_reasons.push(embeds::reason(raw, target));
                 }
-                Target::Named(_) | Target::Nothing => embeds_resolved = false,
             }
         }
 

@@ -2,11 +2,12 @@
 //! edge from the file's item to the document's, written where its link says.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde_json::Value;
 
 use super::document::{self, Embed};
-use super::placement::cleaned;
+use super::placement::{cleaned, path_of};
 use super::{Flagged, Folder, bytes_of, carries_frontmatter, fields, is_document, name_of, state};
 use crate::Result;
 use crate::catalog::Catalog;
@@ -15,7 +16,7 @@ use crate::model::Item;
 /// The edge an embed is.
 pub const ATTACHMENT_EDGE: &str = "attached-to";
 
-/// Where an embed points.
+/// Where an embed of a file points.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Target {
     /// A path in the folder.
@@ -24,8 +25,10 @@ pub(super) enum Target {
     Named(String),
     /// A path leading out of the folder.
     Outside,
-    /// Nothing in the folder answers to it.
+    /// A file's name that no file the folder sends answers to.
     Nothing,
+    /// A path a raw space runs through, which names no file.
+    Spaced,
 }
 
 /// The directory a path inside the folder sits in, with its trailing `/`.
@@ -33,16 +36,14 @@ fn dir_of(path: &str) -> &str {
     path.rfind('/').map_or("", |at| &path[..=at])
 }
 
-/// `path` read from the file at `host`, or `None` where it leads out of the
-/// folder, an absolute path included.
+/// `path` read from the file at `host`, a leading `/` from the folder's root
+/// as Obsidian reads the vault's; `None` where it leads out of the folder.
 fn joined(host: &str, path: &str) -> Option<String> {
-    if path.starts_with(['/', '\\']) {
-        return None;
-    }
-    let mut parts: Vec<&str> = dir_of(host)
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect();
+    let (from, path) = match path.strip_prefix('/') {
+        Some(rooted) => ("", rooted),
+        None => (dir_of(host), path),
+    };
+    let mut parts: Vec<&str> = from.split('/').filter(|part| !part.is_empty()).collect();
     for part in path.split('/') {
         match part {
             "" | "." => {}
@@ -55,14 +56,16 @@ fn joined(host: &str, path: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// Whether a name is a file's rather than a note's: `![[name]]` with no
-/// extension is a note, as Obsidian reads it, and a note is never an embed.
-fn names_a_file(name: &str, named: bool) -> bool {
-    let last = name.rsplit('/').next().unwrap_or(name);
-    match last.rsplit_once('.') {
-        Some((stem, _)) if !stem.is_empty() => !is_document(std::path::Path::new(last)),
-        _ => !named,
-    }
+/// Whether a name is a document's, which an embed shows as a note.
+fn is_note(name: &str) -> bool {
+    is_document(Path::new(name.rsplit('/').next().unwrap_or(name)))
+}
+
+/// Whether a name, with no file answering to it, is still plainly a file's:
+/// its extension names a MIME type. `![[Dr. Smith]]` is a note to Obsidian.
+fn file_like(name: &str) -> bool {
+    !is_note(name)
+        && crate::blob::mime_type_for(Path::new(name), None) != "application/octet-stream"
 }
 
 /// Whether `path` answers to `name`: the whole path, or its ending at a
@@ -90,38 +93,65 @@ fn named<'f>(host: &str, name: &str, files: impl IntoIterator<Item = &'f str>) -
         .map(str::to_string)
 }
 
+/// An embed's name and whether it is read as Obsidian reads a name; `![[./x]]`
+/// and `![[../x]]` are paths. `None` for a raw-space path.
+fn read_as(embed: &Embed) -> Option<(&str, bool)> {
+    match embed {
+        Embed::Named { name, .. } if !(name.starts_with("./") || name.starts_with("../")) => {
+            Some((name, true))
+        }
+        Embed::Named { name: path, .. } | Embed::Path { path, .. } => Some((path, false)),
+        Embed::Spaced { .. } => None,
+    }
+}
+
 /// Where an embed in the file at `host` points among the files the walk
 /// found; `None` for an embed of a note, which is text in the body.
 pub(super) fn on_disk(host: &str, embed: &Embed, files: &[String]) -> Option<Target> {
-    match embed {
-        Embed::Path { path, .. } => {
-            if !names_a_file(path, false) {
-                return None;
-            }
-            Some(match joined(host, path) {
-                None => Target::Outside,
-                Some(at) if files.contains(&at) => Target::At(at),
-                Some(_) => Target::Nothing,
-            })
-        }
-        Embed::Named { name, .. } if name.starts_with("./") || name.starts_with("../") => on_disk(
-            host,
-            &Embed::Path {
-                raw: embed.raw().to_string(),
-                path: name.clone(),
-            },
-            files,
-        ),
-        Embed::Named { name, .. } => {
-            if !names_a_file(name, true) {
-                return None;
-            }
-            Some(
-                named(host, name, files.iter().map(String::as_str))
-                    .map_or(Target::Nothing, Target::At),
-            )
-        }
+    let Some((name, by_name)) = read_as(embed) else {
+        let Embed::Spaced { path, .. } = embed else {
+            return None;
+        };
+        return file_like(path).then_some(Target::Spaced);
+    };
+    if is_note(name) {
+        return None;
     }
+    let found = if by_name {
+        named(host, name, files.iter().map(String::as_str))
+    } else {
+        match joined(host, name) {
+            None => return Some(Target::Outside),
+            Some(at) => files.contains(&at).then_some(at),
+        }
+    };
+    match found {
+        Some(at) if is_note(&at) => None,
+        Some(at) => Some(Target::At(at)),
+        None => file_like(name).then_some(Target::Nothing),
+    }
+}
+
+/// Why the folder reads nothing from an embed, said in the file's report.
+pub(super) fn reason(raw: &str, target: &Target) -> String {
+    match target {
+        Target::Outside => format!(
+            "{raw} leads out of the folder, so the folder neither sends nor writes the file it shows"
+        ),
+        Target::Spaced => format!(
+            "{raw} has a raw space in its path, which ends a Markdown path, so it names no file and no attachment of this file is removed until it does; write the space as %20, or the path inside < >"
+        ),
+        Target::At(_) | Target::Named(_) | Target::Nothing => format!(
+            "{raw} names no file the folder sends, so no attachment of this file is removed until it does"
+        ),
+    }
+}
+
+/// Why a pull writes no file for an embed that names no attachment.
+fn unattached(raw: &str) -> String {
+    format!(
+        "{raw} names no attachment of this file the folder can read, so no file is written for it"
+    )
 }
 
 /// An embed in an item's body, and the attachment the copy reads it as.
@@ -157,12 +187,10 @@ pub(super) fn reported(path: &str, reason: String) -> Flagged {
 impl Folder {
     /// The file items attached to `host` that the copy holds.
     fn attachments(&self, host: &str, catalog: &Catalog) -> Result<Vec<Attachment>> {
-        let mut found = Vec::new();
+        let mut found: Vec<Attachment> = Vec::new();
         for edge in self.core.edges_to(host)? {
             if edge.edge_type != ATTACHMENT_EDGE
-                || found
-                    .iter()
-                    .any(|held: &Attachment| held.id == edge.source_id)
+                || found.iter().any(|held| held.id == edge.source_id)
             {
                 continue;
             }
@@ -193,8 +221,8 @@ impl Folder {
         Ok(found)
     }
 
-    /// The embeds of an item's body, each read as the attachment bound at its
-    /// path, or else the one attachment whose file name or title is its name.
+    /// The embeds of files in an item's body, each read as the attachment
+    /// bound at its path, or else the one whose file name or title is its name.
     pub(super) fn shown_in(
         &self,
         host: &Item,
@@ -202,7 +230,7 @@ impl Folder {
         body: &str,
         catalog: &Catalog,
     ) -> Result<Vec<Shown>> {
-        if !carries_frontmatter(std::path::Path::new(host_path)) {
+        if !carries_frontmatter(Path::new(host_path)) {
             return Ok(Vec::new());
         }
         let embeds = document::embeds(body);
@@ -222,41 +250,39 @@ impl Folder {
         };
         let mut shown = Vec::new();
         for embed in &embeds {
-            let (path, named) = match embed {
-                Embed::Named { name, .. }
-                    if !(name.starts_with("./") || name.starts_with("../")) =>
-                {
-                    (name, true)
-                }
-                Embed::Named { name, .. } | Embed::Path { path: name, .. } => (name, false),
-            };
-            if !names_a_file(path, named) {
-                continue;
-            }
             let raw = embed.raw().to_string();
-            if named {
-                shown.push(Shown {
-                    raw,
-                    item: by_name(path),
-                    target: Target::Named(path.clone()),
-                });
+            let Some((name, named)) = read_as(embed) else {
+                if let Embed::Spaced { path, .. } = embed
+                    && file_like(path)
+                {
+                    shown.push(Shown {
+                        raw,
+                        item: None,
+                        target: Target::Spaced,
+                    });
+                }
+                continue;
+            };
+            if is_note(name) {
                 continue;
             }
-            match joined(host_path, path) {
-                None => shown.push(Shown {
-                    raw,
-                    item: None,
-                    target: Target::Outside,
-                }),
-                Some(at) => shown.push(Shown {
-                    raw,
-                    item: attachments
-                        .iter()
-                        .find(|held| held.path.as_deref() == Some(at.as_str()))
-                        .map(|held| held.id.clone())
-                        .or_else(|| by_name(&at)),
-                    target: Target::At(at),
-                }),
+            let (item, target) = if named {
+                (by_name(name), Target::Named(name.to_string()))
+            } else {
+                match joined(host_path, name) {
+                    None => (None, Target::Outside),
+                    Some(at) => (
+                        attachments
+                            .iter()
+                            .find(|held| held.path.as_deref() == Some(at.as_str()))
+                            .map(|held| held.id.clone())
+                            .or_else(|| by_name(&at)),
+                        Target::At(at),
+                    ),
+                }
+            };
+            if item.is_some() || target == Target::Outside || file_like(name) {
+                shown.push(Shown { raw, item, target });
             }
         }
         Ok(shown)
@@ -285,44 +311,58 @@ impl Folder {
                 .unwrap_or_default();
             for shown in self.shown_in(host, host_path, body, catalog)? {
                 match (shown.item, shown.target) {
-                    (_, Target::Outside) => embedded.reports.push(reported(
-                        host_path,
-                        format!(
-                            "{} leads out of the folder, so the folder neither sends nor writes the file it shows",
-                            shown.raw
-                        ),
-                    )),
                     (Some(id), Target::At(path)) => links.entry(id).or_default().push(Link {
                         path,
                         host: host_path.clone(),
                         raw: shown.raw,
                     }),
                     (Some(id), Target::Named(name)) => {
-                        by_name.push((id, name, host_path.clone(), shown.raw));
+                        by_name.push((host_path.clone(), shown.raw, id, name));
                     }
-                    _ => {}
+                    (None, Target::At(_) | Target::Named(_)) => {
+                        embedded
+                            .reports
+                            .push(reported(host_path, unattached(&shown.raw)));
+                    }
+                    (_, target) => {
+                        embedded
+                            .reports
+                            .push(reported(host_path, reason(&shown.raw, &target)));
+                    }
                 }
             }
         }
-        // Where a file already answers to the name, Obsidian shows that one.
-        for (id, name, host, raw) in by_name {
-            let bound = state::bound_to_item(&*self.core.conn()?, &id)?.map(|bound| bound.path);
-            let linked: Vec<String> = links
-                .get(&id)
-                .map(|found| found.iter().map(|link| link.path.clone()).collect())
-                .unwrap_or_default();
-            let path = named(
-                &host,
-                &name,
-                bound.iter().chain(&linked).map(String::as_str),
-            )
-            .unwrap_or_else(|| {
-                if name.contains('/') {
-                    name.trim_start_matches('/').to_string()
-                } else {
-                    format!("{}{name}", dir_of(&host))
+        // In one order on every machine; a placement the name answers to is
+        // where the file already sits, and otherwise a file of that name here.
+        by_name.sort();
+        for (host, raw, id, name) in by_name {
+            let placed = self
+                .placement(&id)?
+                .and_then(|edge| path_of(&edge).and_then(cleaned))
+                .filter(|path| answers(path, &name));
+            let path = match placed {
+                Some(path) => path,
+                None => {
+                    let bound =
+                        state::bound_to_item(&*self.core.conn()?, &id)?.map(|bound| bound.path);
+                    let linked: Vec<String> = links
+                        .get(&id)
+                        .map(|found| found.iter().map(|link| link.path.clone()).collect())
+                        .unwrap_or_default();
+                    named(
+                        &host,
+                        &name,
+                        bound.iter().chain(&linked).map(String::as_str),
+                    )
+                    .unwrap_or_else(|| {
+                        if name.contains('/') {
+                            name.trim_start_matches('/').to_string()
+                        } else {
+                            format!("{}{name}", dir_of(&host))
+                        }
+                    })
                 }
-            });
+            };
             links.entry(id).or_default().push(Link { path, host, raw });
         }
         for (id, mut found) in links {
@@ -373,9 +413,9 @@ mod tests {
             "a path climbing out of the folder was read inside it"
         );
         assert_eq!(
-            joined("notes/a.md", "/b.png"),
-            None,
-            "an absolute path was read inside the folder"
+            joined("notes/a.md", "/img/b.png").as_deref(),
+            Some("img/b.png"),
+            "a path from the vault's root was not read from the folder's"
         );
     }
 
@@ -403,13 +443,21 @@ mod tests {
     }
 
     #[test]
-    fn an_embed_of_a_note_is_no_file() {
-        assert!(names_a_file("pic.png", true));
-        assert!(
-            !names_a_file("A note", true),
-            "an extensionless name, a note to Obsidian, was read as a file"
-        );
-        assert!(!names_a_file("note.md", false));
-        assert!(names_a_file("scan", false));
+    fn a_name_no_file_answers_to_is_a_file_only_where_a_mime_type_claims_it() {
+        assert!(file_like("pic.png"));
+        assert!(file_like("doc.PDF"));
+        for note in [
+            "A note",
+            "Dr. Smith",
+            "v1.2 plan",
+            "2024.05.01",
+            "note.md",
+            "list.txt",
+        ] {
+            assert!(
+                !file_like(note),
+                "{note} was read as a file, so it would hold back removals"
+            );
+        }
     }
 }
