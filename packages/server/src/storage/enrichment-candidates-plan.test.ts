@@ -1,6 +1,6 @@
 /**
- * Verified by reading the query plan, not by reasoning about it — it once
- * shipped as a full scan behind a comment claiming otherwise; literals stay inlined since a bound param defeats the partial-index proof.
+ * Read from the query plan, not reasoning — it silently regressed to a full
+ * scan once. Literals stay inlined; a bound param defeats the proof.
  */
 import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
@@ -31,8 +31,8 @@ async function candidatePlan(opts?: {
   try {
     await client.executeMultiple(SCHEMA_SQL);
     if (opts?.seedLegacyIndex) {
-      // What a pre-rename build wrote: same name, old predicate. Dropped and
-      // recreated, since the schema above already created it under the current one.
+      // What a pre-rename build wrote: same name, old predicate — dropped
+      // and recreated since `IF NOT EXISTS` schema apply won't replace it.
       await client.execute(
         "DROP INDEX IF EXISTS `idx_items_enrichment_candidates`",
       );

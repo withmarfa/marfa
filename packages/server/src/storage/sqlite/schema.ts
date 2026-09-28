@@ -85,7 +85,7 @@ export const items = sqliteTable(
       .on(table.starts_at)
       .where(sql`starts_at IS NOT NULL`),
     // No type in the predicate — that's the registry's answer — and renamed
-    // apart from its stale twin so `IF NOT EXISTS` gives an old database it too.
+    // apart from its stale twin so `IF NOT EXISTS` creates it for old DBs.
     index("idx_items_enrichment_queue")
       .on(table.created_at)
       .where(

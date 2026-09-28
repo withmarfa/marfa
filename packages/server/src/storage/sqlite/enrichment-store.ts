@@ -41,7 +41,7 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
             ...(inherited.length > 0 ? [inArray(items.type, inherited)] : []),
           ),
           // Literals, textually identical to idx_items_enrichment_queue's
-          // predicate: a partial index is used only when the query provably implies it, which a bound parameter never does.
+          // predicate: only literals prove the partial index applies here.
           sql`${items.state} <> 'trashed'`,
           sql`${blobRef} IS NOT NULL`,
           or(
