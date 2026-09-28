@@ -50,8 +50,8 @@ pub struct Folder {
     root: PathBuf,
     folder: String,
     core: Core,
-    /// The id of the key the credential is, once asked.
-    key_id: std::sync::OnceLock<Option<String>>,
+    /// The key the credential is, once asked.
+    key: std::sync::OnceLock<placement::KeyState>,
 }
 
 /// What a scan did.
@@ -87,9 +87,28 @@ impl Folder {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
+        // A refused add leaves only what was there before it.
+        let made = if !root.exists() {
+            Some(root.clone())
+        } else if !state.exists() {
+            Some(state.clone())
+        } else {
+            None
+        };
         std::fs::create_dir_all(&state).map_err(|error| {
             CoreError::Store(format!("cannot make {}: {error}", state.display()))
         })?;
+        let added = Folder::bind(root, folder, server);
+        if added.is_err()
+            && let Some(made) = made
+        {
+            let _ = std::fs::remove_dir_all(made);
+        }
+        added
+    }
+
+    fn bind(root: PathBuf, folder: &str, server: Server) -> Result<Folder> {
+        let state = root.join(STATE_DIR);
         let core = Core::open(state.join("core.sqlite"), Some(server))?;
         if let Some(bound) = settings_file::bound(&core)?
             && bound != folder
@@ -103,7 +122,7 @@ impl Folder {
             root,
             folder: folder.to_string(),
             core,
-            key_id: std::sync::OnceLock::new(),
+            key: std::sync::OnceLock::new(),
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -164,7 +183,7 @@ impl Folder {
             root,
             folder,
             core,
-            key_id: std::sync::OnceLock::new(),
+            key: std::sync::OnceLock::new(),
         })
     }
 
@@ -1162,7 +1181,6 @@ impl Folder {
     /// longer holds again on the version the copy holds (`folders.md` 20).
     pub fn drain(&self) -> Result<Drained> {
         let mut report = self.core.drain()?;
-        let mut gave_way = self.settle_placements(&mut report)?;
         let mut rebased = 0;
         while report.stopped.is_none() {
             let now = self.rebase_thinned()?;
@@ -1170,8 +1188,7 @@ impl Folder {
                 break;
             }
             rebased += now;
-            let mut again = self.core.drain()?;
-            gave_way += self.settle_placements(&mut again)?;
+            let again = self.core.drain()?;
             report.sent += again.sent;
             report.held = again.held;
             report.verdicts.extend(again.verdicts);
@@ -1183,6 +1200,7 @@ impl Folder {
             }
             report.retry_after_seconds = report.retry_after_seconds.max(again.retry_after_seconds);
         }
+        let gave_way = self.settle_placements(&mut report)?;
         Ok(Drained {
             report,
             rebased,
@@ -1416,61 +1434,101 @@ impl Folder {
         let hash = state::hash(&bytes);
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
 
-        if ours
-            && bound
-                .as_ref()
-                .is_some_and(|bound| bound.content_hash == hash)
-        {
-            report.placed += usize::from(self.place(&item.id, &want, withheld)?);
-            report.unchanged += 1;
-            return Ok(false);
-        }
         // The bytes on the disk, not the mapping's memory of them: a file
         // changed since the scan read it is the person's (`folders.md` 27).
-        if let Some(bound) = &bound
-            && std::fs::read(self.root.join(&bound.path))
+        let changed = |bound: &state::Bound| {
+            std::fs::read(self.root.join(&bound.path))
                 .is_ok_and(|found| state::hash(&found) != bound.content_hash)
-        {
-            report.unwritten += 1;
-            return Ok(false);
-        }
-        if ours
-            && let Some(bound) = &bound
-            && self.behind_by_its_line_alone(item, bound, &declined)?
-        {
-            report.placed += usize::from(self.place(&item.id, &want, withheld)?);
-            report.unchanged += 1;
-            return Ok(false);
-        }
-        // Something at the destination that is not this item's own file
-        // (`folders.md` 27), unless it is byte for byte this item's render.
-        if !ours && path.exists() {
-            if bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes) {
-                let conn = self.core.conn()?;
-                state::bind(
-                    &conn,
-                    &state::Bound {
-                        path: want.clone(),
-                        item_id: item.id.clone(),
-                        identity: None,
-                        content_hash: hash.clone(),
-                        written_hash: Some(hash),
-                        links: wrote,
-                        declined,
-                        edit_line: None,
-                    },
-                )?;
-                state::journal_clear(&conn, &want)?;
-                drop(conn);
-                report.placed += usize::from(self.place(&item.id, &want, withheld)?);
-                report.unchanged += 1;
+        };
+        let in_place = match &bound {
+            Some(bound) if ours && bound.content_hash == hash => true,
+            Some(bound) if changed(bound) => {
+                report.unwritten += 1;
                 return Ok(false);
             }
+            Some(bound) if ours => self.behind_by_its_line_alone(item, bound, &declined)?,
+            _ => false,
+        };
+        // Something at the destination that is not this item's own file
+        // (`folders.md` 27), unless it is byte for byte this item's render.
+        let occupied = !in_place && !ours && path.exists();
+        let rebound =
+            occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
+        if occupied && !rebound {
             if leaving.is_some_and(|leaving| leaving.contains(&want)) {
                 return Ok(true);
             }
             report.unwritten += 1;
             return Ok(false);
+        }
+        if rebound {
+            let conn = self.core.conn()?;
+            state::bind(
+                &conn,
+                &state::Bound {
+                    path: want.clone(),
+                    item_id: item.id.clone(),
+                    identity: None,
+                    content_hash: hash.clone(),
+                    written_hash: Some(hash),
+                    links: wrote,
+                    declined,
+                    edit_line: None,
+                },
+            )?;
+            state::journal_clear(&conn, &want)?;
+            report.unchanged += 1;
+            return Ok(false);
+        }
+        if in_place {
+            report.placed += usize::from(self.place(&item.id, &want, withheld)?);
+            report.unchanged += 1;
+            return Ok(false);
+        }
+
+        // Written over an edit still waiting, the line it writes is spent
+        // too, since the file holds that edit (`folders.md` 20, 21).
+        let spent = bound.as_ref().and_then(|bound| bound.edit_line);
+        let edit_line = if carries_frontmatter(Path::new(&want))
+            && crate::store::item_waits(&*self.core.conn()?, &item.id)?
+        {
+            Some(spent.unwrap_or(0).max(item.version))
+        } else {
+            spent
+        };
+        let binding = |identity: Option<String>| state::Bound {
+            path: want.clone(),
+            item_id: item.id.clone(),
+            identity,
+            content_hash: hash.clone(),
+            written_hash: Some(hash.clone()),
+            links: wrote.clone(),
+            declined: declined.clone(),
+            edit_line,
+        };
+        // Bound before the write, so the scan never reads it back; a path the
+        // filesystem refuses leaves the old file, and every other, as it was.
+        state::bind(&*self.core.conn()?, &binding(None))?;
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| std::fs::write(&path, &bytes));
+        if written.is_err() {
+            state::unbind(&*self.core.conn()?, &want)?;
+            report.unwritten += 1;
+            return Ok(false);
+        }
+        {
+            let conn = self.core.conn()?;
+            // Counted, because one row this clears can be a person's own
+            // delete still inside its grace.
+            if state::journaled(&conn)?
+                .iter()
+                .any(|(path, _, _)| path == &want)
+            {
+                report.revived += 1;
+            }
+            state::journal_clear(&conn, &want)?;
         }
         if let Some(bound) = &bound
             && bound.path != want
@@ -1485,76 +1543,12 @@ impl Folder {
             state::journal_clear(&conn, &bound.path)?;
             report.moved += 1;
         }
-
-        // Written over an edit still waiting, the line it writes is spent
-        // too, since the file holds that edit (`folders.md` 20, 21).
-        let spent = bound.as_ref().and_then(|bound| bound.edit_line);
-        let edit_line = if carries_frontmatter(Path::new(&want))
-            && crate::store::item_waits(&*self.core.conn()?, &item.id)?
-        {
-            Some(spent.unwrap_or(0).max(item.version))
-        } else {
-            spent
-        };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| {
-                CoreError::Store(format!("cannot make {}: {error}", parent.display()))
-            })?;
-        }
-        {
-            let conn = self.core.conn()?;
-            state::bind(
-                &conn,
-                &state::Bound {
-                    path: want.clone(),
-                    item_id: item.id.clone(),
-                    identity: None,
-                    content_hash: hash.clone(),
-                    written_hash: Some(hash.clone()),
-                    links: wrote.clone(),
-                    declined: declined.clone(),
-                    edit_line,
-                },
-            )?;
-            // Counted, because one row this clears can be a person's own
-            // delete still inside its grace.
-            if state::journaled(&conn)?
-                .iter()
-                .any(|(path, _, _)| path == &want)
-            {
-                report.revived += 1;
-            }
-            state::journal_clear(&conn, &want)?;
-        }
-        if let Err(error) = std::fs::write(&path, &bytes) {
-            // Bound first, so it must come out again, or the scan would
-            // take bytes that never landed as the folder's own.
-            let conn = self.core.conn()?;
-            state::unbind(&conn, &want)?;
-            return Err(CoreError::Store(format!(
-                "cannot write {}: {error}",
-                path.display()
-            )));
-        }
         report.placed += usize::from(self.place(&item.id, &want, withheld)?);
         // Read after the write, because the file did not exist until now.
         if let Ok(metadata) = std::fs::symlink_metadata(&path)
             && let Some(found) = identity::of(&metadata)
         {
-            let conn = self.core.conn()?;
-            state::bind(
-                &conn,
-                &state::Bound {
-                    path: want,
-                    item_id: item.id.clone(),
-                    identity: Some(found.key()),
-                    content_hash: hash.clone(),
-                    written_hash: Some(hash),
-                    links: wrote,
-                    declined,
-                    edit_line,
-                },
-            )?;
+            state::bind(&*self.core.conn()?, &binding(Some(found.key())))?;
         }
         if bound.is_none() {
             report.written += 1;

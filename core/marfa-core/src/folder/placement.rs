@@ -10,7 +10,9 @@ use serde_json::{Map, Value};
 use super::Folder;
 use crate::catalog::Catalog;
 use crate::drain::DrainReport;
-use crate::model::{BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, Subject, Verdict, WriteKind};
+use crate::model::{
+    BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, QueuedWrite, Verdict, WriteKind,
+};
 use crate::{Result, store};
 
 /// The edge that says where an item's file sits in a folder, never written
@@ -25,11 +27,27 @@ const META_REFUSED: &str = "folder_placements_refused";
 /// not sent again until the key or the settings change.
 pub(super) type Withheld = BTreeMap<String, String>;
 
+/// The key a credential is, as far as placing goes: its id and its
+/// `in-folder` grant, both `None` for a credential that is not a key.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(super) struct KeyState {
+    id: Option<String>,
+    grant: Option<String>,
+}
+
+impl KeyState {
+    fn of(key: &Value) -> KeyState {
+        KeyState {
+            id: key.get("id").and_then(Value::as_str).map(str::to_string),
+            grant: grant(key),
+        }
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Refused {
-    /// The key they were refused to, by id; `None` for a credential that is
-    /// not a key.
-    key: Option<String>,
+    /// The key they were refused to.
+    key: KeyState,
     /// The version of the settings they were refused under.
     settings: i64,
     placements: Withheld,
@@ -112,26 +130,27 @@ impl Folder {
         }
     }
 
-    /// Whether the credential is another key than `recorded`. Unanswerable,
-    /// offline say, it is taken as the same one.
-    fn key_changed(&self, recorded: &Option<String>) -> bool {
-        match self.key_id() {
+    /// Whether the credential is another key, or the same key with another
+    /// grant, than `recorded`. Unanswerable, offline say, it is the same.
+    fn key_changed(&self, recorded: &KeyState) -> bool {
+        match self.key_state() {
             Ok(current) => &current != recorded,
             Err(_) => false,
         }
     }
 
-    /// The id of the key this credential is, asked once per process.
-    fn key_id(&self) -> Result<Option<String>> {
-        if let Some(known) = self.key_id.get() {
+    /// The key this credential is, asked once per process.
+    fn key_state(&self) -> Result<KeyState> {
+        if let Some(known) = self.key.get() {
             return Ok(known.clone());
         }
-        let id = self
+        let state = self
             .core
             .http()?
             .current_key()?
-            .and_then(|key| key.get("id").and_then(Value::as_str).map(str::to_string));
-        Ok(self.key_id.get_or_init(|| id).clone())
+            .map(|key| KeyState::of(&key))
+            .unwrap_or_default();
+        Ok(self.key.get_or_init(|| state).clone())
     }
 
     /// Gives way where another machine placed or moved the item first, and
@@ -145,13 +164,14 @@ impl Folder {
                 let conn = self.core.conn()?;
                 store::queued_write(&conn, &verdict.id)?
             };
-            let Some(row) = row.filter(|row| {
-                matches!(row.kind, WriteKind::CreateEdge | WriteKind::UpdateEdge)
-                    && row.target_id.as_deref() == Some(self.folder.as_str())
-            }) else {
+            let Some(row) = row else {
                 kept.push(verdict);
                 continue;
             };
+            if !self.places_by(&row)? {
+                kept.push(verdict);
+                continue;
+            }
             let duplicate = row.verdict == Some(Verdict::Refused)
                 && row.kind == WriteKind::CreateEdge
                 && row.answer.as_deref().is_some_and(is_duplicate);
@@ -194,6 +214,32 @@ impl Folder {
         Ok(gave_way)
     }
 
+    /// Whether a queued write is one of this folder's placements: an
+    /// `in-folder` edge to it, and not another edge to the same row.
+    fn places_by(&self, row: &QueuedWrite) -> Result<bool> {
+        if row.target_id.as_deref() != Some(self.folder.as_str()) {
+            return Ok(false);
+        }
+        let conn = self.core.conn()?;
+        let edge_type = match row.kind {
+            WriteKind::CreateEdge => {
+                serde_json::from_str::<Value>(&store::payload_of(&conn, &row.id)?)
+                    .ok()
+                    .and_then(|body| {
+                        body.get("edge_type")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
+            }
+            WriteKind::UpdateEdge => match row.edge_id.as_deref() {
+                Some(id) => store::edge_by_id(&conn, id)?.map(|edge| edge.edge_type),
+                None => None,
+            },
+            _ => None,
+        };
+        Ok(edge_type.as_deref() == Some(PLACEMENT_EDGE))
+    }
+
     /// Puts the placement the server holds for `source` into the copy, in
     /// place of any this machine holds.
     fn take_servers_placement(&self, source: &str) -> Result<()> {
@@ -222,9 +268,7 @@ impl Folder {
             }
         }
         for edge in &held {
-            if !store::holds_newer(&conn, Subject::Edge, &edge.id, edge.version)? {
-                store::upsert_edge(&conn, edge)?;
-            }
+            store::upsert_edge(&conn, edge)?;
         }
         Ok(())
     }
@@ -233,7 +277,7 @@ impl Folder {
         let mut record = match self.refused()? {
             Some(record) => record,
             None => Refused {
-                key: self.key_id().unwrap_or(None),
+                key: self.key_state().unwrap_or_default(),
                 settings: self.core.get(&self.folder)?.map_or(0, |row| row.version),
                 placements: Withheld::new(),
             },
@@ -264,15 +308,20 @@ fn is_duplicate(answer: &str) -> bool {
     })
 }
 
-/// Whether a key writes `in-folder` edges, resolved as the server resolves an
-/// edge grant: the exact name, then the longest `x.*`, then `*`.
+/// Whether a key writes `in-folder` edges.
 pub(super) fn places(key: &Value) -> bool {
+    matches!(grant(key).as_deref(), Some("write" | OPERATOR))
+}
+
+const OPERATOR: &str = "operator";
+
+/// A key's grant on `in-folder`, resolved as the server resolves an edge
+/// grant: the exact name, then the longest `x.*`, then `*`.
+fn grant(key: &Value) -> Option<String> {
     if key.get("is_operator").and_then(Value::as_bool) == Some(true) {
-        return true;
+        return Some(OPERATOR.into());
     }
-    let Some(grants) = key.get("edge_permissions").and_then(Value::as_object) else {
-        return false;
-    };
+    let grants = key.get("edge_permissions").and_then(Value::as_object)?;
     let resolved = grants.get(PLACEMENT_EDGE).or_else(|| {
         grants
             .iter()
@@ -285,7 +334,7 @@ pub(super) fn places(key: &Value) -> bool {
             .map(|(_, level)| level)
             .or_else(|| grants.get("*"))
     });
-    resolved.and_then(Value::as_str) == Some("write")
+    resolved.and_then(Value::as_str).map(str::to_string)
 }
 
 /// The path a placement names.

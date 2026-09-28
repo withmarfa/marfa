@@ -273,8 +273,6 @@ impl Http {
         self.get_json(&["edges"], &params)
     }
 
-    /// One item by id with its edges, as a hydration reads each row: a row
-    /// that comes into the slice after the hydration needs what it draws.
     /// The key this credential is, as `GET /keys/current` answers it; `None`
     /// for a credential that is not a key, which that door refuses `403`.
     pub fn current_key(&self) -> Result<Option<serde_json::Value>, CoreError> {
@@ -285,6 +283,8 @@ impl Http {
         }
     }
 
+    /// One item by id with its edges, as a hydration reads each row: a row
+    /// that comes into the slice after the hydration needs what it draws.
     pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         match self
             .get_json::<WireItemWithMetadata>(&["items", id], &[("include", "edges,metadata")])
