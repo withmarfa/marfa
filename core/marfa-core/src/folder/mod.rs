@@ -793,6 +793,8 @@ impl Folder {
                 if let Some(bound) = by_path.get(key.as_str())
                     && bound.held.is_none()
                     && bound.writes.refused.is_empty()
+                    // A save set aside is sent again by the next scan (39).
+                    && state::untaken_read_version(&bound.content_hash).is_none()
                     && bound.identity.is_some()
                     && marks.get(path).map(|found| found.key()) == bound.identity
                     && let Some(stat) = stat_of(path)
