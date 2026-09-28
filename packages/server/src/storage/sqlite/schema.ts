@@ -84,8 +84,7 @@ export const items = sqliteTable(
     index("idx_items_starts_at")
       .on(table.starts_at)
       .where(sql`starts_at IS NOT NULL`),
-    // No type in the predicate — that's the registry's answer — and renamed
-    // apart from its stale twin so `IF NOT EXISTS` creates it for old DBs.
+    // No type in the predicate: which types are files is the registry's answer.
     index("idx_items_enrichment_queue")
       .on(table.created_at)
       .where(
@@ -889,15 +888,8 @@ export const auth_passkey = sqliteTable(
   ],
 );
 
-// Deterministic-enrichment bookkeeping: one row per file item the text
-// sweeper has looked at, keyed by item id. Lives in its own table rather
-// than in item properties so bookkeeping writes never mint version
-// snapshots or fan out item events. The candidate query anti-joins this
-// table by its PK and drives off `items` via the partial
-// idx_items_enrichment_queue index, the items side being what the
-// query needs indexed. A `blob_ref` change
-// or an `extractor_version` bump re-admits the item; `attempts` bounds
-// retries of failing blobs. Hard-deleting the item deletes the row.
+// Apart from item properties, so the sweeper's bookkeeping mints no
+// versions and announces nothing.
 export const enrichmentState = sqliteTable("enrichment_state", {
   item_id: text("item_id")
     .primaryKey()

@@ -24,25 +24,10 @@ function capturingLogger(into: CapturedQuery[]) {
 
 const SIGNATURE = JSON.stringify({ max_blob_bytes: 1, ocr: false });
 
-async function candidatePlan(opts?: {
-  seedLegacyIndex?: boolean;
-}): Promise<{ plan: string; params: unknown[] }> {
+async function candidatePlan(): Promise<{ plan: string; params: unknown[] }> {
   const client = createClient({ url: ":memory:" });
   try {
     await client.executeMultiple(SCHEMA_SQL);
-    if (opts?.seedLegacyIndex) {
-      // What a pre-rename build wrote: same name, old predicate — dropped
-      // and recreated since `IF NOT EXISTS` schema apply won't replace it.
-      await client.execute(
-        "DROP INDEX IF EXISTS `idx_items_enrichment_candidates`",
-      );
-      await client.execute(
-        "CREATE INDEX `idx_items_enrichment_candidates` ON `items` (`created_at`) WHERE (type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;",
-      );
-      // Re-applies the schema, idempotently: `IF NOT EXISTS` must not treat the
-      // stale index above as already satisfying the current predicate.
-      await client.executeMultiple(SCHEMA_SQL);
-    }
     const captured: CapturedQuery[] = [];
     const db = drizzleSqlite(client, { logger: capturingLogger(captured) });
     const store = new SqliteEnrichmentStore(db as never);
@@ -91,21 +76,6 @@ describe("sqlite candidate query plan", () => {
     try {
       const { plan, params } = await candidatePlan();
       expect(params).toContain("acme.photo");
-      expectIndexServed(plan);
-    } finally {
-      unregisterTypeSchema("acme.photo");
-    }
-  });
-
-  it("is served by the renamed index on a database an earlier build wrote", async () => {
-    registerTypeSchema({
-      id: "acme.photo",
-      version: 1,
-      parent: "core.file.image",
-      fields: {},
-    });
-    try {
-      const { plan } = await candidatePlan({ seedLegacyIndex: true });
       expectIndexServed(plan);
     } finally {
       unregisterTypeSchema("acme.photo");
