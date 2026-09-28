@@ -565,8 +565,7 @@ jobs:
           cargo publish --no-verify --manifest-path "$RUNNER_TEMP/crate/marfa-client-$VERSION/Cargo.toml"
 
       # By trusted publishing: npm exchanges the job's OIDC identity itself,
-      # so no token is set anywhere. No `--provenance`: npm attests
-      # provenance from a public repository only.
+      # so no token is set anywhere.
       - name: Publish @withmarfa/core and @withmarfa/client to npm
         run: |
           for package in core client; do
