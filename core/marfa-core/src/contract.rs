@@ -2,4 +2,4 @@
 
 /// The contract version this core was built for: the document's
 /// `info.version`, which every answer names in `X-Marfa-Contract`.
-pub const CONTRACT_VERSION: u64 = 4;
+pub const CONTRACT_VERSION: u64 = 3;
