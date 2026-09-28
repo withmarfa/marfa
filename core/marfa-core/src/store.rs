@@ -38,7 +38,7 @@ const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("7", "b0e4c59d5dbd0471"),
     ("8", "662310c80f2c6871"),
     ("9", "23d541400ea60681"),
-    ("10", "e8bfd0f5e0d1f7e7"),
+    ("10", "5c367fca65e574f8"),
 ];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
@@ -643,6 +643,11 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
     )
 }
 
+/// Whether any write to an item is still waiting.
+pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(!waiting_writes_for_item(conn, id)?.is_empty())
+}
+
 /// The writes still waiting on one item, read through the index rather than
 /// by reading the whole queue, because this runs once per answer and once
 /// per event.
@@ -1122,7 +1127,7 @@ pub fn land_on_held_row(
 /// was set aside in a conflicted copy against this device's own earlier one
 /// (`queue-and-verdicts.md` 42), so what the file holds reached no row. The
 /// pull then leaves the file as it is, and the next scan sends it as an edit
-/// based on that version (`folders.md` 29). Where a later update is queued,
+/// based on that version (`folders.md` 31). Where a later update is queued,
 /// the file holds that one's bytes, and it is left to its own answer.
 pub fn untake_latest_save(
     conn: &Connection,

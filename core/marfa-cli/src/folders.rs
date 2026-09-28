@@ -132,7 +132,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             let folder = Folder::open(&dir, Some(named.server()?))?;
             let hydrated = folder.resume()?;
             let scanned = folder.scan()?;
-            let drained = folder.core().drain()?;
+            let drained = folder.drain()?;
             // A folder offline still writes out the copy it holds.
             let (caught, failed) = match folder.catch_up() {
                 Ok(caught) => (serde_json::to_value(caught)?, None),
@@ -164,7 +164,13 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         lines.push(format!("hydrated {} item(s) first", hydrated.items));
                     }
                     lines.push(describe_scan(&scanned));
-                    lines.push(format!("sent {}, held {}", drained.sent, drained.held));
+                    lines.push(format!(
+                        "sent {}, held {}",
+                        drained.report.sent, drained.report.held
+                    ));
+                    if drained.rebased > 0 {
+                        lines.push(rebased_line(drained.rebased));
+                    }
                     if let Some(error) = &failed {
                         lines.push(format!("could not catch up: {error}"));
                     }
@@ -200,10 +206,18 @@ fn send(
     Printer { json }.value(&answer)
 }
 
+/// Said in words, because what these edits carried went over whatever
+/// changed since their file was written (`folders.md` 17).
+pub fn rebased_line(rebased: usize) -> String {
+    format!(
+        "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
+    )
+}
+
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 20, 22, 27), named only when there are
+/// get one on this pass (`folders.md` 22, 24, 29), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(

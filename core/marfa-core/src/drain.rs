@@ -1224,7 +1224,7 @@ fn settle(
                     // device's own earlier save: the file holds the newest,
                     // which the row does not, so the pull leaves the file and
                     // the next scan sends it as an edit of the row as it now
-                    // stands (`folders.md` 29).
+                    // stands (`folders.md` 31).
                     if verdict == Verdict::Conflicted
                         && row.kind == WriteKind::UpdateItem
                         && against_its_own(&tx, row, &parsed)?

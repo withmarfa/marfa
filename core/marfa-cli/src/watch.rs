@@ -159,7 +159,7 @@ fn watch_files(
                 if matches!(event.kind, EventKind::Access(_)) {
                     continue;
                 }
-                // Dot-led paths are never watched (`folders.md` 17, 18); this
+                // Dot-led paths are never watched (`folders.md` 19, 20); this
                 // stops a write under `.marfa` waking a pass.
                 if event.paths.iter().all(|path| dot_led(dir, path)) {
                     continue;
@@ -215,7 +215,7 @@ struct Standing {
 /// One pass: read the folder, send what it queued, write back what came in.
 fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<(), CliError> {
     let scanned = folder.scan()?;
-    let drained = folder.core().drain()?;
+    let drained = folder.drain()?;
     let pulled = folder.pull()?;
     // Quiet unless something happened or what stands changed. Files already
     // in step, or outside the slice, are not events.
@@ -225,7 +225,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         + scanned.missing
         + scanned.deleted
         + scanned.requeued
-        + drained.verdicts.len()
+        + drained.report.verdicts.len()
         + pulled.written
         + pulled.rewritten
         + pulled.moved
@@ -252,12 +252,12 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
             // An item with no file is named, never left out of the line.
             let held = pulled.unwritten + pulled.collided + pulled.outside + pulled.absent;
             format!(
-                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}",
+                "{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
                 scanned.deleted,
-                drained.sent,
+                drained.report.sent,
                 pulled.written + pulled.rewritten,
                 if held > 0 {
                     format!(", {held} not written")
@@ -266,6 +266,11 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
                 },
                 if scanned.lost > 0 {
                     format!(", {} bound to an item that is gone", scanned.lost)
+                } else {
+                    String::new()
+                },
+                if drained.rebased > 0 {
+                    format!("; {}", crate::folders::rebased_line(drained.rebased))
                 } else {
                     String::new()
                 }
