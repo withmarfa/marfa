@@ -59,7 +59,10 @@ import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
 import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
-import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
+import {
+  assertEdgesCanBeCreated,
+  edgeTargetNotFound,
+} from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
@@ -2492,10 +2495,7 @@ export function itemRoutes(storage: Storage) {
           uniqueTargets.add(target);
           const targetItem = await storage.items.get(target);
           if (!targetItem || !mayReadTarget(targetItem.type)) {
-            throw new MarfaError(
-              ErrorCode.ITEM_NOT_FOUND,
-              `Edge target item not found: ${target}`,
-            );
+            throw edgeTargetNotFound(target);
           }
         }
       }

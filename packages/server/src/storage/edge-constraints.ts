@@ -109,6 +109,17 @@ function assertNotSelfLoop(
   );
 }
 
+/**
+ * The one answer for a target that is missing or that the caller may not
+ * read. Every door builds it here, so the two cannot drift apart.
+ */
+export function edgeTargetNotFound(targetId: string): MarfaError {
+  return new MarfaError(
+    ErrorCode.ITEM_NOT_FOUND,
+    `Edge target item not found: ${targetId}`,
+  );
+}
+
 export interface EdgeProposal {
   source_id: string;
   target_id: string;
@@ -187,10 +198,7 @@ export async function assertEdgesCanBeCreated(
     // Before every check that reads the target, so a caller cannot tell a
     // row it may not read from no row, nor learn the type of one.
     if (!target || !mayReadTarget(target.type)) {
-      throw new MarfaError(
-        ErrorCode.ITEM_NOT_FOUND,
-        `Edge target item not found: ${p.target_id}`,
-      );
+      throw edgeTargetNotFound(p.target_id);
     }
     // Endpoint types resolve through the registry, exactly as the edge type
     // itself did above, so a constraint naming a runtime-registered type

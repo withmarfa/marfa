@@ -40,7 +40,10 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
-import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
+import {
+  assertEdgeCanBeCreated,
+  edgeTargetNotFound,
+} from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 
 // ---------------------------------------------------------------------------
@@ -301,6 +304,19 @@ async function processBulkEdge(
   const existing = existingByTriple.get(tripleKey);
 
   if (existing) {
+    // A matched edge would otherwise say, with its id, that the target is
+    // live; one the caller may not read answers as the create path does.
+    const target = await storage.items.getIncludingTrashed(raw.target_id);
+    if (!target || !mayReadTarget(target.type)) {
+      const refusal = edgeTargetNotFound(raw.target_id);
+      return {
+        result: {
+          index,
+          outcome: "errored",
+          error: { code: refusal.code, message: refusal.message },
+        },
+      };
+    }
     if (mode === "create_only") {
       return {
         result: {

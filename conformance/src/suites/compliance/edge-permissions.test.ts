@@ -1042,6 +1042,7 @@ describe("an edge write says nothing of a target the credential cannot read", ()
   let source: string;
   let unreadable: string;
   let readable: string;
+  const UPSERT_SOURCE_ID = "target-blind-upsert";
 
   beforeAll(async () => {
     const key = await makeKey("target-blind", {
@@ -1061,6 +1062,16 @@ describe("an edge write says nothing of a target the credential cannot read", ()
     expect(task.ok).toBe(true);
     trackItem(ctx, task.data.item.id);
     readable = task.data.item.id;
+
+    // The row the natural-key door below resolves and upserts.
+    const keyed = await writer.createItem(
+      createNote({
+        source_id: UPSERT_SOURCE_ID,
+        properties: { body: "upserted" },
+      }),
+    );
+    expect(keyed.status).toBe(201);
+    trackItem(ctx, keyed.data.item.id);
   });
 
   /** Every door that writes an edge, each naming one target. */
@@ -1102,6 +1113,17 @@ describe("an edge write says nothing of a target the credential cannot read", ()
         writer.createItem(
           createNote({
             properties: { body: "inline edge" },
+            edges: { [edgeType]: [target] },
+          }),
+        ),
+    },
+    {
+      name: "POST /items with edges, resolving a natural key",
+      write: (edgeType, target) =>
+        writer.createItem(
+          createNote({
+            source_id: UPSERT_SOURCE_ID,
+            properties: { body: "upserted" },
             edges: { [edgeType]: [target] },
           }),
         ),
@@ -1179,4 +1201,60 @@ describe("an edge write says nothing of a target the credential cannot read", ()
       ).toBe(expected);
     },
   );
+
+  it("answers an unreadable target as a missing one on the bulk door, where an edge to it already exists", async () => {
+    const from = await scopedItem(writer, "target-blind-existing");
+    for (const target of [readable, unreadable]) {
+      const held = await client.createEdge({
+        source_id: from,
+        target_id: target,
+        edge_type: "about",
+      });
+      expect(held.status).toBe(201);
+      trackEdge(ctx, held.data.edge.id);
+    }
+
+    const missing = generateId();
+    for (const mode of ["upsert", "create_only"] as const) {
+      for (const atomic of [true, false]) {
+        const write = (target: string) =>
+          writer.bulkEdges({
+            mode,
+            atomic,
+            edges: [{ source_id: from, target_id: target, edge_type: "about" }],
+          });
+        // The witness: the matched edge answers for a target the key reads.
+        const matched = await write(readable);
+        expect(matched.status).toBe(200);
+        expect(JSON.stringify(matched.data)).toContain(
+          mode === "upsert" ? '"updated"' : '"duplicate_edge"',
+        );
+
+        const expected = answer(await write(missing), missing);
+        expect(expected).toContain("item_not_found");
+        expect(answer(await write(unreadable), unreadable)).toBe(expected);
+      }
+    }
+  });
+
+  it("answers an unreadable target as a missing one on a stale PATCH, before the version is read", async () => {
+    const from = await scopedItem(writer, "target-blind-stale");
+    const bumped = await writer.updateItem(from, {
+      version: 1,
+      properties: { body: "moved on" },
+    });
+    expect(bumped.status).toBe(200);
+    const stale = (target: string) =>
+      writer.updateItem(from, { version: 1, edges: { about: [target] } });
+
+    // The witness: a readable target reaches the version check and is refused.
+    const conflict = await stale(readable);
+    expect(conflict.status).toBe(409);
+    expect(conflict.error?.error.code).toBe("version_conflict");
+
+    const missing = generateId();
+    const expected = answer(await stale(missing), missing);
+    expect(expected).toContain("item_not_found");
+    expect(answer(await stale(unreadable), unreadable)).toBe(expected);
+  });
 });
