@@ -118,6 +118,9 @@ pub struct ScanReport {
     /// Directories the walk did not enter, `package` or `unreadable`
     /// (`folders.md` 26).
     pub directories: Vec<Flagged>,
+    /// Files the built-in secrets list refuses, named so a refused file is
+    /// never a silent one (`folders.md` 25).
+    pub secrets: Vec<String>,
 }
 
 /// A missing file not trashed yet, and why.
@@ -529,6 +532,8 @@ struct Walked {
     files: Vec<PathBuf>,
     /// Packages, and directories it could not read.
     directories: Vec<Flagged>,
+    /// Files the secrets list refuses.
+    secrets: Vec<String>,
 }
 
 impl Walked {
@@ -590,8 +595,12 @@ fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
             } else {
                 walk(root, &path, lists, walked);
             }
-        } else if metadata.is_file() && lists.takes(&relative) {
-            walked.files.push(path);
+        } else if metadata.is_file() {
+            if lists.takes(&relative) {
+                walked.files.push(path);
+            } else if lists.secret(&relative) {
+                walked.secrets.push(relative);
+            }
         }
     }
 }
@@ -696,6 +705,7 @@ impl Folder {
         let lists = settings.lists()?;
         let walked = self.walked(&lists);
         report.directories = walked.directories.clone();
+        report.secrets = walked.secrets.clone();
         let snapshot = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?

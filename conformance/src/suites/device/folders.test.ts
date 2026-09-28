@@ -10941,6 +10941,20 @@ describe("what a folder takes", () => {
       ),
       "a secret's bytes reached the server, where every machine and key that reads the folder can have them",
     ).toEqual([]);
+    expect(
+      pushed.ok && [...pushed.value.scan.secrets].sort(),
+      "a refused secret went unnamed, so a person cannot tell why their file never arrived",
+    ).toEqual([
+      ".env",
+      "keys/Deploy.KEY",
+      "keys/credentials",
+      "keys/server.pem",
+      "ssh/id_ed25519",
+    ]);
+    const said = await harness.folder.pushText();
+    expect(said.ok && said.value).toContain(
+      "keys/server.pem: not taken, because its name is one a secret goes by",
+    );
   });
 
   it("ignores what its ignore list names", async () => {

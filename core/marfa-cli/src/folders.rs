@@ -499,6 +499,12 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     for said in directory_lines(&report.directories)
         .into_iter()
         .chain(embed_lines(&report.embeds))
+        .chain(
+            report
+                .secrets
+                .iter()
+                .map(|path| format!("{path}: not taken, because its name is one a secret goes by")),
+        )
     {
         line.push('\n');
         line.push_str(&said);

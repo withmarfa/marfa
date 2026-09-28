@@ -727,6 +727,8 @@ export interface ScanReport {
   /** Directories the walk did not enter, each flagged `package` or
    *  `unreadable` (`folders.md` 26). */
   directories: FlaggedFile[];
+  /** Files the built-in secrets list refuses (`folders.md` 25). */
+  secrets: string[];
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge

@@ -135,6 +135,12 @@ impl Lists {
         !path.split('/').any(|name| name.starts_with('.')) || hit(&self.dotted, &path, false)
     }
 
+    /// Whether the built-in secrets list refuses the file at `relative`.
+    pub(super) fn secret(&self, relative: &str) -> bool {
+        let path: String = relative.nfc().collect();
+        hit(&self.secrets, &path, false)
+    }
+
     /// Whether the walk enters the directory at `relative`: never one the
     /// ignore list or the machine's own lines name, and a dot-led one only
     /// where an include line names it. A secret's name is refused file by
