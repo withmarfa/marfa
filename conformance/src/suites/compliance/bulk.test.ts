@@ -20,6 +20,7 @@ import {
   createSecondClient,
   createTestContext,
   trackItem,
+  trackEdge,
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
@@ -613,6 +614,55 @@ describe("bulk_action", () => {
       const got = await client.getItem(id);
       expect(got.ok).toBe(true);
       expect(got.data.item.state).toBe("archived");
+    }
+  });
+
+  it("restores a row and what its trash took in one transition, counting each row once", async () => {
+    // A parent trashed with the child and grandchild its trash took, all
+    // three matched: the parent's restore brings the other two back before
+    // the job reaches them.
+    const tag = `ba-restore-${ctx.runId}`;
+    const [grandchild, child, parent] = await seedTagged(3, tag);
+    for (const [source_id, target_id] of [
+      [parent!, child!],
+      [child!, grandchild!],
+    ]) {
+      const edge = await client.createEdge({
+        source_id,
+        target_id,
+        edge_type: "parent-of",
+      });
+      expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+      trackEdge(ctx, edge.data.edge.id);
+    }
+    expect((await client.deleteItem(parent!)).ok).toBe(true);
+    // The witnesses: the parent's trash took the other two, and the job
+    // reaches the parent before either.
+    for (const id of [child!, grandchild!]) {
+      expect((await client.getItem(id)).status).toBe(404);
+    }
+    const planned = await client.bulkAction({
+      action: "transition",
+      state: "active",
+      filter: { tags: [tag], state: "trashed" },
+      dry_run: true,
+    });
+    expect((planned.data as BulkActionResponse).ids?.[0]).toBe(parent);
+
+    const result = await runToCompletion({
+      action: "transition",
+      state: "active",
+      filter: { tags: [tag], state: "trashed" },
+    });
+    expect(result.matched).toBe(3);
+    expect(
+      [result.succeeded, result.errored],
+      `a row the parent's restore brought back was moved again or counted twice: ${JSON.stringify(result.errors)}`,
+    ).toEqual([3, 0]);
+    for (const id of [parent!, child!, grandchild!]) {
+      const got = await client.getItem(id);
+      expect(got.status).toBe(200);
+      expect(got.data.item.state).toBe("active");
     }
   });
 

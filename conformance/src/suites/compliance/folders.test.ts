@@ -218,6 +218,12 @@ describe("the folder door", () => {
       title: "renamed",
     });
     expect(changed.status).toBe(200);
+    const read = await exact.client.getItem(id);
+    expect(read.status).toBe(200);
+    expect(read.data.item.properties.title).toBe("renamed");
+    const revoked = await exact.client.revokeFolder(id);
+    expect(revoked.status).toBe(200);
+    expect(revoked.data.item.state).toBe("revoked");
 
     const target = await folder();
     for (const [label, map] of [
@@ -275,13 +281,24 @@ describe("the folder door", () => {
       "unknown_type",
       "defaults.type",
     ],
+    [{ defaults: { type: "Not A Type" } }, "validation_error", "defaults.type"],
     [
       { defaults: { edges: { "no-such-edge": [] } } },
       "validation_error",
       "defaults.edges.no-such-edge",
     ],
+    [
+      { defaults: { edges: { about: ["not-an-id"] } } },
+      "validation_error",
+      "defaults.edges.about",
+    ],
     [{ include: [7] }, "validation_error", "include.0"],
     [{ ignore: [""] }, "validation_error", "ignore.0"],
+    [
+      { first_placement: { "Not A Type": "Notes" } },
+      "validation_error",
+      "first_placement.Not A Type",
+    ],
     [
       { first_placement: { "core.note": "Notes/../../out" } },
       "validation_error",
@@ -331,6 +348,11 @@ describe("the folder door", () => {
       { removal_threshold: { fraction: 1.5 } },
       "validation_error",
       "removal_threshold.fraction",
+    ],
+    [
+      { removal_threshold: { files: -1 } },
+      "validation_error",
+      "removal_threshold.files",
     ],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",
