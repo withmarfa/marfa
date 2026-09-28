@@ -35,6 +35,24 @@ pub enum FoldersCommand {
         /// The folder.
         dir: PathBuf,
     },
+    /// Say where every file in the folder stands, from its own store,
+    /// asking the server nothing.
+    Status {
+        /// The folder.
+        dir: PathBuf,
+    },
+    /// Let a paused large removal go: its deletes are queued, and files
+    /// whose items left elsewhere are taken away.
+    Confirm {
+        /// The folder.
+        dir: PathBuf,
+    },
+    /// Cancel a paused large removal: files gone from the disk are written
+    /// back, and items that left elsewhere are restored.
+    Restore {
+        /// The folder.
+        dir: PathBuf,
+    },
     /// Pull what the folder's search needs into its working copy.
     Hydrate {
         /// The folder.
@@ -132,6 +150,40 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 json,
                 || format!("{} is no longer a folder; its files stay", dir.display()),
             )
+        }
+        FoldersCommand::Status { dir } => {
+            let report = Folder::open(&dir, None)?.status()?;
+            output::report(&report, json, || describe_status(&report))
+        }
+        FoldersCommand::Confirm { dir } => {
+            let confirmed = Folder::open(&dir, None)?.confirm()?;
+            output::report(&confirmed, json, || {
+                format!(
+                    "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
+                    confirmed.deleted,
+                    confirmed.moved,
+                    confirmed.removed,
+                    confirmed
+                        .unsure
+                        .iter()
+                        .map(|file| format!("\n{}: not let go yet, {}", file.path, file.reason))
+                        .collect::<String>()
+                )
+            })
+        }
+        FoldersCommand::Restore { dir } => {
+            let server = match named.server() {
+                Ok(server) => Some(server),
+                Err(CliError::NoServerNamed) => None,
+                Err(error) => return Err(error),
+            };
+            let restored = Folder::open(&dir, server)?.restore()?;
+            output::report(&restored, json, || {
+                format!(
+                    "{} file(s) written back; {} item(s) restored, sent at the next push",
+                    restored.put_back, restored.restored
+                )
+            })
         }
         FoldersCommand::Hydrate { dir } => {
             let folder = Folder::open(&dir, Some(named.server()?))?;
@@ -438,6 +490,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         line.push('\n');
         line.push_str(&settings);
     }
+    if report.paused > 0 {
+        line.push('\n');
+        line.push_str(&paused_line(report.paused, true));
+    }
     for extra in uncarried_line(&report.uncarried)
         .into_iter()
         .chain(flagged_lines(&report.flagged))
@@ -447,6 +503,53 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         line.push_str(&extra);
     }
     line
+}
+
+/// Where every file stands, a line each, for somebody who did not ask
+/// for JSON; a file in step is counted, not listed.
+fn describe_status(report: &marfa_core::StatusReport) -> String {
+    let in_step = report
+        .files
+        .iter()
+        .filter(|file| file.status == "in_step")
+        .count();
+    let mut lines = vec![format!("{in_step} file(s) in step")];
+    for file in report.files.iter().filter(|file| file.status != "in_step") {
+        let mut line = format!("{}: {}", file.path, file.status.replace('_', " "));
+        if !file.waits.is_empty() {
+            line.push_str(&format!(" ({})", file.waits.join(", ")));
+        }
+        if let Some(reason) = &file.reason {
+            line.push_str(&format!(", {reason}"));
+        }
+        if let Some(warning) = &file.warning {
+            line.push_str(&format!("; {warning}"));
+        }
+        lines.push(line);
+    }
+    if report.paused.disk + report.paused.pull > 0 {
+        lines.push(format!(
+            "a large removal waits: {} file(s) gone from the disk, {} whose items left elsewhere; `folders confirm` lets it go, `folders restore` puts them back",
+            report.paused.disk, report.paused.pull
+        ));
+    }
+    lines.join("\n")
+}
+
+/// A large removal waiting to be confirmed, from the disk or from a pull
+/// (`folders.md` 46).
+pub fn paused_line(count: usize, from_pull: bool) -> String {
+    if from_pull {
+        format!(
+            "a large removal waits: {} file(s) left in place whose items left elsewhere; `folders confirm` takes them away, `folders restore` restores the items",
+            count
+        )
+    } else {
+        format!(
+            "a large removal waits: {} delete(s) not sent; `folders confirm` sends them, `folders restore` writes the files back",
+            count
+        )
+    }
 }
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
@@ -496,9 +599,19 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if behind > 0 {
         line.push_str(&format!("; {behind} behind: own-field lines not sent"));
     }
+    if report.paused > 0 {
+        line.push('\n');
+        line.push_str(&paused_line(report.paused, false));
+    }
     for said in directory_lines(&report.directories)
         .into_iter()
         .chain(embed_lines(&report.embeds))
+        .chain(
+            report
+                .warnings
+                .iter()
+                .map(|file| format!("{}: {}", file.path, file.reason)),
+        )
         .chain(
             report
                 .secrets

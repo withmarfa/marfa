@@ -14,9 +14,13 @@ mod lines;
 pub mod lists;
 mod names;
 mod placement;
+mod removal;
+pub use removal::{Confirmed, Restored};
 pub mod registry;
 pub mod settings;
 mod settings_file;
+mod status;
+pub use status::{FileStatus, Paused, StatusReport};
 pub mod state;
 
 use std::cell::OnceCell;
@@ -60,6 +64,30 @@ pub const SETTINGS_FILE: &str = "folder.yaml";
 /// A record of settings kept on this machine alone, which a folder refuses
 /// (`folders.md` 1).
 const OLD_RECORD: &str = "folder.json";
+
+/// The server's cap on a request's body unless its instance names another,
+/// past which it answers `413 request_too_large` (`folders.md` 47).
+pub const REQUEST_LIMIT: usize = 1_048_576;
+
+/// How near the cap a text is warned of: nine tenths of it.
+pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
+
+/// A document's text as the JSON string it is sent in, where that comes near
+/// the cap; a file item's bytes go up outside it.
+fn near_limit(key: &str, text: &str) -> Option<Flagged> {
+    if !is_document(Path::new(key)) || text.len().saturating_mul(6) < NEAR_LIMIT {
+        return None;
+    }
+    let size = serde_json::to_string(text).map_or(text.len(), |sent| sent.len());
+    (size >= NEAR_LIMIT).then(|| Flagged {
+        path: key.to_string(),
+        flag: "size",
+        reason: format!(
+            "is {size} bytes as it is sent, {}% of the {REQUEST_LIMIT} a request may carry; past that the server refuses it request_too_large and the file is held",
+            size * 100 / REQUEST_LIMIT
+        ),
+    })
+}
 
 /// A directory, the `system.folder` it is bound to, and the device
 /// underneath it.
@@ -121,6 +149,12 @@ pub struct ScanReport {
     /// Files the built-in secrets list refuses, named so a refused file is
     /// never a silent one (`folders.md` 25).
     pub secrets: Vec<String>,
+    /// Files gone from the disk whose deletes wait to be confirmed, because
+    /// together they pass the removal threshold (`folders.md` 46).
+    pub paused: usize,
+    /// Texts this scan queued that come near the server's limit, flagged
+    /// `size` (`folders.md` 47).
+    pub warnings: Vec<Flagged>,
 }
 
 /// A missing file not trashed yet, and why.
@@ -137,7 +171,9 @@ pub struct Flagged {
     /// `unreadable`, `refused`, or `edges` for lines that change nothing
     /// (`folders.md` 9, 10, 11); `embed` for an embed read as nothing (12);
     /// `waiting` for a moved file whose item cannot be read yet (42); `name`
-    /// for a name another file here holds in another case or form (27).
+    /// for a name another file here holds in another case or form (27);
+    /// `removal` for a removal waiting to be confirmed (46); `size` for a
+    /// text near the server's limit (47).
     pub flag: &'static str,
     pub reason: String,
 }
@@ -686,6 +722,18 @@ enum Arrival {
     Waits(String),
 }
 
+/// What became of a missing file let go.
+enum Missing {
+    /// Found in another folder on the machine, so its item stays.
+    Moved,
+    /// Not told yet, and looked for again at the next pass.
+    Unsure(String),
+    /// Found nowhere, and its item's delete queued.
+    Deleted,
+    /// Its row was already gone from the copy.
+    Gone,
+}
+
 impl Folder {
     /// Reads the folder and queues what has changed. The watcher calls this
     /// too, so one rule decides identity (`folders.md` 18).
@@ -892,7 +940,10 @@ impl Folder {
                         &mut work,
                     )? {
                         Some(flagged) => report.flagged.push(flagged),
-                        None => report.created += 1,
+                        None => {
+                            report.created += 1;
+                            report.warnings.extend(near_limit(&file.key, &file.text));
+                        }
                     }
                 }
                 Some(Claim {
@@ -909,6 +960,7 @@ impl Folder {
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
+                        report.warnings.extend(near_limit(&file.key, &file.text));
                     } else {
                         report.unchanged += 1;
                     }
@@ -953,6 +1005,7 @@ impl Folder {
                         &mut report.flagged,
                     )? {
                         report.updated += 1;
+                        report.warnings.extend(near_limit(&file.key, &file.text));
                     } else {
                         report.unchanged += 1;
                     }
@@ -962,7 +1015,7 @@ impl Folder {
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
-                    self.queue_update(
+                    if self.queue_update(
                         &item_id,
                         Some(&bound),
                         file,
@@ -970,7 +1023,9 @@ impl Folder {
                         &edge_types,
                         &mut work,
                         &mut report.flagged,
-                    )?;
+                    )? {
+                        report.warnings.extend(near_limit(&file.key, &file.text));
+                    }
                     self.place(&item_id, &file.key, &withheld)?;
                     report.renamed += 1;
                 }
@@ -1334,57 +1389,93 @@ impl Folder {
         Ok(())
     }
 
-    /// Sends the deletes whose grace has run out, save for a file found in
-    /// another folder on this machine (`folders.md` 43).
+    /// Sends the deletes past their grace, save a file found in another folder
+    /// (`folders.md` 43), and none while a large removal waits (46).
     fn sweep_journal(
         &self,
         settings: &Settings,
         peers: &Peers<'_>,
         report: &mut ScanReport,
     ) -> Result<()> {
-        let journaled = {
+        let (journaled, of) = {
             let conn = self.core.conn()?;
-            state::journaled(&conn)?
+            (state::journaled(&conn)?, state::bound_count(&conn)?)
         };
+        // Counted over every missing file, not only those past the grace, so
+        // files a watch meets a pass apart are one removal.
+        if settings.removal_threshold.exceeded(journaled.len(), of) {
+            let paths: Vec<String> = journaled.into_iter().map(|(path, _, _)| path).collect();
+            state::set_paused(&*self.core.conn()?, state::Removal::Disk, &paths)?;
+            report.paused = paths.len();
+            return Ok(());
+        }
+        state::set_paused(&*self.core.conn()?, state::Removal::Disk, &[])?;
         let now = crate::store::now_iso();
         let members = OnceCell::new();
         for (path, item_id, missing_since) in journaled {
             if !elapsed_past(&missing_since, &now, RENAME_GRACE) {
                 continue;
             }
-            // A row already gone is the one excuse; anything else the store
-            // says is an error, not a reason to skip the delete.
-            let (held, bound) = {
-                let conn = self.core.conn()?;
-                (
-                    crate::store::item_held(&conn, &item_id)?,
-                    state::bound_at(&conn, &path)?.filter(|bound| bound.item_id == item_id),
-                )
-            };
-            if held {
-                let look = match &bound {
-                    Some(bound) => peers.moved_to(bound, self.holds(&item_id, settings, &members)),
-                    None => Look::Nowhere,
-                };
-                match look {
-                    Look::Moved => report.moved_away += 1,
-                    // Held as a delete is while offline, until it can be told.
-                    Look::Unsure(reason) => {
-                        report.unsure.push(Unsure { path, reason });
-                        continue;
-                    }
-                    Look::Nowhere => {
-                        self.core.delete_item(&item_id)?;
-                        report.deleted += 1;
-                        report.trashed.push(path.clone());
-                    }
+            match self.let_go_missing(&path, &item_id, settings, peers, &members)? {
+                Missing::Moved => report.moved_away += 1,
+                Missing::Unsure(reason) => report.unsure.push(Unsure { path, reason }),
+                Missing::Deleted => {
+                    report.deleted += 1;
+                    report.trashed.push(path);
                 }
+                Missing::Gone => {}
             }
-            let conn = self.core.conn()?;
-            state::journal_clear(&conn, &path)?;
-            state::unbind(&conn, &path)?;
         }
         Ok(())
+    }
+
+    /// Lets one missing file go: looked for in the other folders first, and
+    /// trashed only where it is in none (`folders.md` 43).
+    fn let_go_missing(
+        &self,
+        path: &str,
+        item_id: &str,
+        settings: &Settings,
+        peers: &Peers<'_>,
+        members: &OnceCell<HashSet<String>>,
+    ) -> Result<Missing> {
+        // A row already gone is the one excuse; anything else the store
+        // says is an error, not a reason to skip the delete.
+        let (held, bound) = {
+            let conn = self.core.conn()?;
+            (
+                crate::store::item_held(&conn, item_id)?,
+                state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),
+            )
+        };
+        let missing = if held {
+            let look = match &bound {
+                Some(bound) => peers.moved_to(bound, self.holds(item_id, settings, members)),
+                None => Look::Nowhere,
+            };
+            match look {
+                Look::Moved => Missing::Moved,
+                // Held as a delete is while offline, until it can be told.
+                Look::Unsure(reason) => return Ok(Missing::Unsure(reason)),
+                Look::Nowhere => {
+                    self.core.delete_item(item_id)?;
+                    Missing::Deleted
+                }
+            }
+        } else {
+            Missing::Gone
+        };
+        let conn = self.core.conn()?;
+        state::journal_clear(&conn, path)?;
+        state::unbind(&conn, path)?;
+        Ok(missing)
+    }
+
+    /// The other folders a missing file is looked for in, doubted where the
+    /// registry this folder listed itself in was gone.
+    fn peers(&self) -> Peers<'_> {
+        let (registry, lost) = self.register();
+        Peers::of(self, registry.filter(|_| lost))
     }
 
     /// Whether this path is one the folder pushes (`folders.md` 29, 36): a
@@ -2337,10 +2428,14 @@ impl Folder {
         let names = Names::load(self, &catalog)?;
         report.unplaced = withheld.len();
         let mut placing: Vec<Placing> = Vec::new();
+        let unmatched_ids: Vec<String> = work
+            .iter()
+            .filter(|(_, unmatched)| *unmatched)
+            .map(|(item, _)| item.id.clone())
+            .collect();
+        report.unmatched = unmatched_ids.len();
+        state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
         for (item, unmatched) in &work {
-            if *unmatched {
-                report.unmatched += 1;
-            }
             // This device's own create, not yet landed: the id goes back
             // only once it has (`folders.md` 13).
             if item.version == 0 {
@@ -2852,47 +2947,78 @@ impl Folder {
         lists: &Lists,
         report: &mut PullReport,
     ) -> Result<()> {
-        let bound = {
+        let (bound, of) = {
             let conn = self.core.conn()?;
-            state::every_bound(&conn)?
+            (state::every_bound(&conn)?, state::bound_count(&conn)?)
         };
+        let mut going: Vec<state::Bound> = Vec::new();
         for row in bound {
-            // A file the lists no longer take is neither read nor written.
-            if members.contains(&row.item_id) || !self.writes_at(lists, &row.path) {
-                continue;
+            match self.departing(&row, members, settings, lists)? {
+                Departing::No => {}
+                Departing::Kept => report.kept += 1,
+                Departing::Yes => going.push(row),
             }
-            let held = {
-                let conn = self.core.conn()?;
-                crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
-            };
-            // A row the copy lost is the scan's to report (`folders.md` 38).
-            let Some(item) = held else {
-                continue;
-            };
-            if settings.holds_state(item.state) {
-                continue;
-            }
-            let path = self.root.join(&row.path);
-            match std::fs::read(&path) {
-                Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
-                    report.kept += 1;
-                    continue;
-                }
-                Ok(_) => {
-                    if plainly_inside(&self.root, &row.path) {
-                        std::fs::remove_file(&path).map_err(|error| {
-                            CoreError::Store(format!("cannot remove {}: {error}", path.display()))
-                        })?;
-                    }
-                }
-                Err(_) => {}
-            }
-            let conn = self.core.conn()?;
-            state::unbind(&conn, &row.path)?;
-            state::journal_clear(&conn, &row.path)?;
+        }
+        // Many files taken away at once is more often a mistake made elsewhere
+        // than a wish, so they stay until confirmed (`folders.md` 46).
+        let paths: Vec<String> = going.iter().map(|row| row.path.clone()).collect();
+        if settings.removal_threshold.exceeded(going.len(), of) {
+            state::set_paused(&*self.core.conn()?, state::Removal::Pull, &paths)?;
+            report.paused = going.len();
+            return Ok(());
+        }
+        state::set_paused(&*self.core.conn()?, state::Removal::Pull, &[])?;
+        for row in going {
+            self.take_away(&row)?;
             report.removed += 1;
         }
         Ok(())
+    }
+
+    /// Whether a bound file goes because its item left by state or was
+    /// trashed (`folders.md` 35), or is kept because the person changed it.
+    fn departing(
+        &self,
+        row: &state::Bound,
+        members: &HashSet<String>,
+        settings: &Settings,
+        lists: &Lists,
+    ) -> Result<Departing> {
+        // A file the lists no longer take is neither read nor written.
+        if members.contains(&row.item_id) || !self.writes_at(lists, &row.path) {
+            return Ok(Departing::No);
+        }
+        let held = {
+            let conn = self.core.conn()?;
+            crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
+        };
+        // A row the copy lost is the scan's to report (`folders.md` 38).
+        let Some(item) = held else {
+            return Ok(Departing::No);
+        };
+        if settings.holds_state(item.state) {
+            return Ok(Departing::No);
+        }
+        Ok(match std::fs::read(self.root.join(&row.path)) {
+            Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
+                Departing::Kept
+            }
+            _ => Departing::Yes,
+        })
+    }
+
+    /// Takes a departed item's file away with its binding; nothing is
+    /// journaled, since the folder was not told of a delete.
+    fn take_away(&self, row: &state::Bound) -> Result<()> {
+        let path = self.root.join(&row.path);
+        if path.exists() && plainly_inside(&self.root, &row.path) {
+            std::fs::remove_file(&path).map_err(|error| {
+                CoreError::Store(format!("cannot remove {}: {error}", path.display()))
+            })?;
+        }
+        let conn = self.core.conn()?;
+        state::unbind(&conn, &row.path)?;
+        state::journal_clear(&conn, &row.path)
     }
 
     /// Whether a file differs from its item's render in its version line
@@ -3336,6 +3462,13 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
         .then(|| format!("{type} is a file type, whose items are bytes rather than documents"))
 }
 
+/// What a pull does with a bound file whose item may have left.
+enum Departing {
+    No,
+    Kept,
+    Yes,
+}
+
 /// An item a pull writes, with the path it settled on.
 struct Placing<'a> {
     item: &'a Item,
@@ -3452,6 +3585,9 @@ pub struct PullReport {
     pub removed: usize,
     /// The same, kept because the person changed them.
     pub kept: usize,
+    /// The same, left in place until confirmed, because together they pass
+    /// the removal threshold (`folders.md` 46).
+    pub paused: usize,
     /// Files whose item the search no longer matches for any other reason,
     /// left where they are (`folders.md` 35).
     pub unmatched: usize,

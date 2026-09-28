@@ -360,6 +360,67 @@ pub fn journaled(conn: &Connection) -> Result<Vec<(String, String, String)>, Cor
     Ok(journaled)
 }
 
+pub fn bound_count(conn: &Connection) -> Result<usize, CoreError> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM folder_files", [], |row| row.get(0))?;
+    Ok(usize::try_from(count).unwrap_or(0))
+}
+
+/// Where a paused removal came from: files gone from the disk, whose deletes
+/// wait, or items gone elsewhere, whose files a pull leaves (`folders.md` 46).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    Disk,
+    Pull,
+}
+
+impl Removal {
+    fn key(self) -> &'static str {
+        match self {
+            Removal::Disk => "folder_paused_disk",
+            Removal::Pull => "folder_paused_pull",
+        }
+    }
+}
+
+/// The paths a paused removal holds back, in path order.
+pub fn paused(conn: &Connection, removal: Removal) -> Result<Vec<String>, CoreError> {
+    list(conn, removal.key())
+}
+
+fn list(conn: &Connection, key: &str) -> Result<Vec<String>, CoreError> {
+    Ok(crate::store::meta_get(conn, key)?
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default())
+}
+
+pub fn set_paused(conn: &Connection, removal: Removal, paths: &[String]) -> Result<(), CoreError> {
+    set_list(conn, removal.key(), paths)
+}
+
+/// A list kept in one `meta` row, written only where it changed, since a
+/// watch sets it on every pass.
+fn set_list(conn: &Connection, key: &str, list: &[String]) -> Result<(), CoreError> {
+    if self::list(conn, key)? == list {
+        return Ok(());
+    }
+    if list.is_empty() {
+        return crate::store::meta_delete(conn, key);
+    }
+    crate::store::meta_set(conn, key, &serde_json::to_string(list)?)
+}
+
+/// The items the last pull left in place because the search no longer
+/// matches them, so a status read needs no pull of its own (`folders.md` 48).
+const UNMATCHED: &str = "folder_unmatched";
+
+pub fn unmatched(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    list(conn, UNMATCHED)
+}
+
+pub fn set_unmatched(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
+    set_list(conn, UNMATCHED, ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

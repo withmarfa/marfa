@@ -729,6 +729,26 @@ export interface ScanReport {
   directories: FlaggedFile[];
   /** Files the built-in secrets list refuses (`folders.md` 25). */
   secrets: string[];
+  /** Deletes of files gone from the disk that wait, a large removal
+   *  (`folders.md` 46). */
+  paused: number;
+  /** Texts near the server's limit, each flagged `size` (`folders.md` 47). */
+  warnings: FlaggedFile[];
+}
+
+/** Where every file stands (`folders.md` 48). */
+export interface StatusReport {
+  files: Array<{
+    path: string;
+    item_id?: string;
+    status:
+      "in_step" | "waiting" | "held" | "unmatched" | "unreached" | "outside";
+    waits?: string[];
+    flag?: string;
+    reason?: string;
+    warning?: string;
+  }>;
+  paused: { disk: number; pull: number };
 }
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
@@ -778,6 +798,9 @@ export interface PullReport {
   /** Files whose item the search no longer matches otherwise, left where
    *  they are (`folders.md` 35). */
   unmatched: number;
+  /** Files left in place whose items left elsewhere in a large removal
+   *  (`folders.md` 46). */
+  paused: number;
   /** Files another folder on the machine let go of, taken in here
    *  (`folders.md` 44). */
   taken: number;
@@ -881,6 +904,25 @@ export class CliFolder {
   /** The folders the registry of this folder's machine lists. */
   async list(): Promise<Outcome<RegisteredFolder[]>> {
     return this.run<RegisteredFolder[]>(["folders", "list"]);
+  }
+
+  /** Where every file stands, read from the folder's own store. */
+  async status(): Promise<Outcome<StatusReport>> {
+    return this.run<StatusReport>(["folders", "status", this.dir]);
+  }
+
+  /** Lets a paused large removal go. */
+  async confirm(): Promise<
+    Outcome<{ deleted: number; moved: number; removed: number }>
+  > {
+    return this.run(["folders", "confirm", this.dir]);
+  }
+
+  /** Cancels a paused large removal. */
+  async restore(): Promise<
+    Outcome<{ put_back: number; restored: number; pull: PullReport }>
+  > {
+    return this.run(["folders", "restore", this.dir, ...this.server()]);
   }
 
   /** Takes the folder off its machine, leaving its files. */
