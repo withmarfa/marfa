@@ -322,7 +322,7 @@ describe("occurrences and the bulk doors", () => {
 });
 
 describe("links and tombstones", () => {
-  it("finds an item by its link and its natural key, and remembers a purge's tombstone longer", async () => {
+  it("finds an item by its link and its natural key, and settles a purge's tombstone later", async () => {
     const type = `user.${unique("clilinked").replace(/-/g, "")}`;
     const registered = await c.cli.json<{
       type: { id: string; link_field?: string };
@@ -386,7 +386,7 @@ describe("links and tombstones", () => {
       Date.parse(tombstone?.purged_at ?? "") + 3_600_000,
     ).toISOString();
     const moved = await c.cli.json<{
-      tombstones: Array<{ remembered_until: string }>;
+      tombstones: Array<{ settled_at: string }>;
     }>([
       "items",
       "tombstones",
@@ -394,10 +394,10 @@ describe("links and tombstones", () => {
       type,
       "--link",
       link,
-      "--until",
+      "--settled-at",
       later,
     ]);
-    expect(moved.tombstones[0]?.remembered_until).toBe(later);
+    expect(moved.tombstones[0]?.settled_at).toBe(later);
   });
 });
 

@@ -504,7 +504,7 @@ CREATE TABLE IF NOT EXISTS `link_tombstones` (
 	`type` text NOT NULL,
 	`value` text NOT NULL,
 	`purged_at` text NOT NULL,
-	`remembered_until` text NOT NULL,
+	`settled_at` text NOT NULL,
 	PRIMARY KEY(`type`, `value`)
 );
 
@@ -520,7 +520,7 @@ CREATE TABLE IF NOT EXISTS `natural_key_tombstones` (
 	`source` text NOT NULL,
 	`source_id` text NOT NULL,
 	`purged_at` text NOT NULL,
-	`remembered_until` text NOT NULL,
+	`settled_at` text NOT NULL,
 	PRIMARY KEY(`type`, `source`, `source_id`)
 );
 

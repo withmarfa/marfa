@@ -1170,6 +1170,6 @@ fn the_key_doors_send_the_selector_they_were_given() {
     assert_eq!(moved.path(), "/items/tombstones");
     assert_eq!(
         body(&moved),
-        &json!({ "type": "t", "links": ["v"], "remembered_until": "2026-01-01T00:00:00Z" })
+        &json!({ "type": "t", "links": ["v"], "settled_at": "2026-01-01T00:00:00Z" })
     );
 }

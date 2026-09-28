@@ -138,20 +138,22 @@ export const item_links = sqliteTable(
 );
 
 // What a purge leaves of a row's link, until a row of the type claims the
-// value again.
+// value again, the type changes its link or is deleted. Never swept: a purge
+// holds against a vendor that still has the item, however long.
 export const link_tombstones = sqliteTable(
   "link_tombstones",
   {
     type: text("type").notNull(),
     value: text("value").notNull(),
     purged_at: text("purged_at").notNull(),
-    remembered_until: text("remembered_until").notNull(),
+    settled_at: text("settled_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.type, table.value] })],
 );
 
 // What a purge leaves of a row's natural key, under the row's type, until a
-// row of any type holds the key again: the key is unique across types.
+// row of any type holds the key again (the key is unique across types) or the
+// type is deleted. Never swept, as above.
 export const natural_key_tombstones = sqliteTable(
   "natural_key_tombstones",
   {
@@ -159,7 +161,7 @@ export const natural_key_tombstones = sqliteTable(
     source: text("source").notNull(),
     source_id: text("source_id").notNull(),
     purged_at: text("purged_at").notNull(),
-    remembered_until: text("remembered_until").notNull(),
+    settled_at: text("settled_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.type, table.source, table.source_id] }),

@@ -151,15 +151,41 @@ describe("the timed trash sweep", () => {
       links: ["swept"],
     });
     expect(link?.key).toBe("swept");
-    expect(link?.remembered_until).toBe(link?.purged_at);
+    expect(link?.settled_at).toBe(link?.purged_at);
     const [naturalKey] = await ctx.storage.items.tombstones(type.id, {
       source: "sweep-source",
       source_ids: ["sweep-1"],
     });
     expect(naturalKey?.key).toBe("sweep-1");
     expect(naturalKey?.purged_at).toBe(link?.purged_at);
-    expect((await ctx.storage.items.findByLinks(type.id, ["swept"])).size).toBe(
-      0,
-    );
+    // The swept row's link entry went with it, so the value is free.
+    const again = await ctx.storage.items.create({
+      type: type.id,
+      properties: { vendor_id: "swept", body: "again" },
+      source: "test",
+    });
+    expect(
+      (await ctx.storage.items.findByLinks(type.id, ["swept"])).get("swept")
+        ?.id,
+    ).toBe(again.id);
+  });
+
+  it("leaves a registered-again type none of the tombstones its orphaned rows left", async () => {
+    const type = await linkedType();
+    const orphan = await ctx.storage.items.create({
+      type: type.id,
+      properties: { vendor_id: "orphaned", body: "b" },
+      source: "orphan-source",
+      source_id: "orphan-1",
+    });
+    await ctx.storage.items.delete(orphan.id);
+    await ctx.storage.types.delete(type.id);
+    await ctx.storage.items.purgeTrashedOlderThan("2999-01-01T00:00:00.000Z");
+    const byKey = { source: "orphan-source", source_ids: ["orphan-1"] };
+    // The witness: the sweep left one under the identifier no type holds.
+    expect(await ctx.storage.items.tombstones(type.id, byKey)).toHaveLength(1);
+
+    await ctx.storage.types.create(type);
+    expect(await ctx.storage.items.tombstones(type.id, byKey)).toEqual([]);
   });
 });

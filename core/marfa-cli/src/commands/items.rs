@@ -136,7 +136,7 @@ pub enum ItemsCommand {
         #[arg(long, value_name = "NAME")]
         include: Vec<String>,
     },
-    /// Move the time the tombstones purges left are remembered until later.
+    /// Settle the tombstones purges left at a later time.
     Tombstones {
         /// The type the tombstones are kept under.
         #[arg(long = "type", value_name = "TYPE")]
@@ -150,10 +150,11 @@ pub enum ItemsCommand {
         /// A natural key's `source_id`; repeat for more.
         #[arg(long = "source-id", value_name = "ID")]
         source_ids: Vec<String>,
-        /// The time to remember them until, RFC 3339; an earlier one than a
-        /// tombstone holds leaves it as it is.
-        #[arg(long, value_name = "TIME")]
-        until: String,
+        /// The time of the vendor's own change the connector made in carrying
+        /// the purge out, RFC 3339; one earlier than a tombstone holds leaves
+        /// it as it is.
+        #[arg(long = "settled-at", value_name = "TIME")]
+        settled_at: String,
     },
     /// Apply one action to every item a filter selects, as a job.
     #[command(name = "bulk-action")]
@@ -710,10 +711,10 @@ pub fn tombstones_request(
     links: &[String],
     source: Option<&str>,
     source_ids: &[String],
-    until: &str,
+    settled_at: &str,
 ) -> Request {
     let mut body = key_selector(type_, links, source, source_ids);
-    body.insert("remembered_until".into(), json!(until));
+    body.insert("settled_at".into(), json!(settled_at));
     Request::post(&["items", "tombstones"]).json(Value::Object(body))
 }
 
@@ -872,8 +873,8 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             links,
             source,
             source_ids,
-            until,
-        } => tombstones_request(type_, links, source.as_deref(), source_ids, until),
+            settled_at,
+        } => tombstones_request(type_, links, source.as_deref(), source_ids, settled_at),
         ItemsCommand::BulkAction { command } => bulk_action_request(command)?,
     };
     out.value(&remote.json(&request)?)

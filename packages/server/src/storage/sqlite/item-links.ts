@@ -31,12 +31,17 @@ function linkTaken(
   type: string,
   field: string,
   value: string,
-  holder: string,
+  holder: string | undefined,
 ): MarfaError {
   return new MarfaError(
     ErrorCode.LINK_TAKEN,
     `Another item of type "${type}" already holds "${value}" in its link, "${field}"`,
-    { type, field, value, existing_id: holder },
+    {
+      type,
+      field,
+      value,
+      ...(holder !== undefined && { existing_id: holder }),
+    },
   );
 }
 
@@ -103,7 +108,7 @@ export async function syncLink(
         and(eq(item_links.type, row.type), eq(item_links.value, link.value)),
       )
       .all();
-    throw linkTaken(row.type, link.field, link.value, raced?.item_id ?? "");
+    throw linkTaken(row.type, link.field, link.value, raced?.item_id);
   }
   await db
     .delete(link_tombstones)
@@ -143,30 +148,42 @@ export async function recordTombstones(
   if (ids.length === 0) return;
   const unique = [...new Set(ids)];
   await db.run(sql`
-    INSERT INTO link_tombstones (type, value, purged_at, remembered_until)
+    INSERT INTO link_tombstones (type, value, purged_at, settled_at)
     SELECT type, value, ${now}, ${now} FROM item_links
     WHERE ${inArray(item_links.item_id, unique)}
     ON CONFLICT (type, value) DO UPDATE SET
       purged_at = excluded.purged_at,
-      remembered_until = max(link_tombstones.remembered_until, excluded.remembered_until)
+      settled_at = max(link_tombstones.settled_at, excluded.settled_at)
   `);
   await db.run(sql`
-    INSERT INTO natural_key_tombstones (type, source, source_id, purged_at, remembered_until)
+    INSERT INTO natural_key_tombstones (type, source, source_id, purged_at, settled_at)
     SELECT type, source, source_id, ${now}, ${now} FROM items
     WHERE ${inArray(items.id, unique)}
       AND source IS NOT NULL AND source_id IS NOT NULL
     ON CONFLICT (type, source, source_id) DO UPDATE SET
       purged_at = excluded.purged_at,
-      remembered_until = max(natural_key_tombstones.remembered_until, excluded.remembered_until)
+      settled_at = max(natural_key_tombstones.settled_at, excluded.settled_at)
   `);
 }
 
+/** Replaces a type's link entries with those `field` gives its rows. The
+ *  old link's tombstones go too: they hold another field's values. */
 export async function rebuildTypeLinks(
   db: Executor,
   type: string,
   field: string | undefined,
 ): Promise<void> {
   await db.delete(item_links).where(eq(item_links.type, type)).run();
+  await db.delete(link_tombstones).where(eq(link_tombstones.type, type)).run();
+  await buildTypeLinks(db, type, field);
+}
+
+/** Enters each row of `type` under `field`, refusing a value two share. */
+export async function buildTypeLinks(
+  db: Executor,
+  type: string,
+  field: string | undefined,
+): Promise<void> {
   if (field === undefined) return;
   const path = `$."${field}"`;
   const holds = sql`${items.type} = ${type}
@@ -193,12 +210,9 @@ export async function rebuildTypeLinks(
     SELECT ${type}, json_extract(${items.properties}, ${path}), ${items.id}
     FROM ${items} WHERE ${holds}
   `);
-  await db.run(sql`
-    DELETE FROM link_tombstones WHERE type = ${type}
-      AND value IN (SELECT value FROM item_links WHERE type = ${type})
-  `);
 }
 
+/** Drops a type's link entries and every tombstone kept under it. */
 export async function forgetType(db: Executor, type: string): Promise<void> {
   await db.delete(item_links).where(eq(item_links.type, type)).run();
   await db.delete(link_tombstones).where(eq(link_tombstones.type, type)).run();
@@ -211,12 +225,12 @@ export async function forgetType(db: Executor, type: string): Promise<void> {
 function asTombstone(row: {
   key: string;
   purged_at: string;
-  remembered_until: string;
+  settled_at: string;
 }): Tombstone {
   return {
     key: row.key,
     purged_at: row.purged_at,
-    remembered_until: row.remembered_until,
+    settled_at: row.settled_at,
   };
 }
 
@@ -230,7 +244,7 @@ export async function readLinkTombstones(
     .select({
       key: link_tombstones.value,
       purged_at: link_tombstones.purged_at,
-      remembered_until: link_tombstones.remembered_until,
+      settled_at: link_tombstones.settled_at,
     })
     .from(link_tombstones)
     .where(
@@ -254,7 +268,7 @@ export async function readNaturalKeyTombstones(
     .select({
       key: natural_key_tombstones.source_id,
       purged_at: natural_key_tombstones.purged_at,
-      remembered_until: natural_key_tombstones.remembered_until,
+      settled_at: natural_key_tombstones.settled_at,
     })
     .from(natural_key_tombstones)
     .where(
@@ -268,17 +282,17 @@ export async function readNaturalKeyTombstones(
   return rows.map(asTombstone);
 }
 
-export async function extendLinkTombstones(
+export async function settleLinkTombstones(
   db: Executor,
   type: string,
   values: readonly string[],
-  until: string,
+  settledAt: string,
 ): Promise<Tombstone[]> {
   if (values.length === 0) return [];
   await db
     .update(link_tombstones)
     .set({
-      remembered_until: sql`max(${link_tombstones.remembered_until}, ${until})`,
+      settled_at: sql`max(${link_tombstones.settled_at}, ${settledAt})`,
     })
     .where(
       and(
@@ -290,18 +304,18 @@ export async function extendLinkTombstones(
   return readLinkTombstones(db, type, values);
 }
 
-export async function extendNaturalKeyTombstones(
+export async function settleNaturalKeyTombstones(
   db: Executor,
   type: string,
   source: string,
   sourceIds: readonly string[],
-  until: string,
+  settledAt: string,
 ): Promise<Tombstone[]> {
   if (sourceIds.length === 0) return [];
   await db
     .update(natural_key_tombstones)
     .set({
-      remembered_until: sql`max(${natural_key_tombstones.remembered_until}, ${until})`,
+      settled_at: sql`max(${natural_key_tombstones.settled_at}, ${settledAt})`,
     })
     .where(
       and(

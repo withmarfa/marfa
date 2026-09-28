@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ExtendTombstonesRequest {
+pub struct SettleTombstonesRequest {
     /// The type the links are held in and the tombstones are kept under.
     #[serde(rename = "type")]
     pub r#type: String,
@@ -25,19 +25,19 @@ pub struct ExtendTombstonesRequest {
     /// Natural-key identifiers under `source`.
     #[serde(rename = "source_ids", skip_serializing_if = "Option::is_none")]
     pub source_ids: Option<Vec<String>>,
-    /// An RFC 3339 instant. Each named tombstone takes it where it is later than the one it holds, and keeps its own otherwise.
-    #[serde(rename = "remembered_until")]
-    pub remembered_until: String,
+    /// An RFC 3339 instant: the time of the vendor's own change the connector made in carrying the purge out. Each named tombstone takes it where it is later than the one it holds, and keeps its own otherwise.
+    #[serde(rename = "settled_at")]
+    pub settled_at: String,
 }
 
-impl ExtendTombstonesRequest {
-    pub fn new(r#type: String, remembered_until: String) -> ExtendTombstonesRequest {
-        ExtendTombstonesRequest {
+impl SettleTombstonesRequest {
+    pub fn new(r#type: String, settled_at: String) -> SettleTombstonesRequest {
+        SettleTombstonesRequest {
             r#type,
             links: None,
             source: None,
             source_ids: None,
-            remembered_until,
+            settled_at,
         }
     }
 }

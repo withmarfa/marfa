@@ -148,8 +148,6 @@ src/models/edge_type_request.rs
 src/models/edge_type_request_property_schema_value.rs
 src/models/edge_version_conflict.rs
 src/models/enforcement_override.rs
-src/models/extend_tombstones_200_response.rs
-src/models/extend_tombstones_request.rs
 src/models/extensions_response.rs
 src/models/field_definition.rs
 src/models/find_connector_agreements_200_response.rs
@@ -278,6 +276,8 @@ src/models/request_too_large_refusal.rs
 src/models/request_too_large_refusal_error.rs
 src/models/search_result.rs
 src/models/search_result_page.rs
+src/models/settle_tombstones_200_response.rs
+src/models/settle_tombstones_request.rs
 src/models/stream_capacity_exhausted_refusal.rs
 src/models/stream_capacity_exhausted_refusal_error.rs
 src/models/tag_count.rs

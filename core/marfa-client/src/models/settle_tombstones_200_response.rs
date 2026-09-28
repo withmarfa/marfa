@@ -12,14 +12,14 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ExtendTombstones200Response {
+pub struct SettleTombstones200Response {
     /// The named tombstones as they stand after the write, in the order named. A key with no tombstone under `type` is left out.
     #[serde(rename = "tombstones")]
     pub tombstones: Vec<models::Tombstone>,
 }
 
-impl ExtendTombstones200Response {
-    pub fn new(tombstones: Vec<models::Tombstone>) -> ExtendTombstones200Response {
-        ExtendTombstones200Response { tombstones }
+impl SettleTombstones200Response {
+    pub fn new(tombstones: Vec<models::Tombstone>) -> SettleTombstones200Response {
+        SettleTombstones200Response { tombstones }
     }
 }

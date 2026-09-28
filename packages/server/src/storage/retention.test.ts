@@ -623,7 +623,7 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
   });
 });
 
-describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
+describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
   /**
    * A grant revoked through the user-facing path, which is the row this sweep
    * exists for. **`state` stays `active` deliberately** — the revoke writes
@@ -631,7 +631,7 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
    * record survives as a record, which is exactly why neither the trash purge
    * nor the activity purge can reach it.
    */
-  async function seedTombstone(revokedAt: string, kind = "app") {
+  async function seedRevokedGrant(revokedAt: string, kind = "app") {
     const item = await ctx.storage.items.create({
       type: "system.connection",
       properties: {
@@ -649,8 +649,8 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   const RECENT = new Date(Date.now() - 60_000).toISOString();
   const CUTOFF = "2021-01-01T00:00:00.000Z";
 
-  it("removes an app tombstone revoked before the window", async () => {
-    const id = await seedTombstone(OLD);
+  it("removes an app grant row revoked before the window", async () => {
+    const id = await seedRevokedGrant(OLD);
     const deleted =
       await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(deleted).toBe(1);
@@ -658,7 +658,7 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   });
 
   it("keeps one revoked inside the window", async () => {
-    const id = await seedTombstone(RECENT);
+    const id = await seedRevokedGrant(RECENT);
     await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
@@ -667,8 +667,8 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
     // **Demonstrated rather than assumed.** The predicate asks
     // `kind = 'app'`; widening it to every revoked connection reddens this
     // and nothing else.
-    const connector = await seedTombstone(OLD, "connector");
-    const app = await seedTombstone(OLD, "app");
+    const connector = await seedRevokedGrant(OLD, "connector");
+    const app = await seedRevokedGrant(OLD, "app");
     const deleted =
       await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(deleted).toBe(1);
@@ -691,14 +691,14 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   });
 
   it("is a no-op at retentionDays 0, like every other housekeeping job here", async () => {
-    const id = await seedTombstone(OLD);
+    const id = await seedRevokedGrant(OLD);
     const purger = new RevokedGrantPurger(ctx.storage.items, 0);
     expect(await purger.runOnce()).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
   it("sweeps through the purger at its configured window", async () => {
-    const id = await seedTombstone(OLD);
+    const id = await seedRevokedGrant(OLD);
     const purger = new RevokedGrantPurger(ctx.storage.items, 90);
     expect(await purger.runOnce()).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
@@ -735,7 +735,7 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
     // The needed correction: a predicate keyed on the item's `state` the
     // way the trash purge is matches none of these, because an
     // ordinarily-revoked grant sits at `state: "active"`.
-    const id = await seedTombstone(OLD);
+    const id = await seedRevokedGrant(OLD);
     expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });

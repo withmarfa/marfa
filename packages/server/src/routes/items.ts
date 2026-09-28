@@ -709,7 +709,10 @@ const updateItemRoute = createRoute({
           "and the losing value lands on a sibling tagged `conflicted-copy` " +
           "beside the original's tags, with a copy of the edges that are the " +
           "original's own, those its own file would write, that a second " +
-          "item may hold and the writer could have made. " +
+          "item may hold and the writer could have made. The sibling " +
+          "carries neither the item's natural key nor its link, so where " +
+          "the type requires its `link_field` nothing is resolved and the " +
+          "write answers the 409 envelope. " +
           "`manual` and `callback` return the 409 envelope for the caller to " +
           "resolve. Omitted means `manual`.",
       ),
@@ -1240,7 +1243,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `remembered_until`. `POST /items/lookup` reads them and `POST /items/tombstones` moves the second later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

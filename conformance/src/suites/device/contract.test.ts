@@ -366,7 +366,7 @@ const invocations: Record<string, () => string[]> = {
     "core.note",
     "--link",
     "v",
-    "--until",
+    "--settled-at",
     WHEN,
   ],
   "extensions list": () => [ID],

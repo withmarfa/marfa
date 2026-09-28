@@ -19,17 +19,17 @@ pub struct Tombstone {
     /// When the row holding the key was purged.
     #[serde(rename = "purged_at")]
     pub purged_at: String,
-    /// The purge time, or a later time a key with write on the type moved it to through `POST /items/tombstones`.
-    #[serde(rename = "remembered_until")]
-    pub remembered_until: String,
+    /// The purge time, or the later time of the vendor's own change a connector made in carrying the purge out, moved by `POST /items/tombstones`; a vendor change after it is a new row.
+    #[serde(rename = "settled_at")]
+    pub settled_at: String,
 }
 
 impl Tombstone {
-    pub fn new(key: String, purged_at: String, remembered_until: String) -> Tombstone {
+    pub fn new(key: String, purged_at: String, settled_at: String) -> Tombstone {
         Tombstone {
             key,
             purged_at,
-            remembered_until,
+            settled_at,
         }
     }
 }

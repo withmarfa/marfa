@@ -296,6 +296,11 @@ const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
  * every row the server stamped, and leaves it no worse than it already
  * was against one a caller spelled its own way.
  */
+export function normalizeTimeBound(value: string, field: string): string;
+export function normalizeTimeBound(
+  value: string | undefined,
+  field: string,
+): string | undefined;
 export function normalizeTimeBound(
   value: string | undefined,
   field: string,
@@ -621,7 +626,7 @@ export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
 export interface Tombstone {
   key: string;
   purged_at: string;
-  remembered_until: string;
+  settled_at: string;
 }
 
 /** The keys a tombstone is read or moved by: links, or natural keys under
@@ -701,12 +706,12 @@ export interface ItemStore {
   ): Promise<Map<string, Item>>;
   /** The tombstones purges left for these keys under `type`. */
   tombstones(type: string, selector: TombstoneSelector): Promise<Tombstone[]>;
-  /** Moves each named tombstone's `remembered_until` to `until` where that is
+  /** Moves each named tombstone's `settled_at` to `settledAt` where that is
    *  later, never earlier, and answers them as they then stand. */
-  extendTombstones(
+  settleTombstones(
     type: string,
     selector: TombstoneSelector,
-    until: string,
+    settledAt: string,
   ): Promise<Tombstone[]>;
   update(
     id: string,
@@ -793,7 +798,7 @@ export interface ItemStore {
    */
   purgeTrashedOlderThan(beforeDate: string): Promise<number>;
   /**
-   * Hard-delete every revoked **application** grant tombstone whose
+   * Hard-delete every revoked **application** grant row whose
    * `properties.revoked_at` is strictly older than `beforeDate`. Returns the
    * number of rows deleted.
    *
@@ -1729,7 +1734,7 @@ export interface OauthProviderStore {
    * Every `system.connection { kind: "app" }` projection carrying this
    * client id, whatever either lifecycle axis says. The
    * operator's client delete walks this list, so it has to see the
-   * tombstones `findGrantItemId` deliberately hides: a projection left
+   * revoked grant rows `findGrantItemId` deliberately hides: a projection left
    * behind by a hand-deleted client row is exactly what that route exists
    * to remove.
    */

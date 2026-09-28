@@ -97,13 +97,13 @@ import {
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import {
-  extendLinkTombstones,
-  extendNaturalKeyTombstones,
   forgetNaturalKey,
   linkFieldOf,
   readLinkTombstones,
   readNaturalKeyTombstones,
   recordTombstones,
+  settleLinkTombstones,
+  settleNaturalKeyTombstones,
   syncLink,
 } from "./item-links.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -192,6 +192,13 @@ function allowedTypesCondition(
 }
 
 type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
+
+function linkRequired(type: string): boolean {
+  const field = linkFieldOf(type);
+  return (
+    field !== undefined && getTypeSchema(type)?.fields[field]?.required === true
+  );
+}
 
 /**
  * Writes the keep-both sibling in the caller's transaction.
@@ -619,19 +626,19 @@ export class SqliteItemStore implements ItemStore {
         );
   }
 
-  extendTombstones(
+  settleTombstones(
     type: string,
     selector: TombstoneSelector,
-    until: string,
+    settledAt: string,
   ): Promise<Tombstone[]> {
     return "links" in selector
-      ? extendLinkTombstones(this.db, type, selector.links, until)
-      : extendNaturalKeyTombstones(
+      ? settleLinkTombstones(this.db, type, selector.links, settledAt)
+      : settleNaturalKeyTombstones(
           this.db,
           type,
           selector.source,
           selector.source_ids,
-          until,
+          settledAt,
         );
   }
 
@@ -1238,6 +1245,19 @@ export class SqliteItemStore implements ItemStore {
         // and the original already past it.
         let siblingId: string | undefined;
         if (plan.keepBothFields.length > 0) {
+          // A copy carries no link, so it could not be a row of a type that
+          // requires one.
+          if (linkRequired(row.type)) {
+            return versionConflict(
+              row.version,
+              currentProps,
+              input.version,
+              ancestor.properties,
+              result.conflicting_fields,
+              policy,
+              ancestorFields,
+            );
+          }
           siblingId = conflictedSiblingIdFor(id, input.version, input);
           sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,

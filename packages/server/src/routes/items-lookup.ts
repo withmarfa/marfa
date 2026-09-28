@@ -35,10 +35,10 @@ const TombstoneSchema = z
       .string()
       .describe("The link value, or the natural key's `source_id`."),
     purged_at: z.string().describe("When the row holding the key was purged."),
-    remembered_until: z
+    settled_at: z
       .string()
       .describe(
-        "The purge time, or a later time a key with write on the type moved it to through `POST /items/tombstones`.",
+        "The purge time, or the later time of the vendor's own change a connector made in carrying the purge out, moved by `POST /items/tombstones`; a vendor change after it is a new row.",
       ),
   })
   .openapi("Tombstone");
@@ -55,6 +55,7 @@ const selectorFields = {
     .describe("Link values, which `type` must name a `link_field` for."),
   source: z
     .string()
+    .min(1)
     .optional()
     .describe("The source the `source_ids` are natural keys under."),
   source_ids: z
@@ -89,10 +90,10 @@ const LookupResponseSchema = z.object({
 
 const TombstonesRequestSchema = z.strictObject({
   ...selectorFields,
-  remembered_until: z
+  settled_at: z
     .string()
     .describe(
-      "An RFC 3339 instant. Each named tombstone takes it where it is later than the one it holds, and keeps its own otherwise.",
+      "An RFC 3339 instant: the time of the vendor's own change the connector made in carrying the purge out. Each named tombstone takes it where it is later than the one it holds, and keeps its own otherwise.",
     ),
 });
 
@@ -162,11 +163,11 @@ const lookupRoute = createRoute({
 const tombstonesRoute = createRoute({
   method: "post",
   path: "/tombstones",
-  operationId: "extendTombstones",
+  operationId: "settleTombstones",
   tags: ["Items"],
-  summary: "Remember tombstones longer",
+  summary: "Move tombstones' settled time later",
   description:
-    "Moves the `remembered_until` of the tombstones purges left under `type` to `remembered_until`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. A connector calls it when its own carrying of a purge touched the vendor after the purge. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`.",
+    "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -189,7 +190,7 @@ const tombstonesRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body naming no `type` or `remembered_until`; `validation_error` for a malformed `type` or `remembered_until`, a body naming neither selector or both, `source` without `source_ids` or the reverse, more than 500 values, an empty value, a key the door does not declare, or `links` for a type naming no `link_field`; `unknown_type` for a well-formed type nothing registered.",
+        "`missing_required_field` for a body naming no `type` or `settled_at`; `validation_error` for a malformed `type` or `settled_at`, a body naming neither selector or both, `source` without `source_ids` or the reverse, more than 500 values, an empty value, a key the door does not declare, or `links` for a type naming no `link_field`; `unknown_type` for a well-formed type nothing registered.",
     },
     401: {
       content: {
@@ -210,10 +211,18 @@ const tombstonesRoute = createRoute({
   },
 });
 
-type Selector =
+type KeySelector =
   | { kind: "links"; values: string[] }
-  | { kind: "source"; source: string; values: string[] }
-  | { kind: "ids"; values: string[] };
+  | { kind: "source"; source: string; values: string[] };
+
+type Selector = KeySelector | { kind: "ids"; values: string[] };
+
+interface SelectorBody {
+  links?: string[];
+  source?: string;
+  source_ids?: string[];
+  ids?: string[];
+}
 
 function registeredType(type: string): string {
   if (!isValidTypeIdentifier(type)) {
@@ -229,19 +238,21 @@ function registeredType(type: string): string {
 
 function selectorOf(
   type: string,
-  body: {
-    links?: string[];
-    source?: string;
-    source_ids?: string[];
-    ids?: string[];
-  },
+  body: SelectorBody,
+  withIds: false,
+): KeySelector;
+function selectorOf(type: string, body: SelectorBody, withIds: true): Selector;
+function selectorOf(
+  type: string,
+  body: SelectorBody,
+  withIds: boolean,
 ): Selector {
   const named = [
     ...(body.links !== undefined ? ["links"] : []),
     ...(body.source !== undefined || body.source_ids !== undefined
       ? ["source"]
       : []),
-    ...(body.ids !== undefined ? ["ids"] : []),
+    ...(withIds && body.ids !== undefined ? ["ids"] : []),
   ];
   if (named.length !== 1) {
     throw new MarfaError(
@@ -271,7 +282,7 @@ function selectorOf(
     }
     return { kind: "links", values: capped(body.links) };
   }
-  if (body.ids !== undefined) {
+  if (withIds && body.ids !== undefined) {
     const ids = capped(body.ids);
     for (const id of ids) {
       if (!isValidId(id)) {
@@ -297,9 +308,7 @@ function selectorOf(
   };
 }
 
-function tombstoneSelector(
-  selector: Exclude<Selector, { kind: "ids" }>,
-): TombstoneSelector {
+function tombstoneSelector(selector: KeySelector): TombstoneSelector {
   return selector.kind === "links"
     ? { links: selector.values }
     : { source: selector.source, source_ids: selector.values };
@@ -329,7 +338,7 @@ export function itemsLookupRoutes(storage: Storage) {
     const apiKey = requireAuth(c);
     const body = c.req.valid("json");
     const type = registeredType(body.type);
-    const selector = selectorOf(type, body);
+    const selector = selectorOf(type, body, true);
     // Before the per-row filter: an empty answer to a key that may read
     // nothing would say the keys named nothing.
     getTypeFilter(c);
@@ -383,21 +392,17 @@ export function itemsLookupRoutes(storage: Storage) {
     requireAuth(c);
     const body = c.req.valid("json");
     const type = registeredType(body.type);
-    const selector = selectorOf(type, body);
-    const until = normalizeTimeBound(body.remembered_until, "remembered_until");
+    const selector = selectorOf(type, body, false);
+    const settledAt = normalizeTimeBound(body.settled_at, "settled_at");
     requireTypeAccess(c, type, "write");
-    // Unreachable: the body declares no `ids` and requires the time.
-    if (selector.kind === "ids" || until === undefined) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid request");
-    }
 
     const tombstones = inOrder(
       selector.values,
       await storage.runInTransaction(() =>
-        storage.items.extendTombstones(
+        storage.items.settleTombstones(
           type,
           tombstoneSelector(selector),
-          until,
+          settledAt,
         ),
       ),
     );
@@ -407,7 +412,7 @@ export function itemsLookupRoutes(storage: Storage) {
       action: "items.tombstones",
       resource_type: "type",
       resource_id: type,
-      details: { remembered_until: until, count: tombstones.length },
+      details: { settled_at: settledAt, count: tombstones.length },
     });
     return c.json({ tombstones }, 200);
   });

@@ -152,7 +152,7 @@ async function allGrantRows(c: TestContext) {
   // Every state, because the claim is about what storage holds rather than
   // what a reader is answered. The listing default is the active state, and
   // a soft-deleted grant sits at `revoked`, so a narrowed read here would
-  // count the tombstone as absent and the assertion would pass on exactly
+  // count the revoked grant row as absent and the assertion would pass on exactly
   // the resurrection it exists to rule out.
   const listed = await c.storage.items.list({
     type: "system.connection",
@@ -235,13 +235,13 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     expect(after[0]!.client_id).toBe(clientId);
     expect(after[0]!.status).toBe("active");
 
-    // The tombstone was never touched. Both halves matter: a row still at
+    // The revoked grant row was never touched. Both halves matter: a row still at
     // `state: revoked` cannot mint or be merged against, and an unchanged
     // `granted_at` is what says the approval never reached it rather than
     // reaching it and writing the same values back.
-    const tombstone = await c.storage.items.get(originalId);
-    expect(tombstone?.state).toBe("revoked");
-    expect(tombstone?.properties.granted_at).toBe(hiddenGrantedAt);
+    const revoked = await c.storage.items.get(originalId);
+    expect(revoked?.state).toBe("revoked");
+    expect(revoked?.properties.granted_at).toBe(hiddenGrantedAt);
 
     // Two rows exist in storage; only the reachable one is a grant.
     const rows = await allGrantRows(c);
@@ -393,7 +393,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
 
   it("a revoked grant meets the same type gate, and the cascade is what removes it", async () => {
     // The type gate reads the row's type and nothing else, so revoking
-    // first does not change its answer: a tombstone is refused at this door
+    // first does not change its answer: a revoked grant row is refused at this door
     // exactly as a live grant is. Removing one is the cascade's job, which
     // is the second half of this case rather than a separate file, because
     // the pair is the whole story of how a grant row ever leaves.
@@ -402,7 +402,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
       c,
-      "grant-visibility-tombstone@example.com",
+      "grant-visibility-revoked@example.com",
     );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
@@ -425,7 +425,10 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // never saw, and with the grant revoked there is nothing left to refuse.
     const note = await request(c.app, "POST", "/items", {
       key,
-      body: { type: "core.note", properties: { body: "holds the tombstone" } },
+      body: {
+        type: "core.note",
+        properties: { body: "holds the revoked grant" },
+      },
     });
     expect(note.status).toBe(201);
     const noteId = ((await note.json()) as { item: { id: string } }).item.id;
@@ -446,7 +449,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
 
   it("a grant revoked on the state axis alone is the strand, and both doors still refuse it", async () => {
     // The revoke cascade writes `status` and never `state`, so this shape is
-    // not a tombstone: tokens live, consent row standing, listed by neither
+    // not a revoked grant row: tokens live, consent row standing, listed by neither
     // read surface. Purging it would make the strand permanent, since
     // nothing could ever run the cascade for it again.
     ctx = await createTestContext({});

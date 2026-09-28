@@ -147,7 +147,7 @@ export interface TypeSchema {
 export interface Tombstone {
   key: string;
   purged_at: string;
-  remembered_until: string;
+  settled_at: string;
 }
 
 /** One selector and the type it is read under: links, natural keys under

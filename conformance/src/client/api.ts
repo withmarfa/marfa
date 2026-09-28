@@ -525,10 +525,10 @@ export class MarfaClient {
     });
   }
 
-  /** POST /items/tombstones — moves the named tombstones' `remembered_until`
+  /** POST /items/tombstones — moves the named tombstones' `settled_at`
    *  later, never earlier. */
-  async extendTombstones(
-    input: Omit<LookupInput, "ids" | "include"> & { remembered_until: string },
+  async settleTombstones(
+    input: Omit<LookupInput, "ids" | "include"> & { settled_at: string },
   ): Promise<ApiResponse<{ tombstones: Tombstone[] }>> {
     return this.request<{ tombstones: Tombstone[] }>("/items/tombstones", {
       method: "POST",

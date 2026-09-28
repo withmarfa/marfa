@@ -12,6 +12,7 @@ import {
   createTestContext,
   getOperatorClient,
   trackEdge,
+  trackFolder,
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
@@ -225,6 +226,72 @@ describe("a type's link", () => {
       binned.id,
       value,
     );
+  });
+
+  /** A type naming no link, two of whose rows share a `vendor_id`, deleted
+   *  by force so the rows stay under its identifier. */
+  async function leftBehind(name: string): Promise<{
+    id: string;
+    fields: Record<string, { type: string }>;
+    first: MarfaItem;
+  }> {
+    const id = `user.linked-${name}-${ctx.runId}`;
+    const fields = {
+      vendor_id: { type: "string" },
+      remote_id: { type: "string" },
+    };
+    expect((await client.registerType({ id, fields } as never)).ok).toBe(true);
+    const first = await row(
+      { vendor_id: v(name), remote_id: v(`${name}-a`) },
+      { type: id },
+    );
+    await row({ vendor_id: v(name), remote_id: v(`${name}-b`) }, { type: id });
+    expect((await client.deleteType(id, true)).ok).toBe(true);
+    return { id, fields, first };
+  }
+
+  it("refuses to register a link the rows a forced delete left share", async () => {
+    const { id, fields, first } = await leftBehind("left");
+    const refused = await client.registerType({
+      id,
+      fields,
+      link_field: "vendor_id",
+    } as never);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+    expect(refused.error?.error.code).toBe("link_taken");
+    expect(refused.error?.error.details).toEqual({
+      type: id,
+      field: "vendor_id",
+    });
+    expect((await client.getType(id)).status).toBe(404);
+
+    // The witness: a link the rows hold apart registers, and holds them.
+    const registered = await client.registerType({
+      id,
+      fields,
+      link_field: "remote_id",
+    } as never);
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const found = await client.lookupItems({ type: id, links: [v("left-a")] });
+    expect(found.data.data.map((i) => i.id)).toEqual([first.id]);
+  });
+
+  it("stops a restore registering a link the rows a forced delete left share", async () => {
+    const { id, fields } = await leftBehind("left-restore");
+    const operator = getOperatorClient();
+    const refused = await operator.restoreArchive(
+      itemsArchive([], [], [{ id, fields, link_field: "vendor_id" }]),
+    );
+    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+    expect(refused.error?.error.code).toBe("link_taken");
+    expect((await client.getType(id)).status).toBe(404);
+
+    // The witness: the same archive naming a link the rows hold apart restores.
+    const restored = await operator.restoreArchive(
+      itemsArchive([], [], [{ id, fields, link_field: "remote_id" }]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect((await client.getType(id)).data.link_field).toBe("remote_id");
   });
 });
 
@@ -470,6 +537,44 @@ describe("a link is one row's", () => {
     expect(none.data.data).toEqual([]);
   });
 
+  it("reports a link another row holds per row of a bulk update_properties", async () => {
+    const taken = v("patch-held");
+    const holder = await row({ vendor_id: taken });
+    const tag = v("patch-tag");
+    const patched = await row({ vendor_id: v("patch-mine") });
+    expect((await client.addTags(patched.id, [tag])).ok).toBe(true);
+    const run = async (vendorId: string) => {
+      const queued = await client.bulkAction({
+        action: "update_properties",
+        patch: { vendor_id: vendorId },
+        filter: { tags: [tag] },
+      });
+      expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+      const job = await client.pollBulkActionToTerminal(
+        (queued.data as { id: string }).id,
+      );
+      expect(job.status).toBe("completed");
+      return job.result;
+    };
+
+    const refused = await run(taken);
+    expect(refused?.succeeded).toBe(0);
+    expect(refused?.errors?.map((e) => [e.id, e.code])).toEqual([
+      [patched.id, "link_taken"],
+    ]);
+    expect(
+      (await client.getItem(patched.id)).data.item.properties.vendor_id,
+    ).toBe(v("patch-mine"));
+    expect((await client.getItem(holder.id)).data.item.version).toBe(1);
+
+    // The witness: a value nothing holds lands through the same action.
+    const landed = await run(v("patch-free"));
+    expect(landed?.succeeded).toBe(1);
+    expect(
+      (await client.getItem(patched.id)).data.item.properties.vendor_id,
+    ).toBe(v("patch-free"));
+  });
+
   it("leaves the link off a keep-both copy of a row", async () => {
     const id = `user.linked-copies-${ctx.runId}`;
     const registered = await client.registerType({
@@ -507,6 +612,44 @@ describe("a link is one row's", () => {
     expect(copy.data.item.properties).not.toHaveProperty("vendor_id");
     const held = await client.lookupItems({ type: id, links: [value] });
     expect(held.data.data.map((i) => i.id)).toEqual([original.id]);
+  });
+
+  it("does not resolve into a copy where the type requires its link", async () => {
+    const id = `user.linked-required-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: {
+        vendor_id: { type: "string", required: true },
+        notes: { type: "string" },
+      },
+      link_field: "vendor_id",
+      merge_policy: { fields: { notes: "keep_both_copies" } },
+    } as never);
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const original = await row(
+      { vendor_id: v("required"), notes: "as written" },
+      { type: id },
+    );
+    expect(
+      (
+        await client.updateItem(original.id, {
+          properties: { notes: "changed here" },
+          version: 1,
+        })
+      ).ok,
+    ).toBe(true);
+    const refused = await client.rawRequest<unknown>(
+      `/items/${original.id}?conflict=auto`,
+      {
+        method: "PATCH",
+        body: { properties: { notes: "changed there" }, version: 1 },
+      },
+    );
+    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+    expect(refused.error?.error.code).toBe("version_conflict");
+    const kept = await client.getItem(original.id);
+    expect(kept.data.item.version).toBe(2);
+    expect(kept.data.item.properties.notes).toBe("changed here");
   });
 
   it("counts an archived row whose link another row holds as a duplicate", async () => {
@@ -572,7 +715,7 @@ describe("a purge's tombstones", () => {
     expect(tombstone?.key).toBe(link);
     const purgedAt = tombstone?.purged_at ?? "";
     expect(purgedAt >= before && purgedAt <= after, purgedAt).toBe(true);
-    expect(tombstone?.remembered_until).toBe(purgedAt);
+    expect(tombstone?.settled_at).toBe(purgedAt);
 
     const byKey = await client.lookupItems({
       type: linked,
@@ -581,7 +724,7 @@ describe("a purge's tombstones", () => {
     });
     expect(byKey.data.data).toEqual([]);
     expect(byKey.data.tombstones).toEqual([
-      { key, purged_at: purgedAt, remembered_until: purgedAt },
+      { key, purged_at: purgedAt, settled_at: purgedAt },
     ]);
   });
 
@@ -642,25 +785,97 @@ describe("a purge's tombstones", () => {
     const key = v("gone-key");
     const target = await row({ vendor_id: link }, { type: id, source_id: key });
     await purge(target.id);
+    const byKey = { type: id, source: ctx.source, source_ids: [key] };
     expect(await tombstonesByLink([link], id)).toHaveLength(1);
+    expect((await client.lookupItems(byKey)).data.tombstones).toHaveLength(1);
 
     expect((await client.deleteType(id)).ok).toBe(true);
     const again = await client.registerType(schema as never);
     expect(again.ok, JSON.stringify(again.error)).toBe(true);
     expect(await tombstonesByLink([link], id)).toEqual([]);
+    expect((await client.lookupItems(byKey)).data.tombstones).toEqual([]);
+  });
+
+  it("starts a type registered again with no tombstones, even those its orphaned rows left", async () => {
+    const id = `user.linked-orphans-${ctx.runId}`;
+    const schema = {
+      id,
+      fields: { vendor_id: { type: "string" } },
+      link_field: "vendor_id",
+    };
+    expect((await client.registerType(schema as never)).ok).toBe(true);
+    const key = v("orphan-key");
+    const orphan = await row(
+      { vendor_id: v("orphan") },
+      { type: id, source_id: key },
+    );
+    expect((await client.deleteItem(orphan.id)).ok).toBe(true);
+    expect((await client.deleteType(id, true)).ok).toBe(true);
+    const purged = await client.purgeItem(orphan.id);
+    expect(purged.ok, JSON.stringify(purged.error)).toBe(true);
+
+    expect((await client.registerType(schema as never)).ok).toBe(true);
+    const kept = v("orphan-kept");
+    const since = await row(
+      { vendor_id: v("orphan-since") },
+      { type: id, source_id: kept },
+    );
+    await purge(since.id);
+    const found = await client.lookupItems({
+      type: id,
+      source: ctx.source,
+      source_ids: [key, kept],
+    });
+    // The witness: the type's tombstones are read, the one purged since.
+    expect(found.data.tombstones.map((t) => t.key)).toEqual([kept]);
+  });
+
+  it("forgets the old link's tombstones when a type changes its link", async () => {
+    const id = `user.linked-moves-${ctx.runId}`;
+    const fields = {
+      vendor_id: { type: "string" },
+      remote_id: { type: "string" },
+    };
+    expect(
+      (
+        await client.registerType({
+          id,
+          fields,
+          link_field: "vendor_id",
+        } as never)
+      ).ok,
+    ).toBe(true);
+    const value = v("moves");
+    const key = v("moves-key");
+    const target = await row(
+      { vendor_id: value, remote_id: v("moves-remote") },
+      { type: id, source_id: key },
+    );
+    await purge(target.id);
+    // The witness: the purge left the value's tombstone under the old link.
+    expect(await tombstonesByLink([value], id)).toHaveLength(1);
+
+    const moved = await client.updateType(id, {
+      fields,
+      version: 2,
+      link_field: "remote_id",
+    });
+    expect(moved.ok, JSON.stringify(moved.error)).toBe(true);
+    expect(await tombstonesByLink([value], id)).toEqual([]);
+    // A natural key is no link, and its tombstone stays.
     const byKey = await client.lookupItems({
       type: id,
       source: ctx.source,
       source_ids: [key],
     });
-    expect(byKey.data.tombstones).toEqual([]);
+    expect(byKey.data.tombstones.map((t) => t.key)).toEqual([key]);
   });
 });
 
 describe("POST /items/tombstones", () => {
-  it("moves remembered_until later, never earlier", async () => {
-    const link = v("remembered");
-    const key = v("remembered-key");
+  it("moves settled_at later, never earlier", async () => {
+    const link = v("settled");
+    const key = v("settled-key");
     const target = await row({ vendor_id: link }, { source_id: key });
     await purge(target.id);
     const [tombstone] = await tombstonesByLink([link]);
@@ -668,43 +883,43 @@ describe("POST /items/tombstones", () => {
     const at = (hours: number) =>
       new Date(purgedAt + hours * 3_600_000).toISOString();
 
-    const later = await client.extendTombstones({
+    const later = await client.settleTombstones({
       type: linked,
-      links: [link, v("remembered-none")],
-      remembered_until: at(2),
+      links: [link, v("settled-none")],
+      settled_at: at(2),
     });
     expect(later.ok, JSON.stringify(later.error)).toBe(true);
     await expectMatchesSchema("POST", "/items/tombstones", 200, later.data);
     expect(later.data.tombstones).toEqual([
-      { key: link, purged_at: tombstone?.purged_at, remembered_until: at(2) },
+      { key: link, purged_at: tombstone?.purged_at, settled_at: at(2) },
     ]);
 
     for (const earlier of [at(1), at(-1)]) {
-      const kept = await client.extendTombstones({
+      const kept = await client.settleTombstones({
         type: linked,
         links: [link],
-        remembered_until: earlier,
+        settled_at: earlier,
       });
       expect(kept.ok).toBe(true);
-      expect(kept.data.tombstones[0]?.remembered_until).toBe(at(2));
+      expect(kept.data.tombstones[0]?.settled_at).toBe(at(2));
     }
     // An offset is the same instant, answered in the stored spelling.
-    const offset = await client.extendTombstones({
+    const offset = await client.settleTombstones({
       type: linked,
       links: [link],
-      remembered_until: at(3).replace("Z", "+00:00"),
+      settled_at: at(3).replace("Z", "+00:00"),
     });
-    expect(offset.data.tombstones[0]?.remembered_until).toBe(at(3));
-    expect((await tombstonesByLink([link]))[0]?.remembered_until).toBe(at(3));
+    expect(offset.data.tombstones[0]?.settled_at).toBe(at(3));
+    expect((await tombstonesByLink([link]))[0]?.settled_at).toBe(at(3));
 
-    const byKey = await client.extendTombstones({
+    const byKey = await client.settleTombstones({
       type: linked,
       source: ctx.source,
       source_ids: [key],
-      remembered_until: at(4),
+      settled_at: at(4),
     });
     expect(byKey.data.tombstones).toEqual([
-      { key, purged_at: tombstone?.purged_at, remembered_until: at(4) },
+      { key, purged_at: tombstone?.purged_at, settled_at: at(4) },
     ]);
   });
 
@@ -729,10 +944,10 @@ describe("POST /items/tombstones", () => {
       apiKey: minted.data.key,
     });
 
-    const refused = await reader.extendTombstones({
+    const refused = await reader.settleTombstones({
       type: linked,
       links: [link],
-      remembered_until: later,
+      settled_at: later,
     });
     expect(refused.status).toBe(403);
     expect(refused.error?.error.code).toBe("type_not_permitted");
@@ -741,12 +956,12 @@ describe("POST /items/tombstones", () => {
     expect(read.data.tombstones).toEqual([tombstone]);
 
     // The witness: the writer moves it.
-    const moved = await client.extendTombstones({
+    const moved = await client.settleTombstones({
       type: linked,
       links: [link],
-      remembered_until: later,
+      settled_at: later,
     });
-    expect(moved.data.tombstones[0]?.remembered_until).toBe(later);
+    expect(moved.data.tombstones[0]?.settled_at).toBe(later);
   });
 
   it("refuses a malformed tombstone request", async () => {
@@ -754,37 +969,42 @@ describe("POST /items/tombstones", () => {
     const post = (body: Record<string, unknown>) =>
       client.rawRequest<unknown>("/items/tombstones", { method: "POST", body });
     const refusals: [Record<string, unknown>, number, string][] = [
-      [{ links: ["x"], remembered_until: when }, 400, "missing_required_field"],
+      [{ links: ["x"], settled_at: when }, 400, "missing_required_field"],
       [{ type: linked, links: ["x"] }, 400, "missing_required_field"],
-      [{ type: linked, remembered_until: when }, 400, "validation_error"],
+      [{ type: linked, settled_at: when }, 400, "validation_error"],
       [
         {
           type: linked,
           links: ["x"],
           source: ctx.source,
           source_ids: ["x"],
-          remembered_until: when,
+          settled_at: when,
         },
         400,
         "validation_error",
       ],
       [
-        { type: linked, source: ctx.source, remembered_until: when },
+        { type: linked, source: ctx.source, settled_at: when },
         400,
         "validation_error",
       ],
       [
-        { type: linked, links: ["x"], remembered_until: "tomorrow" },
+        { type: linked, source: "", source_ids: ["x"], settled_at: when },
         400,
         "validation_error",
       ],
       [
-        { type: linked, ids: [uuidv7()], remembered_until: when },
+        { type: linked, links: ["x"], settled_at: "tomorrow" },
         400,
         "validation_error",
       ],
       [
-        { type: "core.note", links: ["x"], remembered_until: when },
+        { type: linked, ids: [uuidv7()], settled_at: when },
+        400,
+        "validation_error",
+      ],
+      [
+        { type: "core.note", links: ["x"], settled_at: when },
         400,
         "validation_error",
       ],
@@ -792,7 +1012,7 @@ describe("POST /items/tombstones", () => {
         {
           type: `user.nothing-${ctx.runId}`,
           links: ["x"],
-          remembered_until: when,
+          settled_at: when,
         },
         400,
         "unknown_type",
@@ -801,7 +1021,7 @@ describe("POST /items/tombstones", () => {
         {
           type: linked,
           links: Array.from({ length: 501 }, (_, i) => `x${String(i)}`),
-          remembered_until: when,
+          settled_at: when,
         },
         400,
         "validation_error",
@@ -818,7 +1038,7 @@ describe("POST /items/tombstones", () => {
     const full = await post({
       type: linked,
       links: Array.from({ length: 500 }, (_, i) => `x${String(i)}`),
-      remembered_until: when,
+      settled_at: when,
     });
     expect(full.status).toBe(200);
   });
@@ -902,14 +1122,21 @@ describe("POST /items/lookup", () => {
     expect(found.data.tombstones).toEqual([]);
   });
 
-  it("looks rows up by id in every state, where bulk-get leaves the bin out", async () => {
+  it("looks rows up by id in every state, where bulk-get leaves the bin out, and leaves a system row out", async () => {
     const live = await row({ vendor_id: v("id-live") });
     const binned = await row({ body: "in the bin" }, { type: "core.note" });
     expect((await client.deleteItem(binned.id)).ok).toBe(true);
+    const folder = await client.createFolder({ title: v("lookup-folder") });
+    expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+    trackFolder(ctx, folder.data.item.id);
+    // The witness: the item doors read the folder's row by its id.
+    expect((await client.getItem(folder.data.item.id)).data.item.type).toBe(
+      "system.folder",
+    );
 
     const found = await client.lookupItems({
       type: linked,
-      ids: [binned.id, live.id, binned.id, uuidv7()],
+      ids: [binned.id, folder.data.item.id, live.id, binned.id, uuidv7()],
     });
     expect(found.ok, JSON.stringify(found.error)).toBe(true);
     expect(found.data.data.map((i) => [i.id, i.state])).toEqual([
@@ -1002,7 +1229,9 @@ describe("POST /items/lookup", () => {
     expect(theirs.data.tombstones).toEqual([]);
 
     const byLink = { type: linked, links: [link, gone] };
-    expect((await client.lookupItems(byLink)).data.tombstones).toHaveLength(1);
+    const written = await client.lookupItems(byLink);
+    expect(written.data.data.map((i) => i.id)).toEqual([kept.id]);
+    expect(written.data.tombstones).toHaveLength(1);
     expect(await notes.lookupItems(byLink)).toMatchObject({
       status: 200,
       data: { data: [], tombstones: [] },
@@ -1026,6 +1255,7 @@ describe("POST /items/lookup", () => {
       [{ type: linked, links: ["x"], ids: [uuidv7()] }, "validation_error"],
       [{ type: linked, source: ctx.source }, "validation_error"],
       [{ type: linked, source_ids: ["x"] }, "validation_error"],
+      [{ type: linked, source: "", source_ids: ["x"] }, "validation_error"],
       [{ type: linked, links: [""] }, "validation_error"],
       [{ type: linked, links: many(501) }, "validation_error"],
       [{ type: linked, links: ["x"], lnks: ["x"] }, "validation_error"],

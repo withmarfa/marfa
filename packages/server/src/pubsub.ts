@@ -170,7 +170,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
  * edges joining them. `?edges=none` is the opt-out, and it is
  * independent of the type filter. Silencing every edge under a type
  * filter would leave a filtered client with no way to reconstruct its
- * graph — an edge has no row to re-read and leaves no tombstone when it
+ * graph — an edge has no row to re-read and leaves no record when it
  * goes.
  */
 export async function publishEdge(

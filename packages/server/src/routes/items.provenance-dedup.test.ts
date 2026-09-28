@@ -154,7 +154,7 @@ describe("a mirror the user trashed", () => {
   });
 
   it("resumes ordinary updates once the user restores it", async () => {
-    // The acknowledge is a hold, not a tombstone.
+    // The acknowledge is a hold, not a purge.
     const k = await connectorKey("prov-restore", "feed-restore");
     const body = {
       type: "core.note",

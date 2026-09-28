@@ -13,7 +13,7 @@ import { safeJsonParse } from "../json-utils.js";
 import { types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
-import { forgetType, rebuildTypeLinks } from "./item-links.js";
+import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
 
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
@@ -49,8 +49,10 @@ export class SqliteTypeStore implements TypeStore {
         }
         throw err;
       }
-      // Rows a forced delete left behind are rows of this type again.
-      await rebuildTypeLinks(tx, schema.id, schema.link_field);
+      // Rows a forced delete left are this type's again; the tombstones their
+      // purges left were the deleted type's.
+      await forgetType(tx, schema.id);
+      await buildTypeLinks(tx, schema.id, schema.link_field);
     });
     registerTypeSchema(schema);
     return schema;
