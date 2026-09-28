@@ -417,6 +417,10 @@ pub struct UpdateArgs {
     /// The tier to move the item to.
     #[arg(long)]
     pub tier: Option<Tier>,
+    /// The properties are the item's whole properties: one they leave out is
+    /// cleared rather than kept.
+    #[arg(long)]
+    pub replace: bool,
 }
 
 #[derive(Debug, Args)]
@@ -670,6 +674,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                         source_id: args.source_id,
                         r#type: args.type_,
                         tier: args.tier.map(Into::into),
+                        replace_properties: args.replace,
                     };
                     let queued = if args.as_read {
                         core.update_item_as_read(&args.id, &edit)?

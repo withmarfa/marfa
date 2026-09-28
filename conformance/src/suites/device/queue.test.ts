@@ -450,6 +450,55 @@ describe("what a drain sends and reports", () => {
     expect(body.version).toBe(HELD.version);
   });
 
+  it("sends an edit's properties whole, and shows what it cleared", async () => {
+    harness = await hydratedHarness("queue-replace", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: HELD.id,
+              version: HELD.version,
+              properties: { title: "held", body: "held", notes: "to clear" },
+            },
+          },
+        ],
+      },
+    });
+    const edit = await harness.device.update(HELD.id, {
+      properties: { title: "held", body: "rewritten" },
+      version: HELD.version,
+      replace: true,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    const local = await harness.device.get(HELD.id);
+    expect(
+      local.ok && local.value.properties,
+      "the copy showed a property the edit leaves out, which the server will clear",
+    ).toEqual({ title: "held", body: "rewritten" });
+
+    scriptWrites(harness.server, {
+      update: [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "held", body: "rewritten" },
+          }),
+        ),
+      ],
+    });
+    expect((await harness.device.drain()).ok).toBe(true);
+    const patch = harness.server.requests.find(
+      (request) => request.method === "PATCH",
+    );
+    const body = JSON.parse(patch?.body ?? "{}") as Record<string, unknown>;
+    expect(
+      body.properties_mode,
+      "the edit went as a merge, so the property it leaves out stays on the server",
+    ).toBe("replace");
+    expect(body.properties).toEqual({ title: "held", body: "rewritten" });
+  });
+
   it("lets a row go once its retype out of the slice is answered", async () => {
     harness = await hydratedHarness("queue-retype-out", { rows: held() });
     expect(

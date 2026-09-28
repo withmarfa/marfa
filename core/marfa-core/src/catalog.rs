@@ -8,6 +8,9 @@ struct Entry {
     parent: Option<String>,
     title_field: Option<String>,
     thumbnail_field: Option<String>,
+    body_field: Option<String>,
+    /// The properties the type declares itself, not those it inherits.
+    fields: Vec<String>,
 }
 
 /// What the local index reads from an item's properties.
@@ -40,25 +43,35 @@ const MAX_PARENT_WALK: usize = 64;
 
 impl Catalog {
     pub fn load(conn: &Connection) -> Result<Catalog, CoreError> {
-        let mut statement =
-            conn.prepare("SELECT id, parent, title_field, thumbnail_field FROM types")?;
+        let mut statement = conn.prepare(
+            "SELECT id, parent, title_field, thumbnail_field,
+                    json_extract(json, '$.display_hints.body_field'),
+                    (SELECT json_group_array(key) FROM json_each(types.json, '$.fields'))
+               FROM types",
+        )?;
         let rows = statement.query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })?;
         let mut entries = HashMap::new();
         for row in rows {
-            let (id, parent, title_field, thumbnail_field) = row?;
+            let (id, parent, title_field, thumbnail_field, body_field, fields) = row?;
             entries.insert(
                 id,
                 Entry {
                     parent,
                     title_field,
                     thumbnail_field,
+                    body_field,
+                    fields: fields
+                        .and_then(|fields| serde_json::from_str(&fields).ok())
+                        .unwrap_or_default(),
                 },
             );
         }
@@ -105,6 +118,18 @@ impl Catalog {
 
     pub fn title_field(&self, type_id: &str) -> Option<&str> {
         self.nearest(type_id, |entry| entry.title_field.as_deref())
+    }
+
+    /// The property a type's text lives in, its own or the one it inherits.
+    pub fn body_field(&self, type_id: &str) -> Option<&str> {
+        self.nearest(type_id, |entry| entry.body_field.as_deref())
+    }
+
+    /// Every type the copy holds, with the properties each declares itself.
+    pub fn declared(&self) -> impl Iterator<Item = (&str, &[String])> {
+        self.entries
+            .iter()
+            .map(|(id, entry)| (id.as_str(), entry.fields.as_slice()))
     }
 
     /// The thumbnail a type carries, its own or the one it inherits: the
@@ -169,6 +194,8 @@ mod tests {
                             parent: parent.map(str::to_string),
                             title_field: None,
                             thumbnail_field: None,
+                            body_field: None,
+                            fields: Vec::new(),
                         },
                     )
                 })

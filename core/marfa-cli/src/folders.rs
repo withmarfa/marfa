@@ -153,6 +153,16 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     }
                     lines.extend(settings_line(&settings));
                     lines.push(describe_scan(&scanned));
+                    let mut flagged = scanned.flagged.clone();
+                    if let Some(pulled) = &pulled {
+                        for file in &pulled.flagged {
+                            if !flagged.iter().any(|seen| seen.path == file.path) {
+                                flagged.push(file.clone());
+                            }
+                        }
+                        lines.extend(uncarried_line(&pulled.uncarried));
+                    }
+                    lines.extend(flagged_lines(&flagged));
                     lines.push(format!(
                         "sent {}, held {}",
                         drained.report.sent, drained.report.held
@@ -203,7 +213,7 @@ fn send(
 }
 
 /// Said in words, because what these edits carried went over whatever
-/// changed since their file was written (`folders.md` 20).
+/// changed since their file was written (`folders.md` 22).
 pub fn rebased_line(rebased: usize) -> String {
     format!(
         "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
@@ -211,7 +221,7 @@ pub fn rebased_line(rebased: usize) -> String {
 }
 
 /// Placements another machine made first, followed rather than sent
-/// (`folders.md` 16).
+/// (`folders.md` 18).
 pub fn gave_way_line(gave_way: usize) -> String {
     format!("{gave_way} placement(s) another machine made first, followed instead")
 }
@@ -221,6 +231,38 @@ pub fn unplaced_line(unplaced: usize) -> Option<String> {
     (unplaced > 0).then(|| {
         format!(
             "{unplaced} placement(s) the server refused, not sent again until the key or the settings change"
+        )
+    })
+}
+
+/// Each file the folder holds rather than sends, with why, in words.
+pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
+    flagged
+        .iter()
+        .map(|file| match file.flag {
+            "unreadable" => format!(
+                "{} is held, not sent: its frontmatter cannot be read ({})",
+                file.path, file.reason
+            ),
+            _ => format!(
+                "{} is held, not sent, and left as written: {}",
+                file.path, file.reason
+            ),
+        })
+        .collect()
+}
+
+/// Properties no file can carry, because a file reads their name as the
+/// item's own field or an edge.
+pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<String> {
+    (!uncarried.is_empty()).then(|| {
+        let named: Vec<String> = uncarried
+            .iter()
+            .map(|entry| format!("{}.{}", entry.r#type, entry.property))
+            .collect();
+        format!(
+            "no file can carry {}: a file reads type, tier, tags, state and edge names as the item's own",
+            named.join(", ")
         )
     })
 }
@@ -239,7 +281,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 /// What a pull did, for somebody who did not ask for JSON.
 ///
 /// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 25, 27, 33), named only when there are
+/// get one on this pass (`folders.md` 27, 29, 35), named only when there are
 /// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
@@ -306,11 +348,18 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         line.push('\n');
         line.push_str(&settings);
     }
+    for extra in uncarried_line(&report.uncarried)
+        .into_iter()
+        .chain(flagged_lines(&report.flagged))
+    {
+        line.push('\n');
+        line.push_str(&extra);
+    }
     line
 }
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
-    format!(
+    let mut line = format!(
         "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
         report.created,
         report.updated,
@@ -333,5 +382,9 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         .filter(|(count, _)| *count > 0)
         .map(|(count, what)| format!("; {count} {what}"))
         .collect::<String>()
-    )
+    );
+    if !report.flagged.is_empty() {
+        line.push_str(&format!("; {} held, not sent", report.flagged.len()));
+    }
+    line
 }

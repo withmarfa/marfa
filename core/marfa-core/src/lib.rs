@@ -495,7 +495,10 @@ impl Core {
         if row.base_version.is_none_or(|base| base >= held.version) {
             return Ok(false);
         }
-        store::move_edit(&tx, id, held.version)?;
+        // With its base gone, nothing tells a property it left out from one
+        // added since, so it goes as a merge and clears nothing.
+        store::merge_properties(&tx, id)?;
+        store::move_edit(&tx, id, held.version, None)?;
         store::release(&tx, id)?;
         tx.commit()?;
         Ok(true)
@@ -1274,18 +1277,27 @@ fn queue_update(
     // copy's row, where the edit is based on the version the copy holds. One
     // based on a version it read earlier was made against that version, not
     // against what the copy has taken in since, and nothing records it.
+    // A whole-properties edit also changes every property it leaves out.
     let read = (base == held.version).then(|| {
+        let cleared = held.properties.keys().filter(|_| edit.replace_properties);
         serde_json::json!({
             "properties": edit
                 .properties
                 .keys()
+                .chain(cleared)
                 .map(|key| (key.clone(), held.properties.get(key).cloned().unwrap_or(Value::Null)))
                 .collect::<serde_json::Map<String, Value>>(),
         })
     });
     let mut next = held.clone();
-    for (key, value) in &edit.properties {
-        next.properties.insert(key.clone(), value.clone());
+    // As the lay-over does: only an edit that read the copy knows which
+    // properties it cleared.
+    if edit.replace_properties && read.is_some() {
+        next.properties = edit.properties.clone();
+    } else {
+        for (key, value) in &edit.properties {
+            next.properties.insert(key.clone(), value.clone());
+        }
     }
     // **The natural key moves on the copy too, not only on the wire.**
     //

@@ -1,5 +1,5 @@
 //! Which file is which across a rename, for a file that cannot carry a
-//! `marfa_id` (`folders.md` 14).
+//! `marfa_id` (`folders.md` 16).
 //!
 //! Fail-closed: a file is the same file when its device, inode and birth time
 //! all match. A zero birth time yields no identity, an identity two files

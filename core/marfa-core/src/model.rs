@@ -366,6 +366,9 @@ pub struct Edit {
     pub r#type: Option<String>,
     /// The tier to move the row to. Absent leaves it where it is.
     pub tier: Option<Tier>,
+    /// Sends `properties` as the row's whole properties, so one left out is
+    /// cleared (`items.md` 22); otherwise they merge over the row's.
+    pub replace_properties: bool,
 }
 
 impl Edit {
@@ -380,6 +383,9 @@ impl Edit {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));
         body.insert("version".into(), Value::from(base_version));
+        if self.replace_properties {
+            body.insert("properties_mode".into(), Value::String("replace".into()));
+        }
         if let Some(key) = &self.source_id {
             body.insert("source_id".into(), Value::String(key.clone()));
         }

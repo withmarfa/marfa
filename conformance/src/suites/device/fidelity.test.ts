@@ -914,6 +914,113 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
+  it("holds the scripted folder door's whole-properties edits, moves and lifecycle to the server's", async () => {
+    // What a folder sends from a file's frontmatter (`folders.md` 7): its
+    // whole properties from a versioned file, a retype, and a state.
+    const door = new FolderDoor();
+    const id = uuidv7();
+    const created: DoorCreate = {
+      id,
+      type: "core.note",
+      properties: {
+        title: "whole",
+        body: "b",
+        status: "draft",
+        language: "en",
+      },
+    };
+    const made = await client.rawRequest("/items", {
+      method: "POST",
+      body: created,
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, id);
+    door.create(created);
+    const both = async (
+      name: string,
+      path: string,
+      method: "PATCH" | "POST",
+      body: Record<string, unknown>,
+      scripted: () => Answer,
+      same: string[],
+    ) => {
+      const real = await client.rawRequest<Record<string, unknown>>(path, {
+        method,
+        body,
+      });
+      expectFidelity(
+        name,
+        { status: real.status, body: real.ok ? real.data : real.error },
+        scripted(),
+        { same, shape: ["item.id"] },
+      );
+    };
+    const edit = (body: Parameters<FolderDoor["update"]>[1]) => ({
+      path: `/items/${id}?conflict=auto`,
+      body,
+      scripted: () => door.update(id, body, { resolve: true }),
+    });
+    const whole = ["item.version", "item.properties", "item.type", "item.tier"];
+
+    const current = edit({
+      properties: { title: "whole", body: "b", language: "en" },
+      properties_mode: "replace",
+      version: 1,
+    });
+    await both(
+      "whole properties at the version the row is at",
+      current.path,
+      "PATCH",
+      current.body,
+      current.scripted,
+      whole,
+    );
+    const movedOn = edit({ properties: { title: "moved on" }, version: 2 });
+    await both(
+      "an edit moving the row on",
+      movedOn.path,
+      "PATCH",
+      movedOn.body,
+      movedOn.scripted,
+      whole,
+    );
+    const stale = edit({
+      properties: { title: "whole", body: "b2" },
+      properties_mode: "replace",
+      version: 2,
+    });
+    await both(
+      "whole properties at a version since moved past, clearing a field nobody changed",
+      stale.path,
+      "PATCH",
+      stale.body,
+      stale.scripted,
+      whole,
+    );
+    const retype = edit({
+      properties: {},
+      type: "core.bookmark",
+      retype: true,
+      version: 4,
+    });
+    await both(
+      "a retype",
+      retype.path,
+      "PATCH",
+      retype.body,
+      retype.scripted,
+      whole,
+    );
+    await both(
+      "an archive",
+      `/items/${id}/transition`,
+      "POST",
+      { state: "archived" },
+      () => door.transition(id, "archived"),
+      ["item.version", "item.state", "item.type"],
+    );
+  });
+
   it("matches the version_conflict envelope, field for field", async () => {
     const seeded = await note({ title: "base", body: "base" });
     const winner = await client.updateItem(seeded.id, {
@@ -1672,13 +1779,50 @@ describe("the scripted answers match the server's", () => {
         body: { row: scriptedType("core.note") },
       },
       {
-        same: ["row.id", "row.display_hints.title_field"],
+        same: [
+          "row.id",
+          "row.display_hints.title_field",
+          "row.display_hints.body_field",
+        ],
         // A type with no parent carries no `parent` at all. A scripted `null`
         // there is a shape the server never sends, and a device walking a
         // parent chain meets it on the first type it reads.
         shape: ["row.parent", "row.label", "row.fields"],
       },
     );
+    // A folder writes a file's body and name to the properties these name
+    // (`folders.md` 7), so the ones the fixtures lean on are held here.
+    for (const id of ["core.event", "core.highlight"]) {
+      expectFidelity(
+        `the display hints of ${id}`,
+        {
+          status: registry.status,
+          body: { row: rows.find((row) => row.id === id) },
+        },
+        {
+          kind: "json",
+          status: registry.status,
+          body: { row: scriptedType(id) },
+        },
+        {
+          same: [
+            "row.id",
+            "row.display_hints.title_field",
+            "row.display_hints.body_field",
+          ],
+          shape: ["row.label", "row.fields"],
+          // The deployment's field schema, not the protocol's, as for
+          // `core.entity.person` below.
+          absent: [
+            "row.fields",
+            "row.merge_policy",
+            "row.description",
+            "row.version",
+            "row.required",
+          ],
+        },
+      );
+    }
     expectFidelity(
       "a type with a parent",
       { status: registry.status, body: { row: childType } },
@@ -1700,9 +1844,9 @@ describe("the scripted answers match the server's", () => {
         // A type's own field schema is the deployment's rather than the
         // protocol's: `core.entity.person` carries twenty fields here and
         // would carry a different twenty elsewhere. A device reads a type
-        // for its parent and its title field and nothing else (`device.md`
-        // 15), so mirroring the schema would be this file holding a copy of
-        // a seed that changes without it.
+        // for its parent, its title and body fields and the names it declares
+        // (`device.md` 15, `folders.md` 7), so mirroring the schema would be
+        // this file holding a copy of a seed that changes without it.
         absent: [
           "row.fields",
           "row.merge_policy",

@@ -913,7 +913,8 @@ fn move_edits_behind(
             }
             _ => return Ok(()),
         };
-        store::move_edit(conn, &id, to)?;
+        let onto = at.item.filter(|_| to == version);
+        store::move_edit(conn, &id, to, onto.map(|item| &item.properties))?;
     }
     Ok(())
 }
@@ -931,7 +932,7 @@ fn move_edits_back(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()>
     };
     for (id, base) in store::edits_behind(conn, row, subject)? {
         if let Some(back) = back_to(conn, row, &id, base)? {
-            store::move_edit(conn, &id, back)?;
+            store::move_edit(conn, &id, back, None)?;
         }
     }
     Ok(())
@@ -1224,7 +1225,7 @@ fn settle(
                     // device's own earlier save: the file holds the newest,
                     // which the row does not, so the pull leaves the file and
                     // the next scan sends it as an edit of the row as it now
-                    // stands (`folders.md` 35).
+                    // stands (`folders.md` 37).
                     if verdict == Verdict::Conflicted
                         && row.kind == WriteKind::UpdateItem
                         && against_its_own(&tx, row, &parsed)?
@@ -2251,13 +2252,52 @@ mod tests {
             &json!({ "properties": { "title": "held", "body": "first" } }),
         )
         .unwrap();
-        store::move_edit(&conn, &edit.id, 5).unwrap();
+        store::move_edit(&conn, &edit.id, 5, None).unwrap();
         let moved: serde_json::Value =
             serde_json::from_str(&store::payload_of(&conn, &edit.id).unwrap()).unwrap();
         assert_eq!(
             moved,
             json!({ "version": 5, "properties": { "body": "second" } })
         );
+    }
+
+    /// A whole-properties edit cannot drop what it carries unchanged, since a
+    /// dropped property is one it clears: it moves as the answer's properties
+    /// with its own changes laid over. The witnesses are a property the
+    /// answer added, kept, and one the edit left out, cleared.
+    #[test]
+    fn a_whole_edit_moves_as_the_answer_with_its_changes_laid_over() {
+        let conn = store::open_in_memory().unwrap();
+        let body = json!({
+            "version": 3,
+            "properties_mode": "replace",
+            "properties": { "title": "held", "body": "second" },
+        })
+        .to_string();
+        let edit = store::enqueue(
+            &conn,
+            &store::NewWrite {
+                payload: &body,
+                ..write(WriteKind::UpdateItem, "mine", None, Some(3), &[])
+            },
+        )
+        .unwrap();
+        store::record_read(
+            &conn,
+            &edit.id,
+            &json!({ "properties": { "title": "held", "body": "first", "notes": "gone" } }),
+        )
+        .unwrap();
+        let answer = json!({ "title": "theirs", "body": "first", "notes": "gone", "added": 1 });
+        store::move_edit(&conn, &edit.id, 5, answer.as_object()).unwrap();
+        let moved: serde_json::Value =
+            serde_json::from_str(&store::payload_of(&conn, &edit.id).unwrap()).unwrap();
+        assert_eq!(
+            moved["properties"],
+            json!({ "title": "theirs", "body": "second", "added": 1 })
+        );
+        assert_eq!(moved["properties_mode"], "replace");
+        assert_eq!(moved["version"], 5);
     }
 
     /// A create conditional on the version the copy read moves the edits

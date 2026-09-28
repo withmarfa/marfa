@@ -30,6 +30,8 @@ import {
   wireEdge,
   wireItem,
   writeAnswers,
+  SCRIPTED_TYPES,
+  wireType,
 } from "../../device/marfa-answers.js";
 import {
   KEY,
@@ -187,6 +189,9 @@ function scriptFolderWrites(
             source_id:
               typeof item.source_id === "string" ? item.source_id : null,
             version: Number(item.version),
+            tier: item.tier as "library" | "feed",
+            ...(item.state === "active" ? {} : { state: String(item.state) }),
+            ...(row.tags === undefined ? {} : { tags: row.tags }),
           },
         ];
       }),
@@ -205,10 +210,7 @@ function scriptFolderWrites(
       (request) => {
         const answer = door.update(
           request.pathname.split("/").at(-1) ?? "unknown",
-          JSON.parse(request.body) as {
-            properties?: Record<string, unknown>;
-            version: number;
-          },
+          JSON.parse(request.body) as Parameters<FolderDoor["update"]>[1],
           { resolve: request.query.get("conflict") === "auto" },
         );
         edges.logItem("item.updated", answer);
@@ -227,6 +229,12 @@ function scriptFolderWrites(
     status: 204,
     body: {},
   });
+  harness.server.answer("POST", /^\/items\/[^/]+\/transition$/, (request) =>
+    door.transition(
+      request.pathname.split("/").at(-2) ?? "",
+      String((JSON.parse(request.body) as { state?: unknown }).state),
+    ),
+  );
   edges.script(harness.server);
   return door.rows;
 }
@@ -433,7 +441,7 @@ function sentUpdates(
 }
 
 /** A queue without the folder's placements, for a fixture about the other
- *  writes a file makes (`folders.md` 16). */
+ *  writes a file makes (`folders.md` 18). */
 function withoutPlacements(
   harness: FolderHarness,
   rows: QueuedWrite[],
@@ -445,7 +453,7 @@ function withoutPlacements(
 }
 
 /** The verdicts on writes of items, without the placements a push also
- *  sends (`folders.md` 16). */
+ *  sends (`folders.md` 18). */
 function itemVerdicts(verdicts: DrainVerdict[]): DrainVerdict[] {
   return verdicts.filter((entry) => !entry.kind.endsWith("_edge"));
 }
@@ -2297,7 +2305,7 @@ describe("files and items", () => {
     });
     expect(made.ok, `the edge was refused: ${JSON.stringify(made)}`).toBe(true);
 
-    // The witness: the pull renders it as a link, as `folders.md` 9 says it
+    // The witness: the pull renders it as a link, as `folders.md` 11 says it
     // does.
     const rendered = await harness.folder.pull();
     expect(rendered.ok).toBe(true);
@@ -2323,15 +2331,15 @@ describe("files and items", () => {
     expect((await harness.folder.scan()).ok).toBe(true);
     expect((await device.drain()).ok).toBe(true);
 
-    // The edge stays (`folders.md` 26), and the link does not come back. The
+    // The edge stays (`folders.md` 28), and the link does not come back. The
     // file may be written again for its version line, once its edit has
-    // landed (`folders.md` 21).
+    // landed (`folders.md` 23).
     const again = await harness.folder.pull();
     expect(again.ok).toBe(true);
     if (!again.ok) return;
     expect(
       read(harness, "source.md"),
-      "the pull wrote the removed link back, so the person is in the loop `folders.md` 31 was meant to end",
+      "the pull wrote the removed link back, so the person is in the loop `folders.md` 33 was meant to end",
     ).not.toContain("[[other]]");
     const queued = await device.queue();
     expect(queued.ok).toBe(true);
@@ -2364,7 +2372,7 @@ describe("files and items", () => {
     ).not.toContain("[[other]]");
 
     // A link of the folder's own kind taken out is not a declined target:
-    // its edge goes (`folders.md` 26), and an edge of another kind to the
+    // its edge goes (`folders.md` 28), and an edge of another kind to the
     // same item, made afterwards, still renders.
     writeFileSync(
       join(harness.dir, "source.md"),
@@ -2857,6 +2865,626 @@ describe("files and items", () => {
       read(second, "from-server.md"),
       "an edge the item carries did not appear as a link in the file, so a connection made anywhere else is invisible in the folder",
     ).toContain("[[the-target]]");
+  });
+});
+
+/** The tag writes the folder sent, as `add <id> <tag>` and `remove <id> <tag>`. */
+function sentTags(harness: FolderHarness): string[] {
+  return harness.server.requests.flatMap((request) => {
+    const [, items, id, tags, tag] = request.pathname.split("/");
+    if (items !== "items" || tags !== "tags") return [];
+    if (request.method === "POST") {
+      const sent = JSON.parse(request.body) as { tags: string[] };
+      return sent.tags.map((named) => `add ${id} ${named}`);
+    }
+    return request.method === "DELETE"
+      ? [`remove ${id} ${decodeURIComponent(tag ?? "")}`]
+      : [];
+  });
+}
+
+/** The lifecycle moves the folder sent, as `<id> <state>`. */
+function sentTransitions(harness: FolderHarness): string[] {
+  return harness.server.requests
+    .filter(
+      (request) =>
+        request.method === "POST" && request.pathname.endsWith("/transition"),
+    )
+    .map(
+      (request) =>
+        `${request.pathname.split("/").at(-2)} ${String((JSON.parse(request.body) as { state: string }).state)}`,
+    );
+}
+
+describe("what frontmatter says", () => {
+  it("reads type, tags, tier and state as the item's own", async () => {
+    const id = "01a00000-0000-7000-8000-0000000013a1";
+    harness = await folderHarness("folder-own-fields", {
+      settings: {
+        search: { types: ["core.note", "core.bookmark"] },
+        defaults: { tags: ["inbox"] },
+      },
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "Held", body: "held\n" } },
+            tags: ["old", "kept"],
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+
+    // A pull writes them as lines of their own, the type and tier always and
+    // the tags where there are any.
+    const held = read(harness, "Held.md");
+    expect(held).toMatch(/^type: core\.note$/m);
+    expect(held).toMatch(/^tier: library$/m);
+    expect(held).toContain("tags:\n  - kept\n  - old\n");
+    expect(held, "an active item's file said its state").not.toMatch(
+      /^state:/m,
+    );
+
+    // A new file names its own, and one naming none takes the defaults'.
+    put(
+      harness,
+      "Saved.md",
+      "---\ntype: core.bookmark\ntier: library\ntags: [read-later, web]\nstate: archived\nurl: https://example.com\n---\nA page.\n",
+    );
+    put(harness, "Plain.md", "---\nurl: https://example.org\n---\nA note.\n");
+    // A file already bound trades one tag for another.
+    writeFileSync(
+      join(harness.dir, "Held.md"),
+      held.replace("  - old\n", "  - new\n"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+
+    const creates = sentCreates(harness);
+    const saved = creates.find(
+      (sent) => (sent.properties as Record<string, unknown>).title === "Saved",
+    );
+    const plain = creates.find(
+      (sent) => (sent.properties as Record<string, unknown>).title === "Plain",
+    );
+    expect(
+      [saved?.type, saved?.tier],
+      "the file's type or tier was not the item's, so the frontmatter says one thing and the item is another",
+    ).toEqual(["core.bookmark", "library"]);
+    expect(
+      saved?.properties,
+      "an own field travelled as a property, where every later pull writes it twice and a search never finds it",
+    ).toEqual({
+      url: "https://example.com",
+      body: "A page.\n",
+      title: "Saved",
+    });
+    expect(plain?.type, "a file naming no type took none of the defaults").toBe(
+      "core.note",
+    );
+    const [savedId, plainId] = [String(saved?.id), String(plain?.id)];
+    expect(
+      sentTags(harness).sort(),
+      "the tags a file names were not the item's, or a file naming its own tags took the defaults' as well, or a bound file's tag change went nowhere",
+    ).toEqual(
+      [
+        `add ${savedId} read-later`,
+        `add ${savedId} web`,
+        `add ${plainId} inbox`,
+        `add ${id} new`,
+        `remove ${id} old`,
+      ].sort(),
+    );
+    expect(
+      sentTransitions(harness),
+      "a file naming its state archived made an active item",
+    ).toEqual([`${savedId} archived`]);
+    expect(
+      sentUpdates(harness).filter((sent) => sent.id === id),
+      "a change of tags alone went as an edit of the item's properties",
+    ).toEqual([]);
+    expect(rows.get(id)?.properties).toEqual({ title: "Held", body: "held\n" });
+  });
+
+  it("clears a property whose line was taken out of a versioned file", async () => {
+    const id = "01a00000-0000-7000-8000-0000000013b1";
+    harness = await folderHarness("folder-clears-a-line", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              properties: {
+                title: "Status",
+                body: "the text\n",
+                status: "draft",
+                language: "en",
+              },
+            },
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const written = read(harness, "Status.md");
+    // The witness: a versioned file carrying the line to take out.
+    expect(written).toMatch(/^status: draft$/m);
+    expect(written).toMatch(/^marfa_version: 1$/m);
+
+    writeFileSync(
+      join(harness.dir, "Status.md"),
+      written.replace("status: draft\n", ""),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
+    expect(
+      edit?.body.properties_mode,
+      "a versioned file's edit was merged, so a line taken out of it clears nothing",
+    ).toBe("replace");
+    expect(
+      rows.get(id)?.properties,
+      "the property whose line was taken out is still on the item, and the next pull writes it back",
+    ).toEqual({ title: "Status", body: "the text\n", language: "en" });
+    expect(read(harness, "Status.md")).not.toMatch(/^status:/m);
+  });
+
+  it("merges an edit from a file with no version line", async () => {
+    const id = "01a00000-0000-7000-8000-0000000013c1";
+    harness = await folderHarness("folder-merges-a-lineless-file", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              properties: {
+                title: "Loose",
+                body: "as it was\n",
+                status: "draft",
+              },
+            },
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // An editor that keeps no version line, and no status line either.
+    writeFileSync(
+      join(harness.dir, "Loose.md"),
+      read(harness, "Loose.md")
+        .replace(/^marfa_version: \d+\n/m, "")
+        .replace("status: draft\n", "")
+        .replace("as it was", "edited"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
+    expect(edit, "the edit was not sent").toBeDefined();
+    expect(
+      edit?.body.properties_mode,
+      "a file with no version line was sent as the item's whole properties, clearing every line its editor happened not to keep",
+    ).toBeUndefined();
+    expect(rows.get(id)?.properties).toEqual({
+      title: "Loose",
+      body: "edited\n",
+      status: "draft",
+    });
+  });
+
+  it("takes body and title from the type's display hints", async () => {
+    const event = "01a00000-0000-7000-8000-0000000013d1";
+    const highlight = "01a00000-0000-7000-8000-0000000013d2";
+    harness = await folderHarness("folder-display-hints", {
+      settings: { search: { types: ["core.event", "core.highlight"] } },
+      rows: {
+        "core.event": [
+          {
+            item: {
+              id: event,
+              type: "core.event",
+              properties: {
+                title: "Launch",
+                description: "Doors at six.\n",
+                starts_at: "2026-10-01T18:00:00.000Z",
+              },
+            },
+          },
+        ],
+        "core.highlight": [
+          {
+            item: {
+              id: highlight,
+              type: "core.highlight",
+              properties: {
+                text: "A line worth keeping",
+                note: "Why it matters.\n",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const launch = read(harness, "Launch.md");
+    expect(launch, "an event's description was not its file's body").toMatch(
+      /\n---\nDoors at six\.\n$/,
+    );
+    expect(launch).not.toMatch(/^description:/m);
+    expect(
+      read(harness, "A line worth keeping.md"),
+      "a highlight's file was not named by its text or its body was not its note",
+    ).toMatch(/\n---\nWhy it matters\.\n$/);
+
+    put(
+      harness,
+      "Party.md",
+      "---\nstarts_at: 2026-10-02T18:00:00.000Z\n---\nBring food.\n",
+    );
+    put(
+      harness,
+      "Quote.md",
+      "---\ntype: core.highlight\n---\nWorth a second read.\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const creates = sentCreates(harness);
+    expect(
+      creates.map((sent) => [sent.type, sent.properties]),
+      "a file's body or name went to a fixed property rather than the one its type names",
+    ).toEqual([
+      [
+        "core.event",
+        {
+          starts_at: "2026-10-02T18:00:00.000Z",
+          description: "Bring food.\n",
+          title: "Party",
+        },
+      ],
+      ["core.highlight", { note: "Worth a second read.\n", text: "Quote" }],
+    ]);
+  });
+
+  it("reports a type that declares a property no file can carry, and keeps it", async () => {
+    const id = "01a00000-0000-7000-8000-0000000013e1";
+    harness = await folderHarness("folder-uncarried-property", {
+      settings: { search: { types: ["user.ticket"] } },
+      catalog: {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [
+            ...SCRIPTED_TYPES,
+            wireType("user.ticket", {
+              bodyField: "body",
+              fields: {
+                title: { type: "string" },
+                body: { type: "string" },
+                state: { type: "string" },
+                "parent-of": { type: "string" },
+              },
+            }),
+          ],
+          next_cursor: null,
+        },
+      },
+      rows: {
+        "user.ticket": [
+          {
+            item: {
+              id,
+              type: "user.ticket",
+              properties: { title: "Ticket", body: "to do\n", state: "open" },
+            },
+          },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.uncarried,
+      "a property a file reads as the item's own field or an edge went unreported, so it silently never appears in a file",
+    ).toEqual([
+      { type: "user.ticket", property: "parent-of" },
+      { type: "user.ticket", property: "state" },
+    ]);
+    const written = read(harness, "Ticket.md");
+    expect(
+      written,
+      "the property was written as a line the next read takes as the item's state",
+    ).not.toMatch(/^state:/m);
+
+    // An edit of a versioned file leaves it on the item: no file carries it,
+    // so no line was taken out.
+    writeFileSync(
+      join(harness.dir, "Ticket.md"),
+      written.replace("to do", "done"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(rows.get(id)?.properties).toEqual({
+      title: "Ticket",
+      body: "done\n",
+      state: "open",
+    });
+  });
+
+  it("retypes an item whose frontmatter changes its type", async () => {
+    const id = "01a00000-0000-7000-8000-0000000013f1";
+    harness = await folderHarness("folder-retype", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "Link", body: "a page\n" } } },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    writeFileSync(
+      join(harness.dir, "Link.md"),
+      read(harness, "Link.md").replace(
+        "type: core.note",
+        "type: core.bookmark",
+      ),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
+    expect(
+      [edit?.body.type, edit?.body.retype],
+      "the type line did not move the item, so the frontmatter names one type and the item is another",
+    ).toEqual(["core.bookmark", true]);
+    expect(
+      (edit?.body.properties as Record<string, unknown> | undefined)?.type,
+      "the type travelled as a property",
+    ).toBeUndefined();
+    expect(rows.get(id)?.type).toBe("core.bookmark");
+    expect(read(harness, "Link.md")).toMatch(/^type: core\.bookmark$/m);
+  });
+
+  it("flags a refused retype and keeps the file", async () => {
+    const id = "01a00000-0000-7000-8000-000000001401";
+    harness = await folderHarness("folder-retype-refused", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "Link", body: "a page\n" } } },
+        ],
+      },
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    const update = door!.update.bind(door!);
+    door!.update = ((...args: Parameters<FolderDoor["update"]>) =>
+      args[1].retype === true
+        ? refusal(
+            403,
+            "type_not_permitted",
+            "This credential may not write core.bookmark",
+          )
+        : update(...args)) as FolderDoor["update"];
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const retyped = read(harness, "Link.md")
+      .replace("type: core.note", "type: core.bookmark")
+      .replace("a page", "a page, bookmarked");
+    writeFileSync(join(harness.dir, "Link.md"), retyped);
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentUpdates(harness).filter((sent) => sent.id === id).length,
+      "the retype never reached the server, so nothing here was refused",
+    ).toBe(1);
+    expect(rows.get(id)?.type).toBe("core.note");
+    expect(
+      read(harness, "Link.md"),
+      "the pull wrote the item over the person's retype, so what they wrote is gone and nothing says why",
+    ).toBe(retyped);
+    expect(
+      pushed.value.pull?.flagged,
+      "the file was kept without saying why",
+    ).toEqual([
+      expect.objectContaining({
+        path: "Link.md",
+        flag: "refused",
+        reason: expect.stringContaining("type_not_permitted") as unknown,
+      }),
+    ]);
+
+    // Not sent again while the file stays as it is.
+    const again = await harness.folder.push();
+    expect(again.ok).toBe(true);
+    expect(sentUpdates(harness).filter((sent) => sent.id === id).length).toBe(
+      1,
+    );
+    expect(read(harness, "Link.md")).toBe(retyped);
+  });
+
+  it("holds a file whose frontmatter does not parse", async () => {
+    const id = "01a00000-0000-7000-8000-000000001411";
+    harness = await folderHarness("folder-unreadable-frontmatter", {
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "Held", body: "as it was\n" } } },
+        ],
+      },
+    });
+    const rows = scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const written = read(harness, "Held.md");
+    const broken = written
+      .replace("title: Held", "title: [Held")
+      .replace("as it was", "edited");
+    writeFileSync(join(harness.dir, "Held.md"), broken);
+    put(harness, "New.md", "---\ntitle: New\n  bad: indent\n---\nbody\n");
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      [sentUpdates(harness).length, sentCreates(harness).length],
+      "frontmatter that does not parse was sent, its lines as body text or its fields lost",
+    ).toEqual([0, 0]);
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
+    ).toEqual([
+      ["Held.md", "unreadable"],
+      ["New.md", "unreadable"],
+    ]);
+    expect(
+      read(harness, "Held.md"),
+      "the pull wrote the item over the person's unreadable file",
+    ).toBe(broken);
+    expect(rows.get(id)?.properties.body).toBe("as it was\n");
+
+    // Moved while unreadable, it is still that item's file.
+    renameSync(join(harness.dir, "Held.md"), join(harness.dir, "Moved.md"));
+    const moved = await harness.folder.push();
+    expect(moved.ok).toBe(true);
+    if (!moved.ok) return;
+    expect(moved.value.scan.missing).toBe(0);
+
+    // Mended, it is sent.
+    writeFileSync(
+      join(harness.dir, "Moved.md"),
+      broken.replace("title: [Held", "title: Held"),
+    );
+    const mended = await harness.folder.push();
+    expect(mended.ok, JSON.stringify(mended)).toBe(true);
+    expect(rows.get(id)?.properties.body).toBe("edited\n");
+  });
+
+  it("sends only what an old buffer's own lines changed, not what another machine changed since", async () => {
+    const id = "01a00000-0000-7000-8000-000000001431";
+    const moved = {
+      id,
+      version: 2,
+      type: "core.bookmark",
+      properties: { title: "Link", body: "as read\n" },
+    };
+    harness = await folderHarness("folder-own-fields-stale", {
+      settings: { search: { types: ["core.note", "core.bookmark"] } },
+      rows: {
+        "core.note": [
+          {
+            item: { id, properties: { title: "Link", body: "as read\n" } },
+            tags: ["a"],
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent("2", "item.updated", wireItem(moved), { tags: ["a", "b"] }),
+        ]),
+      ],
+    });
+    let door: FolderDoor | undefined;
+    const rows = scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const held = read(harness, "Link.md");
+    // Another machine retypes it and tags it meanwhile.
+    door!.update(id, {
+      properties: {},
+      type: "core.bookmark",
+      retype: true,
+      version: 1,
+    });
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the pull wrote the other machine's type and tag out.
+    expect(read(harness, "Link.md")).toMatch(/^type: core\.bookmark$/m);
+    expect(read(harness, "Link.md")).toContain("  - b\n");
+
+    // An editor that never reloaded saves its old buffer, with an edit.
+    put(harness, "Link.md", held.replace("as read", "my edit"));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
+    expect(
+      edit?.body.version,
+      "the edit went on a version it was not made against",
+    ).toBe(1);
+    expect(
+      edit?.body.retype,
+      "the old buffer's type line moved the item back over the other machine's retype",
+    ).toBeUndefined();
+    expect(
+      sentTags(harness),
+      "the old buffer took away a tag another machine added, which it never saw",
+    ).toEqual([]);
+    expect(rows.get(id)).toMatchObject({
+      type: "core.bookmark",
+      properties: { title: "Link", body: "my edit\n" },
+    });
+  });
+
+  it("keeps an archived item's file with its state in the frontmatter", async () => {
+    const archived = "01a00000-0000-7000-8000-000000001421";
+    const active = "01a00000-0000-7000-8000-000000001422";
+    harness = await folderHarness("folder-archived-state", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: archived,
+              state: "archived",
+              properties: { title: "Shelved", body: "old\n" },
+            },
+          },
+          {
+            item: {
+              id: active,
+              properties: { title: "Current", body: "new\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const shelved = read(harness, "Shelved.md");
+    expect(
+      shelved,
+      "an archived item's file does not say so, so an edit of it cannot tell an archived item from an active one",
+    ).toMatch(/^state: archived$/m);
+    expect(read(harness, "Current.md")).not.toMatch(/^state:/m);
+
+    // Taking the line out restores it, and writing it archives the other.
+    writeFileSync(
+      join(harness.dir, "Shelved.md"),
+      shelved.replace("state: archived\n", ""),
+    );
+    writeFileSync(
+      join(harness.dir, "Current.md"),
+      read(harness, "Current.md").replace(
+        "tier: library\n",
+        "tier: library\nstate: archived\n",
+      ),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(sentTransitions(harness).sort()).toEqual(
+      [`${archived} active`, `${active} archived`].sort(),
+    );
+    expect(
+      existsSync(join(harness.dir, "Current.md")),
+      "the file of an item archived from it went",
+    ).toBe(true);
+    expect(read(harness, "Current.md")).toMatch(/^state: archived$/m);
   });
 });
 
@@ -6004,7 +6632,7 @@ describe("writing", () => {
     // It moves into a dot-led directory rather than being deleted and
     // rewritten, because the device, inode and birth time have to survive
     // for the arrival to be a rename rather than a new file
-    // (`folders.md` 10), and the walk does not enter a dot-led directory.
+    // (`folders.md` 12), and the walk does not enter a dot-led directory.
     const graceStarted = Date.now();
     mkdirSync(join(harness.dir, ".stash"), { recursive: true });
     renameSync(
@@ -6486,7 +7114,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
-    // path becomes a delete once the grace runs out (`folders.md` 18), so
+    // path becomes a delete once the grace runs out (`folders.md` 20), so
     // the absence is asserted after it: the grace is the folder's five
     // seconds, and nothing shorter can show a delete not being sent.
     await new Promise((resolve) => setTimeout(resolve, 6_000));
@@ -6719,7 +7347,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders.md` 34).
+    // again (`folders.md` 36).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();
@@ -6993,7 +7621,7 @@ describe("a file that is not a document", () => {
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
     expect(existsSync(join(harness.dir, "broken.txt"))).toBe(false);
 
-    // Its own write is not read back as a change (`folders.md` 17).
+    // Its own write is not read back as a change (`folders.md` 19).
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;

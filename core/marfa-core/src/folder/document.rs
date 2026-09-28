@@ -1,47 +1,62 @@
-//! A file's bytes as an item's fields, and back: one module, because a file
-//! read in and written straight back out must be the same file.
+//! A file's bytes as frontmatter and a body, and back: one module, because a
+//! file read in and written straight back out must be the same file.
 
 use serde_json::{Map, Value};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 use crate::error::CoreError;
 
-/// The property an item's body is carried in.
-pub const BODY_FIELD: &str = "body";
-
-/// The property the folder writes a file's name into.
-pub const TITLE_FIELD: &str = "title";
-
 /// A file, read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
-    /// The frontmatter as properties, with the body among them.
-    pub properties: Map<String, Value>,
+    /// The frontmatter, every line of it, in the order the file wrote it.
+    pub front: Map<String, Value>,
+    /// What follows the frontmatter, or the whole text where there is none.
+    pub body: String,
     /// The ids this file links to, in the order they appear.
     pub links: Vec<String>,
+    /// Why the frontmatter cannot be read, where the file delimits some that
+    /// does not parse as fields (`folders.md` 8, 10).
+    pub unreadable: Option<String>,
 }
 
 /// What a file opens with, when it opens with frontmatter.
 const FENCE: &str = "---";
 
+/// What a file's opening fence pair holds.
+enum Front<'a> {
+    /// No fence pair, or one holding a list or a line of text: Markdown.
+    Body,
+    Fields(Map<String, Value>, &'a str),
+    /// A fence pair holding YAML that does not parse as fields.
+    Unreadable(String),
+}
+
 /// The frontmatter a file opens with, and the body after it (`folders.md`
-/// 8). Any condition that fails makes the whole text a body, never a refusal
-/// or a half-reading, so nothing is lost in either direction.
-fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
+/// 8). Only a fence pair says there is frontmatter; what it holds says
+/// whether it can be read.
+fn frontmatter(text: &str) -> Front<'_> {
     // The opening fence is its own line: `----` is a horizontal rule and
     // `--- x` is text, and neither opens frontmatter.
-    let rest = text.strip_prefix(FENCE).and_then(|rest| {
+    let Some(rest) = text.strip_prefix(FENCE).and_then(|rest| {
         rest.strip_prefix('\n')
             .or_else(|| rest.strip_prefix("\r\n"))
-    })?;
+    }) else {
+        return Front::Body;
+    };
     // A blank line after the fence is a thematic break: `---\n\nNote: x\n\n---`
     // is two rules around a sentence that also parses as YAML.
     if rest.starts_with('\n') || rest.starts_with("\r\n") {
-        return None;
+        return Front::Body;
     }
     let mut offset = 0usize;
     let (front, body) = loop {
-        let line = rest.get(offset..)?.split_inclusive('\n').next()?;
+        let Some(line) = rest
+            .get(offset..)
+            .and_then(|tail| tail.split_inclusive('\n').next())
+        else {
+            return Front::Body;
+        };
         if line.trim_end_matches(['\r', '\n']) == FENCE {
             break (&rest[..offset], &rest[offset + line.len()..]);
         }
@@ -49,67 +64,69 @@ fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
         // Opened and never closed: a horizontal rule, or a file someone is
         // still typing.
         if offset >= rest.len() {
-            return None;
+            return Front::Body;
         }
     };
-    let documents = YamlLoader::load_from_str(front).ok()?;
-    let mut properties = Map::new();
+    let documents = match YamlLoader::load_from_str(front) {
+        Ok(documents) => documents,
+        Err(error) => return Front::Unreadable(error.to_string()),
+    };
+    let mut fields = Map::new();
     match documents.first() {
-        // An empty fence pair is frontmatter with nothing in it, which is
-        // not the same as a fence pair holding something unreadable.
+        // An empty fence pair is frontmatter with nothing in it.
         None | Some(Yaml::Null) => {}
         Some(Yaml::Hash(hash)) => {
             for (key, value) in hash {
-                // A key or value an item cannot hold: carried as a body.
-                properties.insert(key.as_str()?.to_string(), from_yaml(value)?);
+                let Some(key) = key.as_str() else {
+                    return Front::Unreadable(format!("a key that is not text: {key:?}"));
+                };
+                let Some(value) = from_yaml(value) else {
+                    return Front::Unreadable(format!("{key} holds an alias or a bad value"));
+                };
+                fields.insert(key.to_string(), value);
             }
         }
-        Some(_) => return None,
+        // A rule, a list or a setext heading, and a rule: Markdown.
+        Some(_) => return Front::Body,
     }
-    Some((properties, body))
+    Front::Fields(fields, body)
 }
 
-/// Reads a file into the fields an item carries.
+/// Reads a file that can carry frontmatter.
 pub fn read(text: &str) -> Document {
-    let (mut properties, body) = frontmatter(text).unwrap_or_else(|| (Map::new(), text));
-    properties.insert(BODY_FIELD.into(), Value::String(body.to_string()));
-    Document {
-        links: links(body),
-        properties,
+    match frontmatter(text) {
+        Front::Body => read_body(text),
+        Front::Fields(front, body) => Document {
+            front,
+            body: body.to_string(),
+            links: links(body),
+            unreadable: None,
+        },
+        Front::Unreadable(reason) => Document {
+            unreadable: Some(reason),
+            ..read_body(text)
+        },
     }
 }
 
 /// Reads a file that carries no frontmatter: all of it is the body.
 pub fn read_body(text: &str) -> Document {
-    let mut properties = Map::new();
-    properties.insert(BODY_FIELD.into(), Value::String(text.to_string()));
     Document {
+        front: Map::new(),
+        body: text.to_string(),
         links: links(text),
-        properties,
+        unreadable: None,
     }
 }
 
-/// Writes an item's fields back out as a file.
-pub fn write(properties: &Map<String, Value>) -> Result<String, CoreError> {
-    let body = properties
-        .get(BODY_FIELD)
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let front: Map<String, Value> = properties
-        .iter()
-        .filter(|(key, _)| key.as_str() != BODY_FIELD)
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect();
+/// Writes frontmatter and a body back out as a file.
+pub fn write(front: &Map<String, Value>, body: &str) -> Result<String, CoreError> {
     if front.is_empty() {
         return Ok(body.to_string());
     }
-    let mut hash = yaml_rust2::yaml::Hash::new();
-    for (key, value) in &front {
-        hash.insert(Yaml::String(key.clone()), to_yaml(value));
-    }
     let mut rendered = String::new();
     YamlEmitter::new(&mut rendered)
-        .dump(&Yaml::Hash(hash))
+        .dump(&to_yaml(&Value::Object(front.clone())))
         .map_err(|error| {
             CoreError::Invalid(format!("this item's fields will not render: {error}"))
         })?;
@@ -147,7 +164,7 @@ pub fn write_map(map: &Map<String, Value>) -> Result<String, CoreError> {
 }
 
 /// A YAML value as an item's property. `None` where it cannot be carried as
-/// it is, which makes the whole file a body (`folders.md` 7).
+/// it is, which makes the frontmatter unreadable.
 fn from_yaml(value: &Yaml) -> Option<Value> {
     Some(match value {
         Yaml::Real(text) => match text.parse::<f64>() {
@@ -231,28 +248,26 @@ pub fn render_link(target: &str) -> String {
 mod tests {
     use super::*;
 
-    fn body_of(document: &Document) -> &str {
-        document.properties[BODY_FIELD].as_str().unwrap()
-    }
-
     #[test]
-    fn frontmatter_becomes_properties_and_the_body_stays_the_body() {
+    fn frontmatter_is_read_in_order_and_the_body_stays_the_body() {
         let document = read(
             "---\ntitle: A note\ncount: 3\ntags:\n  - alpha\n  - beta\nnested:\n  deep: true\n---\nThe body.\n",
         );
-        assert_eq!(document.properties["title"], "A note");
-        assert_eq!(document.properties["count"], 3);
+        assert_eq!(document.front["title"], "A note");
+        assert_eq!(document.front["count"], 3);
+        assert_eq!(document.front["tags"], serde_json::json!(["alpha", "beta"]));
         assert_eq!(
-            document.properties["tags"],
-            serde_json::json!(["alpha", "beta"])
-        );
-        assert_eq!(
-            document.properties["nested"],
+            document.front["nested"],
             serde_json::json!({ "deep": true }),
             "a nested field was flattened or dropped, and a file's fields \
              travel whole or not at all"
         );
-        assert_eq!(body_of(&document), "The body.\n");
+        assert_eq!(
+            document.front.keys().collect::<Vec<_>>(),
+            ["title", "count", "tags", "nested"]
+        );
+        assert_eq!(document.body, "The body.\n");
+        assert_eq!(document.unreadable, None);
     }
 
     /// Each opens as frontmatter does and is not frontmatter (`folders.md` 8).
@@ -284,10 +299,6 @@ mod tests {
                 "---\njust a string\n---\nbody\n",
                 "a fence pair holding one string",
             ),
-            (
-                "---\n1: one\n---\nbody\n",
-                "a field keyed by something an item's properties cannot be keyed by",
-            ),
             // The case every other gate lets through: it parses, it is a
             // mapping, and its field converts. Only the blank line after the
             // fence says it is two rules around a sentence.
@@ -308,18 +319,43 @@ mod tests {
         for (text, why) in cases {
             let document = read(text);
             assert_eq!(
-                body_of(&document),
-                text,
+                document.body, text,
                 "this was read as frontmatter and it is {why}; the first \
                  paragraph is gone and the loss is written back"
             );
-            assert_eq!(
-                document.properties.len(),
-                1,
-                "this yielded properties and it is {why}: {:?}",
-                document.properties
+            assert!(
+                document.front.is_empty() && document.unreadable.is_none(),
+                "this yielded frontmatter and it is {why}: {document:?}",
             );
         }
+    }
+
+    /// A fence pair whose YAML does not parse as fields is frontmatter that
+    /// cannot be read, held rather than taken as a body (`folders.md` 10).
+    #[test]
+    fn a_fence_pair_that_does_not_parse_as_fields_is_unreadable() {
+        for text in [
+            "---\n[unclosed: bracket\n---\nbody\n",
+            "---\ntitle: fine\n  bad: indent\n---\nbody\n",
+            "---\nnested:\n  1: not text\n---\nbody\n",
+            "---\n1: one\n---\nbody\n",
+        ] {
+            let document = read(text);
+            assert!(
+                document.unreadable.is_some(),
+                "{text:?} was read as fields or as a body, and a person's \
+                 frontmatter with a typo in it is neither"
+            );
+            assert!(document.front.is_empty());
+            assert_eq!(
+                document.body, text,
+                "an unreadable file lost bytes in the reading"
+            );
+        }
+        // The control: an empty fence pair is frontmatter with nothing in it.
+        let empty = read("---\n---\nbody\n");
+        assert_eq!(empty.body, "body\n");
+        assert!(empty.front.is_empty() && empty.unreadable.is_none());
     }
 
     #[test]
@@ -331,7 +367,7 @@ mod tests {
             "---\n- just\n- a list\n---\nbody\n",
         ] {
             let document = read(text);
-            let written = write(&document.properties).unwrap();
+            let written = write(&document.front, &document.body).unwrap();
             assert_eq!(
                 read(&written),
                 document,
@@ -339,36 +375,6 @@ mod tests {
                  file, so every scan that touches it pushes a change nobody made"
             );
         }
-    }
-
-    /// A file the fence rule turns down keeps every byte, and comes back out
-    /// as itself.
-    #[test]
-    fn a_file_this_build_cannot_read_as_frontmatter_keeps_every_byte() {
-        for text in [
-            "---\n[unclosed: bracket\n---\nbody\n",
-            "---\nnested:\n  1: not text\n---\nbody\n",
-            "---\n- a list\n---\nbody\n",
-        ] {
-            let document = read(text);
-            assert_eq!(
-                body_of(&document),
-                text,
-                "a file whose frontmatter this build cannot carry lost part of \
-                 itself, and every byte of it is still on the disk"
-            );
-            assert_eq!(
-                write(&document.properties).unwrap(),
-                text,
-                "it does not come back out as itself, so the next scan pushes \
-                 a change nobody made"
-            );
-        }
-        // The control: an empty fence pair is frontmatter with nothing in it,
-        // which is not the same as a fence pair this build cannot read.
-        let empty = read("---\n---\nbody\n");
-        assert_eq!(body_of(&empty), "body\n");
-        assert_eq!(empty.properties.len(), 1);
     }
 
     #[test]

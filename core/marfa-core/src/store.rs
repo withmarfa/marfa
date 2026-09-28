@@ -38,7 +38,7 @@ const SCHEMA_HASHES: &[(&str, &str)] = &[
     ("7", "b0e4c59d5dbd0471"),
     ("8", "662310c80f2c6871"),
     ("9", "23d541400ea60681"),
-    ("10", "5c367fca65e574f8"),
+    ("10", "fad987aebd37b3f6"),
 ];
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
@@ -837,6 +837,12 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
             if let Some(label) = &entry.label {
                 json.insert("label".into(), Value::String(label.clone()));
             }
+            if let Some(body) = &hints.body_field {
+                json.insert(
+                    "display_hints".into(),
+                    serde_json::json!({ "body_field": body }),
+                );
+            }
             (
                 entry.id.clone(),
                 entry.parent.clone(),
@@ -1136,7 +1142,7 @@ pub fn land_on_held_row(
 /// was set aside in a conflicted copy against this device's own earlier one
 /// (`queue-and-verdicts.md` 42), so what the file holds reached no row. The
 /// pull then leaves the file as it is, and the next scan sends it as an edit
-/// based on that version (`folders.md` 35). Where a later update is queued,
+/// based on that version (`folders.md` 37). Where a later update is queued,
 /// the file holds that one's bytes, and it is left to its own answer.
 pub fn untake_latest_save(
     conn: &Connection,
@@ -1545,6 +1551,7 @@ pub(crate) mod testing {
             label: None,
             display_hints: Some(WireDisplayHints {
                 title_field: title_field.map(str::to_string),
+                body_field: None,
             }),
             rest: Map::new(),
         }
@@ -3034,7 +3041,7 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
 }
 
 /// Takes back every write to an edge that has not landed, for a folder giving
-/// way to the placement the server holds (`folders.md` 16).
+/// way to the placement the server holds (`folders.md` 18).
 pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
     Ok(conn.execute(
         "DELETE FROM queue
@@ -3106,8 +3113,23 @@ pub fn lay_waiting_writes_over(
         match row.kind {
             WriteKind::UpdateItem => {
                 if let Some(Value::Object(properties)) = payload.get("properties") {
-                    for (key, value) in properties {
-                        item.properties.insert(key.clone(), value.clone());
+                    // Only an edit that read the copy knows which properties
+                    // it cleared; one said to be read earlier is laid over.
+                    let read = match read_of(conn, &row.id)? {
+                        Some(read) if replaces_properties(&payload) => {
+                            serde_json::from_str::<Value>(&read)?
+                                .get("properties")
+                                .and_then(Value::as_object)
+                                .cloned()
+                        }
+                        _ => None,
+                    };
+                    if let Some(read) = read {
+                        lay_changes(&mut item.properties, properties, &read);
+                    } else {
+                        for (key, value) in properties {
+                            item.properties.insert(key.clone(), value.clone());
+                        }
                     }
                 }
                 if let Some(Value::String(key)) = payload.get("source_id") {
@@ -3184,14 +3206,28 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
 /// own, and sent on another version it would assert a value this device
 /// read as newer than whatever another device wrote since. An edit whose
 /// reading was never recorded is moved as it stands.
-pub fn move_edit(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
+pub fn move_edit(
+    conn: &Connection,
+    id: &str,
+    version: i64,
+    onto: Option<&Map<String, Value>>,
+) -> Result<(), CoreError> {
     if let Some(read) = read_of(conn, id)? {
         let read: Value = serde_json::from_str(&read)?;
         let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+        let whole = replaces_properties(&body);
         if let (Some(Value::Object(read)), Some(Value::Object(properties))) =
             (read.get("properties").cloned(), body.get_mut("properties"))
         {
-            properties.retain(|key, value| read.get(key) != Some(value));
+            if !whole {
+                properties.retain(|key, value| read.get(key) != Some(value));
+            } else if let Some(onto) = onto {
+                // Dropping one would clear it, so whole properties move as the
+                // answer's with what the edit changed laid over.
+                let mut moved = onto.clone();
+                lay_changes(&mut moved, properties, &read);
+                *properties = moved;
+            }
         }
         conn.execute(
             "UPDATE queue SET payload = ?2 WHERE id = ?1",
@@ -3199,6 +3235,47 @@ pub fn move_edit(conn: &Connection, id: &str, version: i64) -> Result<(), CoreEr
         )?;
     }
     rebase(conn, id, version)
+}
+
+/// Lays what a whole-properties edit changed from what it read over a row's
+/// properties: a value it changed, a property it left out cleared, and every
+/// other the row's own.
+fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &Map<String, Value>) {
+    for (key, was) in read {
+        match sent.get(key) {
+            Some(value) if value != was => {
+                row.insert(key.clone(), value.clone());
+            }
+            Some(_) => {}
+            None => {
+                row.shift_remove(key);
+            }
+        }
+    }
+    for (key, value) in sent {
+        if !read.contains_key(key) {
+            row.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// Whether a queued update's body sends its properties whole.
+pub fn replaces_properties(body: &Value) -> bool {
+    body.get("properties_mode").and_then(Value::as_str) == Some("replace")
+}
+
+/// Makes a queued whole-properties update merge its properties instead.
+pub fn merge_properties(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+    if let Some(body) = body.as_object_mut()
+        && body.shift_remove("properties_mode").is_some()
+    {
+        conn.execute(
+            "UPDATE queue SET payload = ?2 WHERE id = ?1",
+            params![id, Value::Object(body.clone()).to_string()],
+        )?;
+    }
+    Ok(())
 }
 
 /// Moves a queued write onto another version (`queue-and-verdicts.md` 36,

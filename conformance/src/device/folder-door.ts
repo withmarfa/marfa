@@ -30,6 +30,9 @@ export interface DoorRow {
   trashed?: boolean;
   /** The row's tags, which a read answers in its metadata. */
   tags?: string[];
+  tier?: "library" | "feed";
+  /** `archived`, where a transition moved it there. */
+  state?: string;
 }
 
 /** The tag the server gives the sibling a keep-both resolution writes. */
@@ -42,6 +45,7 @@ export interface DoorCreate {
   properties: Record<string, unknown>;
   source?: string;
   source_id?: string;
+  tier?: "library" | "feed";
   version?: number;
 }
 
@@ -230,6 +234,7 @@ export class FolderDoor {
       source: sent.source,
       source_id: sent.source_id ?? null,
       type: sent.type,
+      ...(sent.tier === undefined ? {} : { tier: sent.tier }),
       version: 1,
     });
     return { answer: answers.created(this.wire(id)), minted: id };
@@ -251,7 +256,11 @@ export class FolderDoor {
     id: string,
     sent: {
       properties?: Record<string, unknown>;
+      properties_mode?: "merge" | "replace";
       source_id?: string;
+      type?: string;
+      retype?: boolean;
+      tier?: "library" | "feed";
       version: number;
     },
     options: { resolve?: boolean } = {},
@@ -262,7 +271,21 @@ export class FolderDoor {
       return refusal(404, "item_not_found", `Item ${id} not found`);
     }
     const sentProperties = sent.properties ?? {};
+    // Under replace the body is the row's whole properties, so a field it
+    // leaves out is one it clears (`items.md` 22).
+    const replace = sent.properties_mode === "replace";
+    const moves = {
+      ...(sent.retype === true && sent.type !== undefined
+        ? { type: sent.type }
+        : {}),
+      ...(sent.tier === undefined ? {} : { tier: sent.tier }),
+    };
     let applied: Record<string, unknown> = sentProperties;
+    let cleared: string[] = replace
+      ? Object.keys(before.properties).filter(
+          (field) => !(field in sentProperties),
+        )
+      : [];
     let sourceId = sent.source_id ?? before.source_id;
     let resolution: Record<string, string> | undefined;
     let sibling: string | undefined;
@@ -274,7 +297,15 @@ export class FolderDoor {
           sent.version,
         );
       }
-      const sides = Object.keys(sentProperties).map((field) => ({
+      const fields = replace
+        ? [
+            ...new Set([
+              ...Object.keys(sentProperties),
+              ...Object.keys(ancestor.properties),
+            ]),
+          ]
+        : Object.keys(sentProperties);
+      const sides = fields.map((field) => ({
         field,
         mine: sentProperties[field],
         base: ancestor.properties[field],
@@ -302,11 +333,17 @@ export class FolderDoor {
       }
       const keepBoth = Object.keys(NOTE_MERGE_POLICY.fields);
       const kept = colliding.filter((side) => keepBoth.includes(side.field));
+      const taken = changed.filter(
+        (side) => side.field !== "source_id" && !kept.includes(side),
+      );
       applied = Object.fromEntries(
-        changed
-          .filter((side) => side.field !== "source_id" && !kept.includes(side))
+        taken
+          .filter((side) => side.mine !== undefined)
           .map((side) => [side.field, side.mine]),
       );
+      cleared = taken
+        .filter((side) => side.mine === undefined)
+        .map((side) => side.field);
       sourceId = changed.some((side) => side.field === "source_id")
         ? (sent.source_id ?? before.source_id)
         : before.source_id;
@@ -334,9 +371,12 @@ export class FolderDoor {
       }
     }
     this.remember(id, before);
+    const properties = { ...before.properties, ...applied };
+    for (const field of cleared) delete properties[field];
     this.rows.set(id, {
       ...before,
-      properties: { ...before.properties, ...applied },
+      ...moves,
+      properties,
       source_id: sourceId,
       version: before.version + 1,
     });
@@ -377,6 +417,18 @@ export class FolderDoor {
       : refusal(404, "item_not_found", `Item ${id} not found`);
   }
 
+  /** A move to another lifecycle state, which takes no version step. */
+  transition(id: string, state: string): Answer {
+    const row = this.rows.get(id);
+    if (row === undefined || row.trashed === true) {
+      return refusal(404, "item_not_found", `Item ${id} not found`);
+    }
+    this.rows.set(id, { ...row, state });
+    // The stored row, as the transition door answers it: no hydrated edges.
+    const { edges: _edges, ...stored } = this.wire(id);
+    return answers.updated(stored, row.tags ?? []);
+  }
+
   /** Drops the snapshot of one version, as the server's version thinning
    *  does: a write naming it is then refused `ancestor_unavailable`. */
   thin(id: string, version: number): void {
@@ -400,7 +452,7 @@ export class FolderDoor {
       id,
       version: row.version,
       properties: row.properties,
-      tier: "library",
+      tier: row.tier ?? "library",
       occurred_at: "2026-01-01T00:00:00.000Z",
       source_id: row.source_id,
       type: row.type ?? "core.note",
@@ -416,7 +468,9 @@ export class FolderDoor {
       type: row.type,
       properties: row.properties,
       ...(row.source === undefined ? {} : { source: row.source }),
+      ...(row.tier === undefined ? {} : { tier: row.tier }),
       source_id: row.source_id,
+      ...(row.state === undefined ? {} : { state: row.state }),
       ...(row.trashed === true ? { state: "trashed" } : {}),
     });
   }
