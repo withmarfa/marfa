@@ -363,7 +363,7 @@ export interface paths {
         put?: never;
         /**
          * Move tombstones' settled time later
-         * @description Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`.
+         * @description Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.
          */
         post: operations["settleTombstones"];
         delete?: never;
@@ -603,7 +603,7 @@ export interface paths {
         put?: never;
         /**
          * Register a type
-         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.
+         * @description Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.
          */
         post: operations["registerType"];
         delete?: never;
@@ -628,7 +628,7 @@ export interface paths {
         get: operations["getType"];
         /**
          * Update a registered type
-         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`. Naming, changing or withdrawing a `link_field` is a change that needs one, and the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values.
+         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`. Naming, changing or withdrawing a `link_field` is a change that needs one, and the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
          */
         put: operations["updateType"];
         post?: never;
@@ -1870,7 +1870,7 @@ export interface components {
             };
         };
         /**
-         * @description Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field` nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
+         * @description Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field`, itself or through a parent, nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
          * @enum {string}
          */
         ConflictMode: "auto" | "manual" | "callback";
@@ -2262,7 +2262,7 @@ export interface components {
             };
             version: number;
             display_hints?: components["schemas"]["DisplayHints"];
-            /** @description The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. */
+            /** @description The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. The field's name holds neither a double quote nor a backslash. */
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"];
@@ -2350,7 +2350,7 @@ export interface components {
             /** @description Sibling types this one asserts a structural superset of. A bare string names one. */
             compatible_with?: string | string[];
             display_hints?: components["schemas"]["DisplayHints"];
-            /** @description The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. */
+            /** @description The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. The field's name holds neither a double quote nor a backslash. */
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"];
@@ -2435,7 +2435,7 @@ export interface components {
             /** @description Sibling types this one asserts a structural superset of. A bare string names one. */
             compatible_with?: string | string[];
             display_hints?: components["schemas"]["DisplayHints"];
-            /** @description The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. */
+            /** @description The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. The field's name holds neither a double quote nor a backslash. */
             link_field?: string;
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"];
@@ -3906,7 +3906,7 @@ export interface operations {
     updateItem: {
         parameters: {
             query?: {
-                /** @description Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field` nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`. */
+                /** @description Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field`, itself or through a parent, nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`. */
                 conflict?: components["schemas"]["ConflictMode"];
             };
             header?: {
@@ -6287,7 +6287,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold write on `type`. */
+            /** @description `type_not_permitted`: the credential does not hold write on `type`. `forbidden`: `source` is neither the credential's own nor one its key claims, named in `details.source`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6299,7 +6299,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
