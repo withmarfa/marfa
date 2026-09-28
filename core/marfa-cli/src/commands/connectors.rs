@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand, ValueEnum};
 use serde_json::{Map, Value, json};
 
-use super::{PageArgs, insert_opt};
+use super::{BodySource, PageArgs, insert_opt};
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -58,6 +58,94 @@ pub enum ConnectorsCommand {
     Deliveries {
         #[command(subcommand)]
         command: DeliveriesCommand,
+    },
+    /// Take or renew the hold on the registration for one process, so no
+    /// other process acts while it is live. Its own key only.
+    Hold {
+        /// The connector id.
+        id: String,
+        /// The process's own name for itself, such as a UUID.
+        #[arg(long)]
+        process: String,
+    },
+    /// Give up the hold, if this process holds it. Its own key only.
+    Release {
+        /// The connector id.
+        id: String,
+        /// The process's own name for itself.
+        #[arg(long)]
+        process: String,
+    },
+    /// The state document a connector keeps on the instance.
+    State {
+        #[command(subcommand)]
+        command: StateCommand,
+    },
+    /// A connector's records of what it and its vendor last agreed about
+    /// rows. Its own key only.
+    Agreements {
+        #[command(subcommand)]
+        command: AgreementsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StateCommand {
+    /// The state document, `{}` until one is written. Its own key only.
+    Get {
+        /// The connector id.
+        id: String,
+    },
+    /// Replace the state document with a JSON object. Its own key only.
+    Put {
+        /// The connector id.
+        id: String,
+        /// The process writing, which must hold the registration if any
+        /// process does.
+        #[arg(long)]
+        process: String,
+        #[command(flatten)]
+        body: BodySource,
+    },
+    /// Remove the state document and every agreement. The connector's own
+    /// key, or the operator key.
+    Clear {
+        /// The connector id.
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgreementsCommand {
+    /// Set and clear agreements, from a JSON object with `set` and `clear`.
+    Write {
+        /// The connector id.
+        id: String,
+        /// The process writing, which must hold the registration if any
+        /// process does.
+        #[arg(long)]
+        process: String,
+        #[command(flatten)]
+        body: BodySource,
+    },
+    /// The agreements of the rows named, in the order named.
+    Find {
+        /// The connector id.
+        id: String,
+        /// The item ids.
+        #[arg(required = true)]
+        items: Vec<String>,
+    },
+    /// The agreements, the one written longest ago first.
+    List {
+        /// The connector id.
+        id: String,
+        /// Only the ones waiting to be carried to the vendor, or only the
+        /// others.
+        #[arg(long)]
+        waiting: Option<bool>,
+        #[command(flatten)]
+        page: PageArgs,
     },
 }
 
@@ -258,6 +346,71 @@ pub fn handle_request(id: &str, deliveries: &[String], outcome: DeliveryOutcome)
         .json(json!({ "ids": deliveries, "outcome": outcome.as_str() }))
 }
 
+pub fn hold_request(id: &str, process: &str) -> Request {
+    Request::post(&["connectors", id, "hold"]).json(json!({ "process": process }))
+}
+
+pub fn release_request(id: &str, process: &str) -> Request {
+    Request::delete(&["connectors", id, "hold"]).query("process", process)
+}
+
+pub fn state_put_request(id: &str, process: &str, state: Value) -> Result<Request, CliError> {
+    if !state.is_object() {
+        return Err(CliError::Invalid(
+            "a connector's state document is a JSON object".into(),
+        ));
+    }
+    Ok(Request::put(&["connectors", id, "state"])
+        .json(json!({ "process": process, "state": state })))
+}
+
+pub fn agreements_write_request(
+    id: &str,
+    process: &str,
+    batch: Value,
+) -> Result<Request, CliError> {
+    let Value::Object(mut body) = batch else {
+        return Err(CliError::Invalid(
+            "agreements are a JSON object with `set` and `clear`".into(),
+        ));
+    };
+    body.insert("process".into(), Value::String(process.to_string()));
+    Ok(Request::post(&["connectors", id, "agreements"]).json(Value::Object(body)))
+}
+
+pub fn agreements_find_request(id: &str, items: &[String]) -> Request {
+    Request::post(&["connectors", id, "agreements", "find"]).json(json!({ "item_ids": items }))
+}
+
+pub fn agreements_list_request(id: &str, waiting: Option<bool>, page: &PageArgs) -> Request {
+    Request::get(&["connectors", id, "agreements"])
+        .query_opt("waiting", waiting.map(|waiting| waiting.to_string()))
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
+}
+
+fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let request = match command {
+        StateCommand::Get { id } => Request::get(&["connectors", &id, "state"]),
+        StateCommand::Put { id, process, body } => state_put_request(&id, &process, body.read()?)?,
+        StateCommand::Clear { id } => Request::delete(&["connectors", &id, "state"]),
+    };
+    out.value(&remote.json(&request)?)
+}
+
+fn agreements(command: AgreementsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let request = match command {
+        AgreementsCommand::Write { id, process, body } => {
+            agreements_write_request(&id, &process, body.read()?)?
+        }
+        AgreementsCommand::Find { id, items } => agreements_find_request(&id, &items),
+        AgreementsCommand::List { id, waiting, page } => {
+            agreements_list_request(&id, waiting, &page)
+        }
+    };
+    out.value(&remote.json(&request)?)
+}
+
 fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     match command {
         EndpointsCommand::Create {
@@ -345,6 +498,8 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
     let request = match command {
         ConnectorsCommand::Endpoints { command } => return endpoints(command, remote, out),
         ConnectorsCommand::Deliveries { command } => return deliveries(command, remote, out),
+        ConnectorsCommand::State { command } => return state(command, remote, out),
+        ConnectorsCommand::Agreements { command } => return agreements(command, remote, out),
         ConnectorsCommand::Register { name, description } => {
             register_request(&name, description.as_deref())
         }
@@ -354,6 +509,8 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         ConnectorsCommand::Heartbeat { id } => Request::post(&["connectors", &id, "heartbeat"]),
         ConnectorsCommand::Report(args) => report_request(&args),
         ConnectorsCommand::Runs { id, limit } => runs_request(&id, limit),
+        ConnectorsCommand::Hold { id, process } => hold_request(&id, &process),
+        ConnectorsCommand::Release { id, process } => release_request(&id, &process),
     };
     out.value(&remote.json(&request)?)
 }

@@ -201,6 +201,8 @@ export enum ErrorCode {
   HOUSEKEEPING_JOB_RUNNING = "housekeeping_job_running",
   /** `GET /connectors/{id}` and the doors under it: no such registration. */
   CONNECTOR_NOT_FOUND = "connector_not_found",
+  /** Another process holds the connector's registration until `details.held_until`. */
+  CONNECTOR_HELD = "connector_held",
   /** An endpoint id the connector's registration does not carry. */
   ENDPOINT_NOT_FOUND = "endpoint_not_found",
   /** A delivery id the connector's registration does not carry. */
@@ -372,6 +374,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.HOUSEKEEPING_JOB_NOT_FOUND]: 404,
   [ErrorCode.HOUSEKEEPING_JOB_RUNNING]: 409,
   [ErrorCode.CONNECTOR_NOT_FOUND]: 404,
+  [ErrorCode.CONNECTOR_HELD]: 409,
   [ErrorCode.ENDPOINT_NOT_FOUND]: 404,
   [ErrorCode.DELIVERY_NOT_FOUND]: 404,
   [ErrorCode.INBOUND_UNAVAILABLE]: 503,

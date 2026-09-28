@@ -766,6 +766,76 @@ fn a_connector_makes_endpoints_and_reads_and_marks_its_deliveries() {
 }
 
 #[test]
+fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
+    let held = connectors::hold_request("c1", "p1");
+    assert_eq!(held.method, Method::Post);
+    assert_eq!(held.path(), "/connectors/c1/hold");
+    assert_eq!(held.body, Body::Json(json!({ "process": "p1" })));
+
+    let released = connectors::release_request("c1", "p1");
+    assert_eq!(released.method, Method::Delete);
+    assert_eq!(released.path(), "/connectors/c1/hold");
+    assert_eq!(query(&released, "process").as_deref(), Some("p1"));
+    assert_eq!(released.body, Body::None);
+
+    let put = connectors::state_put_request("c1", "p1", json!({ "cursor": "c" })).unwrap();
+    assert_eq!(put.method, Method::Put);
+    assert_eq!(put.path(), "/connectors/c1/state");
+    assert_eq!(
+        put.body,
+        Body::Json(json!({ "process": "p1", "state": { "cursor": "c" } }))
+    );
+    let not_an_object = connectors::state_put_request("c1", "p1", json!([1]));
+    assert!(
+        matches!(not_an_object, Err(CliError::Invalid(_))),
+        "{not_an_object:?}"
+    );
+
+    let written = connectors::agreements_write_request(
+        "c1",
+        "p1",
+        json!({ "set": [{ "item_id": "i1", "waiting": true, "record": {} }], "clear": ["i2"] }),
+    )
+    .unwrap();
+    assert_eq!(written.method, Method::Post);
+    assert_eq!(written.path(), "/connectors/c1/agreements");
+    assert_eq!(
+        written.body,
+        Body::Json(json!({
+            "process": "p1",
+            "set": [{ "item_id": "i1", "waiting": true, "record": {} }],
+            "clear": ["i2"],
+        }))
+    );
+    let not_a_batch = connectors::agreements_write_request("c1", "p1", json!("set"));
+    assert!(
+        matches!(not_a_batch, Err(CliError::Invalid(_))),
+        "{not_a_batch:?}"
+    );
+
+    let found = connectors::agreements_find_request("c1", &["i1".into(), "i2".into()]);
+    assert_eq!(found.method, Method::Post);
+    assert_eq!(found.path(), "/connectors/c1/agreements/find");
+    assert_eq!(found.body, Body::Json(json!({ "item_ids": ["i1", "i2"] })));
+
+    let listed = connectors::agreements_list_request(
+        "c1",
+        Some(true),
+        &PageArgs {
+            limit: Some(10),
+            cursor: Some("next".into()),
+        },
+    );
+    assert_eq!(listed.method, Method::Get);
+    assert_eq!(listed.path(), "/connectors/c1/agreements");
+    assert_eq!(query(&listed, "waiting").as_deref(), Some("true"));
+    assert_eq!(query(&listed, "limit").as_deref(), Some("10"));
+    assert_eq!(query(&listed, "cursor").as_deref(), Some("next"));
+    let every = connectors::agreements_list_request("c1", None, &PageArgs::default());
+    assert_eq!(query(&every, "waiting"), None);
+}
+
+#[test]
 fn restore_posts_the_archive_under_its_own_type() {
     let request = restore::request(&restore::RestoreArgs {
         file: PathBuf::from("/nowhere/archive.tar.gz"),

@@ -1093,3 +1093,48 @@ export const inboundDeliveryBodies = sqliteTable("inbound_delivery_bodies", {
     .references(() => inboundDeliveries.id, { onDelete: "cascade" }),
   body: blob("body", { mode: "buffer" }).notNull(),
 });
+
+export const connectorHolds = sqliteTable("connector_holds", {
+  connector_id: text("connector_id")
+    .primaryKey()
+    .references(() => connectors.id, { onDelete: "cascade" }),
+  process: text("process").notNull(),
+  held_until: text("held_until").notNull(),
+});
+
+// Keyed by source rather than registration, so a key minted later under the
+// same source finds what its predecessor kept.
+export const connectorStates = sqliteTable("connector_states", {
+  source: text("source").primaryKey(),
+  state: text("state").notNull(),
+  updated_at: text("updated_at").notNull(),
+});
+
+export const connectorAgreements = sqliteTable(
+  "connector_agreements",
+  {
+    source: text("source").notNull(),
+    item_id: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    waiting: integer("waiting", { mode: "boolean" }).notNull(),
+    record: text("record").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.source, table.item_id] }),
+    index("idx_connector_agreements_waiting").on(
+      table.source,
+      table.waiting,
+      table.updated_at,
+      table.item_id,
+    ),
+    index("idx_connector_agreements_updated").on(
+      table.source,
+      table.updated_at,
+      table.item_id,
+    ),
+    // A purge's cascade finds a row's agreements by the row alone.
+    index("idx_connector_agreements_item").on(table.item_id),
+  ],
+);

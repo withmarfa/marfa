@@ -7,9 +7,10 @@
  * doors carry up to 5000 rows in one body,
  * so they take the larger bulk cap; the per-request cap would refuse a
  * legitimate batch, and the doors still bound the row count and the per-field
- * sizes themselves. The inbound webhook door caps a body itself, after it
- * knows the address names an endpoint, so an unknown address is refused
- * before a byte is read.
+ * sizes themselves. A connector's agreements write is one of them: five
+ * hundred records of up to 16 KiB each. The inbound webhook door caps a body
+ * itself, after it knows the address names an endpoint, so an unknown address
+ * is refused before a byte is read.
  *
  * The one statement of it: `app.ts` mounts the guard from it and the
  * document declares `413` from it, so the two cannot disagree about a door.
@@ -22,7 +23,11 @@ export function bodyCapFor(path: string): BodyCap {
     return "none";
   }
   if (path.startsWith("/inbound/")) return "inbound";
-  if (path.startsWith("/items/bulk") || path.startsWith("/edges/bulk")) {
+  if (
+    path.startsWith("/items/bulk") ||
+    path.startsWith("/edges/bulk") ||
+    /^\/connectors\/[^/]+\/agreements$/.test(path)
+  ) {
     return "bulk";
   }
   return "request";

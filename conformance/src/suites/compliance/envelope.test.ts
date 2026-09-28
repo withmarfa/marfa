@@ -130,6 +130,10 @@ describe("one envelope for every list and search", () => {
       template: "/connectors/{id}/deliveries",
       path: () => `/connectors/${connectorId}/deliveries`,
     },
+    {
+      template: "/connectors/{id}/agreements",
+      path: () => `/connectors/${connectorId}/agreements`,
+    },
     { template: "/housekeeping", path: () => "/housekeeping", operator: true },
     {
       template: "/blobs/orphans",
@@ -159,12 +163,12 @@ describe("one envelope for every list and search", () => {
     },
   ];
 
-  it("names twenty-three doors, every one the document publishes as a page", async () => {
+  it("names twenty-four doors, every one the document publishes as a page", async () => {
     // The derived set holds the rows to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // a row beside it turns this red too.
-    expect(doors).toHaveLength(23);
+    expect(doors).toHaveLength(24);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
@@ -194,7 +198,7 @@ describe("one envelope for every list and search", () => {
   });
 
   it("answers GET /auth/grants, which the document does not publish, in the same envelope", async () => {
-    // Outside the twenty-three: the owner's approved-apps list is served
+    // Outside the twenty-four: the owner's approved-apps list is served
     // beside the document rather than in it, and answers the same two keys.
     expect((await servedDocument()).paths["/auth/grants"]).toBeUndefined();
     const minted = await client.createKey({

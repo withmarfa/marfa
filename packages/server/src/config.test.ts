@@ -5,6 +5,8 @@ import {
   parseOtelHeaders,
   loadConfig,
   parseGrantInactivityDays,
+  parseConnectorHoldMs,
+  DEFAULT_CONNECTOR_HOLD_MS,
 } from "./config.js";
 
 /**
@@ -185,6 +187,42 @@ describe("loadConfig MARFA_BLOB_MIN_COPIES", () => {
     for (const raw of ["0", "-1", "two", "1.5"]) {
       process.env.MARFA_BLOB_MIN_COPIES = raw;
       expect(() => loadConfig(), raw).toThrow(/MARFA_BLOB_MIN_COPIES/);
+    }
+  });
+});
+
+describe("loadConfig MARFA_CONNECTOR_HOLD_MS", () => {
+  const saved = process.env.MARFA_CONNECTOR_HOLD_MS;
+
+  afterEach(() => {
+    if (saved === undefined) {
+      Reflect.deleteProperty(process.env, "MARFA_CONNECTOR_HOLD_MS");
+    } else {
+      process.env.MARFA_CONNECTOR_HOLD_MS = saved;
+    }
+  });
+
+  it("defaults to three minutes and takes a window from a second to an hour", () => {
+    delete process.env.MARFA_CONNECTOR_HOLD_MS;
+    expect(loadConfig().connectorHoldMs).toBe(DEFAULT_CONNECTOR_HOLD_MS);
+    expect(DEFAULT_CONNECTOR_HOLD_MS).toBe(180_000);
+    for (const [raw, ms] of [
+      ["1000", 1_000],
+      [" 60000 ", 60_000],
+      ["3600000", 3_600_000],
+    ] as const) {
+      process.env.MARFA_CONNECTOR_HOLD_MS = raw;
+      expect(loadConfig().connectorHoldMs, raw).toBe(ms);
+    }
+  });
+
+  it("refuses to boot on a window outside its bounds or one that is not a whole number", () => {
+    for (const raw of ["999", "3600001", "0", "-1000", "1.5e3", "2s"]) {
+      expect(() => parseConnectorHoldMs(raw), raw).toThrow(
+        /MARFA_CONNECTOR_HOLD_MS/,
+      );
+      process.env.MARFA_CONNECTOR_HOLD_MS = raw;
+      expect(() => loadConfig(), raw).toThrow(/MARFA_CONNECTOR_HOLD_MS/);
     }
   });
 });

@@ -57,6 +57,7 @@ describe("registration", () => {
     expect(created.data.updated_at).toBe(created.data.registered_at);
     expect(created.data.last_heartbeat_at).toBeNull();
     expect(created.data.last_run).toBeNull();
+    expect(created.data.held_until).toBeNull();
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     const theirs = await register(other, `${ctx.runId} calendar reader`);
@@ -138,6 +139,30 @@ describe("registration", () => {
       201,
     );
     expect((await client.listConnectorRuns(real.data.id)).status).toBe(200);
+    expect((await client.holdConnector(real.data.id, "p")).status).toBe(200);
+    expect((await client.releaseConnectorHold(real.data.id, "p")).status).toBe(
+      200,
+    );
+    expect((await client.getConnectorState(real.data.id)).status).toBe(200);
+    expect((await client.listConnectorAgreements(real.data.id)).status).toBe(
+      200,
+    );
+    expect(
+      (await client.findConnectorAgreements(real.data.id, ["x"])).status,
+    ).toBe(200);
+    expect(
+      (await client.writeConnectorAgreements(real.data.id, { process: "p" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await client.replaceConnectorState(real.data.id, {
+          process: "p",
+          state: {},
+        })
+      ).status,
+    ).toBe(200);
+    expect((await client.clearConnectorState(real.data.id)).status).toBe(200);
 
     const unknown = "01a0c000-0000-7000-8000-000000000000";
     for (const [door, res] of [
@@ -151,6 +176,35 @@ describe("registration", () => {
         await client.reportConnectorRun(unknown, run),
       ],
       ["GET /connectors/{id}/runs", await client.listConnectorRuns(unknown)],
+      ["POST /connectors/{id}/hold", await client.holdConnector(unknown, "p")],
+      [
+        "DELETE /connectors/{id}/hold",
+        await client.releaseConnectorHold(unknown, "p"),
+      ],
+      ["GET /connectors/{id}/state", await client.getConnectorState(unknown)],
+      [
+        "PUT /connectors/{id}/state",
+        await client.replaceConnectorState(unknown, {
+          process: "p",
+          state: {},
+        }),
+      ],
+      [
+        "DELETE /connectors/{id}/state",
+        await client.clearConnectorState(unknown),
+      ],
+      [
+        "POST /connectors/{id}/agreements",
+        await client.writeConnectorAgreements(unknown, { process: "p" }),
+      ],
+      [
+        "POST /connectors/{id}/agreements/find",
+        await client.findConnectorAgreements(unknown, ["x"]),
+      ],
+      [
+        "GET /connectors/{id}/agreements",
+        await client.listConnectorAgreements(unknown),
+      ],
       ["DELETE /connectors/{id}", await client.deleteConnector(unknown)],
     ] as const) {
       expect(res.status, door).toBe(404);

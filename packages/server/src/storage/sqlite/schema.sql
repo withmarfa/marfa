@@ -327,6 +327,26 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS `connector_agreements` (
+	`source` text NOT NULL,
+	`item_id` text NOT NULL,
+	`waiting` integer NOT NULL,
+	`record` text NOT NULL,
+	`updated_at` text NOT NULL,
+	PRIMARY KEY(`source`, `item_id`),
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE INDEX IF NOT EXISTS `idx_connector_agreements_waiting` ON `connector_agreements` (`source`,`waiting`,`updated_at`,`item_id`);
+CREATE INDEX IF NOT EXISTS `idx_connector_agreements_updated` ON `connector_agreements` (`source`,`updated_at`,`item_id`);
+CREATE INDEX IF NOT EXISTS `idx_connector_agreements_item` ON `connector_agreements` (`item_id`);
+CREATE TABLE IF NOT EXISTS `connector_holds` (
+	`connector_id` text PRIMARY KEY NOT NULL,
+	`process` text NOT NULL,
+	`held_until` text NOT NULL,
+	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `connector_runs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`connector_id` text NOT NULL,
@@ -340,6 +360,12 @@ CREATE TABLE IF NOT EXISTS `connector_runs` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_connector_runs_connector_reported` ON `connector_runs` (`connector_id`,`reported_at`);
+CREATE TABLE IF NOT EXISTS `connector_states` (
+	`source` text PRIMARY KEY NOT NULL,
+	`state` text NOT NULL,
+	`updated_at` text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `connectors` (
 	`id` text PRIMARY KEY NOT NULL,
 	`key_id` text NOT NULL,

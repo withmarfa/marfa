@@ -55,6 +55,12 @@ const ConnectorSchema = z
     updated_at: z.string(),
     last_heartbeat_at: z.string().nullable(),
     last_run: nullableRef(ConnectorRunSchema),
+    held_until: z
+      .string()
+      .nullable()
+      .describe(
+        "Until when a process holds the registration, from `POST /connectors/{id}/hold`; `null` when none does or its hold has lapsed.",
+      ),
   })
   .openapi("Connector");
 
@@ -71,7 +77,7 @@ const RunInputSchema = z.object({
   error: z.string().max(2000).optional(),
 });
 
-const IdParam = z.object({
+export const IdParam = z.object({
   id: z.string().describe("A connector's `id`, as `GET /connectors` lists it."),
 });
 
@@ -165,7 +171,7 @@ const notFoundResponse = {
   },
 };
 
-const ownKeyResponses = {
+export const ownKeyResponses = {
   ...anyKeyResponses,
   403: {
     content: {
@@ -230,7 +236,7 @@ const listConnectorsRoute = createRoute({
   tags: ["Connectors"],
   summary: "List the registered connectors",
   description:
-    "Every registration, newest first, each with when it last heartbeated and its last run. Any key.",
+    "Every registration, newest first, each with when it last heartbeated, its last run, and until when a process holds it. Any key.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -270,7 +276,7 @@ const deleteConnectorRoute = createRoute({
   tags: ["Connectors"],
   summary: "Remove a registration and its runs",
   description:
-    "Removes the registration, every run it reported, and its inbound webhook endpoints with every delivery they stored. The connector's own key or the operator key; another key is refused `403 forbidden`.",
+    "Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key; another key is refused `403 forbidden`.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -389,7 +395,7 @@ const listRunsRoute = createRoute({
   },
 });
 
-const validationResponse = {
+export const validationResponse = {
   400: {
     content: {
       "application/json": {
@@ -622,19 +628,16 @@ const markHandledRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
+export async function connectorOrRefuse(storage: Storage, id: string) {
+  const connector = await storage.connectors.get(id);
+  if (!connector) {
+    throw new MarfaError(ErrorCode.CONNECTOR_NOT_FOUND, "Connector not found");
+  }
+  return connector;
+}
+
 export function connectorRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
-
-  async function connectorOrRefuse(id: string) {
-    const connector = await storage.connectors.get(id);
-    if (!connector) {
-      throw new MarfaError(
-        ErrorCode.CONNECTOR_NOT_FOUND,
-        "Connector not found",
-      );
-    }
-    return connector;
-  }
 
   router.openapi(registerConnectorRoute, async (c) => {
     const key = requireAuth(c);
@@ -673,12 +676,15 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(getConnectorRoute, async (c) => {
     requireAuth(c);
-    return c.json(await connectorOrRefuse(c.req.valid("param").id), 200);
+    return c.json(
+      await connectorOrRefuse(storage, c.req.valid("param").id),
+      200,
+    );
   });
 
   router.openapi(deleteConnectorRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     if (connector.key_id !== key.id && !key.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -706,7 +712,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(heartbeatRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     const at = await storage.connectors.heartbeat(connector.id);
     if (at === null) {
@@ -720,7 +726,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(reportRunRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     const body = c.req.valid("json");
     if (Date.parse(body.finished_at) < Date.parse(body.started_at)) {
@@ -735,7 +741,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(listRunsRoute, async (c) => {
     requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     refuseUnknownQueryParams(c.req.raw.url, listRunsRoute.request.query);
     const { limit, cursor } = c.req.valid("query");
     return c.json(
@@ -746,7 +752,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(createEndpointRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKeyOrOperator(connector.key_id, key);
     const body = c.req.valid("json");
     const token = mintInboundToken();
@@ -779,7 +785,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(listEndpointsRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKeyOrOperator(connector.key_id, key);
     const endpoints = await storage.inbound.listEndpoints(connector.id);
     return c.json(
@@ -794,7 +800,7 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(retireEndpointRoute, async (c) => {
     const key = requireAuth(c);
     const { id, endpoint_id } = c.req.valid("param");
-    const connector = await connectorOrRefuse(id);
+    const connector = await connectorOrRefuse(storage, id);
     requireOwnKeyOrOperator(connector.key_id, key);
     const retired = await storage.inbound.retireEndpoint(
       connector.id,
@@ -818,7 +824,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(listDeliveriesRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     refuseUnknownQueryParams(c.req.raw.url, listDeliveriesRoute.request.query);
     const { state, endpoint_id, limit, cursor } = c.req.valid("query");
@@ -837,7 +843,7 @@ export function connectorRoutes(storage: Storage) {
   router.openapi(deliveryBodyRoute, async (c) => {
     const key = requireAuth(c);
     const { id, delivery_id } = c.req.valid("param");
-    const connector = await connectorOrRefuse(id);
+    const connector = await connectorOrRefuse(storage, id);
     requireOwnKey(connector.key_id, key.id);
     const body = await storage.inbound.body(connector.id, delivery_id);
     if (body === null) {
@@ -850,7 +856,7 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(markHandledRoute, async (c) => {
     const key = requireAuth(c);
-    const connector = await connectorOrRefuse(c.req.valid("param").id);
+    const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     const { ids, outcome } = c.req.valid("json");
     const marked = await storage.inbound.markHandled(
@@ -882,7 +888,7 @@ function endpointView(endpoint: InboundEndpoint, path?: string) {
   };
 }
 
-function requireOwnKeyOrOperator(
+export function requireOwnKeyOrOperator(
   ownerKeyId: string,
   key: { id: string; is_operator?: boolean },
 ): void {
@@ -894,7 +900,7 @@ function requireOwnKeyOrOperator(
   }
 }
 
-function requireOwnKey(ownerKeyId: string, keyId: string): void {
+export function requireOwnKey(ownerKeyId: string, keyId: string): void {
   if (ownerKeyId !== keyId) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,

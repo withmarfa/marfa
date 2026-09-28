@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { cleanup, trackKey } from "../../utils/setup.js";
+import { cleanup, trackItem, trackKey } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext } from "./harness.js";
 
@@ -8,7 +8,8 @@ import type { CliContext } from "./harness.js";
  * its key as a connector, says it is alive, reports a run, and the operator
  * sees every registration and removes one. The key is the identity, so the
  * heartbeat and the run report are the connector's own key's and nobody
- * else's, the operator's included.
+ * else's, the operator's included. So are its hold and what it keeps on the
+ * instance, which the operator may only clear.
  */
 
 let c: CliContext;
@@ -290,6 +291,147 @@ describe("connectors from the terminal", () => {
     expect(
       (await fetch(made.url, { method: "POST", body: "late" })).status,
     ).toBe(404);
+
+    await c.operator.json(["connectors", "delete", registered.id]);
+  });
+
+  it("holds its registration, keeps its state and agreements, and the operator clears them", async () => {
+    const minted = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "keeper",
+      "--source",
+      unique("cli-keeper"),
+      "--type-permission",
+      "core.note=write",
+    ]);
+    trackKey(c.ctx, minted.id);
+    const connector = c.cli.as(minted.key);
+    const registered = await connector.json<Connector>([
+      "connectors",
+      "register",
+      "--name",
+      unique("cli-keeper"),
+    ]);
+
+    const held = await connector.json<{ held_until: string }>([
+      "connectors",
+      "hold",
+      registered.id,
+      "--process",
+      "first",
+    ]);
+    expect(held.held_until).toMatch(/^\d{4}-/);
+    const taken = await connector.refused([
+      "connectors",
+      "hold",
+      registered.id,
+      "--process",
+      "second",
+    ]);
+    expect(taken.envelope.error.server?.status).toBe(409);
+    expect(taken.envelope.error.server?.code).toBe("connector_held");
+
+    const state = await connector.json<{
+      state: unknown;
+      updated_at: string | null;
+    }>([
+      "connectors",
+      "state",
+      "put",
+      registered.id,
+      "--process",
+      "first",
+      "--body",
+      '{"cursor":"c1"}',
+    ]);
+    expect(state.state).toEqual({ cursor: "c1" });
+    expect(
+      await connector.json(["connectors", "state", "get", registered.id]),
+    ).toEqual(state);
+
+    const note = await c.cli.json<{ item: { id: string } }>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--prop",
+      "body=agreed from the terminal",
+    ]);
+    trackItem(c.ctx, note.item.id);
+    const written = await connector.json<{
+      written: number;
+      cleared: number;
+      skipped: string[];
+    }>([
+      "connectors",
+      "agreements",
+      "write",
+      registered.id,
+      "--process",
+      "first",
+      "--body",
+      JSON.stringify({
+        set: [{ item_id: note.item.id, waiting: true, record: { etag: "e1" } }],
+      }),
+    ]);
+    expect(written).toEqual({ written: 1, cleared: 0, skipped: [] });
+    const found = await connector.json<{ data: { item_id: string }[] }>([
+      "connectors",
+      "agreements",
+      "find",
+      registered.id,
+      note.item.id,
+    ]);
+    expect(found.data.map((row) => row.item_id)).toEqual([note.item.id]);
+    const waiting = await connector.json<{ data: { item_id: string }[] }>([
+      "connectors",
+      "agreements",
+      "list",
+      registered.id,
+      "--waiting",
+      "true",
+      "--limit",
+      "10",
+    ]);
+    expect(waiting.data.map((row) => row.item_id)).toEqual([note.item.id]);
+
+    await connector.json([
+      "connectors",
+      "release",
+      registered.id,
+      "--process",
+      "first",
+    ]);
+    // Released, so the other process takes it.
+    await connector.json([
+      "connectors",
+      "hold",
+      registered.id,
+      "--process",
+      "second",
+    ]);
+
+    const notItsOwn = await c.operator.refused([
+      "connectors",
+      "state",
+      "get",
+      registered.id,
+    ]);
+    expect(notItsOwn.envelope.error.server?.status).toBe(403);
+    await c.operator.json(["connectors", "state", "clear", registered.id]);
+    expect(
+      await connector.json(["connectors", "state", "get", registered.id]),
+    ).toEqual({ state: {}, updated_at: null });
+    const none = await connector.json<{ data: unknown[] }>([
+      "connectors",
+      "agreements",
+      "find",
+      registered.id,
+      note.item.id,
+    ]);
+    expect(none.data).toEqual([]);
 
     await c.operator.json(["connectors", "delete", registered.id]);
   });

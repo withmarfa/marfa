@@ -31,6 +31,9 @@ pub struct Connector {
     pub last_heartbeat_at: Option<String>,
     #[serde(rename = "last_run", deserialize_with = "Option::deserialize")]
     pub last_run: Option<Box<models::ConnectorRun>>,
+    /// Until when a process holds the registration, from `POST /connectors/{id}/hold`; `null` when none does or its hold has lapsed.
+    #[serde(rename = "held_until", deserialize_with = "Option::deserialize")]
+    pub held_until: Option<String>,
 }
 
 impl Connector {
@@ -44,6 +47,7 @@ impl Connector {
         updated_at: String,
         last_heartbeat_at: Option<String>,
         last_run: Option<models::ConnectorRun>,
+        held_until: Option<String>,
     ) -> Connector {
         Connector {
             id,
@@ -59,6 +63,7 @@ impl Connector {
             } else {
                 None
             },
+            held_until,
         }
     }
 }

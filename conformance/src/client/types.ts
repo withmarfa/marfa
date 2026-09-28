@@ -279,6 +279,35 @@ export interface ConnectorRow {
   updated_at: string;
   last_heartbeat_at: string | null;
   last_run: ConnectorRun | null;
+  held_until: string | null;
+}
+
+export interface ConnectorStateRow {
+  state: Record<string, unknown>;
+  updated_at: string | null;
+}
+
+export interface ConnectorAgreementRow {
+  item_id: string;
+  waiting: boolean;
+  record: Record<string, unknown>;
+  updated_at: string;
+}
+
+export interface ConnectorAgreementsInput {
+  process: string;
+  set?: {
+    item_id: string;
+    waiting: boolean;
+    record: Record<string, unknown>;
+  }[];
+  clear?: string[];
+}
+
+export interface ConnectorAgreementsWritten {
+  written: number;
+  cleared: number;
+  skipped: string[];
 }
 
 export interface InboundEndpointRow {

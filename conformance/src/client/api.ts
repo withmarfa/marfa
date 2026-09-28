@@ -19,9 +19,13 @@ import type {
   BlobLocationRow,
   HousekeepingJobRow,
   HousekeepingRun,
+  ConnectorAgreementRow,
+  ConnectorAgreementsInput,
+  ConnectorAgreementsWritten,
   ConnectorRow,
   ConnectorRun,
   ConnectorRunInput,
+  ConnectorStateRow,
   InboundDeliveryRow,
   InboundEndpointRow,
   InboundOutcome,
@@ -842,6 +846,81 @@ export class MarfaClient {
   ): Promise<ApiResponse<PaginatedResult<ConnectorRun>>> {
     return this.request<PaginatedResult<ConnectorRun>>(
       `/connectors/${id}/runs${pageQuery(page)}`,
+    );
+  }
+
+  /** `POST /connectors/{id}/hold`: take or renew the hold for `process`. */
+  async holdConnector(
+    id: string,
+    process: string,
+  ): Promise<ApiResponse<{ held_until: string }>> {
+    return this.request<{ held_until: string }>(`/connectors/${id}/hold`, {
+      method: "POST",
+      body: { process },
+    });
+  }
+
+  async releaseConnectorHold(
+    id: string,
+    process: string,
+  ): Promise<ApiResponse<{ ok: true }>> {
+    return this.request<{ ok: true }>(
+      `/connectors/${id}/hold?${new URLSearchParams({ process }).toString()}`,
+      { method: "DELETE" },
+    );
+  }
+
+  async getConnectorState(id: string): Promise<ApiResponse<ConnectorStateRow>> {
+    return this.request<ConnectorStateRow>(`/connectors/${id}/state`);
+  }
+
+  async replaceConnectorState(
+    id: string,
+    input: { process: string; state: Record<string, unknown> },
+  ): Promise<ApiResponse<ConnectorStateRow>> {
+    return this.request<ConnectorStateRow>(`/connectors/${id}/state`, {
+      method: "PUT",
+      body: input,
+    });
+  }
+
+  async clearConnectorState(id: string): Promise<ApiResponse<{ ok: true }>> {
+    return this.request<{ ok: true }>(`/connectors/${id}/state`, {
+      method: "DELETE",
+    });
+  }
+
+  async writeConnectorAgreements(
+    id: string,
+    input: ConnectorAgreementsInput,
+  ): Promise<ApiResponse<ConnectorAgreementsWritten>> {
+    return this.request<ConnectorAgreementsWritten>(
+      `/connectors/${id}/agreements`,
+      { method: "POST", body: input as unknown as Record<string, unknown> },
+    );
+  }
+
+  async findConnectorAgreements(
+    id: string,
+    itemIds: string[],
+  ): Promise<ApiResponse<{ data: ConnectorAgreementRow[] }>> {
+    return this.request<{ data: ConnectorAgreementRow[] }>(
+      `/connectors/${id}/agreements/find`,
+      { method: "POST", body: { item_ids: itemIds } },
+    );
+  }
+
+  async listConnectorAgreements(
+    id: string,
+    query: { waiting?: boolean; limit?: number; cursor?: string } = {},
+  ): Promise<ApiResponse<PaginatedResult<ConnectorAgreementRow>>> {
+    const params = new URLSearchParams();
+    for (const [name, value] of Object.entries(query)) {
+      if (value !== undefined) params.set(name, String(value));
+    }
+    const search = params.toString();
+    return this.request<PaginatedResult<ConnectorAgreementRow>>(
+      `/connectors/${id}/agreements${search === "" ? "" : `?${search}`}`,
     );
   }
 

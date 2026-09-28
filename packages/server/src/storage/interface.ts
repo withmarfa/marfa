@@ -423,6 +423,9 @@ export const CONNECTOR_RUNS_CURSOR_KEY: CursorSortKey =
 /** A connector's deliveries are a queue, read oldest first. */
 export const INBOUND_DELIVERIES_CURSOR_KEY: CursorSortKey =
   "inbound-deliveries:received_at:asc";
+/** A source's agreements, the longest unchanged first. */
+export const CONNECTOR_AGREEMENTS_CURSOR_KEY: CursorSortKey =
+  "connector-agreements:updated_at:asc";
 /** Search ranks by relevance rather than by a column, so its cursor carries
  *  the position in the ranking and names the ranking as its key. */
 export const SEARCH_CURSOR_KEY: CursorSortKey = "search:relevance:desc";
@@ -2751,6 +2754,8 @@ export interface Connector {
   updated_at: string;
   last_heartbeat_at: string | null;
   last_run: ConnectorRun | null;
+  /** Until when a process holds the registration; null when none does. */
+  held_until: string | null;
 }
 
 export interface ConnectorStore {
@@ -2777,6 +2782,78 @@ export interface ConnectorStore {
     id: string,
     page: { limit: number; cursor?: string },
   ): Promise<PaginatedResult<ConnectorRun>>;
+  /** Take or renew the hold for `process` for `holdMs`, unless another
+   *  process holds it live. Null when there is no such registration. */
+  takeHold(
+    id: string,
+    process: string,
+    holdMs: number,
+  ): Promise<{ taken: boolean; held_until: string } | null>;
+  /** Release the hold if `process` holds it. */
+  releaseHold(id: string, process: string): Promise<void>;
+}
+
+/** The connector's record of what it and its vendor last agreed about a row. */
+export interface ConnectorAgreement {
+  item_id: string;
+  waiting: boolean;
+  record: Record<string, unknown>;
+  updated_at: string;
+}
+
+/** Why a fenced write wrote nothing: another process holds the registration. */
+export interface ConnectorHeld {
+  held_until: string;
+}
+
+/** What a connector keeps on the instance, keyed by its registration's source. */
+export interface ConnectorStateStore {
+  /** The source's state document; `{}` and null when none was written. */
+  getState(
+    source: string,
+  ): Promise<{ state: Record<string, unknown>; updated_at: string | null }>;
+  /** Replace the document, unless another process holds the registration. */
+  putState(
+    fence: { connectorId: string; process: string },
+    source: string,
+    state: Record<string, unknown>,
+  ): Promise<
+    { state: Record<string, unknown>; updated_at: string } | ConnectorHeld
+  >;
+  /** Skips an id naming no stored row or a type `readable` refuses; writes
+   *  nothing while another process holds the registration. */
+  writeAgreements(
+    fence: { connectorId: string; process: string },
+    source: string,
+    batch: {
+      set: {
+        item_id: string;
+        waiting: boolean;
+        record: Record<string, unknown>;
+      }[];
+      clear: string[];
+    },
+    readable: (type: string) => boolean,
+  ): Promise<
+    { written: number; cleared: number; skipped: string[] } | ConnectorHeld
+  >;
+  /** The agreements of the rows named that have one and whose type
+   *  `readable` admits, in the order named. */
+  findAgreements(
+    source: string,
+    itemIds: string[],
+    readable: (type: string) => boolean,
+  ): Promise<ConnectorAgreement[]>;
+  /** The source's agreements on rows `readable` admits, the longest
+   *  unchanged first, one page at a time. */
+  listAgreements(
+    source: string,
+    filter: { waiting?: boolean },
+    page: { limit: number; cursor?: string },
+    readable: (type: string) => boolean,
+  ): Promise<PaginatedResult<ConnectorAgreement>>;
+  /** Remove the source's document and every agreement, answering what went. */
+  clear(source: string): Promise<{ state: boolean; agreements: number }>;
 }
 
 /** An address a sender posts to, belonging to one connector registration. */
@@ -2932,6 +3009,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   housekeeping: HousekeepingStore;
   /** The registrations behind `/connectors`, and the runs they report. */
   connectors: ConnectorStore;
+  connectorState: ConnectorStateStore;
   inbound: InboundStore;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   close(): Promise<void>;

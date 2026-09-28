@@ -248,6 +248,24 @@ const seeds: Record<string, () => Promise<Read>> = {
     return async (page) =>
       answered(await client.listInboundDeliveries(connector.id, page)) as Page;
   },
+  "GET /connectors/{id}/agreements": async () => {
+    // The same key's registration as the runs seed's: one per key.
+    const connector = answered(
+      await client.registerConnector({ name: `full-last-page ${ctx.runId}` }),
+    );
+    if (!connectors.includes(connector.id)) connectors.push(connector.id);
+    const rows = await notes(LIMIT, "agreement");
+    answered(
+      await client.writeConnectorAgreements(connector.id, {
+        process: "full-last-page",
+        set: rows.map((item_id) => ({ item_id, waiting: true, record: {} })),
+      }),
+    );
+    return async (page) =>
+      answered(
+        await client.listConnectorAgreements(connector.id, page),
+      ) as Page;
+  },
 };
 
 describe("a full last page answers a null cursor", () => {
@@ -261,7 +279,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(9);
+    expect(cursorDoors).toHaveLength(10);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 

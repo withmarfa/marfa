@@ -13,6 +13,13 @@ use crate::{apis::ResponseContent, models};
 use reqwest;
 use serde::{Deserialize, Serialize, de::Error as _};
 
+/// struct for passing parameters to the method [`clear_connector_state`]
+#[derive(Clone, Debug)]
+pub struct ClearConnectorStateParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+}
+
 /// struct for passing parameters to the method [`create_inbound_endpoint`]
 #[derive(Clone, Debug)]
 pub struct CreateInboundEndpointParams {
@@ -28,9 +35,24 @@ pub struct DeleteConnectorParams {
     pub id: String,
 }
 
+/// struct for passing parameters to the method [`find_connector_agreements`]
+#[derive(Clone, Debug)]
+pub struct FindConnectorAgreementsParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    pub find_connector_agreements_request: Option<models::FindConnectorAgreementsRequest>,
+}
+
 /// struct for passing parameters to the method [`get_connector`]
 #[derive(Clone, Debug)]
 pub struct GetConnectorParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+}
+
+/// struct for passing parameters to the method [`get_connector_state`]
+#[derive(Clone, Debug)]
+pub struct GetConnectorStateParams {
     /// A connector's `id`, as `GET /connectors` lists it.
     pub id: String,
 }
@@ -49,6 +71,27 @@ pub struct GetInboundDeliveryBodyParams {
 pub struct HeartbeatConnectorParams {
     /// A connector's `id`, as `GET /connectors` lists it.
     pub id: String,
+}
+
+/// struct for passing parameters to the method [`hold_connector`]
+#[derive(Clone, Debug)]
+pub struct HoldConnectorParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    pub hold_connector_request: Option<models::HoldConnectorRequest>,
+}
+
+/// struct for passing parameters to the method [`list_connector_agreements`]
+#[derive(Clone, Debug)]
+pub struct ListConnectorAgreementsParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    /// Only the agreements waiting to be carried to the vendor, or only the others.
+    pub waiting: Option<String>,
+    /// How many agreements: at most 200, 50 unless given.
+    pub limit: Option<i32>,
+    /// Opaque cursor from a previous page's `next_cursor`.
+    pub cursor: Option<String>,
 }
 
 /// struct for passing parameters to the method [`list_connector_runs`]
@@ -99,6 +142,23 @@ pub struct RegisterConnectorParams {
     pub register_connector_request: Option<models::RegisterConnectorRequest>,
 }
 
+/// struct for passing parameters to the method [`release_connector_hold`]
+#[derive(Clone, Debug)]
+pub struct ReleaseConnectorHoldParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    /// The process's own name for itself, opaque to the server, such as a UUID it chose at start.
+    pub process: String,
+}
+
+/// struct for passing parameters to the method [`replace_connector_state`]
+#[derive(Clone, Debug)]
+pub struct ReplaceConnectorStateParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    pub replace_connector_state_request: Option<models::ReplaceConnectorStateRequest>,
+}
+
 /// struct for passing parameters to the method [`report_connector_run`]
 #[derive(Clone, Debug)]
 pub struct ReportConnectorRunParams {
@@ -114,6 +174,22 @@ pub struct RetireInboundEndpointParams {
     pub id: String,
     /// An endpoint's `id`.
     pub endpoint_id: String,
+}
+
+/// struct for passing parameters to the method [`write_connector_agreements`]
+#[derive(Clone, Debug)]
+pub struct WriteConnectorAgreementsParams {
+    /// A connector's `id`, as `GET /connectors` lists it.
+    pub id: String,
+    pub write_connector_agreements_request: Option<models::WriteConnectorAgreementsRequest>,
+}
+
+/// struct for typed successes of method [`clear_connector_state`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClearConnectorStateSuccess {
+    Status200(models::Acknowledged),
+    UnknownValue(serde_json::Value),
 }
 
 /// struct for typed successes of method [`create_inbound_endpoint`]
@@ -132,11 +208,27 @@ pub enum DeleteConnectorSuccess {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed successes of method [`find_connector_agreements`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FindConnectorAgreementsSuccess {
+    Status200(models::FindConnectorAgreements200Response),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed successes of method [`get_connector`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetConnectorSuccess {
     Status200(models::Connector),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`get_connector_state`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetConnectorStateSuccess {
+    Status200(models::ConnectorState),
     UnknownValue(serde_json::Value),
 }
 
@@ -153,6 +245,22 @@ pub enum GetInboundDeliveryBodySuccess {
 #[serde(untagged)]
 pub enum HeartbeatConnectorSuccess {
     Status200(models::HeartbeatConnector200Response),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`hold_connector`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum HoldConnectorSuccess {
+    Status200(models::HoldConnector200Response),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`list_connector_agreements`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ListConnectorAgreementsSuccess {
+    Status200(models::ConnectorAgreementPage),
     UnknownValue(serde_json::Value),
 }
 
@@ -205,6 +313,22 @@ pub enum RegisterConnectorSuccess {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed successes of method [`release_connector_hold`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReleaseConnectorHoldSuccess {
+    Status200(models::Acknowledged),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`replace_connector_state`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReplaceConnectorStateSuccess {
+    Status200(models::ConnectorState),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed successes of method [`report_connector_run`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -218,6 +342,27 @@ pub enum ReportConnectorRunSuccess {
 #[serde(untagged)]
 pub enum RetireInboundEndpointSuccess {
     Status200(models::InboundEndpoint),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`write_connector_agreements`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WriteConnectorAgreementsSuccess {
+    Status200(models::WriteConnectorAgreements200Response),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`clear_connector_state`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClearConnectorStateError {
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
 }
 
@@ -249,11 +394,37 @@ pub enum DeleteConnectorError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`find_connector_agreements`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FindConnectorAgreementsError {
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`get_connector`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetConnectorError {
     Status401(models::UnauthorizedRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`get_connector_state`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum GetConnectorStateError {
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
     Status404(models::ConnectorNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -280,6 +451,34 @@ pub enum HeartbeatConnectorError {
     Status403(models::ForbiddenRefusal),
     Status404(models::ConnectorNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`hold_connector`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum HoldConnectorError {
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status409(models::ConnectorHeldRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`list_connector_agreements`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ListConnectorAgreementsError {
+    Status400(models::ValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -359,6 +558,35 @@ pub enum RegisterConnectorError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`release_connector_hold`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReleaseConnectorHoldError {
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`replace_connector_state`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReplaceConnectorStateError {
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status409(models::ConnectorHeldRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`report_connector_run`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -384,6 +612,66 @@ pub enum RetireInboundEndpointError {
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`write_connector_agreements`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WriteConnectorAgreementsError {
+    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenRefusal),
+    Status404(models::ConnectorNotFoundRefusal),
+    Status409(models::ConnectorHeldRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// Removes the state document and every agreement of the registration's source, and writes an audit row. The connector's own key or the operator key.
+pub fn clear_connector_state(
+    configuration: &configuration::Configuration,
+    params: ClearConnectorStateParams,
+) -> Result<ResponseContent<ClearConnectorStateSuccess>, Error<ClearConnectorStateError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/state",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::DELETE, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<ClearConnectorStateSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<ClearConnectorStateError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
 }
 
 /// Makes an address a sender posts to without a credential, and answers it in full this once; later reads show its last four characters. The connector's own key or the operator key. A registration holds at most 10 live endpoints, and one more is refused `409 conflict`.
@@ -432,7 +720,7 @@ pub fn create_inbound_endpoint(
     }
 }
 
-/// Removes the registration, every run it reported, and its inbound webhook endpoints with every delivery they stored. The connector's own key or the operator key; another key is refused `403 forbidden`.
+/// Removes the registration, every run it reported, its hold, and its inbound webhook endpoints with every delivery they stored. The state and the agreements it kept stay with its source, for a later key with the same source. The connector's own key or the operator key; another key is refused `403 forbidden`.
 pub fn delete_connector(
     configuration: &configuration::Configuration,
     params: DeleteConnectorParams,
@@ -477,6 +765,52 @@ pub fn delete_connector(
     }
 }
 
+/// The agreements of the rows named that have one, in the order named; at most 500 ids. A row whose type the key's type map does not read is left out. The connector's own key only.
+pub fn find_connector_agreements(
+    configuration: &configuration::Configuration,
+    params: FindConnectorAgreementsParams,
+) -> Result<ResponseContent<FindConnectorAgreementsSuccess>, Error<FindConnectorAgreementsError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/agreements/find",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.find_connector_agreements_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<FindConnectorAgreementsSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<FindConnectorAgreementsError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
 pub fn get_connector(
     configuration: &configuration::Configuration,
     params: GetConnectorParams,
@@ -511,6 +845,49 @@ pub fn get_connector(
     } else {
         let content = resp.text()?;
         let entity: Option<GetConnectorError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// The state document of the registration's source, which a later key with the same source reads too. The connector's own key only.
+pub fn get_connector_state(
+    configuration: &configuration::Configuration,
+    params: GetConnectorStateParams,
+) -> Result<ResponseContent<GetConnectorStateSuccess>, Error<GetConnectorStateError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/state",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<GetConnectorStateSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<GetConnectorStateError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,
@@ -602,6 +979,104 @@ pub fn heartbeat_connector(
     }
 }
 
+/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it. The connector's own key only.
+pub fn hold_connector(
+    configuration: &configuration::Configuration,
+    params: HoldConnectorParams,
+) -> Result<ResponseContent<HoldConnectorSuccess>, Error<HoldConnectorError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/hold",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.hold_connector_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<HoldConnectorSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<HoldConnectorError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// The agreements of the registration's source, the longest unchanged first. A row whose type the key's type map does not read is left out, so a page can be short with a cursor still to follow. The connector's own key only.
+pub fn list_connector_agreements(
+    configuration: &configuration::Configuration,
+    params: ListConnectorAgreementsParams,
+) -> Result<ResponseContent<ListConnectorAgreementsSuccess>, Error<ListConnectorAgreementsError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/agreements",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
+
+    if let Some(ref param_value) = params.waiting {
+        req_builder = req_builder.query(&[("waiting", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.limit {
+        req_builder = req_builder.query(&[("limit", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.cursor {
+        req_builder = req_builder.query(&[("cursor", &param_value.to_string())]);
+    }
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<ListConnectorAgreementsSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<ListConnectorAgreementsError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
 /// Newest first. Any key.
 pub fn list_connector_runs(
     configuration: &configuration::Configuration,
@@ -651,7 +1126,7 @@ pub fn list_connector_runs(
     }
 }
 
-/// Every registration, newest first, each with when it last heartbeated and its last run. Any key.
+/// Every registration, newest first, each with when it last heartbeated, its last run, and until when a process holds it. Any key.
 pub fn list_connectors(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<ListConnectorsSuccess>, Error<ListConnectorsError>> {
@@ -879,6 +1354,96 @@ pub fn register_connector(
     }
 }
 
+/// Releases the hold if `process` holds it, so another process may take it at once. Answers the same whether or not it did, and leaves another process's hold standing. The connector's own key only.
+pub fn release_connector_hold(
+    configuration: &configuration::Configuration,
+    params: ReleaseConnectorHoldParams,
+) -> Result<ResponseContent<ReleaseConnectorHoldSuccess>, Error<ReleaseConnectorHoldError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/hold",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::DELETE, &uri_str);
+
+    req_builder = req_builder.query(&[("process", &params.process.to_string())]);
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<ReleaseConnectorHoldSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<ReleaseConnectorHoldError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Replaces the state document of the registration's source whole. At most 512 KiB serialized. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
+pub fn replace_connector_state(
+    configuration: &configuration::Configuration,
+    params: ReplaceConnectorStateParams,
+) -> Result<ResponseContent<ReplaceConnectorStateSuccess>, Error<ReplaceConnectorStateError>> {
+    let uri_str = format!(
+        "{}/connectors/{id}/state",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration.client.request(reqwest::Method::PUT, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.replace_connector_state_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<ReplaceConnectorStateSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<ReplaceConnectorStateError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
 /// Records one run: `succeeded` or `failed`, when it started and finished, and a summary or an error. The connector's own key only. The server keeps the last hundred runs per connector and drops the oldest beyond that.
 pub fn report_connector_run(
     configuration: &configuration::Configuration,
@@ -963,6 +1528,53 @@ pub fn retire_inbound_endpoint(
     } else {
         let content = resp.text()?;
         let entity: Option<RetireInboundEndpointError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
+pub fn write_connector_agreements(
+    configuration: &configuration::Configuration,
+    params: WriteConnectorAgreementsParams,
+) -> Result<ResponseContent<WriteConnectorAgreementsSuccess>, Error<WriteConnectorAgreementsError>>
+{
+    let uri_str = format!(
+        "{}/connectors/{id}/agreements",
+        configuration.base_path,
+        id = crate::apis::urlencode(params.id)
+    );
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.write_connector_agreements_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<WriteConnectorAgreementsSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<WriteConnectorAgreementsError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,
