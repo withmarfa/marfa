@@ -735,9 +735,19 @@ enum Missing {
 }
 
 impl Folder {
-    /// Reads the folder and queues what has changed. The watcher calls this
-    /// too, so one rule decides identity (`folders.md` 18).
+    /// Reads the folder and queues what has changed. The watcher's full pass
+    /// is this scan too, so one rule decides identity (`folders.md` 18).
     pub fn scan(&self) -> Result<ScanReport> {
+        self.scan_as(true)
+    }
+
+    /// A pass that skips a file whose size, time and identity are as the last
+    /// read left them; a full pass catches what that misses (`folders.md` 49).
+    pub fn scan_quick(&self) -> Result<ScanReport> {
+        self.scan_as(false)
+    }
+
+    fn scan_as(&self, full: bool) -> Result<ScanReport> {
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
@@ -767,34 +777,92 @@ impl Folder {
         // out journals it missing and deletes the item bound to it.
         let seen: HashSet<String> = found.iter().cloned().collect();
         let (paths, keys) = one_per_name(&walked.files, found, &snapshot, &mut report);
+        let by_path: HashMap<&str, &state::Bound> = snapshot
+            .iter()
+            .map(|bound| (bound.path.as_str(), bound))
+            .collect();
+        // Each file's size and time, taken before its read, so a change made
+        // during the read differs from what is recorded (`folders.md` 49).
+        let mut stats: Vec<(String, String)> = Vec::new();
+        let mut unchanged: HashSet<String> = HashSet::new();
+        if !full {
+            // Resolved over every file, so a hard link shares no mark.
+            let marks = identity::resolve(&paths);
+            let conn = self.core.conn()?;
+            for (path, key) in paths.iter().zip(&keys) {
+                if let Some(bound) = by_path.get(key.as_str())
+                    && bound.held.is_none()
+                    && bound.writes.refused.is_empty()
+                    && bound.identity.is_some()
+                    && marks.get(path).map(|found| found.key()) == bound.identity
+                    && let Some(stat) = stat_of(path)
+                    && state::stat_of(&conn, key)?.as_deref() == Some(stat.as_str())
+                    // A file whose item the copy lost is said to be at every pass.
+                    && crate::store::held_version(&conn, &bound.item_id)?.is_some()
+                {
+                    unchanged.insert(key.clone());
+                }
+            }
+        }
         // Markdown files first, so a file only an embed names is sent too
         // (`folders.md` 12).
         let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
         let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
         let mut embedded: HashSet<String> = HashSet::new();
         let index = embeds::Files::of(&keys);
-        for (path, key) in paths.iter().zip(&keys) {
-            if !carries_frontmatter(path) {
-                continue;
-            }
-            let Ok(bytes) = std::fs::read(path) else {
-                continue;
-            };
-            let body = document::read(&String::from_utf8_lossy(&bytes)).body;
-            let mut found = Vec::new();
-            for embed in document::embeds(&body) {
-                if let Some(target) = embeds::on_disk(key, &embed, &index) {
-                    if let embeds::Target::At(at) = &target {
-                        embedded.insert(at.clone());
-                    }
-                    found.push((embed.raw().to_string(), target));
+        let mut reading: Vec<usize> = (0..paths.len()).collect();
+        while !reading.is_empty() {
+            let mut named: HashSet<String> = HashSet::new();
+            for at in reading {
+                let (path, key) = (&paths[at], &keys[at]);
+                if !carries_frontmatter(path) || unchanged.contains(key) {
+                    continue;
                 }
+                let stat = stat_of(path);
+                let Ok(bytes) = std::fs::read(path) else {
+                    continue;
+                };
+                if let Some(stat) = stat {
+                    stats.push((key.clone(), stat));
+                }
+                let text = String::from_utf8_lossy(&bytes);
+                let read = document::read(&text);
+                named.extend(
+                    read.front
+                        .get(ID_FIELD)
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                        .or_else(|| document::id_line(&text)),
+                );
+                let mut found = Vec::new();
+                for embed in document::embeds(&read.body) {
+                    if let Some(target) = embeds::on_disk(key, &embed, &index) {
+                        if let embeds::Target::At(at) = &target {
+                            embedded.insert(at.clone());
+                        }
+                        found.push((embed.raw().to_string(), target));
+                    }
+                }
+                if !found.is_empty() {
+                    shown.insert(key.clone(), found);
+                }
+                early.insert(path.clone(), bytes);
             }
-            if !found.is_empty() {
-                shown.insert(key.clone(), found);
+            // A file carrying the id of a skipped file's item may be its copy,
+            // and which keeps the id is decided with both read (`folders.md` 15).
+            reading = (0..paths.len())
+                .filter(|at| {
+                    unchanged.contains(&keys[*at])
+                        && by_path
+                            .get(keys[*at].as_str())
+                            .is_some_and(|bound| named.contains(&bound.item_id))
+                })
+                .collect();
+            for at in &reading {
+                unchanged.remove(&keys[*at]);
             }
-            early.insert(path.clone(), bytes);
         }
+        report.unchanged += unchanged.len();
         // A file already a file item is read whatever the search says, so one
         // no longer embedded, or moved, is followed rather than journaled.
         let files_bound: Vec<&state::Bound> = snapshot
@@ -815,6 +883,9 @@ impl Folder {
         };
         let mut held: Vec<PathBuf> = Vec::new();
         for (path, key) in paths.iter().zip(&keys) {
+            if unchanged.contains(key) {
+                continue;
+            }
             if self.pushes(path, &settings, &catalog) || embedded.contains(key) || bound(path, key)
             {
                 held.push(path.clone());
@@ -831,10 +902,16 @@ impl Folder {
             // it, and the folder holds what it last agreed with meanwhile.
             let bytes = match early.remove(&path) {
                 Some(bytes) => bytes,
-                None => match std::fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(_) => continue,
-                },
+                None => {
+                    let stat = stat_of(&path);
+                    let Ok(bytes) = std::fs::read(&path) else {
+                        continue;
+                    };
+                    if let Some(stat) = stat {
+                        stats.push((identity::relative(&self.root, &path)?, stat));
+                    }
+                    bytes
+                }
             };
             // No blob the server holds is empty (`folders.md` 36).
             if bytes.is_empty() && !is_document(&path) {
@@ -1085,6 +1162,11 @@ impl Folder {
                     },
                 )?;
             }
+        }
+
+        {
+            let conn = self.core.conn()?;
+            state::set_stats(&conn, &stats, full)?;
         }
 
         // Journaled rather than deleted: the first half of a rename looks
@@ -3491,6 +3573,19 @@ fn extension_of(path: &Path) -> Option<String> {
 /// file (`folders.md` 13).
 fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
+}
+
+/// A file's size and modification time, which a quick pass compares with
+/// those its last read recorded (`folders.md` 49).
+fn stat_of(path: &Path) -> Option<String> {
+    let metadata = std::fs::symlink_metadata(path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some(format!("{}:{modified}", metadata.len()))
 }
 
 /// Whether a file is a document, which a folder reads as an item's fields

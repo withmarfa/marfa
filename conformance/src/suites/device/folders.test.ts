@@ -14116,3 +14116,91 @@ describe("large removals, status and size", () => {
     expect(status.value.paused).toEqual({ disk: 0, pull: 0 });
   });
 });
+
+describe("reading only what changed", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 3_000));
+  const idOf = (h: FolderHarness, name: string) =>
+    /^marfa_id: "?([^"\n]+)"?$/m.exec(read(h, name))?.[1] ?? "";
+
+  /** Two notes in step and a watch past its first pass; `kept.md` is then
+   *  edited at the same size with its modification time put back, and
+   *  `edited.md` edited the same way but with the time left moved. */
+  async function editedUnderWatch(label: string): Promise<FolderHarness> {
+    const made = await folderHarness(label);
+    scriptFolderWrites(made);
+    put(made, "kept.md", "---\ntitle: Kept\n---\nfirst\n");
+    put(made, "edited.md", "---\ntitle: Edited\n---\nfirst\n");
+    expect((await made.folder.push()).ok).toBe(true);
+    const updates = sentUpdates(made).length;
+    const watching = made.folder.watch();
+    try {
+      await settle();
+      const kept = join(made.dir, "kept.md");
+      const time = join(mkdtempSync(join(tmpdir(), "marfa-time-")), "time");
+      execFileSync("touch", ["-r", kept, time]);
+      writeFileSync(kept, read(made, "kept.md").replace("first", "FIRST"));
+      execFileSync("touch", ["-r", time, kept]);
+      put(made, "edited.md", read(made, "edited.md").replace("first", "FIRST"));
+      await vi.waitFor(
+        () => expect(sentUpdates(made).length).toBeGreaterThan(updates),
+        { timeout: 20_000, interval: 100 },
+      );
+      await settle();
+    } finally {
+      await watching.stop();
+    }
+    return made;
+  }
+
+  it("does not reread an unchanged file", async () => {
+    harness = await editedUnderWatch("folder-quick-pass");
+    const sent = sentUpdates(harness).map((update) => update.id);
+    // The witness: the edit whose time moved was read and sent.
+    expect(sent).toContain(idOf(harness, "edited.md"));
+    expect(
+      sent,
+      "a watch reread a file whose size and time had not changed",
+    ).not.toContain(idOf(harness, "kept.md"));
+  });
+
+  it("finds a missed change on its full pass", async () => {
+    harness = await editedUnderWatch("folder-full-pass");
+    const kept = idOf(harness, "kept.md");
+    expect(sentUpdates(harness).map((update) => update.id)).not.toContain(kept);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const sent = sentUpdates(harness).filter((update) => update.id === kept);
+    expect(
+      sent,
+      "a full pass missed a change that left the size and time as they were",
+    ).toHaveLength(1);
+    expect(JSON.stringify(sent[0]?.body)).toContain("FIRST");
+  });
+
+  it("tells a copy from its unread original on a quick pass", async () => {
+    harness = await folderHarness("folder-quick-copy");
+    scriptFolderWrites(harness);
+    put(harness, "note.md", "---\ntitle: Note\n---\nthe original\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idOf(harness, "note.md");
+    const watching = harness.folder.watch();
+    try {
+      await settle();
+      writeFileSync(join(harness.dir, "copy.md"), read(harness, "note.md"));
+      await vi.waitFor(() => expect(sentCreates(harness!)).toHaveLength(2), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      await settle();
+    } finally {
+      await watching.stop();
+    }
+    const copy = String(sentCreates(harness)[1]?.id);
+    expect(
+      copy,
+      "the copy took the original's item while the original went unread",
+    ).not.toBe(id);
+    expect(idOf(harness, "copy.md")).toBe(copy);
+    expect(idOf(harness, "note.md")).toBe(id);
+    expect(sentUpdates(harness)).toEqual([]);
+  });
+});

@@ -287,7 +287,9 @@ A folder is a directory on a machine that holds, as files, what a saved search m
 
 **Large removals, size and status.** A removal of more files than the settings' threshold, ten files and a quarter of the folder unless they say otherwise, waits to be confirmed, whether made on the disk or arriving through a pull: `folders confirm` lets it go, and `folders restore` puts it back. A text near the server's request limit is warned of. `folders status` says where every file stands, from the folder's own store, asking the server nothing.
 
-References: `folders.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48; `edges.md` 2; `items.md` 2, 3, 49; `keys-and-oauth.md` 35; `versions.md` 16.
+**Reading only what changed.** A watch's pass does not read a file whose size, modification time and identity are what they were at its last read, unless something holds the file; a file carrying the id of an unread file's item is read with it, so a copy is still told from its original. The watch's first pass reads every file, and so does one pass a minute, as do `folders push` and `folders scan`, so a change that left the size and time as they were is found there.
+
+References: `folders.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49; `edges.md` 2; `items.md` 2, 3, 49; `keys-and-oauth.md` 35; `versions.md` 16.
 
 ## Housekeeping
 
