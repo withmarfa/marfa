@@ -221,6 +221,8 @@ struct Standing {
     flagged: Vec<marfa_core::folder::Flagged>,
     uncarried: Vec<marfa_core::folder::Uncarried>,
     embeds: Vec<String>,
+    registry: Option<String>,
+    unsure: Vec<marfa_core::folder::Unsure>,
 }
 
 /// One pass: read the folder, send what it queued, write back what came in.
@@ -236,6 +238,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         + scanned.renamed
         + scanned.missing
         + scanned.deleted
+        + scanned.moved_away
         + scanned.requeued
         + drained.report.verdicts.len()
         + drained.gave_way
@@ -243,6 +246,8 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         + pulled.rewritten
         + pulled.moved
         + pulled.removed
+        + pulled.taken
+        + pulled.let_go
         + pulled.revived
         + usize::from(settings.sent)
         > 0;
@@ -267,10 +272,13 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
         },
         uncarried: pulled.uncarried.clone(),
         embeds: crate::folders::embed_lines(scanned.embeds.iter().chain(&pulled.embeds)),
+        registry: scanned.registry.clone(),
+        unsure: scanned.unsure.clone(),
     };
     let changed = standing.as_ref() != Some(&now);
-    let said: Vec<String> = crate::folders::uncarried_line(&now.uncarried)
+    let said: Vec<String> = crate::folders::trashed_lines(&scanned)
         .into_iter()
+        .chain(crate::folders::uncarried_line(&now.uncarried))
         .chain(crate::folders::flagged_lines(&now.flagged))
         .chain(now.embeds.iter().cloned())
         .collect();
