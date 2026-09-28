@@ -369,5 +369,15 @@ mod tests {
         assert_eq!(std::fs::read(registry.path()).unwrap(), b"");
         registry.add(&one, "f1", None).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
+
+        // Written afresh only where it does not parse: one that cannot be
+        // opened refuses the add.
+        use std::os::unix::fs::PermissionsExt;
+        let shut = Registry::at(root.path().join("shut.json"));
+        std::fs::write(shut.path(), b"").unwrap();
+        std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+        assert!(shut.add(&one, "f1", None).is_err());
+        std::fs::set_permissions(shut.path(), std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read(shut.path()).unwrap(), b"");
     }
 }

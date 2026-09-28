@@ -2985,6 +2985,11 @@ impl Folder {
         if path.exists() {
             return Ok(false);
         }
+        // Read again, since fetching other files' bytes since the pull chose
+        // it leaves time for an edit its folder has yet to send.
+        if !std::fs::read(from).is_ok_and(|bytes| state::hash(&bytes) == theirs.content_hash) {
+            return Ok(false);
+        }
         let binding = |identity: Option<String>| state::Bound {
             path: want.to_string(),
             item_id: item.id.clone(),
@@ -3693,8 +3698,12 @@ pub const LINK_EDGE: &str = "references";
 /// The version a file's line names, where it is one the server could have
 /// minted (`versions.md` 18).
 fn line_of(front: &Map<String, Value>) -> Option<i64> {
+    version_named(front.get(VERSION_FIELD)?)
+}
+
+/// The version a version line's value names, the settings file's included.
+fn version_named(line: &Value) -> Option<i64> {
     // An editor typing the line as text writes it quoted.
-    let line = front.get(VERSION_FIELD)?;
     let number = match line {
         Value::String(text) => text.trim().parse::<f64>().ok()?,
         other => other.as_f64()?,
