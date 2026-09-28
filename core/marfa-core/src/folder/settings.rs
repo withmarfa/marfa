@@ -70,6 +70,7 @@ pub struct Defaults {
     pub edges: BTreeMap<String, Vec<String>>,
 }
 
+/// How large a removal is before it waits to be confirmed (`folders.md` 46).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemovalThreshold {
@@ -77,6 +78,22 @@ pub struct RemovalThreshold {
     pub files: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fraction: Option<f64>,
+}
+
+impl RemovalThreshold {
+    pub fn files(&self) -> u64 {
+        self.files.unwrap_or(10)
+    }
+
+    pub fn fraction(&self) -> f64 {
+        self.fraction.unwrap_or(0.25)
+    }
+
+    /// Whether taking `count` files out of a folder of `of` waits: more than
+    /// `files` of them, and more than `fraction` of the folder.
+    pub fn exceeded(&self, count: usize, of: usize) -> bool {
+        count as u64 > self.files() && count as f64 > self.fraction() * of as f64
+    }
 }
 
 impl Settings {
@@ -141,6 +158,13 @@ impl Settings {
             crate::filter::check(filter)?;
         }
         self.lists()?;
+        if let Some(fraction) = self.removal_threshold.fraction
+            && !(0.0..=1.0).contains(&fraction)
+        {
+            return Err(CoreError::Invalid(format!(
+                "a folder's removal threshold names a fraction of {fraction}, and a fraction of the folder runs from 0 to 1"
+            )));
+        }
         if let Some(tier) = self.defaults.tier
             && tier != self.tier()
         {
@@ -284,9 +308,29 @@ mod tests {
         }
         assert!(read(json!({ "defaults": { "colour": "red" } })).is_err());
         assert!(read(json!({ "ignore": ["a{b"] })).is_err());
+        assert!(read(json!({ "removal_threshold": { "fraction": 1.5 } })).is_err());
+        assert!(read(json!({ "removal_threshold": { "files": -1 } })).is_err());
+        assert!(read(json!({ "removal_threshold": { "share": 1 } })).is_err());
         let empty = Map::new();
         assert!(Settings::read("f", FOLDER_TYPE, "revoked", &empty).is_err());
         assert!(Settings::read("f", "core.note", "active", &empty).is_err());
+    }
+
+    #[test]
+    fn a_removal_waits_past_both_halves_of_its_threshold() {
+        let default = RemovalThreshold::default();
+        assert!(!default.exceeded(10, 12), "ten is not more than ten");
+        assert!(default.exceeded(11, 12));
+        assert!(
+            !default.exceeded(11, 44),
+            "eleven is not more than a quarter of 44"
+        );
+        assert!(default.exceeded(12, 44));
+        let set = read(json!({ "removal_threshold": { "files": 1, "fraction": 0.5 } }))
+            .unwrap()
+            .removal_threshold;
+        assert!(set.exceeded(3, 4));
+        assert!(!set.exceeded(2, 4));
     }
 
     #[test]

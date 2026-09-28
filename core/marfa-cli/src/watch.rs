@@ -286,6 +286,14 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
     let said: Vec<String> = crate::folders::trashed_lines(&scanned)
         .into_iter()
         .chain(crate::folders::uncarried_line(&now.uncarried))
+        .chain((scanned.paused > 0).then(|| crate::folders::paused_line(scanned.paused, false)))
+        .chain((pulled.paused > 0).then(|| crate::folders::paused_line(pulled.paused, true)))
+        .chain(
+            scanned
+                .warnings
+                .iter()
+                .map(|file| format!("{}: {}", file.path, file.reason)),
+        )
         .chain(now.directories.iter().cloned())
         .chain(crate::folders::flagged_lines(&now.flagged))
         .chain(now.embeds.iter().cloned())

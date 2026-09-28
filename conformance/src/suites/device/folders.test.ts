@@ -13844,3 +13844,186 @@ describe("folders on one Mac", () => {
     expect(swept.value.scan.trashed).toEqual(["Shared.md"]);
   });
 });
+
+describe("large removals, status and size", () => {
+  const noteRow = (n: number) => ({
+    item: {
+      id: `01a00000-0000-7000-8000-0000000004${String(n).padStart(2, "0")}`,
+      version: 1,
+      properties: { title: `Note ${String(n)}`, body: "body\n" },
+    },
+  });
+  const deletes = (h: FolderHarness) =>
+    h.server.requests.filter(
+      (request) =>
+        request.method === "DELETE" &&
+        /^\/items\/[^/]+$/.test(request.pathname),
+    );
+  const grace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
+
+  /** Six notes pushed, then three deleted from the disk. */
+  async function sixLessThree(
+    label: string,
+    settings?: Record<string, unknown>,
+  ): Promise<FolderHarness> {
+    const made = await folderHarness(label, settings ? { settings } : {});
+    scriptFolderWrites(made);
+    for (let n = 0; n < 6; n += 1) {
+      put(
+        made,
+        `note-${String(n)}.md`,
+        `---\ntitle: Note ${String(n)}\n---\nbody\n`,
+      );
+    }
+    expect((await made.folder.push()).ok).toBe(true);
+    for (let n = 0; n < 3; n += 1) {
+      rmSync(join(made.dir, `note-${String(n)}.md`));
+    }
+    return made;
+  }
+
+  const tight = {
+    search: { types: ["core.note"] },
+    defaults: { type: "core.note" },
+    removal_threshold: { files: 2, fraction: 0.25 },
+  };
+
+  it("pauses a large removal made on disk", async () => {
+    // The witness: at the default threshold three of six is no large
+    // removal, and the deletes go once the grace runs out.
+    const plain = await sixLessThree("folder-removal-plain");
+    expect((await plain.folder.push()).ok).toBe(true);
+    await grace();
+    expect((await plain.folder.push()).ok).toBe(true);
+    expect(deletes(plain)).toHaveLength(3);
+    await plain.stop();
+
+    harness = await sixLessThree("folder-removal-disk", tight);
+    const first = await harness.folder.push();
+    expect(first.ok && first.value.scan.paused).toBe(3);
+    await grace();
+    const later = await harness.folder.push();
+    expect(later.ok && later.value.scan.paused).toBe(3);
+    expect(
+      deletes(harness),
+      "a removal past the threshold was sent without being confirmed",
+    ).toEqual([]);
+    const said = await harness.folder.pushText();
+    expect(said.ok && said.value).toContain(
+      "a large removal waits: 3 delete(s) not sent",
+    );
+  });
+
+  it("follows the settings' removal threshold", async () => {
+    // More than one file and more than a tenth of the folder: two of six
+    // pass it where three of six passed the tighter setting above.
+    harness = await sixLessThree("folder-removal-threshold", {
+      ...tight,
+      removal_threshold: { files: 1, fraction: 0.1 },
+    });
+    put(harness, "note-0.md", "---\ntitle: Note 0\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok && pushed.value.scan.paused).toBe(2);
+  });
+
+  it("lets a paused removal go once confirmed, or puts it back", async () => {
+    harness = await sixLessThree("folder-removal-confirm", tight);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const confirmed = await harness.folder.confirm();
+    expect(confirmed.ok && confirmed.value.deleted).toBe(3);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(deletes(harness)).toHaveLength(3);
+    await harness.stop();
+
+    harness = await sixLessThree("folder-removal-restore", tight);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const restored = await harness.folder.restore();
+    expect(restored.ok && restored.value.put_back).toBe(3);
+    for (let n = 0; n < 3; n += 1) {
+      expect(existsSync(join(harness.dir, `note-${String(n)}.md`))).toBe(true);
+    }
+    await grace();
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(deletes(harness), "a removal put back was still sent").toEqual([]);
+  });
+
+  it("pauses a large removal from another device", async () => {
+    const rows = [0, 1, 2, 3, 4, 5].map(noteRow);
+    const trashed = rows
+      .slice(0, 3)
+      .map((row, at) =>
+        itemEvent(
+          String(at + 2),
+          "item.deleted",
+          wireItem({ ...row.item, state: "trashed" }),
+        ),
+      );
+    const departing = (label: string, settings?: Record<string, unknown>) =>
+      folderHarness(label, {
+        rows: { "core.note": rows },
+        events: [replay("4", trashed)],
+        ...(settings ? { settings } : {}),
+      });
+    // The witness: at the default threshold the three files are taken away.
+    const plain = await departing("folder-removal-pull-plain");
+    scriptFolderWrites(plain);
+    expect((await plain.folder.pull()).ok).toBe(true);
+    expect((await plain.folder.device().catchUp()).ok).toBe(true);
+    const taken = await plain.folder.pull();
+    expect(taken.ok && taken.value.removed).toBe(3);
+    await plain.stop();
+
+    harness = await departing("folder-removal-pull", tight);
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const held = await harness.folder.pull();
+    expect(held.ok && [held.value.removed, held.value.paused]).toEqual([0, 3]);
+    expect(
+      readdirSync(harness.dir).filter((name) => name.endsWith(".md")),
+    ).toHaveLength(6);
+    const status = await harness.folder.status();
+    expect(status.ok && status.value.paused).toEqual({ disk: 0, pull: 3 });
+  });
+
+  it("warns of a text near the limit", async () => {
+    harness = await folderHarness("folder-size");
+    scriptFolderWrites(harness);
+    put(harness, "small.md", "---\ntitle: Small\n---\nbody\n");
+    put(
+      harness,
+      "large.md",
+      `---\ntitle: Large\n---\n${"x".repeat(960_000)}\n`,
+    );
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok).toBe(true);
+    if (!scanned.ok) return;
+    expect(
+      scanned.value.warnings.map((file) => [file.path, file.flag]),
+      "a text near the server's limit went without a warning, or a small one was warned of",
+    ).toEqual([["large.md", "size"]]);
+  });
+
+  it("reports each file's status", async () => {
+    harness = await folderHarness("folder-status");
+    scriptFolderWrites(harness);
+    put(harness, "steady.md", "---\ntitle: Steady\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "queued.md", "---\ntitle: Queued\n---\nbody\n");
+    put(harness, "broken.md", "---\ntitle: [unclosed\n---\nbody\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const status = await harness.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    const of = (path: string) =>
+      status.value.files.find((file) => file.path === path);
+    expect(of("steady.md")?.status).toBe("in_step");
+    expect(of("queued.md")?.status).toBe("waiting");
+    expect(of("queued.md")?.waits).toContain("create");
+    expect([of("broken.md")?.status, of("broken.md")?.flag]).toEqual([
+      "held",
+      "unreadable",
+    ]);
+    expect(status.value.paused).toEqual({ disk: 0, pull: 0 });
+  });
+});

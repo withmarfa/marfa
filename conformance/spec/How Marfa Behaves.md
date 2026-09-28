@@ -285,7 +285,9 @@ A folder is a directory on a machine that holds, as files, what a saved search m
 
 **Keeping up with the server.** A push catches up after its drain and before its pull, and a watch holds the event stream open beside its passes, so another device's change reaches the files without a hydration. A copy that cannot answer, never hydrated, cut short or aged out of the log, is hydrated first. A watch whose hydration met the network or a failing server tries it again after a wait that doubles from a second to thirty. A push whose catch-up cannot reach the server reports it and still writes out the copy it holds, and where that leaves a copy that cannot answer, it reports the pull as not run and the next push hydrates first.
 
-References: `folders.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41, 42, 43, 44, 45; `edges.md` 2; `items.md` 2, 3, 49; `keys-and-oauth.md` 35; `versions.md` 16.
+**Large removals, size and status.** A removal of more files than the settings' threshold, ten files and a quarter of the folder unless they say otherwise, waits to be confirmed, whether made on the disk or arriving through a pull: `folders confirm` lets it go, and `folders restore` puts it back. A text near the server's request limit is warned of. `folders status` says where every file stands, from the folder's own store, asking the server nothing.
+
+References: `folders.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48; `edges.md` 2; `items.md` 2, 3, 49; `keys-and-oauth.md` 35; `versions.md` 16.
 
 ## Housekeeping
 

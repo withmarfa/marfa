@@ -38,7 +38,8 @@ pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
 pub use folder::{
-    Drained, FOLDER_TYPE, Folder, PullReport, ScanReport, Settings, SettingsFileReport,
+    Confirmed, Drained, FOLDER_TYPE, FileStatus, Folder, Paused, PullReport, Restored, ScanReport,
+    Settings, SettingsFileReport, StatusReport,
 };
 pub use lock::Handle;
 pub use model::{
