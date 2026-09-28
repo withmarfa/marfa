@@ -1140,3 +1140,36 @@ mod dispatch {
         assert_eq!(received[0].path(), "/");
     }
 }
+
+/// The key doors send the selector they were given and no other, so the
+/// server can refuse a body that names two.
+#[test]
+fn the_key_doors_send_the_selector_they_were_given() {
+    let by_link = items::lookup_request(
+        "t",
+        &["v".to_string()],
+        None,
+        &[],
+        &[],
+        &["edges".to_string()],
+    );
+    assert_eq!(by_link.method, Method::Post);
+    assert_eq!(by_link.path(), "/items/lookup");
+    assert_eq!(
+        body(&by_link),
+        &json!({ "type": "t", "links": ["v"], "include": ["edges"] })
+    );
+    let by_key = items::lookup_request("t", &[], Some("s"), &["k".to_string()], &[], &[]);
+    assert_eq!(
+        body(&by_key),
+        &json!({ "type": "t", "source": "s", "source_ids": ["k"] })
+    );
+    let moved =
+        items::tombstones_request("t", &["v".to_string()], None, &[], "2026-01-01T00:00:00Z");
+    assert_eq!(moved.method, Method::Post);
+    assert_eq!(moved.path(), "/items/tombstones");
+    assert_eq!(
+        body(&moved),
+        &json!({ "type": "t", "links": ["v"], "remembered_until": "2026-01-01T00:00:00Z" })
+    );
+}

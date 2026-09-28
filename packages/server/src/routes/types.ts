@@ -129,6 +129,12 @@ const DisplayHintsSchema = z
   })
   .openapi("DisplayHints");
 
+const LinkFieldSchema = z
+  .string()
+  .describe(
+    "The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own.",
+  );
+
 const VersionPolicySchema = z
   .looseObject({
     recent_days: z.number().optional(),
@@ -191,6 +197,7 @@ const typeDefinitionBody = {
       "Sibling types this one asserts a structural superset of. A bare string names one.",
     ),
   display_hints: DisplayHintsSchema.optional(),
+  link_field: LinkFieldSchema.optional(),
   version_policy: VersionPolicySchema.optional(),
   merge_policy: MergePolicySchema.optional(),
 };
@@ -279,6 +286,7 @@ const TypeSchemaResponse = z
     fields: z.record(z.string(), z.unknown()),
     version: z.number(),
     display_hints: DisplayHintsSchema.optional(),
+    link_field: LinkFieldSchema.optional(),
     version_policy: VersionPolicySchema.optional(),
     merge_policy: MergePolicySchema.optional(),
   })
@@ -384,7 +392,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a type",
   description:
-    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits (`invalid_schema`). Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -439,10 +447,14 @@ const registerTypeRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_already_exists"]),
+          schema: makeErrorResponseSchema([
+            "type_already_exists",
+            "link_taken",
+          ]),
         },
       },
-      description: "Type already exists",
+      description:
+        "`type_already_exists`: the identifier is registered. `link_taken`: the type names a `link_field`, and two rows a forced delete left under the identifier hold the same value there; neither row is named.",
     },
     422: {
       content: {
@@ -488,7 +500,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a registered type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`. Naming, changing or withdrawing a `link_field` is a change that needs one, and the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -549,6 +561,15 @@ const updateTypeRoute = createRoute({
       },
       description: "Type not found",
     },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["link_taken"]),
+        },
+      },
+      description:
+        "The replacement names a `link_field` two of the type's rows, in any state, hold the same value in. Neither row is named: the door does not ask whether the caller may read them.",
+    },
     422: {
       content: {
         "application/json": {
@@ -568,7 +589,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a registered type",
   description:
-    "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).",
+    "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).\n\nThe tombstones purges left under the type go with it, so a type registered again under the identifier starts with none.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

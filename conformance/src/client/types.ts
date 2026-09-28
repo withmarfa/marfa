@@ -125,6 +125,9 @@ export interface TypeSchema {
     title_field?: string;
     body_field?: string;
   };
+  /** The string field holding each row's own id at the vendor, which the
+   *  server keeps to one row of the type. A subtype names its own. */
+  link_field?: string;
   /**
    * Per-field merge policy a client reads to drive conflict resolution.
    * Resolved-with-inheritance form is emitted by `GET /types/:id` and embedded
@@ -138,6 +141,29 @@ export interface TypeSchema {
    * `compatible_with_violation`.
    */
   compatible_with?: string;
+}
+
+/** What a purge left of a row's link or natural key under its type. */
+export interface Tombstone {
+  key: string;
+  purged_at: string;
+  remembered_until: string;
+}
+
+/** One selector and the type it is read under: links, natural keys under
+ *  one source, or ids. */
+export interface LookupInput {
+  type: string;
+  links?: string[];
+  source?: string;
+  source_ids?: string[];
+  ids?: string[];
+  include?: "edges"[];
+}
+
+export interface LookupResponse {
+  data: MarfaItem[];
+  tombstones: Tombstone[];
 }
 
 export interface SearchResult {

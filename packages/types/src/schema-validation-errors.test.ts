@@ -195,6 +195,33 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     },
     atField: "fields.cover",
   },
+  {
+    name: "link_field that is not a string",
+    input: {
+      id: "acme.v",
+      fields: { vendor_id: { type: "string" } },
+      link_field: ["vendor_id"],
+    },
+    atField: "link_field",
+  },
+  {
+    name: "link_field naming a missing field",
+    input: {
+      id: "acme.w",
+      fields: { vendor_id: { type: "string" } },
+      link_field: "remote_id",
+    },
+    atField: "link_field",
+  },
+  {
+    name: "link_field naming a field that is not a string",
+    input: {
+      id: "acme.x",
+      fields: { vendor_id: { type: "integer" } },
+      link_field: "vendor_id",
+    },
+    atField: "link_field",
+  },
 ];
 
 describe("every validation error explains itself", () => {

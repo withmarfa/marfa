@@ -616,6 +616,20 @@ export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   ConflictResolutionInput & { version?: number };
 
+/** What a purge left of a row's link or natural key under its type. `key`
+ *  is the link value or the natural key's `source_id`. */
+export interface Tombstone {
+  key: string;
+  purged_at: string;
+  remembered_until: string;
+}
+
+/** The keys a tombstone is read or moved by: links, or natural keys under
+ *  one source. */
+export type TombstoneSelector =
+  | { links: readonly string[] }
+  | { source: string; source_ids: readonly string[] };
+
 export interface ItemStore {
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
@@ -674,6 +688,26 @@ export interface ItemStore {
     source: string,
     sourceId: string,
   ): Promise<Item | null>;
+  /** The rows of `type` holding each link value, in any state, by value. */
+  findByLinks(
+    type: string,
+    values: readonly string[],
+  ): Promise<Map<string, Item>>;
+  /** The rows holding each natural key under `source`, in any state and of
+   *  any type, by `source_id`. */
+  findBySourceIds(
+    source: string,
+    sourceIds: readonly string[],
+  ): Promise<Map<string, Item>>;
+  /** The tombstones purges left for these keys under `type`. */
+  tombstones(type: string, selector: TombstoneSelector): Promise<Tombstone[]>;
+  /** Moves each named tombstone's `remembered_until` to `until` where that is
+   *  later, never earlier, and answers them as they then stand. */
+  extendTombstones(
+    type: string,
+    selector: TombstoneSelector,
+    until: string,
+  ): Promise<Tombstone[]>;
   update(
     id: string,
     input: StoredUpdateItemInput,
@@ -684,6 +718,8 @@ export interface ItemStore {
    * into the bin, so a row already there stays its own trash's.
    */
   delete(id: string, trashedWith?: string): Promise<void>;
+  /** Hard-deletes a trashed row, leaving its tombstones. So do `bulkPurge`
+   *  and `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;
   /**
    * Hard-delete every id in `ids`. Bypasses the
@@ -748,8 +784,7 @@ export interface ItemStore {
    * into the soft-deleted state: `updated_at` is the modification time
    * rather than the removal time, and any write to a trashed row moves it,
    * so measuring from it would restart the retention clock on an edit made
-   * in the bin. A trashed row with no stamp, which only the archive restore
-   * writes, is measured from `updated_at`, the one clock it has.
+   * in the bin.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of

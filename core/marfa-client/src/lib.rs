@@ -15,4 +15,4 @@ pub mod models;
 
 /// The contract version this client was generated for: the document's
 /// `info.version`, which the instance's root answers as `contract`.
-pub const CONTRACT_VERSION: u64 = 3;
+pub const CONTRACT_VERSION: u64 = 4;

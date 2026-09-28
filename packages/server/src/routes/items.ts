@@ -372,11 +372,19 @@ const createItemRoute = createRoute({
           schema: z.union([
             ConflictResponseSchema,
             AncestorUnavailableSchema,
-            makeErrorResponseSchema(["conflict", "id_reused", "type_mismatch"]),
+            makeErrorResponseSchema([
+              "conflict",
+              "id_reused",
+              "link_taken",
+              "type_mismatch",
+            ]),
           ]),
         },
       },
       description:
+        "`link_taken`: the type names a `link_field`, and another item of " +
+        "the type, in any state, holds the value this write gives the " +
+        "row; `details.existing_id` names it. " +
         "`id_reused`: the `id` this request minted is taken by an item it " +
         "is not describing, and `details.differs` names what disagrees. " +
         "`POST /edges` answers the same code for an id naming a different " +
@@ -624,7 +632,7 @@ const getItemRoute = createRoute({
   summary: "Get an item",
   description:
     "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.\n\n" +
-    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.\n\n" +
+    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
   request: {
@@ -850,12 +858,16 @@ const updateItemRoute = createRoute({
             // No bare `version_conflict` here. Every one this route answers
             // is one of the three envelopes above, and declaring a fourth
             // shape nothing produces is a client's excuse for handling it.
-            makeErrorResponseSchema(["source_id_conflict", "type_mismatch"]),
+            makeErrorResponseSchema([
+              "link_taken",
+              "source_id_conflict",
+              "type_mismatch",
+            ]),
           ]),
         },
       },
       description:
-        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -1228,7 +1240,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `remembered_until`. `POST /items/lookup` reads them and `POST /items/tombstones` moves the second later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

@@ -65,6 +65,8 @@ import type {
   ItemFilters,
   SortDirection,
   CursorSortKey,
+  Tombstone,
+  TombstoneSelector,
 } from "../interface.js";
 import {
   encodeKeyedCursor,
@@ -86,8 +88,24 @@ import {
   versionConflict,
 } from "../conflict.js";
 import type { ItemFieldValues, SnapshotItemFields } from "../conflict.js";
-import { edges, items, metadata, trash_cascades } from "./schema.js";
+import {
+  edges,
+  item_links,
+  items,
+  metadata,
+  trash_cascades,
+} from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import {
+  extendLinkTombstones,
+  extendNaturalKeyTombstones,
+  forgetNaturalKey,
+  linkFieldOf,
+  readLinkTombstones,
+  readNaturalKeyTombstones,
+  recordTombstones,
+  syncLink,
+} from "./item-links.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
@@ -186,8 +204,8 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  * "conflicted copy" the person created once.
  *
  * The sibling inherits the original's `source` so it lists beside it, and
- * deliberately does not inherit `source_id`: that tuple is unique,
- * and a copy claiming the original's natural key is a second row asserting it
+ * deliberately does not inherit `source_id` or the link its type names:
+ * both are unique, and a copy claiming either is a second row asserting it
  * is the same upstream record.
  *
  * It takes the original's tags and the edges the original's own file writes,
@@ -210,7 +228,14 @@ async function insertConflictedSibling(
     ) => boolean;
   },
 ): Promise<{ sibling: Item; edges: Edge[] } | null> {
-  const { siblingId, row, now, properties, mayCopyEdge } = args;
+  const { siblingId, row, now, mayCopyEdge } = args;
+  const linkField = linkFieldOf(row.type);
+  const properties =
+    linkField === undefined
+      ? args.properties
+      : Object.fromEntries(
+          Object.entries(args.properties).filter(([key]) => key !== linkField),
+        );
   const schemaVersion = getTypeSchema(row.type)?.version ?? 1;
   const inserted = await tx
     .insert(items)
@@ -455,6 +480,11 @@ export class SqliteItemStore implements ItemStore {
         })
         .run();
 
+      await syncLink(tx, { id, type: input.type, properties });
+      if (input.source && input.source_id) {
+        await forgetNaturalKey(tx, input.source, input.source_id);
+      }
+
       // **A row born in the bin is not indexed**, the same rule `transition`
       // applies on the way in (`search-and-filters.md` 12): a trashed row
       // leaves the index rather than being narrowed out of the query, so it
@@ -539,6 +569,82 @@ export class SqliteItemStore implements ItemStore {
       .get();
     if (!row) return null;
     return rowToItem(row);
+  }
+
+  async findByLinks(
+    type: string,
+    values: readonly string[],
+  ): Promise<Map<string, Item>> {
+    const out = new Map<string, Item>();
+    if (values.length === 0) return out;
+    const rows = await this.db
+      .select({ ...itemColumns, link: item_links.value })
+      .from(items)
+      .innerJoin(item_links, eq(item_links.item_id, items.id))
+      .where(
+        and(eq(item_links.type, type), inArray(item_links.value, [...values])),
+      )
+      .all();
+    for (const { link, ...row } of rows) out.set(link, rowToItem(row));
+    return out;
+  }
+
+  async findBySourceIds(
+    source: string,
+    sourceIds: readonly string[],
+  ): Promise<Map<string, Item>> {
+    const out = new Map<string, Item>();
+    if (sourceIds.length === 0) return out;
+    const rows = await this.db
+      .select(itemColumns)
+      .from(items)
+      .where(
+        and(eq(items.source, source), inArray(items.source_id, [...sourceIds])),
+      )
+      .all();
+    for (const row of rows) {
+      if (row.source_id !== null) out.set(row.source_id, rowToItem(row));
+    }
+    return out;
+  }
+
+  tombstones(type: string, selector: TombstoneSelector): Promise<Tombstone[]> {
+    return "links" in selector
+      ? readLinkTombstones(this.db, type, selector.links)
+      : readNaturalKeyTombstones(
+          this.db,
+          type,
+          selector.source,
+          selector.source_ids,
+        );
+  }
+
+  extendTombstones(
+    type: string,
+    selector: TombstoneSelector,
+    until: string,
+  ): Promise<Tombstone[]> {
+    return "links" in selector
+      ? extendLinkTombstones(this.db, type, selector.links, until)
+      : extendNaturalKeyTombstones(
+          this.db,
+          type,
+          selector.source,
+          selector.source_ids,
+          until,
+        );
+  }
+
+  private async keepKeysInStep(
+    tx: SqliteTx,
+    after: { id: string; type: string; properties: Record<string, unknown> },
+    before: { type: string; source: string | null; source_id: string | null },
+    sourceId: string | undefined,
+  ): Promise<void> {
+    await syncLink(tx, after, before.type);
+    if (before.source && sourceId && sourceId !== before.source_id) {
+      await forgetNaturalKey(tx, before.source, sourceId);
+    }
   }
 
   async getMany(
@@ -962,6 +1068,12 @@ export class SqliteItemStore implements ItemStore {
           }
           throw err;
         }
+        await this.keepKeysInStep(
+          tx,
+          { id, type: input.type ?? row.type, properties: merged },
+          row,
+          input.source_id,
+        );
 
         await this.searchStore.remove(id);
         await this.searchStore.index(id, merged, input.type ?? row.type);
@@ -1218,6 +1330,12 @@ export class SqliteItemStore implements ItemStore {
         }
         throw err;
       }
+      await this.keepKeysInStep(
+        tx,
+        { id, type: input.type ?? row.type, properties: resolvedProperties },
+        row,
+        resolvedFields.source_id ?? undefined,
+      );
 
       await this.searchStore.remove(id);
       await this.searchStore.index(
@@ -1316,6 +1434,7 @@ export class SqliteItemStore implements ItemStore {
     }
 
     await this.rehomeTrashRecords([id]);
+    await recordTombstones(this.db, [id], new Date().toISOString());
     // metadata and versions cascade; search index must be removed explicitly.
     await this.db.delete(items).where(eq(items.id, id)).run();
 
@@ -1340,6 +1459,7 @@ export class SqliteItemStore implements ItemStore {
         await this.searchStore.remove(id);
       }
       await this.rehomeTrashRecords(scopedIds, tx);
+      await recordTombstones(tx, scopedIds, new Date().toISOString());
       await tx.delete(items).where(inArray(items.id, scopedIds)).run();
       return scopedIds.length;
     });
@@ -1376,6 +1496,7 @@ export class SqliteItemStore implements ItemStore {
       // sweep: `TrashPurger` carries why, and it is a decision rather than
       // an omission.
       await this.rehomeTrashRecords(ids, tx);
+      await recordTombstones(tx, ids, new Date().toISOString());
       await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
       await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
       await tx.delete(items).where(inArray(items.id, ids)).run();

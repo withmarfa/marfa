@@ -321,6 +321,86 @@ describe("occurrences and the bulk doors", () => {
   });
 });
 
+describe("links and tombstones", () => {
+  it("finds an item by its link and its natural key, and remembers a purge's tombstone longer", async () => {
+    const type = `user.${unique("clilinked").replace(/-/g, "")}`;
+    const registered = await c.cli.json<{
+      type: { id: string; link_field?: string };
+    }>([
+      "types",
+      "register",
+      "--body",
+      JSON.stringify({
+        id: type,
+        fields: { vendor_id: { type: "string" } },
+        link_field: "vendor_id",
+      }),
+    ]);
+    trackType(c.ctx, type);
+    expect(registered.type.link_field).toBe("vendor_id");
+
+    const link = unique("cli-link");
+    const key = unique("cli-key");
+    const created = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      type,
+      "--source-id",
+      key,
+      "--properties",
+      JSON.stringify({ vendor_id: link }),
+    ]);
+    trackItem(c.ctx, created.item.id);
+    const byLink = await c.cli.json<{ data: Array<{ id: string }> }>([
+      "items",
+      "lookup",
+      "--type",
+      type,
+      "--link",
+      link,
+    ]);
+    expect(byLink.data.map((row) => row.id)).toEqual([created.item.id]);
+    const byKey = await c.cli.json<{ data: Array<{ id: string }> }>([
+      "items",
+      "lookup",
+      "--type",
+      type,
+      "--source",
+      c.ctx.source,
+      "--source-id",
+      key,
+    ]);
+    expect(byKey.data.map((row) => row.id)).toEqual([created.item.id]);
+
+    await c.cli.json(["items", "delete", created.item.id]);
+    await c.cli.json(["items", "purge", created.item.id]);
+    const purged = await c.cli.json<{
+      data: unknown[];
+      tombstones: Array<{ key: string; purged_at: string }>;
+    }>(["items", "lookup", "--type", type, "--link", link]);
+    expect(purged.data).toEqual([]);
+    const [tombstone] = purged.tombstones;
+    expect(tombstone?.key).toBe(link);
+    const later = new Date(
+      Date.parse(tombstone?.purged_at ?? "") + 3_600_000,
+    ).toISOString();
+    const moved = await c.cli.json<{
+      tombstones: Array<{ remembered_until: string }>;
+    }>([
+      "items",
+      "tombstones",
+      "--type",
+      type,
+      "--link",
+      link,
+      "--until",
+      later,
+    ]);
+    expect(moved.tombstones[0]?.remembered_until).toBe(later);
+  });
+});
+
 describe("the event stream", () => {
   it("delivers a write made while the stream is open, one frame per line", async () => {
     const stream = c.cli.hold(["events", "--type", "core.note", "--for", "6"]);

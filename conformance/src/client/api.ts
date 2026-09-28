@@ -41,6 +41,9 @@ import type {
   BulkActionResponse,
   RestoreArchiveResponse,
   ErrorResponse,
+  LookupInput,
+  LookupResponse,
+  Tombstone,
   Webhook,
   WebhookDelivery,
   AuditEntry,
@@ -511,6 +514,26 @@ export class MarfaClient {
         body: { ids, ...(include ? { include } : {}) },
       },
     );
+  }
+
+  /** POST /items/lookup — rows by link, natural key or id, in every state,
+   *  and the tombstones purges left for the keys named. */
+  async lookupItems(input: LookupInput): Promise<ApiResponse<LookupResponse>> {
+    return this.request<LookupResponse>("/items/lookup", {
+      method: "POST",
+      body: input as unknown as Record<string, unknown>,
+    });
+  }
+
+  /** POST /items/tombstones — moves the named tombstones' `remembered_until`
+   *  later, never earlier. */
+  async extendTombstones(
+    input: Omit<LookupInput, "ids" | "include"> & { remembered_until: string },
+  ): Promise<ApiResponse<{ tombstones: Tombstone[] }>> {
+    return this.request<{ tombstones: Tombstone[] }>("/items/tombstones", {
+      method: "POST",
+      body: input as unknown as Record<string, unknown>,
+    });
   }
 
   /**

@@ -817,6 +817,7 @@ export function validateTypeSchema(
     thumbnailNames(fields, ancestorFields),
     errors,
   );
+  validateLinkField(obj, fields, requiredNames, ancestorFields, errors);
   validateVersionPolicy(obj, errors);
   validateMergePolicy(obj, visibleFields, errors);
   validateCompatibleWith(
@@ -878,6 +879,7 @@ export function validateTypeSchema(
     if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
     if (Object.keys(dh).length > 0) schema.display_hints = dh;
   }
+  if (typeof obj.link_field === "string") schema.link_field = obj.link_field;
   const versionPolicy = asRecord(obj.version_policy);
   if (versionPolicy) {
     schema.version_policy = versionPolicy;
@@ -1115,6 +1117,53 @@ function validateDisplayHints(
         }),
       );
     }
+  }
+}
+
+function validateLinkField(
+  obj: Record<string, unknown>,
+  fields: Record<string, unknown> | undefined,
+  requiredNames: ReadonlySet<string>,
+  ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
+  errors: SchemaValidationIssue[],
+): void {
+  if (obj.link_field === undefined) return;
+  const name = obj.link_field;
+  if (typeof name !== "string") {
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a string naming a string field on this type",
+        actual: describe(name),
+        hint: "Point link_field at the field holding the vendor's own id, or omit it.",
+      }),
+    );
+    return;
+  }
+  const own = asRecord(fields?.[name]);
+  const definition = own
+    ? normalizeFieldDefinition(own, { required: requiredNames.has(name) })
+    : ancestorFields.get(name)?.definition;
+  if (!definition) {
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a field this type declares or inherits",
+        actual: `"${name}", which is neither`,
+        hint: `Declare "${name}" in fields as a string, or point link_field at an existing one.`,
+      }),
+    );
+  } else if (definition.type !== "string") {
+    // A vendor's id is compared as it was sent, and only a plain string
+    // is stored that way.
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a field of type string",
+        actual: `"${name}", which is of type ${definition.type}`,
+        hint: `Point link_field at a string field, or declare "${name}" as one.`,
+      }),
+    );
   }
 }
 
@@ -1764,6 +1813,7 @@ export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
     fields: true,
     roles: true,
     display_hints: true,
+    link_field: true,
     version_policy: true,
     merge_policy: true,
     compatible_with: true,

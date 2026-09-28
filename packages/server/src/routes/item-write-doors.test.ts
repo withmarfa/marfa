@@ -344,6 +344,8 @@ const DOORS: Door[] = [
  */
 const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
   "POST /items/bulk-get": "read-only batch fetch",
+  "POST /items/lookup": "read-only lookup by link, natural key or id",
+  "POST /items/tombstones": "writes a purge's record, not an item's properties",
   "POST /items/:id/tags": "metadata layer, not the item's properties",
   "PUT /items/:id/metadata": "metadata layer, not the item's properties",
   "PATCH /items/:id/metadata": "metadata layer, not the item's properties",

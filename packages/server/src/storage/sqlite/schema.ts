@@ -120,6 +120,53 @@ export const trash_cascades = sqliteTable(
   (table) => [index("idx_trash_cascades_with").on(table.trashed_with)],
 );
 
+// Each row's link, in every state: the primary key is the uniqueness a
+// `link_field` promises, rebuilt for a type whenever it names another.
+export const item_links = sqliteTable(
+  "item_links",
+  {
+    type: text("type").notNull(),
+    value: text("value").notNull(),
+    item_id: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.type, table.value] }),
+    uniqueIndex("idx_item_links_item").on(table.item_id),
+  ],
+);
+
+// What a purge leaves of a row's link, until a row of the type claims the
+// value again.
+export const link_tombstones = sqliteTable(
+  "link_tombstones",
+  {
+    type: text("type").notNull(),
+    value: text("value").notNull(),
+    purged_at: text("purged_at").notNull(),
+    remembered_until: text("remembered_until").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.type, table.value] })],
+);
+
+// What a purge leaves of a row's natural key, under the row's type, until a
+// row of any type holds the key again: the key is unique across types.
+export const natural_key_tombstones = sqliteTable(
+  "natural_key_tombstones",
+  {
+    type: text("type").notNull(),
+    source: text("source").notNull(),
+    source_id: text("source_id").notNull(),
+    purged_at: text("purged_at").notNull(),
+    remembered_until: text("remembered_until").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.type, table.source, table.source_id] }),
+    index("idx_natural_key_tombstones_key").on(table.source, table.source_id),
+  ],
+);
+
 export const edges = sqliteTable(
   "edges",
   {
