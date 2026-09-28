@@ -23,9 +23,17 @@ const PATH_PROPERTY: &str = "path";
 
 const META_REFUSED: &str = "folder_placements_refused";
 
-/// Placements the server refused, each the item's and the path it named:
-/// not sent again until the key or the settings change.
-pub(super) type Withheld = BTreeMap<String, String>;
+/// Placements the server refused, by item: not sent again until the key or
+/// the settings change, or the item's placement moves on.
+pub(super) type Withheld = BTreeMap<String, Held>;
+
+/// A refused placement: the path it named, and the placement the copy held
+/// for the item once it was refused, by id and version.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct Held {
+    path: String,
+    at: Option<(String, i64)>,
+}
 
 /// The key a credential is, as far as placing goes: its id and its
 /// `in-folder` grant, both `None` for a credential that is not a key.
@@ -73,7 +81,10 @@ impl Folder {
     /// Records that the item's file sits at `path`, as an edge create or an
     /// update of its `path` alone. Answers whether anything was queued.
     pub(super) fn place(&self, item_id: &str, path: &str, withheld: &Withheld) -> Result<bool> {
-        if withheld.get(item_id).is_some_and(|refused| refused == path) {
+        if withheld
+            .get(item_id)
+            .is_some_and(|refused| refused.path == path)
+        {
             return Ok(false);
         }
         let mut properties = Map::new();
@@ -108,12 +119,43 @@ impl Folder {
     }
 
     /// The placements the server refused, while the key and the settings
-    /// they were refused under are the ones in force.
+    /// they were refused under are the ones in force. One whose item's
+    /// placement has moved since, landed from here or elsewhere, is let go,
+    /// so the pull follows it.
     pub(super) fn withheld(&self) -> Result<Withheld> {
+        let Some(mut refused) = self.refused()? else {
+            return Ok(Withheld::new());
+        };
+        let before = refused.placements.len();
+        let mut kept = Withheld::new();
+        for (item, held) in std::mem::take(&mut refused.placements) {
+            if self.placement_at(&item)? == held.at {
+                kept.insert(item, held);
+            }
+        }
+        refused.placements = kept;
+        if refused.placements.len() != before {
+            self.keep_refused(&refused)?;
+        }
+        Ok(refused.placements)
+    }
+
+    /// The item's placement in this folder, by id and version. A create not
+    /// yet answered, at version 0, has landed nowhere.
+    fn placement_at(&self, item_id: &str) -> Result<Option<(String, i64)>> {
         Ok(self
-            .refused()?
-            .map(|refused| refused.placements)
-            .unwrap_or_default())
+            .placement(item_id)?
+            .filter(|edge| edge.version > 0)
+            .map(|edge| (edge.id, edge.version)))
+    }
+
+    fn keep_refused(&self, refused: &Refused) -> Result<()> {
+        let conn = self.core.conn()?;
+        if refused.placements.is_empty() {
+            store::meta_delete(&conn, META_REFUSED)
+        } else {
+            store::meta_set(&conn, META_REFUSED, &serde_json::to_string(refused)?)
+        }
     }
 
     fn refused(&self) -> Result<Option<Refused>> {
@@ -144,9 +186,14 @@ impl Folder {
         }
     }
 
-    /// The key this credential is, asked once per process.
+    /// The key this credential is, asked once a pass: a scan lets the last
+    /// answer go, so a grant restored while a watch runs is seen.
     fn key_state(&self) -> Result<KeyState> {
-        if let Some(known) = self.key.get() {
+        let mut known = self
+            .key
+            .lock()
+            .map_err(|_| crate::error::CoreError::Store("the key's record was poisoned".into()))?;
+        if let Some(known) = known.as_ref() {
             return Ok(known.clone());
         }
         let state = self
@@ -155,7 +202,15 @@ impl Folder {
             .current_key()?
             .map(|key| KeyState::of(&key))
             .unwrap_or_default();
-        Ok(self.key.get_or_init(|| state).clone())
+        *known = Some(state.clone());
+        Ok(state)
+    }
+
+    /// Lets the key's last answer go, for the next pass to ask again.
+    pub(super) fn forget_key(&self) {
+        if let Ok(mut known) = self.key.lock() {
+            *known = None;
+        }
     }
 
     /// Gives way where another machine placed or moved the item first, and
@@ -287,12 +342,11 @@ impl Folder {
                 placements: Withheld::new(),
             },
         };
-        record.placements.extend(placements);
-        store::meta_set(
-            &*self.core.conn()?,
-            META_REFUSED,
-            &serde_json::to_string(&record)?,
-        )
+        for (item, path) in placements {
+            let at = self.placement_at(&item)?;
+            record.placements.insert(item, Held { path, at });
+        }
+        self.keep_refused(&record)
     }
 }
 

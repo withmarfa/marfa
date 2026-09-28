@@ -790,7 +790,7 @@ export interface PullReport {
    *  unwritten (`folders.md` 19). */
   unsuited: number;
   /** Placements the server refused, not sent again until the key or the
-   *  settings change (`folders.md` 19). */
+   *  settings change, or the item's placement moves on (`folders.md` 19). */
   unplaced: number;
   outside: number;
   /** Files of items trashed or out of the search's states, taken away

@@ -100,7 +100,7 @@ impl Peer {
                     root: root.clone(),
                     folder,
                     core,
-                    key: std::sync::OnceLock::new(),
+                    key: std::sync::Mutex::new(None),
                     permissions: std::sync::OnceLock::new(),
                 })
             });

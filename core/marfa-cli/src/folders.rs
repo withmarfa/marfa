@@ -332,7 +332,7 @@ pub fn gave_way_line(gave_way: usize) -> String {
 pub fn unplaced_line(unplaced: usize) -> Option<String> {
     (unplaced > 0).then(|| {
         format!(
-            "{unplaced} placement(s) the server refused, not sent again until the key or the settings change"
+            "{unplaced} placement(s) the server refused, not sent again until the file moves, its placement moves on, or the key or the settings change"
         )
     })
 }
