@@ -99,7 +99,12 @@ impl Lists {
             .cloned()
             .collect();
         let mut dotted_names = Vec::new();
-        for name in include.iter().flat_map(|line| dot_names(line)) {
+        // A `!` line naming a dot-led directory keeps the walk out of it.
+        for name in include
+            .iter()
+            .filter(|line| !line.trim_start().starts_with('!'))
+            .flat_map(|line| dot_names(line))
+        {
             dotted_names.push(
                 GlobBuilder::new(&name)
                     .case_insensitive(true)
@@ -119,9 +124,8 @@ impl Lists {
         })
     }
 
-    /// Lists as wide as the built-in ones, and entering the dot-led
-    /// directories `include` names, for a look into another folder that is
-    /// never narrower than that folder's own walk.
+    /// As wide as the built-in lists, entering the dot-led directories
+    /// `include` names: a look into another folder never narrower than it.
     pub(super) fn wider(include: &[String]) -> Result<Lists> {
         let mut lines = vec!["*".to_string()];
         lines.extend(
@@ -360,6 +364,10 @@ mod tests {
         assert!(named.enters(".notes"));
         assert!(!named.enters(".notes/.hidden"));
         assert!(!named.takes(".notes/.hidden/plan.md"));
+        let unwalked = lists(&["*", "!.git/"], &[]);
+        assert!(!unwalked.enters(".git"));
+        assert!(!unwalked.takes(".git/HEAD"));
+        assert!(unwalked.takes("plan.md"));
         let both = lists(&[".notes/", ".hidden/"], &[]);
         assert!(both.enters(".notes/.hidden"));
         assert!(both.takes(".notes/.hidden/plan.md"));
@@ -370,6 +378,7 @@ mod tests {
         let wider = Lists::wider(&["*.md".into(), ".notes/".into(), "!.notes/x".into()]).unwrap();
         assert!(wider.enters(".notes"));
         assert!(wider.takes(".notes/plan.md"));
+        assert!(wider.takes(".notes/x"));
         assert!(wider.takes("photo.png"));
         assert!(!wider.enters(".git"));
         assert!(!wider.takes(".env"));

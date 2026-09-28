@@ -11095,16 +11095,28 @@ describe("what a folder takes", () => {
     scriptFolderWrites(harness);
     put(harness, ".env", "TOKEN=not-a-real-one\n");
     const watching = harness.folder.watchText();
+    let quiet = "";
     try {
       await vi.waitFor(
         () => expect(watching.stdout).toContain(".env: not taken"),
         { timeout: 20_000, interval: 100 },
       );
+      // Passes enough for a line said at every one to show more than once.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
+      quiet = watching.stdout;
+      // One arriving while it watches is said as it arrives.
+      put(harness, "id_ed25519", "not a real key\n");
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("id_ed25519: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
     } finally {
       await watching.stop();
     }
-    expect(watching.stdout.split(".env: not taken").length - 1).toBe(1);
+    expect(
+      quiet.split(".env: not taken").length - 1,
+      `a watch said the same refused secret at every pass: ${quiet}`,
+    ).toBe(1);
   });
 
   it("does not walk into a package", async () => {
