@@ -1282,14 +1282,6 @@ export interface PendingWebhookDelivery {
 }
 
 export interface WebhookDeliveryStore {
-  log(entry: {
-    webhookId: string;
-    eventType: string;
-    statusCode?: number;
-    attempt: number;
-    succeeded: boolean;
-    error?: string;
-  }): Promise<void>;
   /** A subscription's deliveries, newest first, one page at a time. */
   list(
     webhookId: string,
@@ -1325,6 +1317,9 @@ export interface WebhookDeliveryStore {
     nextAttemptAt: string | null,
   ): Promise<void>;
   markDeadLetter(id: string): Promise<void>;
+  /** Removes settled deliveries older than the retention; one still
+   *  retrying stays whatever its age. Answers how many went. */
+  cleanup(retentionDays: number): Promise<number>;
 }
 
 // ---------------------------------------------------------------------------

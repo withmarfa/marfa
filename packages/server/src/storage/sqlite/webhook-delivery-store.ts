@@ -1,4 +1,4 @@
-import { and, eq, desc, lt, or, sql } from "drizzle-orm";
+import { and, eq, desc, lt, ne, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult, WebhookDelivery } from "@withmarfa/shared";
 import {
@@ -13,6 +13,10 @@ import type {
 import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
 import { outboundWebhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+
+// Only a retry reads these, and kept on a settled row the secret and the
+// address would outlive their subscription.
+const SETTLED = { payload: null, webhook_url: null, webhook_secret: null };
 
 function rowToDelivery(
   row: typeof outboundWebhookDeliveries.$inferSelect,
@@ -31,29 +35,6 @@ function rowToDelivery(
 
 export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   constructor(private db: DrizzleDb) {}
-
-  async log(entry: {
-    webhookId: string;
-    eventType: string;
-    statusCode?: number;
-    attempt: number;
-    succeeded: boolean;
-    error?: string;
-  }): Promise<void> {
-    await this.db
-      .insert(outboundWebhookDeliveries)
-      .values({
-        id: generateId(),
-        webhook_id: entry.webhookId,
-        event_type: entry.eventType,
-        status_code: entry.statusCode ?? null,
-        attempt: entry.attempt,
-        succeeded: entry.succeeded ? 1 : 0,
-        error: entry.error ?? null,
-        created_at: new Date().toISOString(),
-      })
-      .run();
-  }
 
   async list(
     webhookId: string,
@@ -215,6 +196,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         succeeded: 1,
         status_code: statusCode,
         attempt,
+        ...SETTLED,
       })
       .where(eq(outboundWebhookDeliveries.id, id))
       .run();
@@ -235,6 +217,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         attempt,
         next_attempt_at: nextAttemptAt,
         status: nextAttemptAt === null ? "dead_letter" : "pending",
+        ...(nextAttemptAt === null ? SETTLED : {}),
       })
       .where(eq(outboundWebhookDeliveries.id, id))
       .run();
@@ -243,8 +226,24 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
   async markDeadLetter(id: string): Promise<void> {
     await this.db
       .update(outboundWebhookDeliveries)
-      .set({ status: "dead_letter" })
+      .set({ status: "dead_letter", ...SETTLED })
       .where(eq(outboundWebhookDeliveries.id, id))
       .run();
+  }
+
+  async cleanup(retentionDays: number): Promise<number> {
+    const cutoff = new Date(
+      Date.now() - retentionDays * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const result = await this.db
+      .delete(outboundWebhookDeliveries)
+      .where(
+        and(
+          lt(outboundWebhookDeliveries.created_at, cutoff),
+          ne(outboundWebhookDeliveries.status, "pending"),
+        ),
+      )
+      .run();
+    return result.rowsAffected;
   }
 }

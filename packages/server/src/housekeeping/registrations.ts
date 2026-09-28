@@ -93,18 +93,25 @@ export function registerHousekeepingJobs(
     intervalMs: config.auditCleanupIntervalMs,
     firstRunDelayMs: 5_000,
     run: async () => {
+      // Outbound delivery history rides this sweep: the webhook doors
+      // promise it for exactly the audit window.
+      let deliveries = 0;
       const deleted = await runSweepAtRetention({
         override: auditOverride,
         instanceDefault: config.auditRetentionDays,
-        sweep: (retention) => storage.audit.cleanup(retention),
+        sweep: async (retention) => {
+          deliveries +=
+            await storage.outboundWebhookDeliveries.cleanup(retention);
+          return storage.audit.cleanup(retention);
+        },
       });
-      if (deleted > 0) {
+      if (deleted > 0 || deliveries > 0) {
         log(
           "info",
-          `Purged ${String(deleted)} audit entries (instance default: ${String(config.auditRetentionDays)} days; a /config override is honored)`,
+          `Purged ${String(deleted)} audit entries and ${String(deliveries)} outbound webhook deliveries (instance default: ${String(config.auditRetentionDays)} days; a /config override is honored)`,
         );
       }
-      return { deleted };
+      return { deleted, deliveries };
     },
   });
 
