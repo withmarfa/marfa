@@ -18,17 +18,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
-# Apple builds and credential tests use the private local macOS pool.
-# Portable checks use Blacksmith.
 env:
   CARGO_BUILD_JOBS: 2
   CARGO_PROFILE_DEV_DEBUG: 0
   CARGO_PROFILE_TEST_DEBUG: 0
 
+permissions:
+  contents: read
+
 jobs:
   changes:
     name: Classify changes
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -49,7 +50,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CI (SQLite)
     timeout-minutes: 60
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -89,20 +90,9 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Core checks
     timeout-minutes: 30
-    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # The local pool runs two queues, so at most two jobs share the machine:
-    # Rust and Apple builds in this one, booted-server suites in the other.
-    concurrency:
-      group: marfa-mac-build
-      cancel-in-progress: false
-      queue: max
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
-      # Homebrew rustup can be on PATH while its compiler proxies are not.
-      - name: Put Rust executables on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -145,13 +135,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Conformance
     timeout-minutes: 60
-    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # The local pool runs two queues, so at most two jobs share the machine:
-    # booted-server suites in this one, Rust and Apple builds in the other.
-    concurrency:
-      group: marfa-mac-suite
-      cancel-in-progress: false
-      queue: max
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -166,11 +150,6 @@ jobs:
       # type registry from the same place.
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # Homebrew rustup can be on PATH while its compiler proxies are not.
-      - name: Put Rust executables on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -251,13 +230,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CLI scenarios
     timeout-minutes: 60
-    runs-on: [self-hosted, macOS, ARM64, withmarfa, aic-mbp]
-    # The local pool runs two queues, so at most two jobs share the machine:
-    # booted-server suites in this one, Rust and Apple builds in the other.
-    concurrency:
-      group: marfa-mac-suite
-      cancel-in-progress: false
-      queue: max
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -269,11 +242,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # Homebrew rustup can be on PATH while its compiler proxies are not.
-      - name: Put Rust executables on PATH
-        run: |
-          echo "/opt/homebrew/opt/rustup/bin" >> "$GITHUB_PATH"
-          echo "${CARGO_HOME:-$HOME/.cargo}/bin" >> "$GITHUB_PATH"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -327,7 +295,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Restore drill
     timeout-minutes: 30
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -381,7 +349,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Types codegen freshness
     timeout-minutes: 15
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -408,7 +376,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: OpenAPI spec freshness
     timeout-minutes: 15
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -435,7 +403,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: No file holds a version
     timeout-minutes: 10
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -474,7 +442,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Generated clients are fresh
     timeout-minutes: 15
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
