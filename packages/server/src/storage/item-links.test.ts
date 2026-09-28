@@ -5,7 +5,7 @@ import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 // The link index and tombstones where a fixture cannot reach: the trash
-// sweep ages rows by days.
+// sweep ages rows by days, and no door reads a deleted type's tombstones.
 
 let ctx: TestContext;
 let seq = 0;
@@ -187,5 +187,39 @@ describe("the timed trash sweep", () => {
 
     await ctx.storage.types.create(type);
     expect(await ctx.storage.items.tombstones(type.id, byKey)).toEqual([]);
+  });
+});
+
+describe("deleting a type", () => {
+  async function keptUnder(type: string): Promise<string[]> {
+    const storage = ctx.storage as unknown as {
+      __sqliteAll: (query: string) => Promise<unknown[]>;
+    };
+    const quoted = `'${type.replace(/'/g, "''")}'`;
+    return [
+      ...(await storage.__sqliteAll(
+        `SELECT value AS key FROM link_tombstones WHERE type = ${quoted}`,
+      )),
+      ...(await storage.__sqliteAll(
+        `SELECT source_id AS key FROM natural_key_tombstones WHERE type = ${quoted}`,
+      )),
+    ].map((row) => (row as { key: string }).key);
+  }
+
+  it("takes the type's tombstones with it", async () => {
+    const type = await linkedType();
+    const row = await ctx.storage.items.create({
+      type: type.id,
+      properties: { vendor_id: "deleted-with", body: "b" },
+      source: "delete-source",
+      source_id: "delete-1",
+    });
+    await ctx.storage.items.delete(row.id);
+    await ctx.storage.items.purge(row.id);
+    // The witness: the purge left one of each under the type.
+    expect(await keptUnder(type.id)).toEqual(["deleted-with", "delete-1"]);
+
+    await ctx.storage.types.delete(type.id);
+    expect(await keptUnder(type.id)).toEqual([]);
   });
 });

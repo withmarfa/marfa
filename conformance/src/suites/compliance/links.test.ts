@@ -991,7 +991,7 @@ describe("a purge's tombstones", () => {
     expect(await tombstonesByLink([value], id)).toEqual([tombstone]);
   });
 
-  it("takes a type's tombstones with it when the type is deleted", async () => {
+  it("starts a type deleted and registered again with none of its tombstones", async () => {
     const id = `user.linked-gone-${ctx.runId}`;
     const schema = {
       id,
