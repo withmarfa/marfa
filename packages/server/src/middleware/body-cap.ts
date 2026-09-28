@@ -1,20 +1,6 @@
 /**
- * Which body-size cap a path is held to.
- *
- * The blob doors and the archive restore stream their bodies to disk as they
- * arrive, so a body's size costs disk rather than memory, and a file, or an
- * archive of files, is as large as it is: they take no cap. The bulk write
- * doors carry up to 5000 rows in one body,
- * so they take the larger bulk cap; the per-request cap would refuse a
- * legitimate batch, and the doors still bound the row count and the per-field
- * sizes themselves. A connector's agreements write is one of them: five
- * hundred records of up to 16 KiB each. The inbound webhook door caps a body
- * itself, after it knows the address names an endpoint, so an unknown address
- * is refused before a byte is read.
- *
- * The one statement of it: `app.ts` mounts the guard from it and the
- * document declares `413` from it, so the two cannot disagree about a door.
- * The path may be spelled either way, `/blobs/:hash` or `/blobs/{hash}`.
+ * Blob and archive doors stream to disk, so they take no cap; bulk doors
+ * (rows or agreements) need the larger one — stated once so `app.ts`'s mount and the OpenAPI doc can't disagree.
  */
 export type BodyCap = "none" | "bulk" | "request" | "inbound";
 

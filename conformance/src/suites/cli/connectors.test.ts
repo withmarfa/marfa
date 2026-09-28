@@ -4,12 +4,8 @@ import { cliContext, unique } from "./harness.js";
 import type { CliContext } from "./harness.js";
 
 /**
- * A process that writes on a key's behalf, from the terminal: it registers
- * its key as a connector, says it is alive, reports a run, and the operator
- * sees every registration and removes one. The key is the identity, so the
- * heartbeat and the run report are the connector's own key's and nobody
- * else's, the operator's included. So are its hold and what it keeps on the
- * instance, which the operator may only clear.
+ * A CLI process writing on a key's behalf, registered as a connector. The
+ * key is the identity: its heartbeat, run, hold and state are its own, not even the operator's.
  */
 
 let c: CliContext;
