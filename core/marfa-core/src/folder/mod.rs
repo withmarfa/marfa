@@ -37,7 +37,8 @@ pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 /// reads and watches (`folders.md` 1, 22).
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
-/// Where a folder kept its settings before they lived on the server.
+/// A record of settings kept on this machine alone, which a folder refuses
+/// (`folders.md` 1).
 const OLD_RECORD: &str = "folder.json";
 
 /// A directory, the `system.folder` it is bound to, and the device
@@ -99,6 +100,14 @@ impl Folder {
             core,
         };
         let row = added.row_on_server()?;
+        // The catalog the hydration would read, so a default type the
+        // search does not hold is refused before anything is bound.
+        {
+            let types = added.core.http()?.types()?;
+            let conn = added.core.conn()?;
+            crate::store::replace_types(&conn, &types)?;
+            Settings::of_wire(&row.item)?.check_types(&Catalog::load(&conn)?)?;
+        }
         settings_file::bind(&added.core, folder)?;
         added.write_settings_file(&row.item.properties, row.item.version)?;
         let old = state.join(OLD_RECORD);
@@ -153,7 +162,11 @@ impl Folder {
     /// so catch-up keeps it current (`folders.md` 1).
     pub fn settings(&self) -> Result<Settings> {
         match self.core.get(&self.folder)? {
-            Some(item) => Settings::of(&item),
+            Some(item) => {
+                let settings = Settings::of(&item)?;
+                settings.check_types(&Catalog::load(&*self.core.conn()?)?)?;
+                Ok(settings)
+            }
             None => Err(CoreError::Invalid(format!(
                 "this folder's copy does not hold its settings, the {FOLDER_TYPE} {}; hydrate it again with a key holding `{FOLDER_TYPE}:read`",
                 self.folder
@@ -532,7 +545,7 @@ impl Folder {
     }
 
     /// Which item each file is, or `None` for a new one (`folders.md` 10 to
-    /// 12). Held ids decide first; then the binding by identity across every
+    /// 14). Held ids decide first; then the binding by identity across every
     /// file before any by path, so a path never takes an item another file is
     /// by identity.
     fn claim(
@@ -740,7 +753,7 @@ impl Folder {
             .entry(document::TITLE_FIELD)
             .or_insert(Value::String(title_of(&file.key)));
         let draft = Draft {
-            r#type: settings.new_type(),
+            r#type: settings.new_type(catalog),
             properties,
             tags: settings.defaults.tags.clone(),
             tier: Some(settings.new_tier()),

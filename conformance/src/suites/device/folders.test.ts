@@ -37,6 +37,7 @@ import {
   requireBinary,
   scriptBlob,
   scriptFolderRow,
+  scriptHydration,
   scriptWrites,
 } from "./harness.js";
 import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
@@ -422,7 +423,9 @@ describe("what a folder is", () => {
       ).toBe(false);
       if (added.ok) return;
       expect(added.refusal.raw).toContain("system.folder:read");
-      expect(existsSync(join(dir, ".marfa", "folder.json"))).toBe(false);
+      // Written by every add that succeeds (`› writes its settings out as one
+      // file in .marfa/`).
+      expect(existsSync(join(dir, ".marfa", "folder.yaml"))).toBe(false);
     } finally {
       await server.stop();
     }
@@ -523,7 +526,18 @@ describe("what a folder is", () => {
   });
 
   it("keeps its settings in force and flags the file when an edit is refused", async () => {
-    for (const { refused, edit, why } of [
+    const invalid = refusal(
+      400,
+      "validation_error",
+      "that setting is not allowed",
+    );
+    for (const { refused, edit, why, answer = invalid } of [
+      {
+        refused: "by the folder door, for a conflict",
+        edit: (text: string) => text.replace("- kept", "- conflicting"),
+        why: "delete the file to take back the settings in force",
+        answer: refusal(409, "version_conflict", "defaults changed since"),
+      },
       {
         refused: "by the folder door",
         edit: (text: string) => text.replace("- kept", "- refused"),
@@ -556,10 +570,7 @@ describe("what a folder is", () => {
         },
       });
       scriptFolderWrites(harness);
-      const sent = scriptFolderChanges(
-        harness,
-        refusal(400, "validation_error", "that setting is not allowed"),
-      );
+      const sent = scriptFolderChanges(harness, answer);
       const edited = edit(readFileSync(settingsFile(harness), "utf8"));
       writeFileSync(settingsFile(harness), edited);
       put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
@@ -583,8 +594,10 @@ describe("what a folder is", () => {
       // Said in words too, and the same refused text is not sent again.
       const text = await harness.folder.pushText();
       expect(text.ok && text.value, refused).toContain("not in force");
+      const pulled = await harness.folder.pullText();
+      expect(pulled.ok && pulled.value, refused).toContain("not in force");
       expect(sent.length, refused).toBe(
-        refused === "by the folder door" ? 1 : 0,
+        refused.startsWith("by the folder door") ? 1 : 0,
       );
       await harness.stop();
       harness = undefined;
@@ -653,6 +666,95 @@ describe("what a folder is", () => {
     const text = readFileSync(settingsFile(harness), "utf8");
     expect(text).toContain("- from elsewhere");
     expect(text).toContain("- notes/**");
+  });
+
+  it("bases an edit of its settings file on the version written in it", async () => {
+    let changed: Record<string, unknown> = {};
+    harness = await folderHarness("folder-settings-stale-edit", {
+      events: [
+        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
+        liveReplay("2", []),
+      ],
+    });
+    scriptFolderWrites(harness);
+    // An editor holds the text as the folder first wrote it.
+    const held = readFileSync(settingsFile(harness), "utf8");
+    harness.settings.settings = {
+      ...harness.settings.settings,
+      defaults: { tags: ["from elsewhere"] },
+    };
+    harness.settings.version = 2;
+    changed = folderItem(harness.settings);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(readFileSync(settingsFile(harness), "utf8")).toContain("version: 2");
+
+    // It saves its old buffer, with a new title, over the rewrite.
+    writeFileSync(
+      settingsFile(harness),
+      held.replace("title: folder", "title: renamed"),
+    );
+    const sent = scriptFolderChanges(harness);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sent[0]?.version,
+      "an edit written from version 1 went as though it were made on the version the folder last wrote, so the door put its stale settings over another device's",
+    ).toBe(1);
+    expect(sent[0]?.title).toBe("renamed");
+  });
+
+  it("makes a new document the search's first type that is not a file type", async () => {
+    harness = await folderHarness("folder-type-fallback", {
+      settings: { search: { types: ["core.file", "core.note"] } },
+    });
+    scriptFolderWrites(harness);
+    put(harness, "new.md", "---\ntitle: New\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      sentCreates(harness).map((sent) => sent.type),
+      "a new document became a file type, whose items are bytes",
+    ).toEqual(["core.note"]);
+  });
+
+  it("refuses defaults its search would not hold", async () => {
+    for (const { what, settings } of [
+      {
+        what: "a type",
+        settings: {
+          search: { types: ["core.note"] },
+          defaults: { type: "core.bookmark" },
+        },
+      },
+      {
+        what: "a tier",
+        settings: {
+          search: { types: ["core.note"] },
+          defaults: { tier: "feed" as const },
+        },
+      },
+    ]) {
+      const server = await ScriptedServer.start();
+      scriptHydration(server, { head: "1" });
+      const row = scriptFolderRow(server, settings);
+      const dir = join(
+        mkdtempSync(join(tmpdir(), "marfa-folder-defaults-refused-")),
+        "notes",
+      );
+      const folder = new CliFolder(dir, {
+        binary: requireBinary(),
+        url: server.url,
+        key: KEY,
+      });
+      try {
+        const added = await folder.add(row.id);
+        expect(
+          added.ok,
+          `a folder took defaults naming ${what} its search does not hold, so every new file would fall outside it`,
+        ).toBe(false);
+      } finally {
+        await server.stop();
+      }
+    }
   });
 
   it("fills a new file's blanks from its defaults, never an edit's", async () => {
@@ -1072,6 +1174,29 @@ describe("what a folder's search holds", () => {
   });
 
   it("refuses a search condition it does not implement", async () => {
+    // At a later pass, where the settings change to one it cannot answer.
+    let changed: Record<string, unknown> = {};
+    harness = await folderHarness("folder-search-refused-later", {
+      events: [
+        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
+        liveReplay("2", []),
+      ],
+    });
+    scriptFolderWrites(harness);
+    harness.settings.settings = {
+      search: { types: ["core.note"], filter: "backref[parent-of] exists" },
+    };
+    harness.settings.version = 2;
+    changed = folderItem(harness.settings);
+    const later = await harness.folder.push();
+    expect(
+      later.ok,
+      "a pass answered a search whose condition it cannot answer, as though the condition were not there",
+    ).toBe(false);
+    if (!later.ok) expect(later.refusal.raw).toContain("backref");
+    await harness.stop();
+    harness = undefined;
+
     for (const { condition, search, named } of [
       {
         condition: "a backref, which a copy cannot answer whole",
@@ -1692,7 +1817,7 @@ describe("files and items", () => {
     expect((await harness.folder.scan()).ok).toBe(true);
     expect((await device.drain()).ok).toBe(true);
 
-    // The edge stays (23), and the link does not come back.
+    // The edge stays (25), and the link does not come back.
     const again = await harness.folder.pull();
     expect(again.ok).toBe(true);
     if (!again.ok) return;
@@ -1730,7 +1855,7 @@ describe("files and items", () => {
     ).not.toContain("[[other]]");
 
     // A link of the folder's own kind taken out is not a declined target:
-    // its edge goes (23), and an edge of another kind to the same item,
+    // its edge goes (25), and an edge of another kind to the same item,
     // made afterwards, still renders.
     writeFileSync(
       join(harness.dir, "source.md"),
@@ -4644,6 +4769,27 @@ describe("what a folder does not watch", () => {
   });
 });
 
+/** An edit of `going.md` goes to the item it is bound to, not a new one. */
+async function editedReachesItsItem(
+  harness: FolderHarness,
+  item: string,
+  id: string | undefined,
+): Promise<void> {
+  writeFileSync(
+    join(harness.dir, "going.md"),
+    read(harness, "going.md") + "an edit after it left\n",
+  );
+  const creates = sentCreates(harness).length;
+  const pushed = await harness.folder.push();
+  expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+  expect(
+    sentCreates(harness).length,
+    "an edit of the file made a new item of it",
+  ).toBe(creates);
+  expect(sentUpdates(harness).map((sent) => sent.id)).toContain(item);
+  expect(idIn(harness, "going.md")).toBe(id);
+}
+
 describe("what a pull does with a file whose item stops matching", () => {
   const departed = {
     id: "01a00000-0000-7000-8000-0000000000d1",
@@ -4674,6 +4820,8 @@ describe("what a pull does with a file whose item stops matching", () => {
     const first = await harness.folder.pull();
     expect(first.ok && first.value.written).toBe(1);
     expect(existsSync(join(harness.dir, "going.md"))).toBe(true);
+    const pinned = await harness.folder.device().status();
+    expect(pinned.ok && pinned.value.pinned).toContain(departed.id);
 
     const caught = await harness.folder.device().catchUp();
     expect(
@@ -4690,6 +4838,11 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).toBe(1);
     expect(second.value.kept).toBe(0);
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+    const unpinned = await harness.folder.device().status();
+    expect(
+      unpinned.ok && unpinned.value.pinned,
+      "a file's row stayed pinned once its binding went",
+    ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
     // path becomes a delete once the grace runs out (`folders.md` 17), so
@@ -4783,6 +4936,63 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;
     expect([scanned.value.created, scanned.value.updated]).toEqual([0, 1]);
+  });
+
+  it("keeps the file of an item a narrowed search leaves out, flagged, and sends its edits to it", async () => {
+    let changed: Record<string, unknown> = {};
+    harness = await folderHarness("folder-narrowed-out", {
+      rows: { "core.note": [{ item: departed }] },
+      events: [
+        (): Answer => replay("2", [itemEvent("2", "item.updated", changed)]),
+        headRead("3"),
+        liveReplay("3", []),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const id = idIn(harness, "going.md");
+    harness.settings.settings = { search: { types: ["core.bookmark"] } };
+    harness.settings.version = 2;
+    changed = folderItem(harness.settings);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.catch_up.hydrated).not.toBeNull();
+    expect(
+      pushed.value.pull?.unmatched,
+      "the copy let go of a bound file's row when the search narrowed, so the file is bound to nothing",
+    ).toBe(1);
+    await editedReachesItsItem(harness, departed.id, id);
+  });
+
+  it("keeps the file of an item retyped out of its search elsewhere, flagged, and sends its edits to it", async () => {
+    const retyped = { ...departed, type: "core.bookmark", version: 2 };
+    harness = await folderHarness("folder-retyped-out", {
+      rows: { "core.note": [{ item: departed }] },
+      events: [
+        replay("2", [itemEvent("2", "item.updated", wireItem(retyped))]),
+        liveReplay("2", []),
+      ],
+    });
+    scriptFolderWrites(harness, {
+      door: (door) => {
+        door.rows.set(departed.id, {
+          properties: departed.properties,
+          type: "core.bookmark",
+          source_id: null,
+          version: 2,
+        });
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const id = idIn(harness, "going.md");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      pushed.ok && pushed.value.pull?.unmatched,
+      "the copy let go of a bound file's row retyped out of the search, so the file is bound to nothing",
+    ).toBe(1);
+    await editedReachesItsItem(harness, departed.id, id);
   });
 
   it("keeps a file the folder never wrote whose create was refused, inside one push", async () => {

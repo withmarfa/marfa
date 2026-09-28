@@ -278,7 +278,7 @@ CREATE TABLE IF NOT EXISTS folder_files (
   -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
   -- The targets whose rendered link the person took out, for edges of a kind
-  -- the folder could not have made, as a JSON array. The edge stays (23), so
+  -- the folder could not have made, as a JSON array. The edge stays (25), so
   -- without this the next pull writes the link back and the person removes
   -- it again, forever (`folders.md` 30). Naming the link again lifts it.
   declined_links TEXT NOT NULL,

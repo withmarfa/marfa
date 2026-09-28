@@ -57,7 +57,11 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
         .and_then(|version| version.parse().ok())
 }
 
+/// Binds a file, and pins its row so the copy keeps it whatever the search
+/// says of it (`device.md` 1, `folders.md` 29).
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
+    let before = bound_at(conn, &bound.path)?;
+    crate::store::pin(conn, &bound.item_id)?;
     conn.execute(
         "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, declined_links, edit_line, seen_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
@@ -82,11 +86,27 @@ pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
             now_iso()
         ],
     )?;
+    if let Some(before) = before {
+        unpin_if_unbound(conn, &before.item_id)?;
+    }
     Ok(())
 }
 
 pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    let before = bound_at(conn, path)?;
     conn.execute("DELETE FROM folder_files WHERE path = ?1", [path])?;
+    if let Some(before) = before {
+        unpin_if_unbound(conn, &before.item_id)?;
+    }
+    Ok(())
+}
+
+/// The row stays held until a catch-up or hydration lets it go, as any
+/// unpinned row outside the slice does (`device.md` 1).
+fn unpin_if_unbound(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    if bound_to_item(conn, item_id)?.is_none() {
+        crate::store::unpin(conn, item_id)?;
+    }
     Ok(())
 }
 

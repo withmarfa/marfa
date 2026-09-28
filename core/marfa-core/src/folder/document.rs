@@ -25,7 +25,7 @@ pub struct Document {
 const FENCE: &str = "---";
 
 /// The frontmatter a file opens with, and the body after it (`folders.md`
-/// 6). Any condition that fails makes the whole text a body, never a refusal
+/// 8). Any condition that fails makes the whole text a body, never a refusal
 /// or a half-reading, so nothing is lost in either direction.
 fn frontmatter(text: &str) -> Option<(Map<String, Value>, &str)> {
     // The opening fence is its own line: `----` is a horizontal rule and

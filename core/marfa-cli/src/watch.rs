@@ -307,7 +307,7 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
 }
 
 /// Whether a path is the folder's settings file, the one file under `.marfa`
-/// a watch wakes for (`folders.md` 22).
+/// a watch watches, so a save of it is waited out as any file's is (`folders.md` 22).
 fn settings_file(root: &Path, path: &Path) -> bool {
     path == root
         .join(marfa_core::folder::STATE_DIR)

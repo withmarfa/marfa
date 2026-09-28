@@ -115,8 +115,8 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         FoldersCommand::Push { dir } => {
             let folder = Folder::open(&dir, Some(named.server()?))?;
             let hydrated = folder.resume()?;
-            // Before the catch-up and the pull, which would otherwise meet the
-            // person's edit of the file as a file to write over.
+            // First, so the rest of the push works on the settings the person
+            // just wrote.
             let settings = folder.send_settings_edit()?;
             let scanned = folder.scan()?;
             let drained = folder.drain()?;
@@ -266,6 +266,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     if !departed.is_empty() {
         line.push_str("; ");
         line.push_str(&departed.join(", "));
+    }
+    if let Some(settings) = settings_line(&report.settings) {
+        line.push('\n');
+        line.push_str(&settings);
     }
     line
 }

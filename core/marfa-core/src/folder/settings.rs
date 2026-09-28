@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::Result;
+use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Item, ItemState, Tier};
 
@@ -139,7 +140,38 @@ impl Settings {
         if let Some(filter) = &self.search.filter {
             crate::filter::check(filter)?;
         }
+        if let Some(tier) = self.defaults.tier
+            && tier != self.tier()
+        {
+            return Err(CoreError::Invalid(format!(
+                "a new file would be made at the {} tier, and the search holds the {} tier",
+                tier.as_str(),
+                self.tier().as_str()
+            )));
+        }
         Ok(())
+    }
+
+    /// Refuses a default type the search does not hold, which would make
+    /// every new file fall outside its own folder.
+    pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
+        if let Some(named) = &self.defaults.r#type
+            && !self.holds_type(catalog, named)
+        {
+            return Err(CoreError::Invalid(format!(
+                "a new file would become a {named}, which the search does not hold"
+            )));
+        }
+        Ok(())
+    }
+
+    fn holds_type(&self, catalog: &Catalog, named: &str) -> bool {
+        self.search.types.is_empty()
+            || self
+                .search
+                .types
+                .iter()
+                .any(|declared| catalog.matches(declared, named))
     }
 
     /// The types the search holds, each with its subtree; empty is every
@@ -169,12 +201,19 @@ impl Settings {
         }
     }
 
-    /// The type a new document becomes.
-    pub fn new_type(&self) -> String {
+    /// The type a new document becomes: never a file type, whose items are
+    /// bytes rather than documents.
+    pub fn new_type(&self, catalog: &Catalog) -> String {
         self.defaults
             .r#type
             .clone()
-            .or_else(|| self.search.types.first().cloned())
+            .or_else(|| {
+                self.search
+                    .types
+                    .iter()
+                    .find(|declared| !catalog.matches(super::FILE_TYPE, declared))
+                    .cloned()
+            })
             .unwrap_or_else(|| DOCUMENT_TYPE.to_string())
     }
 
@@ -231,11 +270,19 @@ mod tests {
             "defaults": { "type": "core.note" },
         }))
         .unwrap();
-        assert_eq!(named.new_type(), "core.note");
+        let catalog = Catalog::load(&crate::store::testing::conn()).unwrap();
+        assert_eq!(named.new_type(&catalog), "core.note");
         let searched =
             read(json!({ "search": { "types": ["core.bookmark"], "tier": "feed" } })).unwrap();
-        assert_eq!(searched.new_type(), "core.bookmark");
+        assert_eq!(searched.new_type(&catalog), "core.bookmark");
         assert_eq!(searched.new_tier(), Tier::Feed);
-        assert_eq!(read(json!({})).unwrap().new_type(), "core.note");
+        assert_eq!(read(json!({})).unwrap().new_type(&catalog), "core.note");
+        let files_first =
+            read(json!({ "search": { "types": ["core.file", "core.note"] } })).unwrap();
+        assert_eq!(files_first.new_type(&catalog), "core.note");
+        assert!(read(json!({ "defaults": { "tier": "feed" } })).is_err());
+        let unheld = read(json!({ "search": { "types": ["core.note"] }, "defaults": { "type": "core.bookmark" } }))
+            .unwrap();
+        assert!(unheld.check_types(&catalog).is_err());
     }
 }

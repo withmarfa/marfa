@@ -14,7 +14,7 @@
     },
     "defaults": {
       "type": "object",
-      "description": "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to target ids, so a folder whose search follows an edge gives every new file that edge."
+      "description": "What a new file takes where its frontmatter leaves a blank, never applied to an edit: `type`, `tier`, `properties`, `tags`, and `edges` as a map from edge type to item ids, each edge running from the new file to the item named except `parent-of`, which runs from the item named so the new file is its child; a folder whose search follows an edge gives every new file that edge."
     },
     "include": {
       "type": "array",

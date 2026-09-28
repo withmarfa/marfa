@@ -166,7 +166,7 @@ impl Folder {
                 ),
             );
         }
-        let (written, version) = {
+        let (written, written_version) = {
             let conn = self.core.conn()?;
             (
                 store::meta_get(&conn, META_WRITTEN)?.unwrap_or_default(),
@@ -175,11 +175,23 @@ impl Folder {
                     .unwrap_or(0),
             )
         };
+        // Based on the file's own line, as a Markdown file's edit is
+        // (`folders.md` 19): an editor saving text older than the last write
+        // is merged against what it was written from.
+        let version = edited
+            .get(VERSION_KEY)
+            .and_then(Value::as_i64)
+            .filter(|line| *line > 0)
+            .unwrap_or(written_version);
+        let stale = version != written_version;
         let base = document::read_map(&written).unwrap_or_default();
         let setting = |key: &String| key != FOLDER_KEY && key != VERSION_KEY;
-        if let Some(gone) = base
-            .keys()
-            .find(|key| setting(key) && !edited.contains_key(*key))
+        // What a stale file leaves out may be what was added since; the door
+        // keeps a setting nobody sends.
+        if !stale
+            && let Some(gone) = base
+                .keys()
+                .find(|key| setting(key) && !edited.contains_key(*key))
         {
             return self.flag(
                 &text,
@@ -188,9 +200,11 @@ impl Folder {
                 ),
             );
         }
+        // A stale file sends every setting it names, and the door merges
+        // away those unchanged since its version.
         let changed: Map<String, Value> = edited
             .iter()
-            .filter(|(key, value)| setting(key) && base.get(*key) != Some(*value))
+            .filter(|(key, value)| setting(key) && (stale || base.get(*key) != Some(*value)))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
         if changed.is_empty() {
@@ -208,7 +222,11 @@ impl Folder {
         let mut merged = base.clone();
         merged.retain(|key, _| setting(key));
         merged.extend(changed.clone());
-        if let Err(error) = Settings::read(&self.folder, FOLDER_TYPE, "active", &merged) {
+        let checked =
+            Settings::read(&self.folder, FOLDER_TYPE, "active", &merged).and_then(|settings| {
+                settings.check_types(&crate::catalog::Catalog::load(&*self.core.conn()?)?)
+            });
+        if let Err(error) = checked {
             return self.flag(&text, error.to_string());
         }
         let mut body = changed;
@@ -237,7 +255,15 @@ impl Folder {
         if !answer.is_success() {
             let refused =
                 crate::http::refusal(answer.status, &answer.body, answer.retry_after_seconds);
-            return self.flag(&text, format!("the folder door refused it: {refused}"));
+            let back = if answer.status == 409 {
+                "; delete the file to take back the settings in force, then edit it again"
+            } else {
+                ""
+            };
+            return self.flag(
+                &text,
+                format!("the folder door refused it: {refused}{back}"),
+            );
         }
         let row: crate::wire::WireItemWithMetadata = serde_json::from_str(&answer.body)?;
         {

@@ -635,7 +635,6 @@ export class CliDevice implements DeviceUnderTest {
   }
 }
 
-/** What `folders add` is given. */
 /** A `system.folder`'s settings, as the folder door takes them. */
 export interface FolderSettings {
   title?: string;
@@ -818,6 +817,11 @@ export class CliFolder {
       url: this.options.url,
       key: this.options.key,
     }).hold(["folders", "watch", this.dir], "text");
+  }
+
+  /** A pull, printed for a person. */
+  async pullText(): Promise<Outcome<string>> {
+    return this.device().rootText(["folders", "pull", this.dir]);
   }
 
   /** A push, printed for a person. */

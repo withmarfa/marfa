@@ -408,21 +408,22 @@ export async function folderHarness(
       );
     }
   };
-  const added = await folder.add(settings.id);
-  if (!added.ok) {
-    await stop();
-    throw new Error(
-      `the fixture could not make a folder: ${JSON.stringify(added.refusal)}`,
-    );
-  }
-  // A shared server's doors are its owner's; a second folder hydrates from
-  // what the owner scripted, and sees the rows the owner's fixture adds.
+  // Before the add, which reads the catalog. A shared server's doors are
+  // its owner's; a second folder hydrates from what the owner scripted, and
+  // sees the rows the owner's fixture adds.
   if (options.sharing === undefined) {
     scriptHydration(server, {
       head: options.head ?? "1",
       rows: options.rows,
       edges: options.edges,
     });
+  }
+  const added = await folder.add(settings.id);
+  if (!added.ok) {
+    await stop();
+    throw new Error(
+      `the fixture could not make a folder: ${JSON.stringify(added.refusal)}`,
+    );
   }
   if (options.events !== undefined) {
     server.answer("GET", "/events", ...options.events);
