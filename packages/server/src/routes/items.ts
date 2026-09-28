@@ -2618,8 +2618,12 @@ export function itemRoutes(storage: Storage) {
               ...(idempotencyKey !== null && {
                 idempotency_key: idempotencyKey,
               }),
-              may_copy_edge: (edgeType: string, sourceType: string) =>
-                mayWriteEdge(requireAuth(c), edgeType, sourceType),
+              may_copy_edge: (
+                edgeType: string,
+                sourceType: string,
+                targetType: string,
+              ) =>
+                mayWriteEdge(requireAuth(c), edgeType, sourceType, targetType),
               tier: hasTier ? body.tier : undefined,
               occurred_at: hasOccurredAt ? body.occurred_at : undefined,
               source_id: hasSourceId ? body.source_id : undefined,

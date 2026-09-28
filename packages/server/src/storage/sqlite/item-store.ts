@@ -203,7 +203,11 @@ async function insertConflictedSibling(
     row: { id: string; type: string; source: string | null; tier: string };
     now: string;
     properties: Record<string, unknown>;
-    mayCopyEdge?: (edgeType: string, sourceType: string) => boolean;
+    mayCopyEdge?: (
+      edgeType: string,
+      sourceType: string,
+      targetType: string,
+    ) => boolean;
   },
 ): Promise<{ sibling: Item; edges: Edge[] } | null> {
   const { siblingId, row, now, properties, mayCopyEdge } = args;
@@ -276,7 +280,10 @@ async function insertConflictedSibling(
     if (schema.cascade_on_delete === "block") continue;
     if (outbound && schema.cascade_on_delete === "cascade") continue;
     const sourceType = outbound ? row.type : other.type;
-    if (mayCopyEdge?.(edge.edge_type, sourceType) !== true) continue;
+    const targetType = outbound ? other.type : row.type;
+    if (mayCopyEdge?.(edge.edge_type, sourceType, targetType) !== true) {
+      continue;
+    }
     const allowed = outbound
       ? schema.cardinality === "many-to-one" ||
         schema.cardinality === "many-to-many"
@@ -304,9 +311,8 @@ async function insertConflictedSibling(
     });
   }
 
-  // Everything `create()` does, because this row is a create. Skipping the
-  // index left the sibling unfindable by the search that is the ordinary way
-  // to go looking for a conflicted copy.
+  // Everything `create()` does, because this row is a create: unindexed, the
+  // sibling is missed by the search people use to look for a conflicted copy.
   await searchStore.index(siblingId, properties, row.type);
 
   return {
