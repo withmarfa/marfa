@@ -5,14 +5,17 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use serde_json::{Map, Value};
 
 use super::edge_types::{self, EdgeType, EdgeTypes, End};
+use super::embeds::{ATTACHMENT_EDGE, Target};
 use super::state::{self, Line};
-use super::{FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, document, fields, name_of, title_of};
+use super::{
+    FILE_TYPE, Folder, LINK_EDGE, PLACEMENT_EDGE, bytes_of, document, fields, name_of, title_of,
+};
 use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::{Edge, EdgeDraft, Item};
 
 /// A file's links and lines, read once every file in the scan is bound
-/// (`folders.md` 30).
+/// (`folders.md` 31).
 pub(super) struct EdgeWork {
     pub path: String,
     pub item_id: String,
@@ -20,6 +23,8 @@ pub(super) struct EdgeWork {
     pub front: Map<String, Value>,
     pub had_links: Vec<String>,
     pub had_lines: Vec<Line>,
+    /// The body's embeds as the walk found them (`folders.md` 12).
+    pub embeds: Vec<(String, Target)>,
 }
 
 /// What a file's links and lines left behind: the record the binding keeps,
@@ -30,6 +35,8 @@ pub(super) struct Outcome {
     pub held: Option<String>,
     /// The edge writes the lines queued, so only their refusal holds the file.
     pub queued: Vec<String>,
+    /// Embeds that name no file the folder sends, and why.
+    pub embeds: Vec<String>,
 }
 
 /// Every name an item answers to in this copy, lowercased: its title, and
@@ -434,7 +441,7 @@ impl Folder {
         catalog: &Catalog,
         names: &Names,
         typed: Option<&Map<String, Value>>,
-        body_links: &[String],
+        (body_links, body_embeds): (&[String], &[String]),
         recorded: &[Line],
     ) -> Result<Written> {
         let mut grouped: BTreeMap<String, (bool, Vec<String>)> = BTreeMap::new();
@@ -451,6 +458,18 @@ impl Folder {
                 End::Target => edge.source_id.clone(),
             };
             if edge.edge_type == LINK_EDGE && end == End::Source && body_links.contains(&other) {
+                continue;
+            }
+            // The body shows it, so no line repeats it; the record still does.
+            if edge.edge_type == ATTACHMENT_EDGE
+                && end == End::Target
+                && body_embeds.contains(&other)
+            {
+                written.push(Line {
+                    edge_type: edge.edge_type.clone(),
+                    end,
+                    other,
+                });
                 continue;
             }
             let Some(name) = def.name_at(end) else {
@@ -537,8 +556,9 @@ impl Folder {
         })
     }
 
-    /// Queues what a file's links and lines change (`folders.md` 11, 28); a
-    /// line that cannot be read as written changes nothing of its type.
+    /// Queues what a file's links, embeds and lines change (`folders.md` 11,
+    /// 12, 29); a line that cannot be read as written changes nothing of its
+    /// type.
     pub(super) fn queue_edges(
         &self,
         work: &EdgeWork,
@@ -559,6 +579,27 @@ impl Folder {
                 Some(_) => {}
                 // A link naming nothing looks like a link removed.
                 None => links_resolved = false,
+            }
+        }
+
+        // An embed of a file is its item's `attached-to` edge to this one.
+        let mut attached: Vec<String> = Vec::new();
+        let mut embeds_resolved = true;
+        let mut embed_reasons: Vec<String> = Vec::new();
+        for (raw, target) in &work.embeds {
+            match target {
+                Target::At(path) => match self.embedded_item(path, catalog)? {
+                    Some(Some(id)) if !attached.contains(&id) => attached.push(id),
+                    Some(_) => {}
+                    None => embeds_resolved = false,
+                },
+                Target::Outside => {
+                    embeds_resolved = false;
+                    embed_reasons.push(format!(
+                        "{raw} leads out of the folder, so the folder neither sends nor writes the file it shows"
+                    ));
+                }
+                Target::Named(_) | Target::Nothing => embeds_resolved = false,
             }
         }
 
@@ -591,6 +632,9 @@ impl Folder {
         let mut wanted_keys = recorded_keys;
         if !work.links.is_empty() || !work.had_links.is_empty() {
             wanted_keys.insert((LINK_EDGE.to_string(), End::Source));
+        }
+        if !work.embeds.is_empty() {
+            wanted_keys.insert((ATTACHMENT_EDGE.to_string(), End::Target));
         }
         for (edge_type, end) in wanted_keys {
             let Some(def) = types.get(&edge_type) else {
@@ -642,6 +686,7 @@ impl Folder {
                 &mut waiting,
             )?;
             let links_group = edge_type == LINK_EDGE && end == End::Source;
+            let embeds_group = edge_type == ATTACHMENT_EDGE && end == End::Target;
             let Some(desired) = desired else {
                 lines.extend(recorded.into_iter().map(|other| Line {
                     edge_type: edge_type.to_string(),
@@ -666,11 +711,30 @@ impl Folder {
                 }
                 had.extend(work.had_links.iter().cloned());
             }
+            // The body's embeds and the line say the same edge; the record
+            // holds both, so taking either out removes it.
+            let mut shown = desired;
+            if embeds_group {
+                for id in &attached {
+                    if !wanted.contains(id) {
+                        wanted.push(id.clone());
+                        shown.push(id.clone());
+                    }
+                }
+                if !embeds_resolved {
+                    for id in &recorded {
+                        if !shown.contains(id) {
+                            shown.push(id.clone());
+                        }
+                    }
+                }
+            }
             let held: Vec<String> = current.iter().map(|edge| other_of(edge)).collect();
             let adds: Vec<&String> = wanted.iter().filter(|id| !held.contains(id)).collect();
             // An edge the file never carried arrived from elsewhere and is
-            // not yet written; a line that names nothing looks like one gone.
-            let may_remove = !links_group || links_resolved;
+            // not yet written; a link or an embed that names nothing looks
+            // like one gone.
+            let may_remove = (!links_group || links_resolved) && (!embeds_group || embeds_resolved);
             let mut removes: Vec<&Edge> = current
                 .iter()
                 .copied()
@@ -736,7 +800,7 @@ impl Folder {
             for edge in removes {
                 queued.push(self.core.delete_edge(&edge.id)?.id);
             }
-            lines.extend(desired.into_iter().map(|other| Line {
+            lines.extend(shown.into_iter().map(|other| Line {
                 edge_type: edge_type.to_string(),
                 end,
                 other,
@@ -768,7 +832,22 @@ impl Folder {
             lines,
             held,
             queued,
+            embeds: embed_reasons,
         })
+    }
+
+    /// The item of the file an embed names: `Some(None)` for one that is not
+    /// a file item, and `None` where no file here is bound at the path.
+    fn embedded_item(&self, path: &str, catalog: &Catalog) -> Result<Option<Option<String>>> {
+        let Some(bound) = state::bound_at(&*self.core.conn()?, path)? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            self.core
+                .get(&bound.item_id)?
+                .filter(|item| bytes_of(item, catalog).is_some())
+                .map(|item| item.id),
+        ))
     }
 
     /// The items a group's line names, or `None` where it changes nothing,

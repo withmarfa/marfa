@@ -15,12 +15,12 @@ pub struct Bound {
     pub path: String,
     pub item_id: String,
     /// Device, inode and birth time. Null where the filesystem gave none
-    /// (`folders.md` 16).
+    /// (`folders.md` 17).
     pub identity: Option<String>,
     pub content_hash: String,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
     /// where the last agreement was a scan's read. A pull removes only a
-    /// file it wrote (`folders.md` 32).
+    /// file it wrote (`folders.md` 33).
     pub written_hash: Option<String>,
     /// The item ids the links in those bytes named, as the folder last read
     /// or wrote them. Empty where the file named none.
@@ -117,7 +117,7 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 /// A content hash no bytes have, for a save set aside in a conflicted copy
-/// against this device's own (`folders.md` 36): the file reads as changed,
+/// against this device's own (`folders.md` 37): the file reads as changed,
 /// and its next edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
@@ -133,7 +133,7 @@ pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
 }
 
 /// Binds a file, and pins its row so the copy keeps it whatever the search
-/// says of it (`device.md` 1, `folders.md` 32).
+/// says of it (`device.md` 1, `folders.md` 33).
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;

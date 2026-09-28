@@ -567,7 +567,7 @@ mod tests {
         let add = ["marfa", "folders", "add", "notes", "--folder", "f1"];
         assert!(
             Cli::try_parse_from(add.iter().copied().chain(["--source", "notes"])).is_err(),
-            "a folder names no source (`folders.md` 12)"
+            "a folder names no source (`folders.md` 13)"
         );
         // A folder's settings are its `system.folder`'s, never flags here
         // (`folders.md` 1).

@@ -246,7 +246,7 @@ fn to_yaml(value: &Value) -> Yaml {
 }
 
 /// The `[[target]]` links a body carries, in order and without repeats. An
-/// embed, `![[target]]`, is not a link.
+/// embed, `![[target]]`, is not a link (`folders.md` 12).
 pub fn links(body: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = body.as_bytes();
@@ -274,6 +274,141 @@ pub fn links(body: &str) -> Vec<String> {
 /// One wiki link, as an edge's line names its target.
 pub fn render_link(target: &str) -> String {
     format!("[[{target}]]")
+}
+
+/// A body embed that names a file in the folder rather than an address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Embed {
+    /// `![[name]]`, the name before any `|` or `#`.
+    Named { raw: String, name: String },
+    /// `![alt](path)`, the path decoded and without its query or fragment.
+    Path { raw: String, path: String },
+}
+
+impl Embed {
+    /// The embed as the body writes it.
+    pub fn raw(&self) -> &str {
+        match self {
+            Embed::Named { raw, .. } | Embed::Path { raw, .. } => raw,
+        }
+    }
+}
+
+/// The embeds a body carries, in order and once each: `![[name]]` and
+/// `![alt](path)`, an address such as `https://` aside.
+pub fn embeds(body: &str) -> Vec<Embed> {
+    let mut found: Vec<Embed> = Vec::new();
+    let mut at = 0usize;
+    while let Some(start) = body[at..].find("![") {
+        let open = at + start;
+        let rest = &body[open + 2..];
+        let (embed, used) = match rest.strip_prefix('[') {
+            Some(inner) => match inner.find("]]") {
+                Some(end) if !inner[..end].contains('\n') => {
+                    let name = inner[..end]
+                        .split(['|', '#'])
+                        .next()
+                        .unwrap_or_default()
+                        .trim();
+                    let used = 3 + end + 2;
+                    let embed = (!name.is_empty()).then(|| Embed::Named {
+                        raw: body[open..open + used].to_string(),
+                        name: name.to_string(),
+                    });
+                    (embed, used)
+                }
+                _ => (None, 3),
+            },
+            None => {
+                match image(rest) {
+                    Some((path, length)) => {
+                        let used = 2 + length;
+                        let embed = (!is_address(&path)).then(|| Embed::Path {
+                            raw: body[open..open + used].to_string(),
+                            path: local(&path),
+                        });
+                        (embed.filter(|embed| !matches!(embed, Embed::Path { path, .. } if path.is_empty())), used)
+                    }
+                    None => (None, 2),
+                }
+            }
+        };
+        if let Some(embed) = embed
+            && !found.contains(&embed)
+        {
+            found.push(embed);
+        }
+        at = open + used;
+    }
+    found
+}
+
+/// A Markdown image's destination and how much of `rest`, the text after
+/// its `![`, it takes.
+fn image(rest: &str) -> Option<(String, usize)> {
+    let close = rest.find(']')?;
+    if rest[..close].contains('\n') || !rest[close + 1..].starts_with('(') {
+        return None;
+    }
+    let from = close + 2;
+    let tail = &rest[from..];
+    let skipped = tail.len() - tail.trim_start_matches([' ', '\t']).len();
+    let tail = &tail[skipped..];
+    let (destination, after) = match tail.strip_prefix('<') {
+        Some(inner) => {
+            let end = inner.find('>')?;
+            (&inner[..end], 1 + end + 1)
+        }
+        None => {
+            let end = tail
+                .find(|glyph: char| glyph.is_whitespace() || glyph == ')')
+                .unwrap_or(tail.len());
+            (&tail[..end], end)
+        }
+    };
+    // What follows is a title, if anything, and then the closing parenthesis.
+    let paren = tail[after..].find(')')?;
+    if tail[after..after + paren].contains('\n') {
+        return None;
+    }
+    Some((destination.to_string(), from + skipped + after + paren + 1))
+}
+
+/// Whether a destination is an address rather than a path: a scheme, a
+/// network path, or a fragment of this file.
+fn is_address(destination: &str) -> bool {
+    if destination.starts_with("//") || destination.starts_with('#') {
+        return true;
+    }
+    let scheme = destination.split(':').next().unwrap_or_default();
+    destination.contains(':')
+        && scheme.starts_with(|glyph: char| glyph.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|glyph| glyph.is_ascii_alphanumeric() || matches!(glyph, '+' | '.' | '-'))
+}
+
+/// A path as the filesystem names it: percent escapes decoded, and any query
+/// or fragment, `a.pdf#page=2` say, taken off.
+fn local(destination: &str) -> String {
+    let path = destination.split(['?', '#']).next().unwrap_or_default();
+    let bytes = path.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%'
+            && let Some(byte) = path
+                .get(at + 1..at + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            decoded.push(byte);
+            at += 3;
+        } else {
+            decoded.push(bytes[at]);
+            at += 1;
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
 }
 
 #[cfg(test)]
@@ -444,5 +579,36 @@ mod tests {
             "an embed was read as a link, so a picture shown in a note became a reference"
         );
         assert_eq!(render_link("abc"), "[[abc]]");
+    }
+
+    #[test]
+    fn embeds_are_read_in_order_and_once_each() {
+        let named = |raw: &str, name: &str| Embed::Named {
+            raw: raw.into(),
+            name: name.into(),
+        };
+        let path = |raw: &str, path: &str| Embed::Path {
+            raw: raw.into(),
+            path: path.into(),
+        };
+        assert_eq!(
+            embeds(
+                "![[a.png|300]] and ![shown](img/b%20c.png \"title\") and \
+                 ![](<d e.png>) and ![[a.png|300]] and [[link]] and \
+                 ![](https://example.com/x.png) and ![](doc.pdf#page=2) and ![[#part]]"
+            ),
+            vec![
+                named("![[a.png|300]]", "a.png"),
+                path("![shown](img/b%20c.png \"title\")", "img/b c.png"),
+                path("![](<d e.png>)", "d e.png"),
+                path("![](doc.pdf#page=2)", "doc.pdf"),
+            ],
+            "an embed was missed, repeated or read past its size, title or fragment, \
+             or an address was read as a file in the folder"
+        );
+        assert!(
+            embeds("![alt\ntext](x.png) and ![unclosed](x.png").is_empty(),
+            "an image split across lines, or never closed, was read as an embed"
+        );
     }
 }

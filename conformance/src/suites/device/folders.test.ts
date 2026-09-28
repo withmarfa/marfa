@@ -492,7 +492,7 @@ function sentUpdates(
 }
 
 /** A queue without the folder's placements, for a fixture about the other
- *  writes a file makes (`folders.md` 18). */
+ *  writes a file makes (`folders.md` 19). */
 function withoutPlacements(
   harness: FolderHarness,
   rows: QueuedWrite[],
@@ -504,7 +504,7 @@ function withoutPlacements(
 }
 
 /** The verdicts on writes of items, without the placements a push also
- *  sends (`folders.md` 18). */
+ *  sends (`folders.md` 19). */
 function itemVerdicts(verdicts: DrainVerdict[]): DrainVerdict[] {
   return verdicts.filter((entry) => !entry.kind.endsWith("_edge"));
 }
@@ -2962,8 +2962,8 @@ describe("edges in frontmatter", () => {
             .map((request) => request.query.get("edge_type")),
         ),
       ],
-      "the copy held whole an edge type no child's file writes",
-    ).toEqual(["parent-of"]);
+      "the copy held whole an edge type that neither a child's file nor a host's embeds need",
+    ).toEqual(["attached-to", "parent-of"]);
     expect((await harness.folder.pull()).ok).toBe(true);
     expect(
       frontOf(harness, "Child.md"),
@@ -4154,6 +4154,451 @@ function sentTransitions(harness: FolderHarness): string[] {
         `${request.pathname.split("/").at(-2)} ${String((JSON.parse(request.body) as { state: string }).state)}`,
     );
 }
+
+describe("embedded files", () => {
+  const host = "01a00000-0000-7000-8000-00000000e201";
+  const pic = "01a00000-0000-7000-8000-00000000e202";
+  const chart = "01a00000-0000-7000-8000-00000000e203";
+  const scan = "01a00000-0000-7000-8000-00000000e204";
+  const other = "01a00000-0000-7000-8000-00000000e205";
+  const png = (last: number): Buffer =>
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, last]);
+
+  /** A file item the server holds, named by its title. */
+  function fileRow(id: string, title: string, bytes: Buffer): WireItemOptions {
+    return {
+      id,
+      type: "core.file.image",
+      properties: { title, blob_ref: hashOf(bytes), mime_type: "image/png" },
+    };
+  }
+
+  /** An `attached-to` edge from a file to the note that embeds it. */
+  function attached(id: string, file: string, to: string): WireEdgeOptions {
+    return { id, source_id: file, target_id: to, edge_type: "attached-to" };
+  }
+
+  /** The item the folder created for a file, by the title it sent. */
+  function createdFor(harness: FolderHarness, title: string): string {
+    const sent = sentCreates(harness).find(
+      (create) =>
+        (create.properties as Record<string, unknown>).title === title,
+    );
+    return String(sent?.id);
+  }
+
+  it("sends an embedded file with its file", async () => {
+    // A folder of notes, whose search holds no file type.
+    harness = await folderHarness("folder-embed-push");
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    acceptUploads(harness.server);
+    mkdirSync(join(harness.dir, "img"), { recursive: true });
+    writeFileSync(join(harness.dir, "img", "pic.png"), png(1));
+    mkdirSync(join(harness.dir, "charts"), { recursive: true });
+    writeFileSync(join(harness.dir, "charts", "chart.png"), png(2));
+    // Beside them and embedded by nothing, so left alone as before.
+    writeFileSync(join(harness.dir, "loose.png"), png(3));
+    put(
+      harness,
+      "Note.md",
+      "---\ntitle: Note\n---\na picture ![](img/pic.png) and a chart ![[chart.png|300]]\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentTitles(harness).sort(),
+      "an embedded file was not sent with the note that embeds it, or a file nothing embeds was sent",
+    ).toEqual(["Note", "chart.png", "pic.png"]);
+    expect(pushed.value.scan.skipped).toBe(1);
+    const note = createdFor(harness, "Note");
+    const picId = createdFor(harness, "pic.png");
+    const chartId = createdFor(harness, "chart.png");
+    expect(
+      sentCreates(harness).find((create) => create.id === picId)?.type,
+      "the embedded file did not go as a file item",
+    ).toBe("core.file.image");
+    expect(
+      heldEdges(edges),
+      "an embed did not become its file's attached-to edge to the note",
+    ).toEqual(
+      [`${picId} attached-to ${note}`, `${chartId} attached-to ${note}`].sort(),
+    );
+    const order = harness.server.requests
+      .filter((request) => request.method === "POST")
+      .map((request) =>
+        request.pathname === "/items"
+          ? `/items ${String((JSON.parse(request.body) as { properties: { title?: string } }).properties.title)}`
+          : request.pathname,
+      );
+    expect(
+      order.indexOf("/blobs"),
+      "the embedded file's item went out before its bytes",
+    ).toBeLessThan(order.indexOf("/items pic.png"));
+    expect(
+      pushed.value.pull?.unmatched,
+      "an embedded file outside the search was flagged as an item the folder no longer holds",
+    ).toBe(0);
+    expect(
+      read(harness, "Note.md"),
+      "the note repeats in a line an attachment its body already shows",
+    ).not.toContain("has-attachment");
+
+    // Read back, the files change nothing.
+    const writes = sentEdgeWrites(harness).length;
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness)).toHaveLength(writes);
+  });
+
+  it("writes an embedded file where its link says", async () => {
+    const made = await edgeHarness(
+      "folder-embed-pull",
+      [
+        {
+          id: host,
+          properties: {
+            title: "Host",
+            body: "a picture ![](img/pic.png) and a chart ![[chart.png]]\n",
+          },
+        },
+        fileRow(pic, "pic.png", png(1)),
+        fileRow(chart, "chart.png", png(2)),
+      ],
+      [
+        attached("01a00000-0000-7000-8000-00000000e2e1", pic, host),
+        attached("01a00000-0000-7000-8000-00000000e2e2", chart, host),
+      ],
+      {
+        settings: {
+          search: { types: ["core.note"] },
+          first_placement: { "core.note": "notes" },
+        },
+      },
+    );
+    harness = made.harness;
+    scriptBlob(harness.server, png(1));
+    scriptBlob(harness.server, png(2));
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(existsSync(join(harness.dir, "notes", "Host.md"))).toBe(true);
+    expect(
+      readFileSync(join(harness.dir, "notes", "img", "pic.png")),
+      "an embedded file was not written at its path read from the note that embeds it",
+    ).toEqual(png(1));
+    expect(
+      readFileSync(join(harness.dir, "notes", "chart.png")),
+      "a file embedded by name was not written beside the note that embeds it",
+    ).toEqual(png(2));
+    expect(pulled.value.embeds).toEqual([]);
+    // The placements the pull wrote go at the next drain.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      made.door.placements(harness.settings.id),
+      "an embedded file's placement is not the path its link says",
+    ).toEqual(
+      new Map([
+        [host, "notes/Host.md"],
+        [pic, "notes/img/pic.png"],
+        [chart, "notes/chart.png"],
+      ]),
+    );
+
+    // Moved where a name still finds it, a file embedded by name stays; one
+    // embedded by path goes back where its link says, its placement with it.
+    mkdirSync(join(harness.dir, "charts"));
+    renameSync(
+      join(harness.dir, "notes", "chart.png"),
+      join(harness.dir, "charts", "chart.png"),
+    );
+    renameSync(
+      join(harness.dir, "notes", "img", "pic.png"),
+      join(harness.dir, "notes", "pic.png"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(existsSync(join(harness.dir, "charts", "chart.png"))).toBe(true);
+    expect(existsSync(join(harness.dir, "notes", "chart.png"))).toBe(false);
+    expect(
+      existsSync(join(harness.dir, "notes", "img", "pic.png")),
+      "a file embedded by path was left where its link no longer finds it",
+    ).toBe(true);
+    expect(existsSync(join(harness.dir, "notes", "pic.png"))).toBe(false);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(made.door.placements(harness.settings.id)).toEqual(
+      new Map([
+        [host, "notes/Host.md"],
+        [pic, "notes/img/pic.png"],
+        [chart, "charts/chart.png"],
+      ]),
+    );
+    expect(
+      heldEdges(made.door),
+      "moving an embedded file changed an edge",
+    ).toEqual(
+      [`${chart} attached-to ${host}`, `${pic} attached-to ${host}`].sort(),
+    );
+  });
+
+  it("reports an embed pointing outside the folder", async () => {
+    harness = await folderHarness("folder-embed-outside");
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    acceptUploads(harness.server);
+    // A real file there, so only the folder's rule keeps it from being sent.
+    writeFileSync(join(harness.dir, "..", "away.png"), png(1));
+    writeFileSync(join(harness.dir, "near.png"), png(2));
+    put(
+      harness,
+      "Note.md",
+      "---\ntitle: Note\n---\n![](../away.png) beside ![](near.png)\n",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentTitles(harness).sort(),
+      "a file outside the folder was sent, or the one inside was not",
+    ).toEqual(["Note", "near.png"]);
+    expect(
+      pushed.value.scan.embeds,
+      "an embed leading out of the folder was not reported",
+    ).toEqual([
+      expect.objectContaining({
+        path: "Note.md",
+        flag: "embed",
+        reason: expect.stringContaining("![](../away.png)") as unknown,
+      }),
+    ]);
+
+    // Pulled on another machine, the file is not written out there either.
+    const elsewhere = await edgeHarness(
+      "folder-embed-outside-pull",
+      [
+        {
+          id: host,
+          properties: {
+            title: "Host",
+            body: "![](../away.png) beside ![](near.png)\n",
+          },
+        },
+        fileRow(pic, "away.png", png(1)),
+        fileRow(chart, "near.png", png(2)),
+      ],
+      [
+        attached("01a00000-0000-7000-8000-00000000e2e3", pic, host),
+        attached("01a00000-0000-7000-8000-00000000e2e4", chart, host),
+      ],
+    ).then((made) => made.harness);
+    second = elsewhere;
+    scriptBlob(elsewhere.server, png(1));
+    scriptBlob(elsewhere.server, png(2));
+    const pulled = await elsewhere.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      readFileSync(join(elsewhere.dir, "near.png")),
+      "the pull wrote no embedded file at all, so the one below is absent for nothing",
+    ).toEqual(png(2));
+    expect(existsSync(join(elsewhere.dir, "..", "away.png"))).toBe(false);
+    expect(existsSync(join(elsewhere.dir, "away.png"))).toBe(false);
+    expect(
+      pulled.value.embeds,
+      "a pull did not report an embed leading out of the folder",
+    ).toEqual([
+      expect.objectContaining({
+        path: "Host.md",
+        flag: "embed",
+        reason: expect.stringContaining("![](../away.png)") as unknown,
+      }),
+    ]);
+  });
+
+  it("writes an item embedded at two paths at the first, and reports the other", async () => {
+    const made = await edgeHarness(
+      "folder-embed-two-paths",
+      [
+        {
+          id: host,
+          properties: { title: "First", body: "![](img/pic.png)\n" },
+        },
+        {
+          id: other,
+          properties: { title: "Second", body: "![](art/pic.png)\n" },
+        },
+        fileRow(pic, "pic.png", png(1)),
+      ],
+      [
+        attached("01a00000-0000-7000-8000-00000000e2e5", pic, host),
+        attached("01a00000-0000-7000-8000-00000000e2e6", pic, other),
+      ],
+    );
+    harness = made.harness;
+    scriptBlob(harness.server, png(1));
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      readFileSync(join(harness.dir, "art", "pic.png")),
+      "an item embedded at two paths was not written at the first in path order",
+    ).toEqual(png(1));
+    expect(
+      existsSync(join(harness.dir, "img", "pic.png")),
+      "an item embedded at two paths was written twice, as two files of one item",
+    ).toBe(false);
+    expect(
+      pulled.value.embeds,
+      "the link naming the other path was not reported",
+    ).toEqual([
+      expect.objectContaining({
+        path: "First.md",
+        flag: "embed",
+        reason: expect.stringContaining("art/pic.png") as unknown,
+      }),
+    ]);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(made.door.placements(harness.settings.id).get(pic)).toBe(
+      "art/pic.png",
+    );
+  });
+
+  it("removes the edge when the embed is taken out", async () => {
+    harness = await folderHarness("folder-embed-removed");
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    acceptUploads(harness.server);
+    writeFileSync(join(harness.dir, "a.png"), png(1));
+    writeFileSync(join(harness.dir, "b.png"), png(2));
+    put(
+      harness,
+      "Note.md",
+      "---\ntitle: Note\n---\nfirst ![](a.png) and more\n![[b.png]]\nthe end\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    const note = createdFor(harness, "Note");
+    const a = createdFor(harness, "a.png");
+    const b = createdFor(harness, "b.png");
+    expect(
+      heldEdges(edges),
+      "an embed made no edge, so there is nothing for taking it out to remove",
+    ).toEqual([`${a} attached-to ${note}`, `${b} attached-to ${note}`].sort());
+
+    // The embed taken out of its line, and a line holding one taken out.
+    edit(harness, "Note.md", " ![](a.png)", "");
+    const once = await harness.folder.push();
+    expect(once.ok, JSON.stringify(once)).toBe(true);
+    expect(
+      heldEdges(edges),
+      "the edge stayed when its embed was taken out of the body",
+    ).toEqual([`${b} attached-to ${note}`]);
+    edit(harness, "Note.md", "![[b.png]]\n", "");
+    const twice = await harness.folder.push();
+    expect(twice.ok, JSON.stringify(twice)).toBe(true);
+    expect(
+      heldEdges(edges),
+      "the edge stayed when the line holding its embed was taken out",
+    ).toEqual([]);
+    expect(
+      existsSync(join(harness.dir, "b.png")),
+      "the file an embed named went with the embed",
+    ).toBe(true);
+  });
+
+  it("removes no attachment while an embed names nothing, and removes it once none does", async () => {
+    harness = await folderHarness("folder-embed-stand-down");
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+    acceptUploads(harness.server);
+    writeFileSync(join(harness.dir, "a.png"), png(1));
+    writeFileSync(join(harness.dir, "b.png"), png(2));
+    put(harness, "Note.md", "---\ntitle: Note\n---\n![](a.png)\n![](b.png)\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const note = createdFor(harness, "Note");
+    const a = createdFor(harness, "a.png");
+    const b = createdFor(harness, "b.png");
+    expect(heldEdges(edges)).toEqual(
+      [`${a} attached-to ${note}`, `${b} attached-to ${note}`].sort(),
+    );
+    const deletes = async (): Promise<number> => {
+      const queued = await harness!.folder.device().queue();
+      if (!queued.ok) throw new Error(JSON.stringify(queued));
+      return withoutPlacements(harness!, queued.value).filter(
+        (row) => row.kind === "delete_edge",
+      ).length;
+    };
+
+    // One embed taken out while another names no file: an embed gone and an
+    // embed that names nothing look the same, so nothing is removed.
+    edit(harness, "Note.md", "![](a.png)\n![](b.png)", "![](gone.png)");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    expect(
+      await deletes(),
+      "an attachment was removed while an embed in the same file named nothing",
+    ).toBe(0);
+
+    // Once it names a file again, the removal the file held back lands.
+    edit(harness, "Note.md", "![](gone.png)", "![](b.png)");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      await deletes(),
+      "no removal was queued at all, so the one held back above is absent for nothing",
+    ).toBe(1);
+    expect(
+      heldEdges(edges),
+      "the removal held back while an embed named nothing never landed",
+    ).toEqual([`${b} attached-to ${note}`]);
+  });
+
+  it("lists under has-attachment only what the body does not embed", async () => {
+    const made = await edgeHarness(
+      "folder-embed-has-attachment",
+      [
+        {
+          id: host,
+          properties: { title: "Host", body: "shown ![](pic.png)\n" },
+        },
+        fileRow(pic, "pic.png", png(1)),
+        fileRow(scan, "scan.png", png(2)),
+      ],
+      [
+        attached("01a00000-0000-7000-8000-00000000e2e7", pic, host),
+        attached("01a00000-0000-7000-8000-00000000e2e8", scan, host),
+      ],
+    );
+    harness = made.harness;
+    scriptBlob(harness.server, png(1));
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(
+      frontOf(harness, "Host.md"),
+      "an attachment the body does not embed is not listed, so its edge is shown in no file",
+    ).toContain('has-attachment:\n  - "[[scan.png]]"');
+    expect(
+      frontOf(harness, "Host.md"),
+      "an attachment the body embeds is listed under has-attachment too, so one edge is said twice",
+    ).not.toContain("pic.png");
+    expect(existsSync(join(harness.dir, "pic.png"))).toBe(true);
+    expect(
+      existsSync(join(harness.dir, "scan.png")),
+      "an attachment nothing embeds was written as a file",
+    ).toBe(false);
+
+    // Read back, nothing changes; the line taken out removes only its edge.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentEdgeWrites(harness)).toEqual([]);
+    edit(
+      harness,
+      "Host.md",
+      /has-attachment:\n {2}- "\[\[scan\.png\]\]"\n/,
+      "",
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(heldEdges(made.door)).toEqual([`${pic} attached-to ${host}`]);
+  });
+});
 
 describe("what frontmatter says", () => {
   it("reads type, tags, tier and state as the item's own", async () => {
@@ -5669,7 +6114,7 @@ describe("what frontmatter says", () => {
     });
     expect((await harness.folder.pull()).ok).toBe(true);
     // An edit whose values the file already shows: the version moves, and
-    // the file is not written again for its line alone (`folders.md` 23).
+    // the file is not written again for its line alone (`folders.md` 24).
     edges.logItem(
       "item.updated",
       door!.update(id, { properties: { title: "T" }, version: 1 }),
@@ -9067,7 +9512,7 @@ describe("writing", () => {
     // It moves into a dot-led directory rather than being deleted and
     // rewritten, because the device, inode and birth time have to survive
     // for the arrival to be a rename rather than a new file
-    // (`folders.md` 12), and the walk does not enter a dot-led directory.
+    // (`folders.md` 13), and the walk does not enter a dot-led directory.
     const graceStarted = Date.now();
     mkdirSync(join(harness.dir, ".stash"), { recursive: true });
     renameSync(
@@ -9549,7 +9994,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
-    // path becomes a delete once the grace runs out (`folders.md` 20), so
+    // path becomes a delete once the grace runs out (`folders.md` 21), so
     // the absence is asserted after it: the grace is the folder's five
     // seconds, and nothing shorter can show a delete not being sent.
     await new Promise((resolve) => setTimeout(resolve, 6_000));
@@ -9782,7 +10227,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders.md` 35).
+    // again (`folders.md` 36).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();
@@ -10056,7 +10501,7 @@ describe("a file that is not a document", () => {
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
     expect(existsSync(join(harness.dir, "broken.txt"))).toBe(false);
 
-    // Its own write is not read back as a change (`folders.md` 19).
+    // Its own write is not read back as a change (`folders.md` 20).
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;
