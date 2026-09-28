@@ -2488,10 +2488,8 @@ describe("a local read answers the listing grammar as the server does", () => {
       ["garden"],
       { "parent-of": [child] },
     );
-    // Text a numeric bound casts, a source_id a boolean's REAL matches or
-    // not, and floats inside a container that JavaScript spells in full.
-    // `t` is text a REAL does not match, since a property has no affinity,
-    // beside numbers it does.
+    // Text a numeric bound casts, text a REAL matches by affinity (source_id)
+    // or never (`t`), and floats in a container JavaScript spells in full.
     const five = await seed({ title: "five", s: "5" }, [], undefined, "1.0");
     const ten = await seed({ title: "ten", s: "10" }, [], undefined, "1");
     const letters = await seed(
@@ -2723,5 +2721,13 @@ describe("a local read answers the listing grammar as the server does", () => {
     ).toEqual([linked, target].sort());
     const present = await device.list({ filter: "edge[references] exists" });
     expect(present.ok ? present.value : present).toEqual([]);
+    const other = await device.list({
+      filter: `edge[references] neq "${target}"`,
+    });
+    expect(
+      other.ok ? other.value.map((item) => item.id).sort() : other,
+    ).toEqual([linked, target].sort());
+    const to = await device.list({ filter: `edge[references] eq "${target}"` });
+    expect(to.ok ? to.value : to).toEqual([]);
   });
 });
