@@ -3,6 +3,7 @@ import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
 import type {
   Connector,
+  ConnectorHoldOutcome,
   ConnectorRun,
   ConnectorRunInput,
   ConnectorStore,
@@ -46,12 +47,12 @@ export class SqliteConnectorStore implements ConnectorStore {
       .limit(1)
       .get();
     const hold = await this.db
-      .select({ held_until: connectorHolds.held_until })
+      .select({ expires_at: connectorHolds.expires_at })
       .from(connectorHolds)
       .where(
         and(
           eq(connectorHolds.connector_id, row.id),
-          gt(connectorHolds.held_until, new Date().toISOString()),
+          gt(connectorHolds.expires_at, new Date().toISOString()),
         ),
       )
       .get();
@@ -65,7 +66,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       updated_at: row.updated_at,
       last_heartbeat_at: row.last_heartbeat_at,
       last_run: last ? toRun(last) : null,
-      held_until: hold?.held_until ?? null,
+      hold_expires_at: hold?.expires_at ?? null,
     };
   }
 
@@ -184,7 +185,7 @@ export class SqliteConnectorStore implements ConnectorStore {
     id: string,
     process: string,
     holdMs: number,
-  ): Promise<{ taken: boolean; held_until: string } | null> {
+  ): Promise<ConnectorHoldOutcome | null> {
     return this.db.transaction(async (tx) => {
       const registered = await tx
         .select({ id: connectors.id })
@@ -198,23 +199,21 @@ export class SqliteConnectorStore implements ConnectorStore {
         .from(connectorHolds)
         .where(eq(connectorHolds.connector_id, id))
         .get();
-      if (
-        current &&
-        current.process !== process &&
-        current.held_until > now.toISOString()
-      ) {
-        return { taken: false, held_until: current.held_until };
+      const live =
+        current !== undefined && current.expires_at > now.toISOString();
+      if (live && current.process !== process) {
+        return { taken: false, expires_at: current.expires_at };
       }
-      const heldUntil = new Date(now.getTime() + holdMs).toISOString();
+      const expiresAt = new Date(now.getTime() + holdMs).toISOString();
       await tx
         .insert(connectorHolds)
-        .values({ connector_id: id, process, held_until: heldUntil })
+        .values({ connector_id: id, process, expires_at: expiresAt })
         .onConflictDoUpdate({
           target: connectorHolds.connector_id,
-          set: { process, held_until: heldUntil },
+          set: { process, expires_at: expiresAt },
         })
         .run();
-      return { taken: true, held_until: heldUntil };
+      return { taken: true, expires_at: expiresAt, renewed: live };
     });
   }
 

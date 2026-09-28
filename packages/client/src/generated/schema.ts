@@ -1040,7 +1040,7 @@ export interface paths {
         put?: never;
         /**
          * Take or renew the hold on a registration
-         * @description Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it. The connector's own key only.
+         * @description Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.
          */
         post: operations["holdConnector"];
         /**
@@ -1073,7 +1073,7 @@ export interface paths {
         post?: never;
         /**
          * Clear what a connector keeps on the instance
-         * @description Removes the state document and every agreement of the registration's source, and writes an audit row. The connector's own key or the operator key.
+         * @description Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.
          */
         delete: operations["clearConnectorState"];
         options?: never;
@@ -1096,7 +1096,7 @@ export interface paths {
         put?: never;
         /**
          * Write a connector's agreements about rows
-         * @description Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
+         * @description Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
          */
         post: operations["writeConnectorAgreements"];
         delete?: never;
@@ -2568,8 +2568,8 @@ export interface components {
             updated_at: string;
             last_heartbeat_at: string | null;
             last_run: components["schemas"]["ConnectorRun"] | null;
-            /** @description Until when a process holds the registration, from `POST /connectors/{id}/hold`; `null` when none does or its hold has lapsed. */
-            held_until: string | null;
+            /** @description When the hold a process took at `POST /connectors/{id}/hold` lapses; `null` when no process holds the registration or its hold has lapsed. */
+            hold_expires_at: string | null;
         };
         ConnectorRun: {
             id: string;
@@ -11490,7 +11490,10 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        held_until: string;
+                        /** @description When the hold lapses. */
+                        expires_at: string;
+                        /** @description True only when this process's hold was still live when the call arrived; false on a first take and on a take after a lapse. A process answered false while it believed it held the registration re-reads the state and the agreements before writing again. */
+                        renewed: boolean;
                     };
                 };
             };
@@ -11554,7 +11557,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Another process holds the registration until `details.held_until`; nothing was written */
+            /** @description Another process holds the registration until `details.expires_at`; nothing was written */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11885,7 +11888,14 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConnectorState"];
+                    "application/json": {
+                        /** @description The document as written. */
+                        state: {
+                            [key: string]: unknown;
+                        };
+                        /** @description When it was written. */
+                        updated_at: string;
+                    };
                 };
             };
             /** @description A field missing, or one of the wrong shape or past its bound */
@@ -11948,7 +11958,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Another process holds the registration until `details.held_until`; nothing was written */
+            /** @description Another process holds the registration until `details.expires_at`; nothing was written */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12358,7 +12368,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorNotFoundRefusal"];
                 };
             };
-            /** @description Another process holds the registration until `details.held_until`; nothing was written */
+            /** @description Another process holds the registration until `details.expires_at`; nothing was written */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

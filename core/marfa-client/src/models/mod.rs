@@ -471,6 +471,8 @@ pub mod replace_config_request;
 pub use self::replace_config_request::ReplaceConfigRequest;
 pub mod replace_config_request_enforcement;
 pub use self::replace_config_request_enforcement::ReplaceConfigRequestEnforcement;
+pub mod replace_connector_state_200_response;
+pub use self::replace_connector_state_200_response::ReplaceConnectorState200Response;
 pub mod replace_connector_state_request;
 pub use self::replace_connector_state_request::ReplaceConnectorStateRequest;
 pub mod replace_item_metadata_request;

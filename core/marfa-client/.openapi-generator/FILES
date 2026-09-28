@@ -256,6 +256,7 @@ src/models/register_o_auth_client_401_response.rs
 src/models/register_o_auth_client_request.rs
 src/models/replace_config_request.rs
 src/models/replace_config_request_enforcement.rs
+src/models/replace_connector_state_200_response.rs
 src/models/replace_connector_state_request.rs
 src/models/replace_item_metadata_request.rs
 src/models/report_connector_run_request.rs

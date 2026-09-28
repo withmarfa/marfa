@@ -343,7 +343,7 @@ CREATE INDEX IF NOT EXISTS `idx_connector_agreements_item` ON `connector_agreeme
 CREATE TABLE IF NOT EXISTS `connector_holds` (
 	`connector_id` text PRIMARY KEY NOT NULL,
 	`process` text NOT NULL,
-	`held_until` text NOT NULL,
+	`expires_at` text NOT NULL,
 	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
 );
 

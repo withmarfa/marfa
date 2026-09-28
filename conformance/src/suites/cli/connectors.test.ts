@@ -315,14 +315,14 @@ describe("connectors from the terminal", () => {
       unique("cli-keeper"),
     ]);
 
-    const held = await connector.json<{ held_until: string }>([
+    const held = await connector.json<{ expires_at: string }>([
       "connectors",
       "hold",
       registered.id,
       "--process",
       "first",
     ]);
-    expect(held.held_until).toMatch(/^\d{4}-/);
+    expect(held.expires_at).toMatch(/^\d{4}-/);
     const taken = await connector.refused([
       "connectors",
       "hold",

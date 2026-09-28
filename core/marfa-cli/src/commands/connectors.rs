@@ -374,6 +374,11 @@ pub fn agreements_write_request(
             "agreements are a JSON object with `set` and `clear`".into(),
         ));
     };
+    if body.contains_key("process") {
+        return Err(CliError::Invalid(
+            "name the process with --process, not as `process` in --body".into(),
+        ));
+    }
     body.insert("process".into(), Value::String(process.to_string()));
     Ok(Request::post(&["connectors", id, "agreements"]).json(Value::Object(body)))
 }

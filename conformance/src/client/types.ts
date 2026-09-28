@@ -279,12 +279,22 @@ export interface ConnectorRow {
   updated_at: string;
   last_heartbeat_at: string | null;
   last_run: ConnectorRun | null;
-  held_until: string | null;
+  hold_expires_at: string | null;
+}
+
+export interface ConnectorHoldTaken {
+  expires_at: string;
+  renewed: boolean;
 }
 
 export interface ConnectorStateRow {
   state: Record<string, unknown>;
   updated_at: string | null;
+}
+
+export interface ConnectorStateWritten {
+  state: Record<string, unknown>;
+  updated_at: string;
 }
 
 export interface ConnectorAgreementRow {

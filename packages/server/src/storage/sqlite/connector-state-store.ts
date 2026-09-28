@@ -43,8 +43,8 @@ async function heldByAnother(
     .get();
   return hold !== undefined &&
     hold.process !== fence.process &&
-    hold.held_until > now
-    ? { held_until: hold.held_until }
+    hold.expires_at > now
+    ? { expires_at: hold.expires_at }
     : null;
 }
 

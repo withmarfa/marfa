@@ -325,7 +325,7 @@ pub enum ReleaseConnectorHoldSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ReplaceConnectorStateSuccess {
-    Status200(models::ConnectorState),
+    Status200(models::ReplaceConnectorState200Response),
     UnknownValue(serde_json::Value),
 }
 
@@ -629,7 +629,7 @@ pub enum WriteConnectorAgreementsError {
     UnknownValue(serde_json::Value),
 }
 
-/// Removes the state document and every agreement of the registration's source, and writes an audit row. The connector's own key or the operator key.
+/// Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.
 pub fn clear_connector_state(
     configuration: &configuration::Configuration,
     params: ClearConnectorStateParams,
@@ -979,7 +979,7 @@ pub fn heartbeat_connector(
     }
 }
 
-/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it. The connector's own key only.
+/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.
 pub fn hold_connector(
     configuration: &configuration::Configuration,
     params: HoldConnectorParams,
@@ -1536,7 +1536,7 @@ pub fn retire_inbound_endpoint(
     }
 }
 
-/// Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
+/// Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most 500 in each list, each record at most 16 KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in `skipped`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its `updated_at` and its version as they were. While another process holds the registration this answers `409 connector_held` and writes nothing. The connector's own key only.
 pub fn write_connector_agreements(
     configuration: &configuration::Configuration,
     params: WriteConnectorAgreementsParams,

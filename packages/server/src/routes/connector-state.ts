@@ -57,6 +57,11 @@ const ConnectorStateSchema = z
   })
   .openapi("ConnectorState");
 
+const WrittenStateSchema = z.object({
+  state: JsonObject.describe("The document as written."),
+  updated_at: z.string().describe("When it was written."),
+});
+
 const ConnectorAgreementSchema = z
   .object({
     item_id: z.string(),
@@ -112,7 +117,7 @@ const heldResponse = {
       },
     },
     description:
-      "Another process holds the registration until `details.held_until`; nothing was written",
+      "Another process holds the registration until `details.expires_at`; nothing was written",
   },
 };
 
@@ -123,7 +128,7 @@ const holdRoute = createRoute({
   tags: ["Connectors"],
   summary: "Take or renew the hold on a registration",
   description:
-    "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it. The connector's own key only.",
+    "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. The connector's own key only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -137,7 +142,14 @@ const holdRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({ held_until: z.string() }),
+          schema: z.object({
+            expires_at: z.string().describe("When the hold lapses."),
+            renewed: z
+              .boolean()
+              .describe(
+                "True only when this process's hold was still live when the call arrived; false on a first take and on a take after a lapse. A process answered false while it believed it held the registration re-reads the state and the agreements before writing again.",
+              ),
+          }),
         },
       },
       description: "Held",
@@ -210,7 +222,7 @@ const putStateRoute = createRoute({
   },
   responses: {
     200: {
-      content: { "application/json": { schema: ConnectorStateSchema } },
+      content: { "application/json": { schema: WrittenStateSchema } },
       description: "The state, written",
     },
     ...bodyRefusal,
@@ -226,7 +238,7 @@ const clearStateRoute = createRoute({
   tags: ["Connectors"],
   summary: "Clear what a connector keeps on the instance",
   description:
-    "Removes the state document and every agreement of the registration's source, and writes an audit row. The connector's own key or the operator key.",
+    "Removes the state document and every agreement of the registration's source, which every registration of that source reads, and writes an audit row against the registration named. No hold fences it. The connector's own key or the operator key.",
   security: [{ bearerAuth: [] }],
   request: { params: IdParam },
   responses: {
@@ -244,7 +256,7 @@ const writeAgreementsRoute = createRoute({
   path: "/{id}/agreements",
   tags: ["Connectors"],
   summary: "Write a connector's agreements about rows",
-  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A field the body does not declare is refused. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. While another process holds the registration this answers \`409 connector_held\` and writes nothing. The connector's own key only.`,
+  description: `Writes and removes the connector's records of what it and its vendor last agreed about rows, one per row for the registration's source: at most ${String(MAX_AGREEMENTS_PER_REQUEST)} in each list, each record at most ${String(MAX_RECORD_BYTES / 1024)} KiB serialized, and no row named twice. A row that is not stored, or whose type the key's type map does not read, is skipped and named in \`skipped\`; a trashed row is stored. A top-level field the body does not declare is refused. A record announces nothing and leaves the row, its \`updated_at\` and its version as they were. While another process holds the registration this answers \`409 connector_held\` and writes nothing. The connector's own key only.`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -354,11 +366,11 @@ const listAgreementsRoute = createRoute({
   },
 });
 
-function held(heldUntil: string): MarfaError {
+function held(expiresAt: string): MarfaError {
   return new MarfaError(
     ErrorCode.CONNECTOR_HELD,
-    `Another process holds this connector until ${heldUntil}`,
-    { held_until: heldUntil },
+    `Another process holds this connector until ${expiresAt}`,
+    { expires_at: expiresAt },
   );
 }
 
@@ -386,8 +398,8 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
         "Connector not found",
       );
     }
-    if (!hold.taken) throw held(hold.held_until);
-    return c.json({ held_until: hold.held_until }, 200);
+    if (!hold.taken) throw held(hold.expires_at);
+    return c.json({ expires_at: hold.expires_at, renewed: hold.renewed }, 200);
   });
 
   router.openapi(releaseHoldRoute, async (c) => {
@@ -426,7 +438,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       connector.source,
       state,
     );
-    if (!("state" in written)) throw held(written.held_until);
+    if (!("state" in written)) throw held(written.expires_at);
     return c.json(written, 200);
   });
 
@@ -478,7 +490,7 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       { set, clear },
       (type) => mayReadType(key, type),
     );
-    if (!("written" in written)) throw held(written.held_until);
+    if (!("written" in written)) throw held(written.expires_at);
     return c.json(written, 200);
   });
 

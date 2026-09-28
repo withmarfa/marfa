@@ -2754,9 +2754,15 @@ export interface Connector {
   updated_at: string;
   last_heartbeat_at: string | null;
   last_run: ConnectorRun | null;
-  /** Until when a process holds the registration; null when none does. */
-  held_until: string | null;
+  /** When the live hold on the registration lapses; null when none is live. */
+  hold_expires_at: string | null;
 }
+
+/** A take answers `renewed` true only when the same process's hold was still
+ *  live, so a process can tell a lapse from an unbroken renewal. */
+export type ConnectorHoldOutcome =
+  | { taken: true; expires_at: string; renewed: boolean }
+  | { taken: false; expires_at: string };
 
 export interface ConnectorStore {
   /** Register the key, or update its registration: one per key, decided
@@ -2788,7 +2794,7 @@ export interface ConnectorStore {
     id: string,
     process: string,
     holdMs: number,
-  ): Promise<{ taken: boolean; held_until: string } | null>;
+  ): Promise<ConnectorHoldOutcome | null>;
   /** Release the hold if `process` holds it. */
   releaseHold(id: string, process: string): Promise<void>;
 }
@@ -2803,7 +2809,7 @@ export interface ConnectorAgreement {
 
 /** Why a fenced write wrote nothing: another process holds the registration. */
 export interface ConnectorHeld {
-  held_until: string;
+  expires_at: string;
 }
 
 /** What a connector keeps on the instance, keyed by its registration's source. */

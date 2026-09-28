@@ -22,10 +22,12 @@ import type {
   ConnectorAgreementRow,
   ConnectorAgreementsInput,
   ConnectorAgreementsWritten,
+  ConnectorHoldTaken,
   ConnectorRow,
   ConnectorRun,
   ConnectorRunInput,
   ConnectorStateRow,
+  ConnectorStateWritten,
   InboundDeliveryRow,
   InboundEndpointRow,
   InboundOutcome,
@@ -853,8 +855,8 @@ export class MarfaClient {
   async holdConnector(
     id: string,
     process: string,
-  ): Promise<ApiResponse<{ held_until: string }>> {
-    return this.request<{ held_until: string }>(`/connectors/${id}/hold`, {
+  ): Promise<ApiResponse<ConnectorHoldTaken>> {
+    return this.request<ConnectorHoldTaken>(`/connectors/${id}/hold`, {
       method: "POST",
       body: { process },
     });
@@ -877,8 +879,8 @@ export class MarfaClient {
   async replaceConnectorState(
     id: string,
     input: { process: string; state: Record<string, unknown> },
-  ): Promise<ApiResponse<ConnectorStateRow>> {
-    return this.request<ConnectorStateRow>(`/connectors/${id}/state`, {
+  ): Promise<ApiResponse<ConnectorStateWritten>> {
+    return this.request<ConnectorStateWritten>(`/connectors/${id}/state`, {
       method: "PUT",
       body: input,
     });

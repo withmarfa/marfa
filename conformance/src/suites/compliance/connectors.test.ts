@@ -57,7 +57,7 @@ describe("registration", () => {
     expect(created.data.updated_at).toBe(created.data.registered_at);
     expect(created.data.last_heartbeat_at).toBeNull();
     expect(created.data.last_run).toBeNull();
-    expect(created.data.held_until).toBeNull();
+    expect(created.data.hold_expires_at).toBeNull();
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     const theirs = await register(other, `${ctx.runId} calendar reader`);

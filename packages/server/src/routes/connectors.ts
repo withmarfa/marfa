@@ -55,11 +55,11 @@ const ConnectorSchema = z
     updated_at: z.string(),
     last_heartbeat_at: z.string().nullable(),
     last_run: nullableRef(ConnectorRunSchema),
-    held_until: z
+    hold_expires_at: z
       .string()
       .nullable()
       .describe(
-        "Until when a process holds the registration, from `POST /connectors/{id}/hold`; `null` when none does or its hold has lapsed.",
+        "When the hold a process took at `POST /connectors/{id}/hold` lapses; `null` when no process holds the registration or its hold has lapsed.",
       ),
   })
   .openapi("Connector");

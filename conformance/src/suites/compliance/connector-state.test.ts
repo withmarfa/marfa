@@ -87,6 +87,18 @@ async function note(body = "agreed"): Promise<MarfaItem> {
   return created.data.item;
 }
 
+/** A key of its own under `source`, which a revoked key may have held. */
+async function mintUnder(source: string, label: string): Promise<MarfaClient> {
+  const minted = await getClientFromEnv().client.createKey({
+    label: `${source}-${label}`,
+    source,
+    default_tier: "library",
+  });
+  expect(minted.status).toBe(201);
+  trackKey(ctx, minted.data.id);
+  return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+}
+
 async function found(mine: Connector, ids: string[]): Promise<string[]> {
   const res = await mine.client.findConnectorAgreements(mine.id, ids);
   expect(res.status).toBe(200);
@@ -98,45 +110,47 @@ describe("the hold", () => {
     const mine = await connector("hold-take");
     const process = randomUUID();
     expect(
-      (await mine.client.getConnector(mine.id)).data.held_until,
+      (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
     // A heartbeat takes no hold.
     const beat = await mine.client.heartbeatConnector(mine.id);
     expect(beat.status).toBe(200);
     expect(
-      (await mine.client.getConnector(mine.id)).data.held_until,
+      (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
 
     const before = Date.now();
     const taken = await mine.client.holdConnector(mine.id, process);
     expect(taken.status).toBe(200);
     await expectMatchesSchema("POST", "/connectors/{id}/hold", 200, taken.data);
-    expect(taken.data.held_until).toMatch(ISO);
+    expect(taken.data.expires_at).toMatch(ISO);
+    expect(taken.data.renewed).toBe(false);
     // The server's clock plus the window, three minutes unless named.
-    const window = Date.parse(taken.data.held_until) - before;
+    const window = Date.parse(taken.data.expires_at) - before;
     expect(window).toBeGreaterThanOrEqual(179_000);
     expect(window).toBeLessThanOrEqual(185_000);
 
     const read = await other.getConnector(mine.id);
     expect(read.status).toBe(200);
     await expectMatchesSchema("GET", "/connectors/{id}", 200, read.data);
-    expect(read.data.held_until).toBe(taken.data.held_until);
+    expect(read.data.hold_expires_at).toBe(taken.data.expires_at);
     // A hold stamps no heartbeat.
     expect(read.data.last_heartbeat_at).toBe(beat.data.last_heartbeat_at);
     const listed = await other.listConnectors();
     await expectMatchesSchema("GET", "/connectors", 200, listed.data);
-    expect(listed.data.data.find((row) => row.id === mine.id)?.held_until).toBe(
-      taken.data.held_until,
-    );
+    expect(
+      listed.data.data.find((row) => row.id === mine.id)?.hold_expires_at,
+    ).toBe(taken.data.expires_at);
 
     await sleep(5);
     const renewed = await mine.client.holdConnector(mine.id, process);
     expect(renewed.status).toBe(200);
-    expect(Date.parse(renewed.data.held_until)).toBeGreaterThan(
-      Date.parse(taken.data.held_until),
+    expect(renewed.data.renewed).toBe(true);
+    expect(Date.parse(renewed.data.expires_at)).toBeGreaterThan(
+      Date.parse(taken.data.expires_at),
     );
-    expect((await other.getConnector(mine.id)).data.held_until).toBe(
-      renewed.data.held_until,
+    expect((await other.getConnector(mine.id)).data.hold_expires_at).toBe(
+      renewed.data.expires_at,
     );
   });
 
@@ -163,7 +177,7 @@ describe("the hold", () => {
     expect(unnamed.status).toBe(400);
     expect(unnamed.error?.error.code).toBe("missing_required_field");
     expect(
-      (await mine.client.getConnector(mine.id)).data.held_until,
+      (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
 
     // At the bound, taken and released.
@@ -186,8 +200,8 @@ describe("the hold", () => {
     const refused = await mine.client.holdConnector(mine.id, second);
     expect(refused.status).toBe(409);
     expect(refused.error?.error.code).toBe("connector_held");
-    expect(refused.error?.error.details?.["held_until"]).toBe(
-      taken.data.held_until,
+    expect(refused.error?.error.details?.["expires_at"]).toBe(
+      taken.data.expires_at,
     );
     await expectMatchesSchema(
       "POST",
@@ -195,8 +209,8 @@ describe("the hold", () => {
       409,
       refused.error,
     );
-    expect((await mine.client.getConnector(mine.id)).data.held_until).toBe(
-      taken.data.held_until,
+    expect((await mine.client.getConnector(mine.id)).data.hold_expires_at).toBe(
+      taken.data.expires_at,
     );
   });
 
@@ -210,8 +224,8 @@ describe("the hold", () => {
     const notTheirs = await mine.client.releaseConnectorHold(mine.id, second);
     expect(notTheirs.status).toBe(200);
     expect(notTheirs.data).toEqual({ ok: true });
-    expect((await mine.client.getConnector(mine.id)).data.held_until).toBe(
-      taken.data.held_until,
+    expect((await mine.client.getConnector(mine.id)).data.hold_expires_at).toBe(
+      taken.data.expires_at,
     );
 
     const released = await mine.client.releaseConnectorHold(mine.id, first);
@@ -224,7 +238,7 @@ describe("the hold", () => {
     );
     expect(released.data).toEqual({ ok: true });
     expect(
-      (await mine.client.getConnector(mine.id)).data.held_until,
+      (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
     expect(
       (await mine.client.releaseConnectorHold(mine.id, first)).status,
@@ -242,7 +256,7 @@ describe("the hold", () => {
       expect(taken.error?.error.code).toBe("forbidden");
     }
     expect(
-      (await mine.client.getConnector(mine.id)).data.held_until,
+      (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
     const held = await mine.client.holdConnector(mine.id, process);
     expect(held.status).toBe(200);
@@ -251,8 +265,8 @@ describe("the hold", () => {
       expect(released.status).toBe(403);
       expect(released.error?.error.code).toBe("forbidden");
     }
-    expect((await mine.client.getConnector(mine.id)).data.held_until).toBe(
-      held.data.held_until,
+    expect((await mine.client.getConnector(mine.id)).data.hold_expires_at).toBe(
+      held.data.expires_at,
     );
   });
 });
@@ -271,15 +285,17 @@ describe("the hold on an instance that names its window", () => {
     server?.stop();
   });
 
-  it("lets another process take a hold that lapsed, and takes a write from any process once it has", async () => {
+  async function registered(
+    label: string,
+  ): Promise<{ own: MarfaClient; id: string }> {
     if (server === undefined) throw new Error("no server");
     const minter = new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: server.workingKey,
     });
     const minted = await minter.createKey({
-      label: "lapse",
-      source: "connector-hold-lapse",
+      label,
+      source: `connector-hold-${label}`,
       default_tier: "library",
     });
     expect(minted.status).toBe(201);
@@ -287,16 +303,23 @@ describe("the hold on an instance that names its window", () => {
       baseUrl: server.apiUrl,
       apiKey: minted.data.key,
     });
-    const registered = await own.registerConnector({ name: "lapse" });
-    expect(registered.status).toBe(201);
-    const id = registered.data.id;
+    const registration = await own.registerConnector({ name: label });
+    expect(registration.status).toBe(201);
+    return { own, id: registration.data.id };
+  }
+
+  const lapse = (hold: { expires_at: string }) =>
+    sleep(Date.parse(hold.expires_at) - Date.now() + 250);
+
+  it("lets another process take a hold that lapsed, and takes a write from any process once it has", async () => {
+    const { own, id } = await registered("lapse");
     const first = randomUUID();
     const second = randomUUID();
 
     const before = Date.now();
     const taken = await own.holdConnector(id, first);
     expect(taken.status).toBe(200);
-    const window = Date.parse(taken.data.held_until) - before;
+    const window = Date.parse(taken.data.expires_at) - before;
     expect(window).toBeGreaterThanOrEqual(WINDOW_MS - 1_000);
     expect(window).toBeLessThanOrEqual(WINDOW_MS + 1_000);
     const live = await own.holdConnector(id, second);
@@ -308,8 +331,8 @@ describe("the hold on an instance that names its window", () => {
     });
     expect(fenced.status).toBe(409);
 
-    await sleep(Date.parse(taken.data.held_until) - Date.now() + 250);
-    expect((await own.getConnector(id)).data.held_until).toBeNull();
+    await lapse(taken.data);
+    expect((await own.getConnector(id)).data.hold_expires_at).toBeNull();
     const written = await own.replaceConnectorState(id, {
       process: second,
       state: { cursor: "after" },
@@ -319,9 +342,46 @@ describe("the hold on an instance that names its window", () => {
     expect(retaken.status).toBe(200);
     const displaced = await own.holdConnector(id, first);
     expect(displaced.status).toBe(409);
-    expect(displaced.error?.error.details?.["held_until"]).toBe(
-      retaken.data.held_until,
+    expect(displaced.error?.error.details?.["expires_at"]).toBe(
+      retaken.data.expires_at,
     );
+  });
+
+  it("tells a process whose hold lapsed that it did not renew it", async () => {
+    const { own, id } = await registered("renewal");
+    const first = randomUUID();
+    const second = randomUUID();
+
+    const taken = await own.holdConnector(id, first);
+    expect(taken.status).toBe(200);
+    expect(taken.data.renewed).toBe(false);
+    // The witness: a renewal while the hold is live says so.
+    const unbroken = await own.holdConnector(id, first);
+    expect(unbroken.status).toBe(200);
+    expect(unbroken.data.renewed).toBe(true);
+
+    // Lapsed with nothing between, the same process's take is not a renewal.
+    await lapse(unbroken.data);
+    const alone = await own.holdConnector(id, first);
+    expect(alone.status).toBe(200);
+    expect(alone.data.renewed).toBe(false);
+
+    // Lapsed while another process took it, wrote and gave it up.
+    await lapse(alone.data);
+    const between = await own.holdConnector(id, second);
+    expect(between.status).toBe(200);
+    expect(between.data.renewed).toBe(false);
+    const written = await own.replaceConnectorState(id, {
+      process: second,
+      state: { cursor: "second" },
+    });
+    expect(written.status).toBe(200);
+    expect((await own.releaseConnectorHold(id, second)).status).toBe(200);
+    const back = await own.holdConnector(id, first);
+    expect(back.status).toBe(200);
+    expect(back.data.renewed).toBe(false);
+    // What it re-reads before writing again: the other process's work.
+    expect((await own.getConnectorState(id)).data).toEqual(written.data);
   });
 });
 
@@ -352,8 +412,8 @@ describe("what a connector keeps on the instance", () => {
       state: { page: 2 },
     });
     expect(second.status).toBe(200);
-    expect(Date.parse(second.data.updated_at ?? "")).toBeGreaterThan(
-      Date.parse(first.data.updated_at ?? ""),
+    expect(Date.parse(second.data.updated_at)).toBeGreaterThan(
+      Date.parse(first.data.updated_at),
     );
     // Replaced whole, not merged.
     expect((await mine.client.getConnectorState(mine.id)).data).toEqual({
@@ -897,8 +957,8 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(state.status).toBe(409);
     expect(state.error?.error.code).toBe("connector_held");
-    expect(state.error?.error.details?.["held_until"]).toBe(
-      held.data.held_until,
+    expect(state.error?.error.details?.["expires_at"]).toBe(
+      held.data.expires_at,
     );
     await expectMatchesSchema(
       "PUT",
@@ -912,8 +972,8 @@ describe("what a connector keeps on the instance", () => {
     });
     expect(agreements.status).toBe(409);
     expect(agreements.error?.error.code).toBe("connector_held");
-    expect(agreements.error?.error.details?.["held_until"]).toBe(
-      held.data.held_until,
+    expect(agreements.error?.error.details?.["expires_at"]).toBe(
+      held.data.expires_at,
     );
     await expectMatchesSchema(
       "POST",
@@ -1105,24 +1165,72 @@ describe("what a connector keeps on the instance", () => {
     expect(audited.data.data.map((row) => row.key_id)).toContain(mine.keyId);
   });
 
+  it("keeps each source's state and agreements apart", async () => {
+    const a = await connector("apart-a");
+    const b = await connector("apart-b");
+    expect(a.source).not.toBe(b.source);
+    const process = randomUUID();
+    const row = await note("shared");
+    for (const mine of [a, b]) {
+      const written = await mine.client.writeConnectorAgreements(mine.id, {
+        process,
+        set: [{ item_id: row.id, waiting: true, record: { etag: mine.id } }],
+      });
+      expect(written.data).toEqual({ written: 1, cleared: 0, skipped: [] });
+    }
+    for (const mine of [a, b]) {
+      const own = [
+        { item_id: row.id, waiting: true, record: { etag: mine.id } },
+      ];
+      const read = await mine.client.findConnectorAgreements(mine.id, [row.id]);
+      expect(read.data.data.map(({ updated_at: _, ...rest }) => rest)).toEqual(
+        own,
+      );
+      const waiting = await mine.client.listConnectorAgreements(mine.id, {
+        waiting: true,
+      });
+      expect(
+        waiting.data.data.map(({ updated_at: _, ...rest }) => rest),
+      ).toEqual(own);
+    }
+
+    const aState = await a.client.replaceConnectorState(a.id, {
+      process,
+      state: { cursor: "a" },
+    });
+    expect(aState.status).toBe(200);
+    expect((await b.client.getConnectorState(b.id)).data).toEqual({
+      state: {},
+      updated_at: null,
+    });
+    const bState = await b.client.replaceConnectorState(b.id, {
+      process,
+      state: { cursor: "b" },
+    });
+    expect(bState.status).toBe(200);
+    expect((await a.client.getConnectorState(a.id)).data).toEqual(aState.data);
+
+    expect((await a.client.clearConnectorState(a.id)).status).toBe(200);
+    // The witness: A's own went.
+    expect((await a.client.getConnectorState(a.id)).data).toEqual({
+      state: {},
+      updated_at: null,
+    });
+    expect(await found(a, [row.id])).toEqual([]);
+    expect((await b.client.getConnectorState(b.id)).data).toEqual(bState.data);
+    expect(await found(b, [row.id])).toEqual([row.id]);
+  });
+
   it("hands the state and the agreements to the next key with the same source", async () => {
     const source = `${ctx.source}-successor`;
-    const provisioner = getClientFromEnv().client;
     const operator = getOperatorClient();
-    const mint = async (label: string) => {
-      const minted = await provisioner.createKey({
-        label: `${source}-${label}`,
-        source,
-        default_tier: "library",
-      });
-      expect(minted.status).toBe(201);
-      trackKey(ctx, minted.data.id);
-      return new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
-    };
     const process = randomUUID();
     const row = await note("handed on");
 
-    const first = await register(await mint("first"), "predecessor");
+    const first = await register(
+      await mintUnder(source, "first"),
+      "predecessor",
+    );
     const state = await first.client.replaceConnectorState(first.id, {
       process,
       state: { cursor: "handed on" },
@@ -1137,12 +1245,13 @@ describe("what a connector keeps on the instance", () => {
       ).data.written,
     ).toBe(1);
     expect((await operator.revokeKey(first.keyId)).status).toBe(200);
-    expect((await operator.deleteConnector(first.id)).status).toBe(200);
 
-    const next = await register(await mint("second"), "successor");
+    // Revoked, not removed: the first registration stands beside the next.
+    const next = await register(await mintUnder(source, "second"), "successor");
     expect(next.id).not.toBe(first.id);
     expect(next.keyId).not.toBe(first.keyId);
     expect(next.source).toBe(source);
+    expect((await operator.getConnector(first.id)).status).toBe(200);
     expect((await next.client.getConnectorState(next.id)).data).toEqual(
       state.data,
     );
@@ -1158,5 +1267,77 @@ describe("what a connector keeps on the instance", () => {
         await next.client.listConnectorAgreements(next.id, { waiting: true })
       ).data.data.map((r) => r.item_id),
     ).toEqual([row.id]);
+
+    // The operator's clear through the first registration takes the
+    // successor's live state too, and no hold fences it.
+    const held = await next.client.holdConnector(next.id, process);
+    expect(held.status).toBe(200);
+    const live = await next.client.replaceConnectorState(next.id, {
+      process,
+      state: { cursor: "live" },
+    });
+    expect(live.status).toBe(200);
+    expect((await operator.clearConnectorState(first.id)).status).toBe(200);
+    expect((await next.client.getConnectorState(next.id)).data).toEqual({
+      state: {},
+      updated_at: null,
+    });
+    expect(await found(next, [row.id])).toEqual([]);
+    const audited = await client.listAudit({
+      resource_id: first.id,
+      action: "connector_state.clear",
+    });
+    expect(audited.status).toBe(200);
+    expect(audited.data.data.map((r) => r.details)).toEqual([
+      { source, state: true, agreements: 1 },
+    ]);
+    expect(
+      (
+        await client.listAudit({
+          resource_id: next.id,
+          action: "connector_state.clear",
+        })
+      ).data.data,
+    ).toEqual([]);
+  });
+
+  it("clears what a removed registration left, through a later registration of its source", async () => {
+    const source = `${ctx.source}-orphaned`;
+    const operator = getOperatorClient();
+    const process = randomUUID();
+    const row = await note("left behind");
+
+    const gone = await register(await mintUnder(source, "gone"), "removed");
+    expect(
+      (
+        await gone.client.replaceConnectorState(gone.id, {
+          process,
+          state: { cursor: "left behind" },
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await gone.client.writeConnectorAgreements(gone.id, {
+          process,
+          set: [{ item_id: row.id, waiting: true, record: {} }],
+        })
+      ).data.written,
+    ).toBe(1);
+    expect((await operator.revokeKey(gone.keyId)).status).toBe(200);
+    expect((await operator.deleteConnector(gone.id)).status).toBe(200);
+
+    const later = await register(await mintUnder(source, "later"), "clearer");
+    // The witness: what the removed registration kept is still there.
+    expect((await later.client.getConnectorState(later.id)).data.state).toEqual(
+      { cursor: "left behind" },
+    );
+    expect(await found(later, [row.id])).toEqual([row.id]);
+    expect((await operator.clearConnectorState(later.id)).status).toBe(200);
+    expect((await later.client.getConnectorState(later.id)).data).toEqual({
+      state: {},
+      updated_at: null,
+    });
+    expect(await found(later, [row.id])).toEqual([]);
   });
 });

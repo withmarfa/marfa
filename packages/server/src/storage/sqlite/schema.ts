@@ -1099,7 +1099,7 @@ export const connectorHolds = sqliteTable("connector_holds", {
     .primaryKey()
     .references(() => connectors.id, { onDelete: "cascade" }),
   process: text("process").notNull(),
-  held_until: text("held_until").notNull(),
+  expires_at: text("expires_at").notNull(),
 });
 
 // Keyed by source rather than registration, so a key minted later under the

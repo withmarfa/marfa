@@ -812,6 +812,12 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
         matches!(not_a_batch, Err(CliError::Invalid(_))),
         "{not_a_batch:?}"
     );
+    let named_twice =
+        connectors::agreements_write_request("c1", "p1", json!({ "process": "p2", "clear": [] }));
+    assert!(
+        matches!(&named_twice, Err(CliError::Invalid(message)) if message.contains("--process")),
+        "{named_twice:?}"
+    );
 
     let found = connectors::agreements_find_request("c1", &["i1".into(), "i2".into()]);
     assert_eq!(found.method, Method::Post);

@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { subscribeAll } from "../pubsub.js";
+import type { LiveFrame } from "../pubsub.js";
 import {
-  collectItemEvents,
   createTestContext,
   request,
   seedOauthBearer,
@@ -94,14 +95,16 @@ describe("the hold", () => {
       });
     const taken = await hold("first");
     expect(taken.status).toBe(200);
-    const { held_until } = await json<{ held_until: string }>(taken);
+    const { expires_at } = await json<{ expires_at: string }>(taken);
     const refused = await hold("second");
     expect(refused.status).toBe(409);
     expect(await json<{ error: { details: unknown } }>(refused)).toMatchObject({
-      error: { code: "connector_held", details: { held_until } },
+      error: { code: "connector_held", details: { expires_at } },
     });
-    await sleep(Date.parse(held_until) - Date.now() + 50);
-    expect((await ctx.storage.connectors.get(mine.id))?.held_until).toBeNull();
+    await sleep(Date.parse(expires_at) - Date.now() + 50);
+    expect(
+      (await ctx.storage.connectors.get(mine.id))?.hold_expires_at,
+    ).toBeNull();
     expect((await hold("second")).status).toBe(200);
   });
 
@@ -193,12 +196,18 @@ describe("what a connector keeps", () => {
     expect(await agreements()).toEqual([]);
   });
 
-  it("writes an agreement without an event, a version or a touch to the row", async () => {
+  it("writes an agreement without an event of any kind, a version or a touch to the row", async () => {
     const { key, connector: mine } = await connector();
     const row = await note();
     const controller = new AbortController();
-    const { events, done } = collectItemEvents(controller.signal);
+    const frames: LiveFrame[] = [];
+    const done = (async () => {
+      for await (const frame of subscribeAll({ signal: controller.signal })) {
+        frames.push(frame);
+      }
+    })();
     await settle();
+    const opened = frames.length;
     for (const body of [
       { process: "p", set: [{ item_id: row.id, waiting: true, record: {} }] },
       { process: "p", clear: [row.id] },
@@ -215,9 +224,7 @@ describe("what a connector keeps", () => {
       expect(res.status).toBe(200);
     }
     await settle();
-    const about = () =>
-      events.filter((e) => JSON.stringify(e).includes(row.id));
-    const quiet = about().length;
+    const closed = frames.length;
     const read = await request(ctx.app, "GET", `/items/${row.id}`, {
       key: ctx.workingKey,
     });
@@ -225,7 +232,7 @@ describe("what a connector keeps", () => {
       updated_at: row.updated_at,
       version: row.version,
     });
-    // The witness: the log does move for an ordinary write to the row.
+    // The witness: the same subscription sees an ordinary write to the row.
     const patched = await request(ctx.app, "PATCH", `/items/${row.id}`, {
       key: ctx.workingKey,
       body: { version: row.version, properties: { body: "changed" } },
@@ -234,8 +241,13 @@ describe("what a connector keeps", () => {
     await settle();
     controller.abort();
     await done;
-    expect(quiet).toBe(0);
-    expect(about().map((e) => e.type)).toEqual(["updated"]);
+    expect(frames.slice(opened, closed)).toEqual([]);
+    expect(
+      frames
+        .slice(closed)
+        .filter((f) => f.kind === "item" && f.event.item.id === row.id)
+        .map((f) => f.event.type),
+    ).toEqual(["updated"]);
   });
 
   it("takes an agreements batch past the request cap, under the bulk one", async () => {
