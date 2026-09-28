@@ -57,12 +57,16 @@ export interface InlineEdgeChanges {
  * loop below removes every existing edge of that type and then creates
  * nothing. Gating only non-empty lists leaves the delete primitive
  * ungated, which is the half a create-only test passes straight over.
+ *
+ * `mayReadTarget` is required for the same reason: a target whose type the
+ * caller may not read is answered as missing, on every door alike.
  */
 export async function applyInlineEdges(
   storage: Storage,
   itemId: string,
   edges: Record<string, string[]>,
   assertEdgeWritable: (edgeType: string) => void,
+  mayReadTarget: (type: string) => boolean,
 ): Promise<InlineEdgeChanges> {
   // Permission first, before any shape validation or write. A caller with
   // no edge permission must not be able to distinguish a malformed target
@@ -101,7 +105,12 @@ export async function applyInlineEdges(
   // Validate the full proposed set against the post-delete state. Throws
   // on the first violation (cardinality, type constraint, duplicate,
   // cycle), aborting the caller's transaction before any edge is recreated.
-  await assertEdgesCanBeCreated(storage.edges, storage.items, proposals);
+  await assertEdgesCanBeCreated(
+    storage.edges,
+    storage.items,
+    proposals,
+    mayReadTarget,
+  );
 
   const created: Edge[] = [];
   for (const p of proposals) {

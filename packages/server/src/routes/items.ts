@@ -48,6 +48,7 @@ import {
   checkTypePermission,
   requireEdgePermission,
   getTypeFilter,
+  mayReadEdgeTarget,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -58,7 +59,10 @@ import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
 import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
-import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
+import {
+  assertEdgesCanBeCreated,
+  edgeTargetNotFound,
+} from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
@@ -349,6 +353,18 @@ const createItemRoute = createRoute({
       },
       description:
         "`forbidden`: the body named a `source` the credential's key does not claim, named in `details.source`, or a source allow-list excludes the source. `type_not_permitted` and `edge_permission_denied`: the credential holds no write on the item's type or on an inline edge's type, or on the type of the row the natural key resolves; where it may not read that type, the refusal names nothing of the row.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "item_not_found",
+            "edge_type_not_found",
+          ]),
+        },
+      },
+      description:
+        "An inline edge names an edge type that does not exist, or a target that does not exist or whose type the caller may not read; the two targets answer alike.",
     },
     409: {
       content: {
@@ -1597,6 +1613,7 @@ export function itemRoutes(storage: Storage) {
                 (edgeType) => {
                   requireEdgePermission(c, edgeType, "write");
                 },
+                mayReadEdgeTarget(c),
               )
             : undefined;
 
@@ -1796,6 +1813,7 @@ export function itemRoutes(storage: Storage) {
               storage.edges,
               storage.items,
               proposals,
+              mayReadEdgeTarget(c),
             );
             for (const p of proposals) {
               createdEdges.push(
@@ -2452,12 +2470,10 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // Pre-validate the edges payload before any mutation: edge type
-    // exists, each target item exists + type-constraint-compatible, and
-    // (after-delete) cardinality stays within bounds. Fast-fails on bad
-    // input before the delete-and-create pass; the inner transaction
-    // rolls back lower-level surprises.
+    // Before the version check inside the transaction, so a stale write
+    // cannot tell a target the key may not read from a missing one.
     if (hasEdges && body.edges) {
+      const mayReadTarget = mayReadEdgeTarget(c);
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         const schema = getEdgeTypeSchema(edgeType);
         if (!schema) {
@@ -2478,11 +2494,8 @@ export function itemRoutes(storage: Storage) {
           }
           uniqueTargets.add(target);
           const targetItem = await storage.items.get(target);
-          if (!targetItem) {
-            throw new MarfaError(
-              ErrorCode.ITEM_NOT_FOUND,
-              `Edge target not found: ${target}`,
-            );
+          if (!targetItem || !mayReadTarget(targetItem.type)) {
+            throw edgeTargetNotFound(target);
           }
         }
       }
@@ -2592,6 +2605,7 @@ export function itemRoutes(storage: Storage) {
           (edgeType) => {
             requireEdgePermission(c, edgeType, "write");
           },
+          mayReadEdgeTarget(c),
         );
       }
 

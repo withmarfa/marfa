@@ -406,6 +406,7 @@ pub enum CreateItemError {
     Status400(models::EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal),
+    Status404(models::EdgeTypeNotFoundOrItemNotFoundRefusal),
     Status409(models::CreateItem409Response),
     Status413(models::RequestTooLargeRefusal),
     Status422(models::IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal),

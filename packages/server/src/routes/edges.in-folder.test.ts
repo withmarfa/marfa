@@ -90,10 +90,28 @@ async function refusal(res: Response): Promise<ErrorResponse["error"]> {
 }
 
 describe("in-folder", () => {
-  it("is written by a key holding the source's type and the edge type, and nothing on system.folder", async () => {
+  it("is written by a key holding the source's type, the edge type and read on system.folder, and writing nothing of it", async () => {
     const target = await folder();
-    const key = await mintWorkingKey(ctx, {
+    const blind = await mintWorkingKey(ctx, {
       type_permissions: { "core.note": "write" },
+      edge_permissions: { "in-folder": "write" },
+    });
+    const unseen = await request(ctx.app, "POST", "/edges", {
+      key: blind,
+      body: {
+        source_id: await note(blind),
+        target_id: target,
+        edge_type: "in-folder",
+        properties: { path: "Notes/placed.md" },
+      },
+    });
+    expect(unseen.status).toBe(404);
+    expect(((await unseen.json()) as ErrorResponse).error.code).toBe(
+      "item_not_found",
+    );
+
+    const key = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write", "system.folder": "read" },
       edge_permissions: { "in-folder": "write" },
     });
     const source = await note(key);

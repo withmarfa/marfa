@@ -291,7 +291,7 @@ describe("custom edge-type registration", () => {
     expect(inFolder?.property_schema).toHaveProperty("path");
   });
 
-  it("writes an in-folder edge from a key holding the source's type and the edge type, and nothing on system.folder", async () => {
+  it("writes an in-folder edge from a key holding the source's type, the edge type and read on system.folder, and writing nothing of it", async () => {
     const made = await client.createFolder({ title: "placement" });
     expect(made.status).toBe(201);
     const folderId = made.data.item.id;
@@ -300,7 +300,7 @@ describe("custom edge-type registration", () => {
     const minted = await client.createKey({
       label: "placer",
       source: `${ctx.source}-placer`,
-      type_permissions: { "core.note": "write" },
+      type_permissions: { "core.note": "write", "system.folder": "read" },
       edge_permissions: { "in-folder": "write" },
     });
     expect(minted.status).toBe(201);
@@ -314,6 +314,33 @@ describe("custom edge-type registration", () => {
     );
     expect(note.status).toBe(201);
     trackItem(ctx, note.data.item.id);
+
+    // Without read on the folder's type, the folder answers as missing.
+    const blindMinted = await client.createKey({
+      label: "blind-placer",
+      source: `${ctx.source}-blind-placer`,
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { "in-folder": "write" },
+    });
+    expect(blindMinted.status).toBe(201);
+    trackKey(ctx, blindMinted.data.id);
+    const blind = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: blindMinted.data.key,
+    });
+    const blindNote = await blind.createItem(
+      createNote({ source: `${ctx.source}-blind-placer` }),
+    );
+    expect(blindNote.status).toBe(201);
+    trackItem(ctx, blindNote.data.item.id);
+    const unseen = await blind.createEdge({
+      source_id: blindNote.data.item.id,
+      target_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "Notes/placed.md" },
+    });
+    expect(unseen.status).toBe(404);
+    expect(unseen.error?.error.code).toBe("item_not_found");
 
     const edge = await placer.createEdge({
       source_id: note.data.item.id,
