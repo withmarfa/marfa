@@ -615,41 +615,57 @@ describe("a link is one row's", () => {
   });
 
   it("does not resolve into a copy where the type requires its link", async () => {
-    const id = `user.linked-required-${ctx.runId}`;
-    const registered = await client.registerType({
-      id,
-      fields: {
-        vendor_id: { type: "string", required: true },
-        notes: { type: "string" },
-      },
+    const own = `user.linked-required-${ctx.runId}`;
+    const parent = `user.linked-required-parent-${ctx.runId}`;
+    const inherits = `user.linked-required-child-${ctx.runId}`;
+    const fields = {
+      vendor_id: { type: "string", required: true },
+      notes: { type: "string" },
+    };
+    const linkedCopies = {
       link_field: "vendor_id",
       merge_policy: { fields: { notes: "keep_both_copies" } },
-    } as never);
-    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
-    const original = await row(
-      { vendor_id: v("required"), notes: "as written" },
-      { type: id },
-    );
-    expect(
-      (
-        await client.updateItem(original.id, {
-          properties: { notes: "changed here" },
-          version: 1,
-        })
-      ).ok,
-    ).toBe(true);
-    const refused = await client.rawRequest<unknown>(
-      `/items/${original.id}?conflict=auto`,
-      {
-        method: "PATCH",
-        body: { properties: { notes: "changed there" }, version: 1 },
-      },
-    );
-    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
-    expect(refused.error?.error.code).toBe("version_conflict");
-    const kept = await client.getItem(original.id);
-    expect(kept.data.item.version).toBe(2);
-    expect(kept.data.item.properties.notes).toBe("changed here");
+    };
+    for (const body of [
+      { id: own, fields, ...linkedCopies },
+      { id: parent, fields },
+      { id: inherits, parent, fields: {}, ...linkedCopies },
+    ]) {
+      const registered = await client.registerType(body as never);
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    }
+
+    for (const [label, id] of [
+      ["own", own],
+      ["inherited", inherits],
+    ] as const) {
+      const original = await row(
+        { vendor_id: v(`required-${label}`), notes: "as written" },
+        { type: id },
+      );
+      expect(
+        (
+          await client.updateItem(original.id, {
+            properties: { notes: "changed here" },
+            version: 1,
+          })
+        ).ok,
+      ).toBe(true);
+      const refused = await client.rawRequest<unknown>(
+        `/items/${original.id}?conflict=auto`,
+        {
+          method: "PATCH",
+          body: { properties: { notes: "changed there" }, version: 1 },
+        },
+      );
+      expect(refused.status, `${label}: ${JSON.stringify(refused.data)}`).toBe(
+        409,
+      );
+      expect(refused.error?.error.code).toBe("version_conflict");
+      const kept = await client.getItem(original.id);
+      expect(kept.data.item.version).toBe(2);
+      expect(kept.data.item.properties.notes).toBe("changed here");
+    }
   });
 
   it("counts an archived row whose link another row holds as a duplicate", async () => {

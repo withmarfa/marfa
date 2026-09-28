@@ -23,6 +23,7 @@ import { softDeleteClock } from "../soft-delete-clock.js";
 import {
   generateId,
   isValidId,
+  getResolvedFields,
   getTypeSchema,
   validateProperties,
   validateTransition,
@@ -196,7 +197,7 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 function linkRequired(type: string): boolean {
   const field = linkFieldOf(type);
   return (
-    field !== undefined && getTypeSchema(type)?.fields[field]?.required === true
+    field !== undefined && getResolvedFields(type)?.[field]?.required === true
   );
 }
 

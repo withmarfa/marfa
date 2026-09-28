@@ -711,7 +711,8 @@ const updateItemRoute = createRoute({
           "original's own, those its own file would write, that a second " +
           "item may hold and the writer could have made. The sibling " +
           "carries neither the item's natural key nor its link, so where " +
-          "the type requires its `link_field` nothing is resolved and the " +
+          "the type requires its `link_field`, itself or through a parent, " +
+          "nothing is resolved and the " +
           "write answers the 409 envelope. " +
           "`manual` and `callback` return the 409 envelope for the caller to " +
           "resolve. Omitted means `manual`.",
