@@ -29,6 +29,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { maskInActions } from "../src/utils/target.js";
 
 const READY_BUDGET_MS = 30_000;
 const POLL_MS = 250;
@@ -211,6 +212,7 @@ async function up(args: Args): Promise<void> {
   if (!keyId || !secret) {
     throw new Error("garage key create printed no key id and secret");
   }
+  maskInActions(keyId, secret);
   garage(p.config, [
     "bucket",
     "allow",
