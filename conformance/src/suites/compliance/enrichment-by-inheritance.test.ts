@@ -7,7 +7,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MarfaClient } from "../../client/api.js";
 import type { TypeSchema } from "../../client/types.js";
-import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
 let server: FreshServer;
 let client: MarfaClient;
@@ -27,11 +31,11 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.operatorKey,
   });
-}, 120_000);
+}, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server?.stop();
-});
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 async function upload(bytes: Buffer, mimeType: string): Promise<string> {
   const uploaded = await client.uploadBlob(bytes, mimeType);

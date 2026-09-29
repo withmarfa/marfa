@@ -54,9 +54,29 @@ const conformanceRoot = resolve(
  *  than cut off. */
 const BOOT_BUDGET_MS = 240_000;
 
+/** A hook or test's budget for one boot or one stop: past the script's own
+ *  bound and the working key's mint, so the script's diagnostics are kept. */
+export const FRESH_SERVER_TIMEOUT_MS = BOOT_BUDGET_MS + 30_000;
+
+/** Every server booted or booting and not yet stopped, so a file's teardown
+ *  can stop one whose boot outlived the hook that started it. */
+const unstopped = new Set<() => Promise<void>>();
+
+/** Stop every fixture server this file started, reporting every failure. */
+export async function stopFreshServers(): Promise<void> {
+  const stopped = await Promise.allSettled([...unstopped].map((s) => s()));
+  const failures = stopped.flatMap((r) =>
+    r.status === "rejected" ? [r.reason as unknown] : [],
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "fixture servers failed to stop");
+  }
+}
+
 /** Not blocking: a worker held for a boot cannot retire its pooled
  *  connections, and the run's server closes one under the next request. */
-function runScript(
+export function runScript(
   command: string,
   args: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -140,20 +160,13 @@ export async function bootFreshServer(
       ...extraEnv,
     });
 
-  const up = await run("up");
-  if (up.status !== 0) {
-    // The script spawns the server detached before the health wait and
-    // the mint, either of which can fail, so a failed boot may have left
-    // one running; `down` finds it through the pid file, which is why the
-    // directory goes only after.
-    await run("down");
-    rmSync(state, { recursive: true, force: true });
-    throw new Error(`could not boot a server into ${state}:\n${up.output}`);
-  }
-
+  const booting = run("up");
   let stopping: Promise<void> | undefined;
   const stop = (): Promise<void> => {
     stopping ??= (async () => {
+      // `down` finds the server through the pid file `up` writes, so one
+      // still booting is waited for rather than left to come up after.
+      await booting;
       // Before `down`, which clears the log with the rest of the state. The
       // run's server boots from the same checkout, so what this one answered
       // is held to the same document.
@@ -170,9 +183,23 @@ export async function bootFreshServer(
         );
       }
       rmSync(state, { recursive: true, force: true });
-    })();
+    })().finally(() => unstopped.delete(stop));
     return stopping;
   };
+  unstopped.add(stop);
+
+  const up = await booting;
+  if (up.status !== 0) {
+    // A failed boot may have left a server running, since the script spawns
+    // it before the health wait; `stop` finds it through the pid file.
+    const stopped = await stop().then(
+      () => "",
+      (err: unknown) => `\n${String(err)}`,
+    );
+    throw new Error(
+      `could not boot a server into ${state}:\n${up.output}${stopped}`,
+    );
+  }
 
   const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
   const apiUrl = env.MARFA_API_URL;

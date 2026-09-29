@@ -1,7 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
 /**
  * What a write answers when it meets the write lock and never gets it.
@@ -32,12 +37,9 @@ beforeAll(async () => {
     SQLITE_BUSY_BUDGET_MS: "0",
   });
   patient = await bootFreshServer("contention-patient");
-}, 180_000);
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-afterAll(async () => {
-  await impatient?.stop();
-  await patient?.stop();
-});
+afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /** A connection sitting in `BEGIN IMMEDIATE` on the server's own file. */
 class HeldLock {

@@ -9,7 +9,11 @@ import {
   trackKey,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { approvedAppToken, bootFreshServer } from "../../utils/fresh-server.js";
+import {
+  approvedAppToken,
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -1309,67 +1313,71 @@ describe("a key's claims", () => {
     ).toEqual([]);
   });
 
-  it("never widens a key an app made to a new source", async () => {
-    // An app's key is minted through a sign-in, which needs an owner, and an
-    // instance has one: the story needs a server of its own.
-    const server = await bootFreshServer("claimed-sources-app");
-    try {
-      const app = new MarfaClient({
-        baseUrl: server.apiUrl,
-        apiKey: await approvedAppToken(server),
-      });
-      const own = new MarfaClient({
-        baseUrl: server.apiUrl,
-        apiKey: server.operatorKey,
-      });
+  it(
+    "never widens a key an app made to a new source",
+    async () => {
+      // An app's key is minted through a sign-in, which needs an owner, and an
+      // instance has one: the story needs a server of its own.
+      const server = await bootFreshServer("claimed-sources-app");
+      try {
+        const app = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: await approvedAppToken(server),
+        });
+        const own = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.operatorKey,
+        });
 
-      const appKey = await app.createKey({
-        label: "app-made",
-        source: "app-made",
-      });
-      expect(
-        appKey.status,
-        "the app could not mint a key, so there is no key an app made to hold to the rule",
-      ).toBe(201);
-      expect(
-        appKey.data.oauth_client_id,
-        "the app's key does not say an app made it, so nothing below is about an app's key",
-      ).toBeDefined();
-      // Its witness is the widened key below, whose claims the same field
-      // answers.
-      expect(
-        appKey.data.sources,
-        "a key an app made claims a source, though an app claims none to give it",
-      ).toEqual([]);
+        const appKey = await app.createKey({
+          label: "app-made",
+          source: "app-made",
+        });
+        expect(
+          appKey.status,
+          "the app could not mint a key, so there is no key an app made to hold to the rule",
+        ).toBe(201);
+        expect(
+          appKey.data.oauth_client_id,
+          "the app's key does not say an app made it, so nothing below is about an app's key",
+        ).toBeDefined();
+        // Its witness is the widened key below, whose claims the same field
+        // answers.
+        expect(
+          appKey.data.sources,
+          "a key an app made claims a source, though an app claims none to give it",
+        ).toEqual([]);
 
-      // The witness. The operator widens a key it made itself to the same
-      // source, so the refusal below is the key and not the caller.
-      const plain = await own.createKey({ label: "plain", source: "plain" });
-      expect(plain.status, "the operator could not mint a key").toBe(201);
-      const widened = await own.updateKey(plain.data.id, {
-        sources: ["shared-folder"],
-      });
-      expect(
-        widened.status,
-        "the operator could not widen a key it made, so the refusal below may be every update",
-      ).toBe(200);
-      expect(widened.data.sources).toEqual(["shared-folder"]);
+        // The witness. The operator widens a key it made itself to the same
+        // source, so the refusal below is the key and not the caller.
+        const plain = await own.createKey({ label: "plain", source: "plain" });
+        expect(plain.status, "the operator could not mint a key").toBe(201);
+        const widened = await own.updateKey(plain.data.id, {
+          sources: ["shared-folder"],
+        });
+        expect(
+          widened.status,
+          "the operator could not widen a key it made, so the refusal below may be every update",
+        ).toBe(200);
+        expect(widened.data.sources).toEqual(["shared-folder"]);
 
-      const refused = await own.updateKey(appKey.data.id, {
-        sources: ["shared-folder"],
-      });
-      expect(
-        refused.status,
-        "a key an app made was widened to a source, so what the person approved for the app is not a ceiling",
-      ).toBe(403);
-      expect(refused.error?.error.code).toBe("forbidden");
-      expect(
-        refused.error?.error.details?.source,
-        "the refusal does not name the source the key may not be given",
-      ).toBe("shared-folder");
-      await expectMatchesSchema("PATCH", "/keys/{id}", 403, refused.error);
-    } finally {
-      await server.stop();
-    }
-  });
+        const refused = await own.updateKey(appKey.data.id, {
+          sources: ["shared-folder"],
+        });
+        expect(
+          refused.status,
+          "a key an app made was widened to a source, so what the person approved for the app is not a ceiling",
+        ).toBe(403);
+        expect(refused.error?.error.code).toBe("forbidden");
+        expect(
+          refused.error?.error.details?.source,
+          "the refusal does not name the source the key may not be given",
+        ).toBe("shared-folder");
+        await expectMatchesSchema("PATCH", "/keys/{id}", 403, refused.error);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

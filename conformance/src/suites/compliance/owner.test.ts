@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { ErrorResponse } from "../../client/types.js";
-import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -26,11 +30,11 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-});
+}, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server?.stop();
-});
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /** A request carrying no credential at all, which the client cannot send. */
 async function bare(method: "GET" | "POST"): Promise<Response> {

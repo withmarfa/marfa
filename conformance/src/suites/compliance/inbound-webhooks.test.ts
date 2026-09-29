@@ -18,7 +18,11 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { createNote } from "../../generators/items.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
-import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
 let ctx: TestContext;
 let client: MarfaClient;
@@ -534,11 +538,11 @@ describe("the receiving door on an instance that names its limits", () => {
       MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
       MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
     });
-  }, 300_000);
+  }, FRESH_SERVER_TIMEOUT_MS);
 
   afterAll(async () => {
     await server?.stop();
-  });
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
   async function freshConnector(label: string): Promise<Connector> {
     if (server === undefined) throw new Error("no server");

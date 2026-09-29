@@ -15,7 +15,11 @@ import {
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { createNote, createTask } from "../../generators/items.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
-import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
 /**
  * The hold, the state document and the agreements a connector keeps on the
@@ -287,11 +291,11 @@ describe("the hold on an instance that names its window", () => {
     server = await bootFreshServer("connector-hold", {
       MARFA_CONNECTOR_HOLD_MS: String(WINDOW_MS),
     });
-  }, 300_000);
+  }, FRESH_SERVER_TIMEOUT_MS);
 
   afterAll(async () => {
     await server?.stop();
-  });
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
   async function registered(
     label: string,

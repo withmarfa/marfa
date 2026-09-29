@@ -51,6 +51,7 @@ export default defineConfig({
         test: {
           name: "compliance",
           include: ["src/suites/compliance/**/*.test.ts"],
+          setupFiles: ["src/utils/fresh-server-teardown.ts"],
           // Matches correctness, for the same reasons: archive, bulk and
           // export bodies are slow under full-run load, and every file pays
           // the same mint-and-teardown cost.
