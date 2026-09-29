@@ -10,7 +10,11 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createBookmark, createNote } from "../../generators/items.js";
-import { approvedAppToken, bootFreshServer } from "../../utils/fresh-server.js";
+import {
+  approvedAppToken,
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -317,73 +321,86 @@ describe("what a key is told of an item it cannot read through a readable one", 
 });
 
 describe("a delete refused for a live grant it would take with it", () => {
-  it("names nothing of a grant the key cannot read", async () => {
-    // Its own server: approving an app creates the one owner an instance has.
-    const server = await bootFreshServer("hidden-grant");
-    try {
-      await approvedAppToken(server);
-      const as = (key: string, method: string, path: string, body?: unknown) =>
-        fetch(`${server.apiUrl}${path}`, {
-          method,
-          headers: {
-            Authorization: `Bearer ${key}`,
-            ...(body === undefined
-              ? {}
-              : { "Content-Type": "application/json" }),
-          },
-          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  it(
+    "names nothing of a grant the key cannot read",
+    async () => {
+      // Its own server: approving an app creates the one owner an instance has.
+      const server = await bootFreshServer("hidden-grant");
+      try {
+        await approvedAppToken(server);
+        const as = (
+          key: string,
+          method: string,
+          path: string,
+          body?: unknown,
+        ) =>
+          fetch(`${server.apiUrl}${path}`, {
+            method,
+            headers: {
+              Authorization: `Bearer ${key}`,
+              ...(body === undefined
+                ? {}
+                : { "Content-Type": "application/json" }),
+            },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+          });
+        const grants = (await (
+          await as(
+            server.workingKey,
+            "GET",
+            "/items?type=system.connection&include=system",
+          )
+        ).json()) as { data: { id: string; properties: { status: string } }[] };
+        const grant = grants.data.find(
+          (row) => row.properties.status === "active",
+        );
+        expect(grant, "the approval projected no live grant").toBeDefined();
+        const note = (await (
+          await as(server.workingKey, "POST", "/items", {
+            type: "core.note",
+            properties: { body: "holds a grant" },
+          })
+        ).json()) as { item: { id: string } };
+        const placed = await as(server.workingKey, "POST", "/edges", {
+          source_id: note.item.id,
+          target_id: grant!.id,
+          edge_type: "parent-of",
         });
-      const grants = (await (
-        await as(
+        expect(placed.status).toBe(201);
+        const minted = (await (
+          await as(server.workingKey, "POST", "/keys", {
+            label: "hidden-grant-narrow",
+            source: "hidden-grant-narrow",
+            permissions: [],
+            type_permissions: { "core.note": "write" },
+          })
+        ).json()) as { key: string };
+
+        const refused = await as(
+          minted.key,
+          "DELETE",
+          `/items/${note.item.id}`,
+        );
+        const text = await refused.text();
+        expect(refused.status, text).toBe(400);
+        expect(JSON.parse(text)).toMatchObject({
+          error: { code: "validation_error" },
+        });
+        expect(text).not.toContain(grant!.id);
+        expect(text).not.toMatch(/Grant|Connection|grants/);
+
+        // The witness: a key that reads the grant is told which one.
+        const named = await as(
           server.workingKey,
-          "GET",
-          "/items?type=system.connection&include=system",
-        )
-      ).json()) as { data: { id: string; properties: { status: string } }[] };
-      const grant = grants.data.find(
-        (row) => row.properties.status === "active",
-      );
-      expect(grant, "the approval projected no live grant").toBeDefined();
-      const note = (await (
-        await as(server.workingKey, "POST", "/items", {
-          type: "core.note",
-          properties: { body: "holds a grant" },
-        })
-      ).json()) as { item: { id: string } };
-      const placed = await as(server.workingKey, "POST", "/edges", {
-        source_id: note.item.id,
-        target_id: grant!.id,
-        edge_type: "parent-of",
-      });
-      expect(placed.status).toBe(201);
-      const minted = (await (
-        await as(server.workingKey, "POST", "/keys", {
-          label: "hidden-grant-narrow",
-          source: "hidden-grant-narrow",
-          permissions: [],
-          type_permissions: { "core.note": "write" },
-        })
-      ).json()) as { key: string };
-
-      const refused = await as(minted.key, "DELETE", `/items/${note.item.id}`);
-      const text = await refused.text();
-      expect(refused.status, text).toBe(400);
-      expect(JSON.parse(text)).toMatchObject({
-        error: { code: "validation_error" },
-      });
-      expect(text).not.toContain(grant!.id);
-      expect(text).not.toMatch(/Grant|Connection|grants/);
-
-      // The witness: a key that reads the grant is told which one.
-      const named = await as(
-        server.workingKey,
-        "DELETE",
-        `/items/${note.item.id}`,
-      );
-      expect(named.status).toBe(400);
-      expect(await named.text()).toContain(grant!.id);
-    } finally {
-      server.stop();
-    }
-  });
+          "DELETE",
+          `/items/${note.item.id}`,
+        );
+        expect(named.status).toBe(400);
+        expect(await named.text()).toContain(grant!.id);
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS * 2,
+  );
 });
