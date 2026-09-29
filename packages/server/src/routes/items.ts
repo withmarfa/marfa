@@ -56,6 +56,7 @@ import {
   requireEdgePermission,
   getTypeFilter,
   mayReadEdgeEnd,
+  mayReadType,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -84,7 +85,10 @@ import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { sourceAllowlistRefusal } from "./_source-allowlist.js";
-import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
+import {
+  assertFilterEdgeTermsReadable,
+  readableEdges,
+} from "./_edge-visibility.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
@@ -1325,6 +1329,25 @@ async function acknowledgedItemBody(
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
+
+/**
+ * A block refusal with the blocking edges the caller may not read left out,
+ * so it can say something hidden holds the row and never what or where.
+ */
+async function withoutHiddenBlockers(
+  storage: Storage,
+  key: ApiKey,
+  err: unknown,
+): Promise<unknown> {
+  const details = err instanceof MarfaError ? err.details : undefined;
+  const blockers = (details as { blocking_edges?: Edge[] } | undefined)
+    ?.blocking_edges;
+  if (!(err instanceof MarfaError) || !blockers) return err;
+  return new MarfaError(err.code, err.message, {
+    ...details,
+    blocking_edges: await readableEdges(storage, key, blockers),
+  });
+}
 
 export function itemRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
@@ -2744,7 +2767,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireAuth(c);
+    const key = requireAuth(c);
 
     const targetItem = requireReadableRow(
       c,
@@ -2765,7 +2788,11 @@ export function itemRoutes(storage: Storage) {
     // entirely, when a grant's tokens must not outlive the row that names
     // their owner (`_connection-refusal.ts`).
     const snapshots = await storage.runInTransaction(async () => {
-      const toDelete = await planCascadeDelete(storage.edges, id);
+      const toDelete = await planCascadeDelete(storage.edges, id).catch(
+        async (err: unknown) => {
+          throw await withoutHiddenBlockers(storage, key, err);
+        },
+      );
       const snaps = await Promise.all(
         toDelete.map((delId) => storage.items.get(delId)),
       );
@@ -2785,7 +2812,7 @@ export function itemRoutes(storage: Storage) {
       // credential that could not write it directly.
       for (const snap of snaps) {
         if (!snap) continue;
-        refuseUnlessUninstalled(snap);
+        refuseUnlessUninstalled(snap, mayReadType(key, snap.type));
       }
       for (const delId of toDelete) {
         await storage.items.delete(delId, delId === id ? undefined : root);

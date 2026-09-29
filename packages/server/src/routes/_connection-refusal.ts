@@ -86,7 +86,16 @@ export function liveConnectionRefusal(
 /** Throw the refusal, for the doors that answer a single row. */
 export function refuseUnlessUninstalled(
   item: Pick<Item, "id" | "type" | "properties"> | null | undefined,
+  readable = true,
 ): void {
   const reason = liveConnectionRefusal(item);
-  if (reason) throw new MarfaError(ErrorCode.VALIDATION_ERROR, reason);
+  if (!reason) return;
+  // The reason names the row and its kind, which a caller that cannot read it
+  // learns nothing of: only that something the delete would take is kept.
+  throw new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    readable
+      ? reason
+      : "A row this delete would take with it cannot be removed here, so nothing was removed.",
+  );
 }
