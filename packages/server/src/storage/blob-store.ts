@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createWriteStream } from "node:fs";
 import {
+  type FileHandle,
   mkdir,
+  open,
   readdir,
   readFile,
   rename,
@@ -242,19 +244,35 @@ export class DiskBlobStore implements BlobStore {
   }
 
   async get(hash: string, range?: ByteRange): Promise<BlobRead | null> {
-    const path = this.pathFor(hash);
-    let size: number;
+    // Opened here, not by the stream: a stream opens its path later, and one
+    // destroyed unread then throws uncaught if the file went in between.
+    let handle: FileHandle;
     try {
-      size = (await stat(path)).size;
+      handle = await open(this.pathFor(hash), "r");
     } catch (err) {
       if (isEnoent(err)) return null;
+      throw err;
+    }
+    let size: number;
+    try {
+      size = (await handle.stat()).size;
+    } catch (err) {
+      await handle.close();
       throw err;
     }
     const start = range?.start ?? 0;
     const end = range?.end ?? size - 1;
     const length = size === 0 ? 0 : end - start + 1;
-    const stream =
-      length === 0 ? Readable.from([]) : createReadStream(path, { start, end });
+    if (length === 0) {
+      await handle.close();
+      return {
+        stream: Readable.from([]),
+        size_bytes: size,
+        offset: start,
+        length,
+      };
+    }
+    const stream = handle.createReadStream({ start, end });
     return { stream, size_bytes: size, offset: start, length };
   }
 

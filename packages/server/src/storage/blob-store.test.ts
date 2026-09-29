@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream, unlinkSync } from "node:fs";
 import {
   mkdtemp,
   readdir,
@@ -172,6 +173,52 @@ describe("DiskBlobStore", () => {
       expect((await collect(part!.stream)).toString()).toBe("345");
 
       expect(await store.get(hashOf(Buffer.from("absent")))).toBeNull();
+    });
+
+    it("holds the file it found, so a read dropped unread or finished after the file goes raises nothing", async () => {
+      const dir = await freshDir();
+      const store = new DiskBlobStore(dir);
+      await store.attach();
+      const bytes = Buffer.from("removed while read");
+      const hash = hashOf(bytes);
+      await store.put(hash, {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+      const hex = hash.slice("sha256:".length);
+      const path = join(dir, hex.slice(0, 4), hex);
+      const errorsOf = async (stream: Readable): Promise<unknown[]> => {
+        const errors: unknown[] = [];
+        stream.on("error", (err) => errors.push(err));
+        await new Promise((resolve) => stream.once("close", resolve));
+        return errors;
+      };
+
+      // The witness: a stream that opens its path itself, dropped unread
+      // and its file removed in the same tick, errors when it opens.
+      const lazy = createReadStream(path);
+      const lazyErrors = errorsOf(lazy);
+      lazy.destroy();
+      unlinkSync(path);
+      expect(await lazyErrors).toMatchObject([{ code: "ENOENT" }]);
+      await store.put(hash, {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+
+      const dropped = await store.get(hash);
+      const droppedErrors = errorsOf(dropped!.stream);
+      dropped!.stream.destroy();
+      unlinkSync(path);
+      expect(await droppedErrors).toEqual([]);
+      await store.put(hash, {
+        stream: Readable.from(bytes),
+        size_bytes: bytes.length,
+      });
+
+      const finished = await store.get(hash);
+      unlinkSync(path);
+      expect((await collect(finished!.stream)).equals(bytes)).toBe(true);
     });
 
     it("refuses a hash that would escape the store", async () => {
