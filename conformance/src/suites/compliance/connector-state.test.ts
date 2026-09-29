@@ -289,8 +289,8 @@ describe("the hold on an instance that names its window", () => {
     });
   }, 300_000);
 
-  afterAll(() => {
-    server?.stop();
+  afterAll(async () => {
+    await server?.stop();
   });
 
   async function registered(

@@ -1369,7 +1369,7 @@ describe("a key's claims", () => {
       ).toBe("shared-folder");
       await expectMatchesSchema("PATCH", "/keys/{id}", 403, refused.error);
     } finally {
-      server.stop();
+      await server.stop();
     }
   });
 });

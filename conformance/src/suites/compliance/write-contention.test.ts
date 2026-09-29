@@ -34,9 +34,9 @@ beforeAll(async () => {
   patient = await bootFreshServer("contention-patient");
 }, 180_000);
 
-afterAll(() => {
-  impatient?.stop();
-  patient?.stop();
+afterAll(async () => {
+  await impatient?.stop();
+  await patient?.stop();
 });
 
 /** A connection sitting in `BEGIN IMMEDIATE` on the server's own file. */

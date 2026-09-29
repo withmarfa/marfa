@@ -536,8 +536,8 @@ describe("the receiving door on an instance that names its limits", () => {
     });
   }, 300_000);
 
-  afterAll(() => {
-    server?.stop();
+  afterAll(async () => {
+    await server?.stop();
   });
 
   async function freshConnector(label: string): Promise<Connector> {

@@ -29,8 +29,8 @@ beforeAll(async () => {
   });
 }, 120_000);
 
-afterAll(() => {
-  server?.stop();
+afterAll(async () => {
+  await server?.stop();
 });
 
 async function upload(bytes: Buffer, mimeType: string): Promise<string> {

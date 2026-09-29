@@ -44,8 +44,8 @@ beforeAll(async () => {
   });
 }, 120_000);
 
-afterAll(() => {
-  server?.stop();
+afterAll(async () => {
+  await server?.stop();
 });
 
 /** A PNG's signature, then bytes that are no image and no PNG header. */

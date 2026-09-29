@@ -615,7 +615,7 @@ describe("a deployment that caps live viewers", () => {
       await expectMatchesSchema("GET", "/events", 503, body);
     } finally {
       held.abort();
-      server.stop();
+      await server.stop();
     }
   });
 });
@@ -653,7 +653,7 @@ describe("a session token", () => {
       expect(selfBody.error?.code).toBe("forbidden");
       await expectMatchesSchema("GET", "/keys/current", 403, selfBody);
     } finally {
-      server.stop();
+      await server.stop();
     }
   });
 });

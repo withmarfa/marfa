@@ -28,8 +28,8 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => {
-  server?.stop();
+afterAll(async () => {
+  await server?.stop();
 });
 
 /** A request carrying no credential at all, which the client cannot send. */

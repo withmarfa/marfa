@@ -44,9 +44,9 @@ beforeAll(async () => {
   });
 }, 300_000);
 
-afterAll(() => {
-  server?.stop();
-  unset?.stop();
+afterAll(async () => {
+  await server?.stop();
+  await unset?.stop();
 });
 
 /**
