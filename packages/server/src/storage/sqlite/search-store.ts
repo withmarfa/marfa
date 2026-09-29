@@ -8,7 +8,11 @@ import {
 } from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
 import { normalizeTimeBound } from "../interface.js";
-import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
+import {
+  filterToRawSql,
+  hideAnchors,
+  sourceFilterToRawSql,
+} from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
 // What text reaches the index is decided in `search-text.ts`, not here, so
@@ -187,7 +191,10 @@ export class SqliteSearchStore implements SearchStore {
     }
 
     if (filters.filter) {
-      const expr = parseFilter(filters.filter);
+      const expr = hideAnchors(
+        parseFilter(filters.filter),
+        filters.hidden_anchors,
+      );
       const { clause, params: filterParams } = filterToRawSql(expr, "i");
       conditions.push(`AND ${clause}`);
       params.push(...filterParams);

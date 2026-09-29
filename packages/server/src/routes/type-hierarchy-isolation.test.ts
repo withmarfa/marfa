@@ -144,9 +144,8 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
       permissions: [],
     });
 
-    // The listing and the fetch by id must agree that the denied row is not
-    // there: a list that shows what a fetch hides is the fail-open
-    // direction, so permission patterns resolve names only.
+    // A list showing what a fetch hides fails open, so both agree the denied
+    // row is not there: permission patterns resolve names only.
     const list = await request(ctx.app, "GET", "/items", { key: scoped });
     expect(list.status).toBe(200);
     const types = (

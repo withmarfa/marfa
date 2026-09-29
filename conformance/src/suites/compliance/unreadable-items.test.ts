@@ -154,10 +154,35 @@ describe("an item the key cannot read answers as a missing one", () => {
     /** A row the key may reach there, and what the door answers for it. */
     witness: () => Promise<string>;
     served: number;
+    /** What an id no row holds answers there, if not `404 item_not_found`. */
+    absent?: (seen: Seen) => void;
   }
 
   const live = (): Promise<string> => note();
   const trashed = (): Promise<string> => note(true);
+  const itemNotFound = (seen: Seen): void => {
+    expect(seen.status).toBe(404);
+    expect(seen.body).toMatchObject({ error: { code: "item_not_found" } });
+  };
+  const edgeNotFound = (seen: Seen): void => {
+    expect(seen.status).toBe(404);
+    expect(seen.body).toMatchObject({ error: { code: "edge_not_found" } });
+  };
+  const entryNotFound = (seen: Seen): void => {
+    expect(seen.status).toBe(200);
+    expect(seen.body).toMatchObject({
+      results: [{ outcome: "errored", error: { code: "item_not_found" } }],
+    });
+  };
+  const pageRolledBack = (seen: Seen): void => {
+    expect(seen.status).toBe(400);
+    expect(seen.body).toMatchObject({
+      error: {
+        code: "bulk_atomic_rollback",
+        details: { code: "item_not_found" },
+      },
+    });
+  };
 
   const doors: Door[] = [
     {
@@ -318,6 +343,22 @@ describe("an item the key cannot read answers as a missing one", () => {
       served: 200,
     },
     {
+      name: "GET /items/{id}/edges, of a trashed item",
+      method: "GET",
+      path: (id) => `/items/${id}/edges`,
+      unreadable: () => hiddenTrashed,
+      witness: trashed,
+      served: 200,
+    },
+    {
+      name: "GET /items/{id}/backrefs, of a trashed item",
+      method: "GET",
+      path: (id) => `/items/${id}/backrefs`,
+      unreadable: () => hiddenTrashed,
+      witness: trashed,
+      served: 200,
+    },
+    {
       name: "POST /edges, naming the source",
       method: "POST",
       path: () => "/edges",
@@ -334,6 +375,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       }),
       witness: live,
       served: 200,
+      absent: pageRolledBack,
     },
     {
       name: "POST /edges/bulk, naming the source, not atomic",
@@ -345,6 +387,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       }),
       witness: live,
       served: 200,
+      absent: entryNotFound,
     },
     {
       name: "POST /edges/bulk, where an edge from the source already exists",
@@ -363,6 +406,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       unreadable: () => hidden,
       witness: live,
       served: 200,
+      absent: entryNotFound,
     },
     {
       name: "GET /edges/{id}, of an edge whose source it cannot read",
@@ -371,6 +415,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       unreadable: () => hiddenEdge,
       witness: async () => edge(await note(), task),
       served: 200,
+      absent: edgeNotFound,
     },
     {
       name: "PATCH /edges/{id}, of an edge whose source it cannot read",
@@ -380,6 +425,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       unreadable: () => hiddenEdge,
       witness: async () => edge(await note(), task),
       served: 200,
+      absent: edgeNotFound,
     },
     {
       name: "DELETE /edges/{id}, of an edge whose source it cannot read",
@@ -388,6 +434,7 @@ describe("an item the key cannot read answers as a missing one", () => {
       unreadable: () => hiddenEdge,
       witness: async () => edge(await note(), task),
       served: 200,
+      absent: edgeNotFound,
     },
   ];
 
@@ -399,6 +446,7 @@ describe("an item the key cannot read answers as a missing one", () => {
 
     const refused = await asked(unreadable);
     const absent = await asked(missing);
+    (door.absent ?? itemNotFound)(absent);
     expect(refused.status).toBe(absent.status);
     expect(refused.headers).toEqual(absent.headers);
     expect(refused.body).toEqual(absent.body);
@@ -510,7 +558,17 @@ describe("an item the key cannot read answers as a missing one", () => {
       edges: [body(hiddenEdge)],
     });
     expect(bulk.status).toBe(200);
-    expect(JSON.stringify(bulk.body)).not.toContain("differs");
+    expect((bulk.body as { results: unknown[] }).results).toEqual([
+      {
+        index: 0,
+        outcome: "errored",
+        error: {
+          code: "id_reused",
+          message: `Edge id ${hiddenEdge} already names a different edge`,
+          details: { existing_id: hiddenEdge },
+        },
+      },
+    ]);
 
     // The witness: an edge it may read is described, with what differs.
     const own = await edge(await note(), task);
@@ -536,19 +594,146 @@ describe("an item the key cannot read answers as a missing one", () => {
   it("a key reaching no type is refused a single row, whatever the id names", async () => {
     const operator = process.env.MARFA_OPERATOR_KEY;
     if (!operator) throw new Error("MARFA_OPERATOR_KEY is required");
-    const refused = without(
-      await ask(operator, "GET", `/items/${hidden}`),
-      hidden,
-    );
     const missing = generateId();
-    const absent = without(
-      await ask(operator, "GET", `/items/${missing}`),
-      missing,
-    );
-    expect(refused.status).toBe(403);
-    expect(refused.body).toMatchObject({
-      error: { code: "type_not_permitted" },
+    const own = await note();
+    const ownEdge = await edge(own, task);
+    const entry = (source: string) => ({
+      edges: [{ source_id: source, target_id: task, edge_type: "about" }],
     });
-    expect(absent).toEqual(refused);
+    // Each door, asked of a row that exists and of an id nothing holds, and
+    // what a key reaching one type is answered there.
+    const doors: [
+      string,
+      string,
+      (id: string) => string,
+      (id: string) => unknown,
+      string,
+      string,
+      number,
+    ][] = [
+      [
+        "GET",
+        "/items/{id}",
+        (id) => `/items/${id}`,
+        () => undefined,
+        hidden,
+        own,
+        200,
+      ],
+      [
+        "GET",
+        "/items/{id}/edges",
+        (id) => `/items/${id}/edges`,
+        () => undefined,
+        hidden,
+        own,
+        200,
+      ],
+      [
+        "GET",
+        "/edges/{id}",
+        (id) => `/edges/${id}`,
+        () => undefined,
+        hiddenEdge,
+        ownEdge,
+        200,
+      ],
+      [
+        "POST",
+        "/edges/bulk, one entry",
+        () => "/edges/bulk",
+        entry,
+        hidden,
+        own,
+        200,
+      ],
+      [
+        "POST",
+        "/edges/bulk, no entry",
+        () => "/edges/bulk",
+        () => ({ edges: [] }),
+        hidden,
+        own,
+        200,
+      ],
+    ];
+    for (const [method, name, path, body, held, reached, served] of doors) {
+      const refused = without(
+        await ask(operator, method, path(held), body(held)),
+        held,
+      );
+      const absent = without(
+        await ask(operator, method, path(missing), body(missing)),
+        missing,
+      );
+      expect(refused.status, name).toBe(403);
+      expect(refused.body, name).toMatchObject({
+        error: { code: "type_not_permitted" },
+      });
+      expect(absent, name).toEqual(refused);
+      // The witness: a key reaching one type is served at the same door.
+      expect(
+        (await ask(key, method, path(reached), body(reached))).status,
+        name,
+      ).toBe(served);
+    }
+  });
+
+  it("a filter term anchored on an item it cannot read matches as one anchored on no item", async () => {
+    const pointer = await note();
+    const into = await client.createEdge({
+      source_id: pointer,
+      target_id: hidden,
+      edge_type: "about",
+    });
+    expect(into.status).toBe(201);
+    trackEdge(ctx, into.data.edge.id);
+    const source = encodeURIComponent(`${ctx.source}-unreadable-items`);
+    const terms: [string, (id: string) => string][] = [
+      ["GET /items, backref shorthand", (id) => `/items?backref[about]=${id}`],
+      ["GET /items, edge shorthand", (id) => `/items?edge[about]=${id}`],
+      [
+        "GET /items, backref neq",
+        (id) =>
+          `/items?source=${source}&limit=200&filter=${encodeURIComponent(`backref[about] neq "${id}"`)}`,
+      ],
+      [
+        "GET /search, backref",
+        (id) =>
+          `/search?q=note&filter=${encodeURIComponent(`backref[about] eq "${id}"`)}`,
+      ],
+      [
+        "GET /search, edge",
+        (id) =>
+          `/search?q=note&filter=${encodeURIComponent(`edge[about] eq "${id}"`)}`,
+      ],
+    ];
+    for (const anchor of [hidden, hiddenTrashed]) {
+      for (const [name, path] of terms) {
+        const missing = generateId();
+        const seen = without(await ask(key, "GET", path(anchor)), anchor);
+        const absent = without(await ask(key, "GET", path(missing)), missing);
+        expect(absent.status, name).toBe(200);
+        expect(seen, name).toEqual(absent);
+      }
+    }
+
+    // The witness: anchored on an item it may read, the term matches.
+    const target = await note();
+    const readable = await ask(key, "POST", "/edges", {
+      source_id: pointer,
+      target_id: target,
+      edge_type: "about",
+    });
+    expect(readable.status).toBe(201);
+    trackEdge(ctx, (readable.body as { edge: { id: string } }).edge.id);
+    const matched = await ask(key, "GET", `/items?edge[about]=${target}`);
+    expect(
+      (matched.body as { data: { id: string }[] }).data.map((row) => row.id),
+    ).toContain(pointer);
+    const back = await ask(key, "GET", `/items?backref[about]=${pointer}`);
+    expect(
+      (back.body as { data: { id: string }[] }).data.map((row) => row.id),
+    ).toContain(target);
   });
 });

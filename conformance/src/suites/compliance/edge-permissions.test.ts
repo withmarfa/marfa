@@ -1013,18 +1013,19 @@ describe("the doors under an item answer only what the credential may read", () 
     ).toBe(403);
     expect(refusedFullForm.error?.error.code).toBe("edge_permission_denied");
 
-    // The inbound direction, where the caller names the source and an
-    // edge's readability is the source's. The edge type here is one this
-    // credential holds, so what refuses it can only be the anchor's type.
-    const refusedSource = await narrowClient.listItems({
+    // An anchor it may not read is not refused: it matches as an anchor no
+    // row holds, so the page says nothing of the item or its edges.
+    const hiddenAnchor = await narrowClient.listItems({
       backref: { [seen]: hiddenSource },
       limit: 100,
     });
-    expect(
-      refusedSource.status,
-      `a backref filter anchored on an unreadable item was answered: ${JSON.stringify(refusedSource.data)}`,
-    ).toBe(403);
-    expect(refusedSource.error?.error.code).toBe("type_not_permitted");
+    const missingAnchor = await narrowClient.listItems({
+      backref: { [seen]: generateId() },
+      limit: 100,
+    });
+    expect(hiddenAnchor.status).toBe(200);
+    expect(hiddenAnchor.data).toEqual(missingAnchor.data);
+    expect(hiddenAnchor.data.data).toEqual([]);
 
     // And its witness: the same direction anchored on an item this
     // credential may read is answered.

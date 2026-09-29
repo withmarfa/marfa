@@ -84,7 +84,7 @@ import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { sourceAllowlistRefusal } from "./_source-allowlist.js";
-import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
+import { readFilterEdgeTerms } from "./_edge-visibility.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -492,9 +492,9 @@ const listItemsRoute = createRoute({
             "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
             "about a relationship, so it is held to the edge read " +
             "permission: one naming a type the credential may not read is " +
-            "refused `403 edge_permission_denied`, and a `backref` term " +
-            "anchored on an item whose type it may not read is " +
-            "`403 type_not_permitted`.",
+            "refused `403 edge_permission_denied`. A term anchored on " +
+            "an item whose type it may not read matches as one anchored " +
+            "on an id no row holds.",
         ),
       sort: z
         .string()
@@ -618,7 +618,7 @@ const listItemsRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read, or when a `backref` term is anchored on an item whose type it may not read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
+        "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
     },
   },
 });
@@ -2040,7 +2040,7 @@ export function itemRoutes(storage: Storage) {
     }
     // The shorthand and the full form are one expression by this point,
     // so one pass over it covers both. `GET /search` makes the same call.
-    await assertFilterEdgeTermsReadable(c, storage, filter);
+    const hiddenAnchors = await readFilterEdgeTerms(c, storage, filter);
     // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
@@ -2084,6 +2084,7 @@ export function itemRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags,
       filter,
+      hidden_anchors: hiddenAnchors,
       allowed_types: typeFilterForList.allowed,
       excluded_types: typeFilterForList.excluded,
       // The query schema's regex already constrains this to a system column or
@@ -2976,9 +2977,8 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     requirePermission(c, "items.purge");
-    // Read including trashed: on the ordinary path (trash, then purge) a
-    // plain `get` answers `null`, leaving no type to ask about. The same read
-    // `storage.items.purge` gates on, and the message it answers.
+    // Including trashed, because purge follows trash; the message is the one
+    // `storage.items.purge` answers, so a hidden row and no row read alike.
     const purgeTarget = requireReadableRow(
       c,
       await storage.items.getIncludingTrashed(id),

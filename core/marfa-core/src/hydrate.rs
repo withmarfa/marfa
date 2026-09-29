@@ -154,13 +154,9 @@ pub(crate) fn hydrate(
         if store::item_held(&*core.conn()?, &id)? {
             continue;
         }
-        // A pinned row the server does not hold, or the key can no longer
-        // read, stays pinned and holds nothing until an event brings it.
-        let read = match read_with_edges(http, &id) {
-            Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => None,
-            read => read?,
-        };
-        let Some((row, edges)) = read else {
+        // A pinned row the server does not show this key stays pinned and
+        // holds nothing until an event brings it.
+        let Some((row, edges)) = read_with_edges(http, &id)? else {
             continue;
         };
         let mut conn = core.conn()?;

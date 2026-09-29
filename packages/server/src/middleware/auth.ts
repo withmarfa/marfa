@@ -759,9 +759,8 @@ export function requireTypeAccess(
 }
 
 /**
- * The row a door names by id, answered as that door's `notFound` where the
- * credential may not read its type, so a hidden row and no row look alike.
- * A credential reaching no type is refused first, whatever the id names.
+ * The row a door names by id, answered as its `notFound` where the key cannot
+ * read its type, so a hidden row and no row look alike to the caller.
  */
 export function requireReadableRow<T extends { type: string }>(
   c: Context<AppEnv>,

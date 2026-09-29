@@ -265,10 +265,11 @@ export class FolderDoor {
     },
     options: { resolve?: boolean } = {},
   ): Answer {
-    // A row in the bin is not there to an update, as it is not to a read.
+    // A row in the bin, or of a type the key cannot read, is not there to an
+    // update, as it is not to a read (`keys-and-oauth.md` 20).
     const before = this.rows.get(id);
-    if (before === undefined || before.trashed === true) {
-      return refusal(404, "item_not_found", `Item ${id} not found`);
+    if (!this.shows(before)) {
+      return answers.itemNotFound(id);
     }
     const sentProperties = sent.properties ?? {};
     // Under replace the body is the row's whole properties, so a field it
@@ -409,19 +410,19 @@ export class FolderDoor {
   }
 
   /** A read by id, which a device makes to hold a row a refusal named. A row
-   *  in the bin reads as absent, as it does on the server. */
+   *  in the bin, or one the key cannot read, reads as absent, as on the server. */
   read(id: string): Answer {
     const row = this.rows.get(id);
-    return row !== undefined && row.trashed !== true
+    return this.shows(row)
       ? answers.updated(this.wire(id), row.tags ?? [])
-      : refusal(404, "item_not_found", `Item ${id} not found`);
+      : answers.itemNotFound(id);
   }
 
   /** A move to another lifecycle state, which takes no version step. */
   transition(id: string, state: string): Answer {
     const row = this.rows.get(id);
-    if (row === undefined || row.trashed === true) {
-      return refusal(404, "item_not_found", `Item ${id} not found`);
+    if (!this.shows(row)) {
+      return answers.itemNotFound(id);
     }
     this.rows.set(id, { ...row, state });
     // The stored row, as the transition door answers it: no hydrated edges.
@@ -439,6 +440,15 @@ export class FolderDoor {
   trash(id: string): void {
     const row = this.rows.get(id);
     if (row !== undefined) this.rows.set(id, { ...row, trashed: true });
+  }
+
+  /** Whether a read by id shows this row: live, and of a type the key reads. */
+  private shows(row: DoorRow | undefined): row is DoorRow {
+    return (
+      row !== undefined &&
+      row.trashed !== true &&
+      this.reads(row.type ?? "core.note")
+    );
   }
 
   private remember(id: string, row: DoorRow): void {

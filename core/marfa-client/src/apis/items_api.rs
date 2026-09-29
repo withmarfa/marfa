@@ -106,7 +106,7 @@ pub struct ListItemsParams {
     pub tier: Option<String>,
     /// Comma-separated tags; items must carry all of them
     pub tags: Option<String>,
-    /// Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`, and a `backref` term anchored on an item whose type it may not read is `403 type_not_permitted`.
+    /// Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A term anchored on an item whose type it may not read matches as one anchored on an id no row holds.
     pub filter: Option<String>,
     /// Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.
     pub sort: Option<String>,

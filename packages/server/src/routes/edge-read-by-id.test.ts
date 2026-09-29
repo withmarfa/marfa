@@ -183,9 +183,8 @@ describe("GET /edges/:id", () => {
   });
 
   it("still applies the source-type gate when the source item is trashed", async () => {
-    // A plain read returns null for a trashed item, and a null source skips
-    // the check rather than failing it, so trashing an item would otherwise
-    // disclose what it is related to.
+    // A null source skips the check, so reading past the trash is what keeps
+    // a trashed item from disclosing what it is related to.
     const { id, source } = await createEdge(keyA);
     const trashed = await request(
       ctx.app,

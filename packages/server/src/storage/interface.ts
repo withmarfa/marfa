@@ -129,6 +129,8 @@ export interface ItemFilters {
   exclude_system_types?: boolean;
   tags?: string[];
   filter?: string;
+  /** Edge-term anchors the caller may not read, matched as ids with no edges. */
+  hidden_anchors?: ReadonlySet<string>;
   allowed_types?: string[];
   /** Patterns the permission map withholds, subtracted from `allowed_types`
    *  under the specificity ranking `resolveTypePermission` uses. A `"none"`
@@ -241,6 +243,8 @@ export interface SearchFilters {
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
+  /** Edge-term anchors the caller may not read, matched as ids with no edges. */
+  hidden_anchors?: ReadonlySet<string>;
   /** Exclusive lower bound on the item's own time — `occurred_at`,
    *  falling back to `created_at` — exactly as `ItemFilters` reads it.
    *  Search advertises parity with `GET /items` in its own description,

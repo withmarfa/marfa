@@ -19,6 +19,27 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
+ * The expression with each edge term anchored on a hidden id pointed at an
+ * id no edge names, so it matches exactly as an anchor that does not exist.
+ */
+export function hideAnchors(
+  expr: FilterExpression,
+  hidden: ReadonlySet<string> | undefined,
+): FilterExpression {
+  if (!hidden || hidden.size === 0) return expr;
+  return {
+    ...expr,
+    conditions: expr.conditions.map((condition) =>
+      condition.field.kind === "edge" &&
+      typeof condition.value === "string" &&
+      hidden.has(condition.value)
+        ? { ...condition, value: "" }
+        : condition,
+    ),
+  };
+}
+
+/**
  * Escape LIKE pattern characters so they are treated as literals.
  *
  * Only half the job: the escape character has to be declared too. SQLite

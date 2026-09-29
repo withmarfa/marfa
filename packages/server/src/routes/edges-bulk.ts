@@ -250,9 +250,8 @@ async function processBulkEdge(
     };
   }
 
-  // Authorize the write before any mutation. Resolve the source item's
-  // type (getIncludingTrashed so a trashed source still runs the gate,
-  // matching PATCH /edges/:id).
+  // Before any mutation, and past the trash so trashing the source does not
+  // lift the gate.
   const srcItem = await storage.items.getIncludingTrashed(raw.source_id);
   const sourceHidden = srcItem !== null && !mayRead(srcItem.type);
   try {
