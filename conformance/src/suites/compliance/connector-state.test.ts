@@ -291,7 +291,7 @@ describe("the hold on an instance that names its window", () => {
     server = await bootFreshServer("connector-hold", {
       MARFA_CONNECTOR_HOLD_MS: String(WINDOW_MS),
     });
-  }, FRESH_SERVER_TIMEOUT_MS);
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
   afterAll(async () => {
     await server?.stop();

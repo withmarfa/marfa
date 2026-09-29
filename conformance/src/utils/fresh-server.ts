@@ -54,8 +54,8 @@ const conformanceRoot = resolve(
  *  than cut off. */
 const BOOT_BUDGET_MS = 240_000;
 
-/** A hook or test's budget for one boot or one stop: past the script's own
- *  bound and the working key's mint, so the script's diagnostics are kept. */
+/** Budgeted per script run a hook may wait on (a failed boot runs two), past
+ *  the script's own bound and the mint, so the script's diagnostics are kept. */
 export const FRESH_SERVER_TIMEOUT_MS = BOOT_BUDGET_MS + 30_000;
 
 /** Every server booted or booting and not yet stopped, so a file's teardown

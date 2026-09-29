@@ -37,7 +37,7 @@ beforeAll(async () => {
     SQLITE_BUSY_BUDGET_MS: "0",
   });
   patient = await bootFreshServer("contention-patient");
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+}, 4 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 

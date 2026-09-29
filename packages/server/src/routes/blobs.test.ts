@@ -486,6 +486,7 @@ describe("GET /blobs/:hash/fetch", () => {
       vi.setSystemTime(minted + 999);
       const live = await ctx.app.request(url.pathname + url.search);
       expect(live.status).toBe(200);
+      expect(new Uint8Array(await live.arrayBuffer())).toEqual(data);
       vi.setSystemTime(minted + 1001);
       const fetched = await ctx.app.request(url.pathname + url.search);
       expect(fetched.status).toBe(401);

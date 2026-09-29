@@ -31,7 +31,7 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.operatorKey,
   });
-}, FRESH_SERVER_TIMEOUT_MS);
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await server?.stop();

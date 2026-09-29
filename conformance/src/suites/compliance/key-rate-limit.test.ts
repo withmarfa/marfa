@@ -47,7 +47,7 @@ beforeAll(async () => {
   unset = await bootFreshServer("keys-rate-limit-default", {
     RATE_LIMIT_ENABLED: "true",
   });
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+}, 4 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 

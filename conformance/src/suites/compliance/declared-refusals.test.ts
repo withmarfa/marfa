@@ -624,7 +624,7 @@ describe("a deployment that caps live viewers", () => {
         await server.stop();
       }
     },
-    2 * FRESH_SERVER_TIMEOUT_MS,
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
 });
 
@@ -666,6 +666,6 @@ describe("a session token", () => {
         await server.stop();
       }
     },
-    2 * FRESH_SERVER_TIMEOUT_MS,
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
 });

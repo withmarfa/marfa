@@ -1378,6 +1378,6 @@ describe("a key's claims", () => {
         await server.stop();
       }
     },
-    2 * FRESH_SERVER_TIMEOUT_MS,
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
 });

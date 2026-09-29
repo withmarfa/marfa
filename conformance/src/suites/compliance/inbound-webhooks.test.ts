@@ -538,7 +538,7 @@ describe("the receiving door on an instance that names its limits", () => {
       MARFA_INBOUND_IN_FLIGHT_BYTES: "8",
       MARFA_INBOUND_READ_TIMEOUT_MS: "1000",
     });
-  }, FRESH_SERVER_TIMEOUT_MS);
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
   afterAll(async () => {
     await server?.stop();
