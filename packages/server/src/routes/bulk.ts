@@ -25,6 +25,7 @@
  * subscriber is not what the caller asked for.
  */
 
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
@@ -284,10 +285,14 @@ const bulkActionRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "forbidden",
+          ]),
         },
       },
-      description: "`items.purge` required (purge only)",
+      description:
+        "`forbidden` where `items.purge` is missing (purge only); `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it.",
     },
   },
 });
@@ -1478,6 +1483,7 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const callerKey = c.get("apiKey");
+    assertFilterEdgeTermsReadable(c, filter.filter);
 
     // Narrowed to what the caller may *write*, which this comment claimed
     // before the code did it. The filter compiled readable patterns, so a

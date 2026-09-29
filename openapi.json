@@ -1394,7 +1394,7 @@
           "error"
         ]
       },
-      "ForbiddenRefusal": {
+      "EdgePermissionDeniedOrForbiddenRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1403,6 +1403,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "edge_permission_denied",
                   "forbidden"
                 ]
               },
@@ -1464,6 +1465,36 @@
             "type": "string"
           }
         }
+      },
+      "ForbiddenRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "forbidden"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
       },
       "BulkJobNotFoundRefusal": {
         "type": "object",
@@ -5852,10 +5883,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A term anchored on an item whose type it may not read matches as one anchored on an id no row holds."
+              "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included."
             },
             "required": false,
-            "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A term anchored on an item whose type it may not read matches as one anchored on an id no row holds.",
+            "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.",
             "name": "filter",
             "in": "query"
           },
@@ -10694,11 +10725,11 @@
             }
           },
           "403": {
-            "description": "`items.purge` required (purge only)",
+            "description": "`forbidden` where `items.purge` is missing (purge only); `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenRefusal"
                 }
               }
             },
@@ -17618,10 +17649,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`, and a term anchored on an item whose type it may not read matches as one anchored on an id no row holds."
+              "description": "Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included."
             },
             "required": false,
-            "description": "Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`, and a term anchored on an item whose type it may not read matches as one anchored on an id no row holds.",
+            "description": "Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.",
             "name": "filter",
             "in": "query"
           },

@@ -150,9 +150,11 @@ const searchRoute = createRoute({
           "Structured filter expression, as on `GET /items`, including " +
             "its edge terms and their refusals: a term naming an edge " +
             "type the credential may not read is refused " +
-            "`403 edge_permission_denied`, and a term anchored on an " +
-            "item whose type it may not read matches as one anchored on " +
-            "an id no row holds.",
+            "`403 edge_permission_denied`. A `backref` term counts only " +
+            "edges whose source the credential may read, so one anchored " +
+            "on an item it may not read matches as one anchored on an id " +
+            "no row holds; an `edge` term matches every edge it may read, " +
+            "one to an item it may not read included.",
         )
         .optional(),
       occurred_after: z

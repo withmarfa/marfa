@@ -501,9 +501,11 @@ const listItemsRoute = createRoute({
             "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
             "about a relationship, so it is held to the edge read " +
             "permission: one naming a type the credential may not read is " +
-            "refused `403 edge_permission_denied`. A term anchored on " +
-            "an item whose type it may not read matches as one anchored " +
-            "on an id no row holds.",
+            "refused `403 edge_permission_denied`. A `backref` term " +
+            "counts only edges whose source the credential may read, so " +
+            "one anchored on an item it may not read matches as one " +
+            "anchored on an id no row holds; an `edge` term matches every " +
+            "edge it may read, one to an item it may not read included.",
         ),
       sort: z
         .string()

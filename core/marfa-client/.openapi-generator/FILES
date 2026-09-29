@@ -133,6 +133,8 @@ src/models/edge_not_found_refusal_error.rs
 src/models/edge_page.rs
 src/models/edge_permission_denied_or_forbidden_or_type_not_permitted_refusal.rs
 src/models/edge_permission_denied_or_forbidden_or_type_not_permitted_refusal_error.rs
+src/models/edge_permission_denied_or_forbidden_refusal.rs
+src/models/edge_permission_denied_or_forbidden_refusal_error.rs
 src/models/edge_permission_denied_or_type_not_permitted_refusal.rs
 src/models/edge_permission_denied_or_type_not_permitted_refusal_error.rs
 src/models/edge_response.rs

@@ -1058,6 +1058,32 @@ describe("the doors under an item answer only what the credential may read", () 
       `search answered a filter naming an unreadable edge type: ${JSON.stringify(searchRefused.data)}`,
     ).toBe(403);
     expect(searchRefused.error?.error.code).toBe("edge_permission_denied");
+
+    // `POST /items/bulk-actions` takes the grammar too, and asks the same.
+    const writerKey = await makeKey("underitem-filter-bulk", {
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { [seen]: "read" },
+    });
+    const bulk = (filter: string) =>
+      new MarfaClient({ baseUrl: apiUrl, apiKey: writerKey.key }).rawRequest<{
+        matched?: number;
+      }>("/items/bulk-actions", {
+        method: "POST",
+        body: {
+          filter: { filter },
+          action: "update_tags",
+          add: ["ep-filter-bulk"],
+          dry_run: true,
+        },
+      });
+    const bulkWitness = await bulk(`edge[${seen}] eq "${target}"`);
+    expect(bulkWitness.status, JSON.stringify(bulkWitness.error)).toBe(200);
+    const bulkRefused = await bulk(`edge[${unseen}] eq "${target}"`);
+    expect(
+      bulkRefused.status,
+      `bulk-actions answered a filter naming an unreadable edge type: ${JSON.stringify(bulkRefused.data)}`,
+    ).toBe(403);
+    expect(bulkRefused.error?.error.code).toBe("edge_permission_denied");
   });
 });
 

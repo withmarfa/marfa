@@ -782,19 +782,19 @@ describe("an item the key cannot read answers as a missing one", () => {
         "Idempotency-Key": generateId(),
       };
       const send = async (): Promise<Seen> => {
-        const res = await fetch(`${apiUrl}/items/${id}/tags`, {
+        const res = await fetch(`${apiUrl}/items/${id}/transition`, {
           method: "POST",
           headers,
-          body: JSON.stringify({ tags: ["replayed"] }),
+          body: JSON.stringify({ state: "archived" }),
         });
+        const kept: Record<string, string> = {};
+        for (const [name, value] of res.headers) {
+          if (!PER_REQUEST_HEADERS.has(name)) kept[name] = value;
+        }
         return without(
           {
             status: res.status,
-            headers: Object.fromEntries(
-              [...res.headers].filter(
-                ([name]) => !PER_REQUEST_HEADERS.has(name),
-              ),
-            ),
+            headers: kept,
             body: JSON.parse(await res.text()) as unknown,
           },
           id,
@@ -804,9 +804,10 @@ describe("an item the key cannot read answers as a missing one", () => {
     };
     const [hiddenFirst, hiddenAgain] = await replayed(hidden);
     const [missingFirst, missingAgain] = await replayed(generateId());
-    // The witness: a missing id's 404 is recorded and replayed as it was.
+    // The witness: a missing id's 404 is recorded, and its repeat is a replay.
     expect(missingFirst.status).toBe(404);
-    expect(missingAgain).toEqual(missingFirst);
+    expect(missingFirst.headers["idempotency-replayed"]).toBeUndefined();
+    expect(missingAgain.headers["idempotency-replayed"]).toBe("true");
     expect(hiddenFirst).toEqual(missingFirst);
     expect(hiddenAgain).toEqual(missingAgain);
   });

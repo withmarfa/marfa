@@ -2024,10 +2024,10 @@ export interface components {
                 };
             };
         };
-        ForbiddenRefusal: {
+        EdgePermissionDeniedOrForbiddenRefusal: {
             error: {
                 /** @enum {string} */
-                code: "forbidden";
+                code: "edge_permission_denied" | "forbidden";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2045,6 +2045,16 @@ export interface components {
             /** @description Upper bound on the same expression, strictly before this. Exclusive, matching its lower twin. */
             occurred_before?: string;
             filter?: string;
+        };
+        ForbiddenRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "forbidden";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         BulkJobNotFoundRefusal: {
             error: {
@@ -3199,7 +3209,7 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated tags; items must carry all of them */
                 tags?: string;
-                /** @description Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A term anchored on an item whose type it may not read matches as one anchored on an id no row holds. */
+                /** @description Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
                 filter?: string;
                 /** @description Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical. */
                 sort?: string;
@@ -5681,7 +5691,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `items.purge` required (purge only) */
+            /** @description `forbidden` where `items.purge` is missing (purge only); `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5693,7 +5703,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
@@ -9021,7 +9031,7 @@ export interface operations {
                 limit?: number;
                 /** @description Opaque cursor from a previous page's `next_cursor`. */
                 cursor?: string;
-                /** @description Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`, and a term anchored on an item whose type it may not read matches as one anchored on an id no row holds. */
+                /** @description Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
                 filter?: string;
                 /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time. */
                 occurred_after?: string;
