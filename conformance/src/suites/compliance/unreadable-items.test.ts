@@ -602,7 +602,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     });
     // Each door, asked of a row that exists and of an id nothing holds, and
     // what a key reaching one type is answered there.
-    const doors: [
+    type Reached = [
       string,
       string,
       (id: string) => string,
@@ -610,7 +610,8 @@ describe("an item the key cannot read answers as a missing one", () => {
       string,
       string,
       number,
-    ][] = [
+    ];
+    const doors: Reached[] = [
       [
         "GET",
         "/items/{id}",
@@ -620,15 +621,22 @@ describe("an item the key cannot read answers as a missing one", () => {
         own,
         200,
       ],
-      [
+      ...[
+        "edges",
+        "backrefs",
+        "versions",
+        "metadata",
+        "extensions",
+        "extensions/unreadable",
+      ].map((door): Reached => [
         "GET",
-        "/items/{id}/edges",
-        (id) => `/items/${id}/edges`,
+        `/items/{id}/${door}`,
+        (id) => `/items/${id}/${door}`,
         () => undefined,
         hidden,
         own,
         200,
-      ],
+      ]),
       [
         "GET",
         "/edges/{id}",
