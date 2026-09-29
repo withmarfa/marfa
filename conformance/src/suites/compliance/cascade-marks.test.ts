@@ -321,6 +321,32 @@ describe("a cascaded trash names its root", () => {
     }
   });
 
+  it("answers the marks on POST /items/lookup, to each reader as it may be told", async () => {
+    const tag = `lookup-${ctx.runId}`;
+    const root = await task(tag);
+    const child = await note("child", tag);
+    const alone = await note("alone", tag);
+    await edge(root, child, "parent-of");
+    expect((await client.deleteItem(root)).ok).toBe(true);
+    expect((await client.deleteItem(alone)).ok).toBe(true);
+
+    const ids = [child, alone];
+    const full = await client.lookupItems({ type: "core.note", ids });
+    expect(full.status).toBe(200);
+    const fullRows = new Map(full.data.data.map((row) => [row.id, row]));
+    expect(fullRows.get(child)?.trashed_by_cascade).toBe(true);
+    expect(fullRows.get(child)?.trashed_with).toBe(root);
+    // The witness: a row trashed on its own is answered, unmarked.
+    expect(fullRows.get(alone)?.state).toBe("trashed");
+    expect(fullRows.get(alone)).not.toHaveProperty("trashed_by_cascade");
+
+    const notes = await noteClient.lookupItems({ type: "core.note", ids });
+    expect(notes.status).toBe(200);
+    const noteRows = new Map(notes.data.data.map((row) => [row.id, row]));
+    expect(noteRows.get(child)?.trashed_by_cascade).toBe(true);
+    expect(noteRows.get(child)).not.toHaveProperty("trashed_with");
+  });
+
   it("names the row trashed only to a key that may read its type, and says a cascade took the row to any key that reads it", async ({
     signal,
   }) => {
