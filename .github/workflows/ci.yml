@@ -129,7 +129,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Conformance
     timeout-minutes: 60
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -163,10 +163,12 @@ jobs:
       # The object store the server attaches beside its disk, so the
       # object-store half of the blob chapters is asserted rather than
       # skipped. `garage:up` writes S3 settings to GITHUB_ENV for the server.
+      # The same release the restore drill installs.
       - name: Put an object store beside the server
         working-directory: conformance
         run: |
-          brew install garage
+          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+          sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
           pnpm garage:up --state "$RUNNER_TEMP/garage"
 
       - name: Boot the server from this checkout
@@ -177,7 +179,7 @@ jobs:
 
       - name: Run the default selection
         working-directory: conformance
-        run: ../core/scripts/login-keychain-unchanged.sh pnpm test:conformance
+        run: pnpm test:conformance
 
       # Reads the log of the server the selection just drove, so it runs
       # here rather than as a job of its own and before the stop, which
@@ -224,7 +226,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CLI scenarios
     timeout-minutes: 60
-    runs-on: macos-26
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -253,7 +255,7 @@ jobs:
 
       - name: Run the scenarios
         working-directory: conformance
-        run: ../core/scripts/login-keychain-unchanged.sh pnpm test:cli
+        run: pnpm test:cli
 
       - name: Hold every status observed to its declaration
         working-directory: conformance

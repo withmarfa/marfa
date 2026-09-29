@@ -27,9 +27,8 @@
 # second boot in the same shell does not read.
 #
 # PORT defaults to one the kernel says is free, because a fixed default
-# cannot be right for both callers: the runner pool runs on a developer's own
-# Mac, so a local boot and a CI job would take the same port and whichever
-# arrived second would fail to bind against a process belonging to the other.
+# cannot be right for two boots on one machine: whichever arrived second would
+# fail to bind against a process belonging to the other.
 set -euo pipefail
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"

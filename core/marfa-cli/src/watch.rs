@@ -31,6 +31,15 @@ fn full_due(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.duration_since(last) >= FULL_PASS)
 }
 
+/// Whether an event the loop passes over lets the tick's pass run: only once
+/// a tick has gone by since the last pass ended and since the last change,
+/// as a receive that timed out would. inotify reports every open of a file,
+/// so a reader faster than the tick would otherwise keep the receive from
+/// ever timing out.
+fn passed_over_is_due(since_pass: Duration, since_change: Duration) -> bool {
+    since_pass >= TICK && since_change >= TICK
+}
+
 /// Watches a folder and keeps it in step. Every pass, the first included,
 /// decides identity by the same rule (`folders.md` 18).
 pub fn watch(
@@ -153,6 +162,7 @@ fn watch_files(
 
     let started = Instant::now();
     let mut quiet_since = Instant::now();
+    let mut last_pass = Instant::now();
     // What stood after the last pass that printed, so a standing condition
     // is said once rather than once a second.
     let mut standing: Option<Standing> = None;
@@ -167,22 +177,23 @@ fn watch_files(
         }
         match events.recv_timeout(TICK) {
             Ok(Wake::File(Ok(event))) => {
-                // `Access` is a read, and a folder does not push a file
-                // because somebody opened it.
-                if matches!(event.kind, EventKind::Access(_)) {
+                // `Access` is an open or the close after a write, and a folder
+                // does not push a file because somebody opened it; a write
+                // has already shown itself as a modify. A dot-led path is watched only
+                // where the include list names it (`folders.md` 25), and
+                // `.marfa` only for the settings file (28); this stops a write
+                // under `.marfa` waking a pass.
+                let passed_over = matches!(event.kind, EventKind::Access(_))
+                    || event.paths.iter().all(|path| {
+                        dot_led(dir, path)
+                            && !settings_file(dir, path)
+                            && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
+                    });
+                if !passed_over {
+                    quiet_since = Instant::now();
+                } else if !passed_over_is_due(last_pass.elapsed(), quiet_since.elapsed()) {
                     continue;
                 }
-                // A dot-led path is watched only where the include list names
-                // it (`folders.md` 25), and `.marfa` only for the settings file
-                // (28); this stops a write under `.marfa` waking a pass.
-                if event.paths.iter().all(|path| {
-                    dot_led(dir, path)
-                        && !settings_file(dir, path)
-                        && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
-                }) {
-                    continue;
-                }
-                quiet_since = Instant::now();
             }
             Ok(Wake::File(Err(error))) => eprintln!("watch error: {error}"),
             // A change from elsewhere is written out on the pass below.
@@ -197,9 +208,10 @@ fn watch_files(
         }
         // A pass on every tick, not only on a change: a journaled delete
         // becomes a delete when its grace runs out, and nothing on the
-        // filesystem marks that. So the only gate is the debounce — an
-        // editor writes a file in several steps, and a pass between two of
-        // them reads a file halfway through being written and pushes it.
+        // filesystem marks that. So once a tick is due, the only gate is
+        // the debounce — an editor writes a file in several steps, and a
+        // pass between two of them reads a file halfway through being
+        // written and pushes it.
         //
         // There is deliberately no "was there a change" flag beside this.
         // A pass with nothing to do is cheap and says nothing, and a flag
@@ -218,6 +230,10 @@ fn watch_files(
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }
+        // From the end: a pass's own reads are events passed over, and
+        // measured from its start a pass longer than a tick would set off
+        // the next one.
+        last_pass = Instant::now();
         lists = folder.settings().and_then(|settings| settings.lists()).ok();
     }
     Ok(())
@@ -448,6 +464,15 @@ mod tests {
     use super::*;
 
     const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn an_event_passed_over_runs_a_pass_only_a_tick_after_both_the_last_pass_and_change() {
+        let under = Duration::from_millis(900);
+        assert!(passed_over_is_due(SECOND, 5 * SECOND));
+        assert!(!passed_over_is_due(under, 5 * SECOND));
+        assert!(!passed_over_is_due(5 * SECOND, under));
+        assert!(!passed_over_is_due(under, under));
+    }
 
     #[test]
     fn a_failed_hydration_is_tried_again_after_a_wait_that_doubles_to_thirty_seconds() {

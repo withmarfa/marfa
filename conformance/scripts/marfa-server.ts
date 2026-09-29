@@ -6,8 +6,8 @@
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>]
  *
  * The port is `--port`, else `PORT`, else one the kernel says is free. The
- * default is what matters: two boots on one machine never collide, which the
- * runner pool depends on because it runs on a developer's own Mac.
+ * default is what matters: two boots on one machine, from two worktrees or
+ * two agents, never collide.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]
  *

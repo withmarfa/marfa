@@ -94,7 +94,7 @@ function requireGarage(): void {
   const probe = spawnSync("garage", ["--version"], { stdio: "pipe" });
   if (probe.status !== 0) {
     throw new Error(
-      "garage is not on the path; install it with `brew install garage`",
+      "garage is not on the path; install it with `brew install garage`, or a release binary from garagehq.deuxfleurs.fr",
     );
   }
 }
