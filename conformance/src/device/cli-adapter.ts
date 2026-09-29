@@ -777,6 +777,9 @@ export interface PullReport {
   unchanged: number;
   skipped: number;
   unwritten: number;
+  /** Files the person deleted, written back because their item changed
+   *  elsewhere inside the grace (`folders.md` 21). */
+  revived: number;
   /** Items whose placement another item holds, written at a free path
    *  beside it (`folders.md` 19). */
   beside: number;

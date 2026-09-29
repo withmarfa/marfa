@@ -1217,17 +1217,19 @@ impl Folder {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
         };
-        let journaled: HashSet<String> = {
+        // By path and item: another item's file at the path answers no delete.
+        let journaled: HashSet<(String, String)> = {
             let conn = self.core.conn()?;
             state::journaled(&conn)?
                 .into_iter()
-                .map(|(path, _, _)| path)
+                .map(|(path, item_id, _)| (path, item_id))
                 .collect()
         };
         for row in bound {
+            let held = journaled.contains(&(row.path.clone(), row.item_id.clone()));
             if seen.contains(&row.path) {
                 // Back inside the grace, so the server never hears of it.
-                if journaled.contains(&row.path) {
+                if held {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
                 }
@@ -1239,7 +1241,7 @@ impl Folder {
                 || walked.passed_over(&row.path)
                 || in_nested_folder(&self.root, &row.path)
             {
-                if journaled.contains(&row.path) {
+                if held {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
                 }
@@ -1566,16 +1568,18 @@ impl Folder {
         peers: &Peers<'_>,
         members: &OnceCell<HashSet<String>>,
     ) -> Result<Missing> {
-        // A row already gone is the one excuse; anything else the store
+        // Only a row gone or in the bin sends nothing; anything else the store
         // says is an error, not a reason to skip the delete.
         let (held, bound) = {
             let conn = self.core.conn()?;
             (
-                crate::store::item_held(&conn, item_id)?,
+                crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop(),
                 state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),
             )
         };
-        let missing = if held {
+        // An item already in the bin is where the delete would put it, and the
+        // server refuses a second delete `404`.
+        let missing = if held.is_some_and(|item| item.state != ItemState::Trashed) {
             let look = match &bound {
                 Some(bound) => peers.moved_to(bound, self.holds(item_id, settings, members)),
                 None => Look::Nowhere,
@@ -2098,6 +2102,13 @@ impl Folder {
             .find(|(path, _)| wanted.contains(&names::folded(path)))
             .map(|(_, item_id)| item_id))
     }
+}
+
+/// Whether the journal holds a delete of this item at this path.
+fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
+    Ok(state::journaled(conn)?
+        .iter()
+        .any(|(at, id, _)| at == path && id == item_id))
 }
 
 /// Whether a move was answered that another machine deleted its edge first.
@@ -2831,6 +2842,14 @@ impl Folder {
         };
         let hash = state::hash(&bytes);
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
+        // A file the person deleted whose item moved on in nothing it shows is
+        // the scan's, and its journaled delete stands (`folders.md` 21).
+        if let Some(bound) = &bound
+            && bytes_of(item, catalog).is_none()
+            && self.deleted_as_agreed(item, bound, rendering)?
+        {
+            return Ok(false);
+        }
 
         // The bytes on the disk, not the mapping's memory of them: a file
         // changed since the scan read it is the person's (`folders.md` 32).
@@ -2950,15 +2969,11 @@ impl Folder {
         }
         {
             let conn = self.core.conn()?;
-            // Counted, because one row this clears can be a person's own
-            // delete still inside its grace.
-            if state::journaled(&conn)?
-                .iter()
-                .any(|(path, _, _)| path == &want)
-            {
+            // Only this item's row: another's is a delete this write does not answer.
+            if journaled_for(&conn, &want, &item.id)? {
                 report.revived += 1;
+                state::journal_clear_for(&conn, &want, &item.id)?;
             }
-            state::journal_clear(&conn, &want)?;
         }
         if let Some(bound) = &bound
             && bound.path != want
@@ -2970,6 +2985,9 @@ impl Folder {
             }
             let conn = self.core.conn()?;
             state::unbind(&conn, &bound.path)?;
+            if journaled_for(&conn, &bound.path, &item.id)? {
+                report.revived += 1;
+            }
             state::journal_clear(&conn, &bound.path)?;
             report.moved += 1;
         }
@@ -3124,6 +3142,7 @@ impl Folder {
             match self.departing(&row, members, settings, lists)? {
                 Departing::No => {}
                 Departing::Kept => report.kept += 1,
+                Departing::Unread => report.unwritten += 1,
                 Departing::Yes => going.push(row),
             }
         }
@@ -3143,8 +3162,8 @@ impl Folder {
         Ok(())
     }
 
-    /// Whether a bound file goes because its item left by state or was
-    /// trashed (`folders.md` 35), or is kept because the person changed it.
+    /// Whether a file goes as its item left by state or was trashed (`folders.md`
+    /// 35): kept if changed, the scan's if gone, and unread if unreadable.
     fn departing(
         &self,
         row: &state::Bound,
@@ -3171,12 +3190,17 @@ impl Folder {
             Ok(found) if row.written_hash.as_deref() != Some(state::hash(&found).as_str()) => {
                 Departing::Kept
             }
-            _ => Departing::Yes,
+            Ok(_) => Departing::Yes,
+            // The person's delete is newer than the departure: the scan journals
+            // it, and sends it unless the item is in the bin (`folders.md` 21).
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Departing::No,
+            // Bytes it cannot read are not shown to be the folder's own.
+            Err(_) => Departing::Unread,
         })
     }
 
-    /// Takes a departed item's file away with its binding; nothing is
-    /// journaled, since the folder was not told of a delete.
+    /// Takes a departed item's file away with its binding. A journal row here
+    /// is a file put back since its scan, so it asks for nothing now.
     fn take_away(&self, row: &state::Bound) -> Result<()> {
         let path = self.root.join(&row.path);
         if path.exists() && plainly_inside(&self.root, &row.path) {
@@ -3187,6 +3211,33 @@ impl Folder {
         let conn = self.core.conn()?;
         state::unbind(&conn, &row.path)?;
         state::journal_clear(&conn, &row.path)
+    }
+
+    /// Whether a journaled file gone from the disk would show its item as last
+    /// agreed, rendered at the line it was agreed at.
+    fn deleted_as_agreed(
+        &self,
+        item: &Item,
+        bound: &state::Bound,
+        rendering: &Rendering<'_>,
+    ) -> Result<bool> {
+        if self.root.join(&bound.path).exists()
+            || !journaled_for(&*self.core.conn()?, &bound.path, &item.id)?
+        {
+            return Ok(false);
+        }
+        let line = carries_frontmatter(Path::new(&bound.path))
+            .then(|| bound.own.as_ref().map(|own| own.line))
+            .flatten();
+        let rendered = self.render(
+            item,
+            &bound.path,
+            line,
+            rendering.catalog,
+            rendering.edge_types,
+            (rendering.names, None, &bound.lines),
+        )?;
+        Ok(state::hash(rendered.text.as_bytes()) == bound.content_hash)
     }
 
     /// Whether a file differs from its item's render in its version line
@@ -3634,6 +3685,7 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
 enum Departing {
     No,
     Kept,
+    Unread,
     Yes,
 }
 

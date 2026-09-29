@@ -10,7 +10,7 @@ use super::edge_types::EdgeTypes;
 use super::{Flagged, Folder, ScanReport, identity, is_document, near_limit, one_per_name, state};
 use crate::Result;
 use crate::catalog::Catalog;
-use crate::model::{QueuedWrite, Verdict, WriteKind};
+use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
 
 /// One file and where it stands.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -182,6 +182,21 @@ impl Folder {
                 FileStatus::new(&bound.path, at, "held").because(
                     "removal",
                     "is gone with more files than the removal threshold lets go at once, so its item is not deleted: `folders confirm` deletes it, and `folders restore` or putting it back cancels that",
+                )
+            } else if crate::store::items_by_ids(
+                &*self.core.conn()?,
+                std::slice::from_ref(&bound.item_id),
+            )?
+            .pop()
+            .is_none_or(|item| item.state == ItemState::Trashed)
+            {
+                FileStatus {
+                    waits: vec!["scan"],
+                    ..FileStatus::new(&bound.path, at, "waiting")
+                }
+                .because(
+                    "gone",
+                    "is gone, and its item is already in the bin or no longer held, so no delete is sent: a scan past the grace lets the file go",
                 )
             } else {
                 FileStatus {
