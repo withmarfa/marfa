@@ -177,8 +177,9 @@ fn watch_files(
         }
         match events.recv_timeout(TICK) {
             Ok(Wake::File(Ok(event))) => {
-                // `Access` is a read, and a folder does not push a file
-                // because somebody opened it. A dot-led path is watched only
+                // `Access` is an open or the close after a write, and a folder
+                // does not push a file because somebody opened it; a write
+                // has already shown itself as a modify. A dot-led path is watched only
                 // where the include list names it (`folders.md` 25), and
                 // `.marfa` only for the settings file (28); this stops a write
                 // under `.marfa` waking a pass.
@@ -207,9 +208,10 @@ fn watch_files(
         }
         // A pass on every tick, not only on a change: a journaled delete
         // becomes a delete when its grace runs out, and nothing on the
-        // filesystem marks that. So the only gate is the debounce — an
-        // editor writes a file in several steps, and a pass between two of
-        // them reads a file halfway through being written and pushes it.
+        // filesystem marks that. So once a tick is due, the only gate is
+        // the debounce — an editor writes a file in several steps, and a
+        // pass between two of them reads a file halfway through being
+        // written and pushes it.
         //
         // There is deliberately no "was there a change" flag beside this.
         // A pass with nothing to do is cheap and says nothing, and a flag
@@ -228,7 +230,9 @@ fn watch_files(
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }
-        // From the end, because a pass's own reads are events passed over.
+        // From the end: a pass's own reads are events passed over, and
+        // measured from its start a pass longer than a tick would set off
+        // the next one.
         last_pass = Instant::now();
         lists = folder.settings().and_then(|settings| settings.lists()).ok();
     }
@@ -462,25 +466,12 @@ mod tests {
     const SECOND: Duration = Duration::from_secs(1);
 
     #[test]
-    fn a_stream_of_reads_lets_the_pass_run_once_a_tick_has_gone_by() {
-        let read_every = Duration::from_millis(100);
-        let mut since = Duration::ZERO;
-        let mut due_at = None;
-        while since < 3 * SECOND && due_at.is_none() {
-            since += read_every;
-            if passed_over_is_due(since, since) {
-                due_at = Some(since);
-            }
-        }
-        assert_eq!(due_at, Some(SECOND));
-    }
-
-    #[test]
-    fn an_event_passed_over_runs_no_pass_within_a_tick_of_a_pass_or_a_change() {
+    fn an_event_passed_over_runs_a_pass_only_a_tick_after_both_the_last_pass_and_change() {
         let under = Duration::from_millis(900);
+        assert!(passed_over_is_due(SECOND, 5 * SECOND));
         assert!(!passed_over_is_due(under, 5 * SECOND));
         assert!(!passed_over_is_due(5 * SECOND, under));
-        assert!(passed_over_is_due(5 * SECOND, 5 * SECOND));
+        assert!(!passed_over_is_due(under, under));
     }
 
     #[test]
