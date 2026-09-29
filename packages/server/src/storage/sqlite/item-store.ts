@@ -42,11 +42,7 @@ import {
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "../merge-properties.js";
-import {
-  filterToSqlConditions,
-  hideAnchors,
-  sourceFilterToSql,
-} from "../filter-sql.js";
+import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { TypeFilter, Edge } from "@withmarfa/shared";
 import type {
@@ -875,11 +871,12 @@ export class SqliteItemStore implements ItemStore {
     if (sourceLever) conditions.push(sourceLever);
 
     if (filters.filter) {
-      const expr = hideAnchors(
-        parseFilter(filters.filter),
-        filters.hidden_anchors,
+      const expr = parseFilter(filters.filter);
+      const filterConds = filterToSqlConditions(
+        expr,
+        items,
+        filters.readable_sources,
       );
-      const filterConds = filterToSqlConditions(expr, items);
       if (expr.logical === "OR") {
         const orClause = or(...filterConds);
         if (orClause) conditions.push(orClause);

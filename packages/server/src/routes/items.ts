@@ -84,7 +84,7 @@ import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { sourceAllowlistRefusal } from "./_source-allowlist.js";
-import { readFilterEdgeTerms } from "./_edge-visibility.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
@@ -2044,7 +2044,7 @@ export function itemRoutes(storage: Storage) {
     }
     // The shorthand and the full form are one expression by this point,
     // so one pass over it covers both. `GET /search` makes the same call.
-    const hiddenAnchors = await readFilterEdgeTerms(c, storage, filter);
+    assertFilterEdgeTermsReadable(c, filter);
     // Read tier from the raw query string — zod-openapi occasionally drops enum strings.
     const rawTier = c.req.query("tier");
     const tier: "library" | "feed" | undefined =
@@ -2088,7 +2088,7 @@ export function itemRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags,
       filter,
-      hidden_anchors: hiddenAnchors,
+      readable_sources: typeFilterForList,
       allowed_types: typeFilterForList.allowed,
       excluded_types: typeFilterForList.excluded,
       // The query schema's regex already constrains this to a system column or

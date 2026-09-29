@@ -2,11 +2,7 @@ import { edgePermissionCovers, parseFilter } from "@withmarfa/shared";
 import type { ApiKey, Edge } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  mayReadRow,
-  mayReadType,
-  requireEdgePermission,
-} from "../middleware/auth.js";
+import { mayReadType, requireEdgePermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
@@ -153,31 +149,16 @@ export async function edgeReadable(
  * different question under the same status — the unfiltered page the
  * unknown-parameter refusal exists to prevent.
  *
- * **An anchor the caller may not read is not refused: it is answered as a
- * missing one.** Its id comes back in the returned set, which the store
- * compiles as an id no edge names, so the term matches exactly as it would
- * for an id no row holds, in either direction.
- *
- * Parsed here as well as in the store: the expression is bounded at
- * `MAX_FILTER_INPUT_LENGTH`, and a second pass over two kilobytes is
- * cheaper than threading a parsed form through a store interface that
- * takes the string. One function for every door, because a listing and a
- * search that disagree about one term is the same disclosure reached
- * through the other one.
+ * An anchor the caller may not read is not refused: the store counts only
+ * edges with a readable source, so a hidden `backref` anchor matches as none.
  */
-export async function readFilterEdgeTerms(
+export function assertFilterEdgeTermsReadable(
   c: Context<AppEnv>,
-  storage: Storage,
   filter: string | undefined,
-): Promise<ReadonlySet<string>> {
-  const hidden = new Set<string>();
-  if (filter === undefined) return hidden;
+): void {
+  if (filter === undefined) return;
   for (const condition of parseFilter(filter).conditions) {
     if (condition.field.kind !== "edge") continue;
     requireEdgePermission(c, condition.field.edge_type, "read");
-    if (typeof condition.value !== "string") continue;
-    const anchor = await storage.items.getIncludingTrashed(condition.value);
-    if (anchor && !mayReadRow(c, anchor)) hidden.add(condition.value);
   }
-  return hidden;
 }

@@ -58,6 +58,7 @@ import {
   requireDeclaredTypeMatches,
   itemProvenanceSource,
   getTypeFilter,
+  computeTypeFilter,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
@@ -1528,6 +1529,8 @@ export function bulkRoutes(storage: Storage) {
         tier: filter.tier,
         tags: filter.tags,
         filter: filter.filter,
+        // What the caller reads, not writes: an edge is readable by its source.
+        readable_sources: computeTypeFilter(callerKey, "read"),
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
         // Per row, from the row's own type, as on every read door.

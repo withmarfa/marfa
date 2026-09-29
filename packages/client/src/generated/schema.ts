@@ -501,7 +501,7 @@ export interface paths {
         };
         /**
          * Get an edge
-         * @description Returns one edge by its id. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.
+         * @description Returns one edge by its id; an edge whose edge type or source item the caller may not read answers `404 edge_not_found`, exactly as a missing one. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.
          */
         get: operations["getEdge"];
         put?: never;
@@ -7474,7 +7474,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `edge_permission_denied` without read on the edge type; `type_not_permitted` where the credential's type permissions reach no type. */
+            /** @description The credential's type permissions reach no type. An edge of a type it may not read, or with a source it may not read, answers 404 as a missing edge does. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7486,10 +7486,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Edge not found */
+            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7598,7 +7598,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type. */
+            /** @description The dual gate refused one of its halves: `edge_permission_denied` on an edge type the credential may read and not write, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7613,7 +7613,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Edge not found */
+            /** @description No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7784,7 +7784,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type. */
+            /** @description The dual gate refused one of its halves: `edge_permission_denied` on an edge type the credential may read and not write, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7799,7 +7799,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description `edge_not_found` for the edge, and for one whose source item is of a type the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by. */
+            /** @description `edge_not_found` for the edge, and for one whose edge type or source item the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

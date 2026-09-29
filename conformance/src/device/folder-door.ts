@@ -422,7 +422,8 @@ export class FolderDoor {
   transition(id: string, state: string): Answer {
     const row = this.rows.get(id);
     if (!this.shows(row)) {
-      return answers.itemNotFound(id);
+      // The transition door's own message, which names no id.
+      return refusal(404, "item_not_found", "Item not found");
     }
     this.rows.set(id, { ...row, state });
     // The stored row, as the transition door answers it: no hydrated edges.

@@ -134,7 +134,11 @@ describe("an item the key cannot read answers as a missing one", () => {
     key = minted.data.key;
 
     hidden = await ownerItem(createBookmark);
-    hiddenTrashed = await ownerItem(createBookmark, true);
+    // An edge each way before the trash, so an answer that leaked it could show.
+    hiddenTrashed = await ownerItem(createBookmark);
+    await edge(hiddenTrashed, await note());
+    await edge(await note(), hiddenTrashed);
+    expect((await client.deleteItem(hiddenTrashed)).ok).toBe(true);
     task = await ownerItem(createTask);
     hiddenEdge = await edge(hidden, await note());
     await edge(hidden, task, "references");
@@ -688,18 +692,9 @@ describe("an item the key cannot read answers as a missing one", () => {
   });
 
   it("a filter term anchored on an item it cannot read matches as one anchored on no item", async () => {
-    const pointer = await note();
-    const into = await client.createEdge({
-      source_id: pointer,
-      target_id: hidden,
-      edge_type: "about",
-    });
-    expect(into.status).toBe(201);
-    trackEdge(ctx, into.data.edge.id);
     const source = encodeURIComponent(`${ctx.source}-unreadable-items`);
     const terms: [string, (id: string) => string][] = [
       ["GET /items, backref shorthand", (id) => `/items?backref[about]=${id}`],
-      ["GET /items, edge shorthand", (id) => `/items?edge[about]=${id}`],
       [
         "GET /items, backref neq",
         (id) =>
@@ -711,22 +706,42 @@ describe("an item the key cannot read answers as a missing one", () => {
           `/search?q=note&filter=${encodeURIComponent(`backref[about] eq "${id}"`)}`,
       ],
       [
-        "GET /search, edge",
-        (id) =>
-          `/search?q=note&filter=${encodeURIComponent(`edge[about] eq "${id}"`)}`,
+        "POST /items/bulk-actions, backref dry run",
+        (id) => `/items/bulk-actions#${id}`,
       ],
     ];
+    const asked = async (path: string): Promise<Seen> => {
+      if (!path.startsWith("/items/bulk-actions#"))
+        return ask(key, "GET", path);
+      const id = path.slice("/items/bulk-actions#".length);
+      return ask(key, "POST", "/items/bulk-actions", {
+        filter: { filter: `backref[about] eq "${id}"` },
+        action: "update_tags",
+        add: ["unreadable-anchor"],
+        dry_run: true,
+      });
+    };
     for (const anchor of [hidden, hiddenTrashed]) {
       for (const [name, path] of terms) {
         const missing = generateId();
-        const seen = without(await ask(key, "GET", path(anchor)), anchor);
-        const absent = without(await ask(key, "GET", path(missing)), missing);
-        expect(absent.status, name).toBe(200);
+        const seen = without(await asked(path(anchor)), anchor);
+        const absent = without(await asked(path(missing)), missing);
+        expect([200, 202], name).toContain(absent.status);
         expect(seen, name).toEqual(absent);
       }
     }
 
-    // The witness: anchored on an item it may read, the term matches.
+    // The witness: the hidden anchors do have edges out, which the owner's
+    // listing finds, so the pages above hid them rather than lacked them.
+    for (const anchor of [hidden, hiddenTrashed]) {
+      const owned = await client.listItems({
+        backref: { about: anchor },
+        limit: 100,
+      });
+      expect(owned.data.data.length, anchor).toBeGreaterThan(0);
+    }
+    // And one anchored on an item the key may read matches.
+    const pointer = await note();
     const target = await note();
     const readable = await ask(key, "POST", "/edges", {
       source_id: pointer,
@@ -735,13 +750,103 @@ describe("an item the key cannot read answers as a missing one", () => {
     });
     expect(readable.status).toBe(201);
     trackEdge(ctx, (readable.body as { edge: { id: string } }).edge.id);
-    const matched = await ask(key, "GET", `/items?edge[about]=${target}`);
-    expect(
-      (matched.body as { data: { id: string }[] }).data.map((row) => row.id),
-    ).toContain(pointer);
     const back = await ask(key, "GET", `/items?backref[about]=${pointer}`);
     expect(
       (back.body as { data: { id: string }[] }).data.map((row) => row.id),
     ).toContain(target);
+  });
+
+  it("an outbound term naming an item it cannot read matches the readable edges to it", async () => {
+    // A readable edge names its target whoever reads it (`edges.md` 22), so
+    // the term answers from that edge, as a device holding it does.
+    const pointer = await note();
+    const into = await client.createEdge({
+      source_id: pointer,
+      target_id: hidden,
+      edge_type: "about",
+    });
+    expect(into.status).toBe(201);
+    trackEdge(ctx, into.data.edge.id);
+    const matched = await ask(key, "GET", `/items?edge[about]=${hidden}`);
+    expect(matched.status).toBe(200);
+    expect(
+      (matched.body as { data: { id: string }[] }).data.map((row) => row.id),
+    ).toContain(pointer);
+  });
+
+  it("replays a hidden row's 404 under its Idempotency-Key, as it replays a missing id's", async () => {
+    const replayed = async (id: string): Promise<[Seen, Seen]> => {
+      const headers = {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": generateId(),
+      };
+      const send = async (): Promise<Seen> => {
+        const res = await fetch(`${apiUrl}/items/${id}/tags`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ tags: ["replayed"] }),
+        });
+        return without(
+          {
+            status: res.status,
+            headers: Object.fromEntries(
+              [...res.headers].filter(
+                ([name]) => !PER_REQUEST_HEADERS.has(name),
+              ),
+            ),
+            body: JSON.parse(await res.text()) as unknown,
+          },
+          id,
+        );
+      };
+      return [await send(), await send()];
+    };
+    const [hiddenFirst, hiddenAgain] = await replayed(hidden);
+    const [missingFirst, missingAgain] = await replayed(generateId());
+    // The witness: a missing id's 404 is recorded and replayed as it was.
+    expect(missingFirst.status).toBe(404);
+    expect(missingAgain).toEqual(missingFirst);
+    expect(hiddenFirst).toEqual(missingFirst);
+    expect(hiddenAgain).toEqual(missingAgain);
+  });
+
+  it("an edge of a type it cannot read answers as a missing edge on every door naming it", async () => {
+    const hiddenKind = await client.createKey({
+      label: "unreadable-edge-kind",
+      source: `${ctx.source}-unreadable-edge-kind`,
+      permissions: [],
+      type_permissions: { "core.note": "write", "core.task": "read" },
+      edge_permissions: { references: "write" },
+    });
+    expect(hiddenKind.ok).toBe(true);
+    trackKey(ctx, hiddenKind.data.id);
+    const narrow = hiddenKind.data.key;
+    const from = await note();
+    const aboutEdge = await edge(from, task);
+    const doors: [string, unknown][] = [
+      ["GET", undefined],
+      ["PATCH", { version: 1, properties: { weight: 2 } }],
+      ["DELETE", undefined],
+    ];
+    for (const [method, body] of doors) {
+      const missing = generateId();
+      const seen = without(
+        await ask(narrow, method, `/edges/${aboutEdge}`, body),
+        aboutEdge,
+      );
+      const absent = without(
+        await ask(narrow, method, `/edges/${missing}`, body),
+        missing,
+      );
+      expect(absent.status, method).toBe(404);
+      expect(absent.body, method).toMatchObject({
+        error: { code: "edge_not_found" },
+      });
+      expect(seen, method).toEqual(absent);
+    }
+    // The witness: an edge of a type it holds is served at the same door.
+    const own = await edge(from, task, "references");
+    expect((await ask(narrow, "GET", `/edges/${own}`)).status).toBe(200);
   });
 });

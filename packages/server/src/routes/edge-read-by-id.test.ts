@@ -169,17 +169,15 @@ describe("GET /edges/:id", () => {
     expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
   });
 
-  it("refuses a caller without read on the edge type", async () => {
+  it("answers a caller without read on the edge type as it answers no edge", async () => {
     const { id } = await createEdge(keyA);
     const key = await mintKey({
       type_permissions: { "*": "read" },
       edge_permissions: { "in-thread": "read" },
     });
     const res = await request(ctx.app, "GET", `/edges/${id}`, { key });
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as ErrorBody).error.code).toBe(
-      "edge_permission_denied",
-    );
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
   });
 
   it("still applies the source-type gate when the source item is trashed", async () => {

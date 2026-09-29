@@ -209,7 +209,7 @@ pub enum DeleteEdgeError {
 #[serde(untagged)]
 pub enum GetEdgeError {
     Status401(models::UnauthorizedRefusal),
-    Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::EdgeNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -405,7 +405,7 @@ pub fn delete_edge(
     }
 }
 
-/// Returns one edge by its id. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.
+/// Returns one edge by its id; an edge whose edge type or source item the caller may not read answers `404 edge_not_found`, exactly as a missing one. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.
 pub fn get_edge(
     configuration: &configuration::Configuration,
     params: GetEdgeParams,

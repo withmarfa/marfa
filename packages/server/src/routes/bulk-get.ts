@@ -201,13 +201,8 @@ export function bulkGetRoutes(storage: Storage) {
     // `items.getMany` drops trashed rows, matching the single-item GET.
     const found = await storage.items.getMany(ids);
 
-    // Permission filter: an id the caller may not read is omitted, as the
-    // single-item GET answers it as missing. The credential that holds none
-    // is refused above rather than omitted into silence.
-    // `system.*`
-    // items stay out unless the caller opts in via `include: ["system"]`,
-    // matching the list endpoint's default exclusion. Preserve request order
-    // by iterating `ids`; de-dupe so a repeated id appears once.
+    // An id the caller may not read is omitted, as the single GET answers it
+    // missing; `system.*` rows stay out unless opted in, as on the listing.
     const seen = new Set<string>();
     const visible: Item[] = [];
     for (const id of ids) {

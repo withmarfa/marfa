@@ -1998,12 +1998,13 @@ describe("the scripted answers match the server's", () => {
       { same: ["error.code", "error.message"] },
     );
 
-    // The stand-in the folder fixtures refuse a move with.
+    // The stand-in the folder fixtures refuse a move with: a key that reads
+    // `parent-of`, as a device holding the edge does, and does not write it.
     const minted = await client.createKey({
       label: "fidelity-no-parent-of",
       source: `${ctx.source}-fidelity-no-parent-of`,
       type_permissions: { "*": "write" },
-      edge_permissions: { about: "write" },
+      edge_permissions: { about: "write", "parent-of": "read" },
       permissions: [],
     });
     expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
@@ -2729,5 +2730,80 @@ describe("a local read answers the listing grammar as the server does", () => {
     ).toEqual([linked, target].sort());
     const to = await device.list({ filter: `edge[references] eq "${target}"` });
     expect(to.ok ? to.value : to).toEqual([]);
+  });
+
+  it("answers an edge term naming a target the key cannot read as the server does", async () => {
+    const type = `user.edge-hidden-target-${ctx.runId}`;
+    const hiddenType = `user.edge-hidden-kept-${ctx.runId}`;
+    for (const id of [type, hiddenType]) {
+      const registered = await client.registerType({
+        id,
+        fields: { title: { type: "string" } },
+        display_hints: { title_field: "title" },
+      });
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    }
+    const seed = async (
+      of: string,
+      title: string,
+      edges?: Record<string, string[]>,
+    ): Promise<string> => {
+      const created = await client.createItem({
+        type: of,
+        source: ctx.source,
+        properties: { title },
+        ...(edges === undefined ? {} : { edges }),
+      });
+      expect(created.ok, JSON.stringify(created.error)).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      return created.data.item.id;
+    };
+    const kept = await seed(hiddenType, "kept");
+    const pointer = await seed(type, "pointer", { references: [kept] });
+    const bystander = await seed(type, "bystander");
+
+    const minted = await client.createKey({
+      label: `${ctx.source}-edge-hidden-target`,
+      source: `${ctx.source}-edge-hidden-target`,
+      type_permissions: { [type]: "read" },
+      edge_permissions: { "*": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    // The witness that the target is hidden from this key.
+    expect((await narrow.getItem(kept)).status).toBe(404);
+
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("fidelity-edge-hidden-target"),
+      url: apiUrl,
+      key: minted.data.key,
+    });
+    const hydrated = await device.hydrate([type], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    for (const filter of [
+      `edge[references] eq "${kept}"`,
+      `edge[references] neq "${kept}"`,
+      "edge[references] exists",
+    ]) {
+      const served = await narrow.listItems({ type, filter, limit: 100 });
+      expect(served.ok, JSON.stringify(served.error)).toBe(true);
+      const local = await device.list({ filter });
+      expect(local.ok, JSON.stringify(local)).toBe(true);
+      expect(
+        (local.ok ? local.value.map((item) => item.id) : []).sort(),
+        `the device answers ${filter} with other rows than the server does`,
+      ).toEqual(served.data.data.map((item) => item.id).sort());
+    }
+    const to = await narrow.listItems({
+      type,
+      filter: `edge[references] eq "${kept}"`,
+    });
+    expect(to.data.data.map((item) => item.id)).toEqual([pointer]);
+    expect(bystander).not.toBe(pointer);
   });
 });

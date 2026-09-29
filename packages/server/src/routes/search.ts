@@ -3,7 +3,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError, resolveEnforcement } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
-import { readFilterEdgeTerms } from "./_edge-visibility.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import {
   requireAuth,
   requireTypeAccess,
@@ -253,7 +253,7 @@ export function searchRoutes(storage: Storage) {
     // compiles an edge term rather than ignoring one, so it asks the same
     // question of it. Two doors that disagreed about one term would be
     // the disclosure reached through the other one.
-    const hiddenAnchors = await readFilterEdgeTerms(c, storage, filter);
+    assertFilterEdgeTermsReadable(c, filter);
 
     const { allowed: allowed_types, excluded: excluded_types } =
       getTypeFilter(c);
@@ -302,7 +302,7 @@ export function searchRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
-      hidden_anchors: hiddenAnchors,
+      readable_sources: { allowed: allowed_types, excluded: excluded_types },
       occurred_after: occurredAfter,
       occurred_before: occurredBefore,
       allowed_types,

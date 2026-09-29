@@ -31,7 +31,11 @@ import {
   VersionConflictErrorSchema,
 } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
-import { edgeReadable, readableEdges } from "./_edge-visibility.js";
+import {
+  edgeKindReadable,
+  edgeReadable,
+  readableEdges,
+} from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
   assertEdgesCanBeCreated,
@@ -162,19 +166,24 @@ async function endsAfterMove(
 
 /**
  * The edge a door names by id and its source, answered as no edge where the
- * credential may not read the source, trashed or not: an edge is its source's.
+ * key may not read its type or its source, trashed or not, as every listing.
  */
 async function readableEdge(
   c: Context<AppEnv>,
   storage: Storage,
   id: string,
 ): Promise<{ edge: Edge; source: Item | null }> {
+  const key = requireAuth(c);
   getTypeFilter(c);
   const edge = await storage.edges.get(id);
   const source = edge
     ? await storage.items.getIncludingTrashed(edge.source_id)
     : null;
-  if (!edge || (source && !mayReadRow(c, source))) {
+  if (
+    !edge ||
+    !edgeKindReadable(key, edge) ||
+    (source && !mayReadRow(c, source))
+  ) {
     throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
   }
   return { edge, source };
@@ -388,7 +397,7 @@ const getEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Get an edge",
   description:
-    "Returns one edge by its id. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.",
+    "Returns one edge by its id; an edge whose edge type or source item the caller may not read answers `404 edge_not_found`, exactly as a missing one. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.",
   security: [{ bearerAuth: [] }],
   request: { params: z.object({ id: z.string().describe("Edge id.") }) },
   responses: {
@@ -401,14 +410,11 @@ const getEdgeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "edge_permission_denied",
-            "type_not_permitted",
-          ]),
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
       description:
-        "`edge_permission_denied` without read on the edge type; `type_not_permitted` where the credential's type permissions reach no type.",
+        "The credential's type permissions reach no type. An edge of a type it may not read, or with a source it may not read, answers 404 as a missing edge does.",
     },
     404: {
       content: {
@@ -416,7 +422,8 @@ const getEdgeRoute = createRoute({
           schema: makeErrorResponseSchema(["edge_not_found"]),
         },
       },
-      description: "Edge not found",
+      description:
+        "No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike.",
     },
   },
 });
@@ -507,7 +514,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
+        "The dual gate refused one of its halves: `edge_permission_denied` on an edge type the credential may read and not write, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
     },
     404: {
       content: {
@@ -520,7 +527,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "`edge_not_found` for the edge, and for one whose source item is of a type the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
+        "`edge_not_found` for the edge, and for one whose edge type or source item the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
     },
   },
 });
@@ -550,7 +557,7 @@ const deleteEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
+        "The dual gate refused one of its halves: `edge_permission_denied` on an edge type the credential may read and not write, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
     },
     404: {
       content: {
@@ -558,7 +565,8 @@ const deleteEdgeRoute = createRoute({
           schema: makeErrorResponseSchema(["edge_not_found"]),
         },
       },
-      description: "Edge not found",
+      description:
+        "No edge has this id that the credential may read: one whose edge type or source item it may not read answers alike.",
     },
   },
 });
@@ -749,10 +757,7 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(getEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    // Reading an edge discloses both endpoints and the properties on it, so
-    // a caller who may not read the source's type may not learn it either.
     const { edge: existing } = await readableEdge(c, storage, id);
-    requireEdgePermission(c, existing.edge_type, "read");
     return c.json({ edge: existing }, 200);
   });
 

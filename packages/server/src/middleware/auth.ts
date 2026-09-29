@@ -1002,9 +1002,8 @@ export function requirePermission(
  * An empty `allowed` at read level is a credential that may read no type
  * at all. Answering it `200` with an empty page says "there is nothing
  * here", which is not what happened: there is a great deal here and this
- * credential may not see it. The single-row doors refuse it here too, through
- * `requireReadableRow`, so one question gets one answer however many rows the
- * caller asked for.
+ * credential may not see it. The single-row doors refuse it too, through
+ * `requireReadableRow`, so one question gets one answer however many rows.
  *
  * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
  * where it narrows a match set rather than refusing a row, and a key
