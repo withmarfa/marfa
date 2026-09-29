@@ -1331,8 +1331,8 @@ async function acknowledgedItemBody(
 // ---------------------------------------------------------------------------
 
 /**
- * A block refusal with the blocking edges the caller may not read left out,
- * so it can say something hidden holds the row and never what or where.
+ * A block refusal listing, and counting, only the blocking edges whose kind
+ * and both ends the caller may read, so a hidden holder is never named.
  */
 async function withoutHiddenBlockers(
   storage: Storage,
@@ -1342,11 +1342,24 @@ async function withoutHiddenBlockers(
   const details = err instanceof MarfaError ? err.details : undefined;
   const blockers = (details as { blocking_edges?: Edge[] } | undefined)
     ?.blocking_edges;
-  if (!(err instanceof MarfaError) || !blockers) return err;
-  return new MarfaError(err.code, err.message, {
-    ...details,
-    blocking_edges: await readableEdges(storage, key, blockers),
+  const root = (details as { root_item_id?: string } | undefined)?.root_item_id;
+  if (!(err instanceof MarfaError) || !blockers || !root) return err;
+  const readable = await readableEdges(storage, key, blockers);
+  const targets = await storage.items.getMany(
+    readable.map((edge) => edge.target_id),
+    { includeTrashed: true },
+  );
+  const listed = readable.filter((edge) => {
+    const target = targets.get(edge.target_id);
+    return target !== undefined && mayReadType(key, target.type);
   });
+  return new MarfaError(
+    err.code,
+    listed.length === 0
+      ? `Cannot delete item ${root}: blocked by an edge with cascade_on_delete=block`
+      : `Cannot delete item ${root}: blocked by ${String(listed.length)} edge(s) with cascade_on_delete=block`,
+    { ...details, blocking_edges: listed },
+  );
 }
 
 export function itemRoutes(storage: Storage) {
