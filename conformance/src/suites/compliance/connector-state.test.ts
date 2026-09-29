@@ -597,10 +597,14 @@ describe("what a connector keeps on the instance", () => {
     const task = await client.createItem(createTask({ source: ctx.source }));
     expect(task.ok).toBe(true);
     trackItem(ctx, task.data.item.id);
-    // The witness that the key's type map does not read the task.
+    // The witness that the key's type map does not read the task: the item
+    // door answers it as a missing one, and the key's map says why.
     const unreadable = await mine.client.getItem(task.data.item.id);
-    expect(unreadable.status).toBe(403);
-    expect(unreadable.error?.error.code).toBe("type_not_permitted");
+    expect(unreadable.status).toBe(404);
+    expect(unreadable.error?.error.code).toBe("item_not_found");
+    expect((await mine.client.getCurrentKey()).data.type_permissions).toEqual({
+      "core.note": "write",
+    });
     const missing = uuidv7();
 
     const written = await mine.client.writeConnectorAgreements(mine.id, {
