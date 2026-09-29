@@ -31,7 +31,7 @@ import {
   VersionConflictErrorSchema,
 } from "./_schemas.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
-import { readableEdges } from "./_edge-visibility.js";
+import { edgeReadable, readableEdges } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
   assertEdgesCanBeCreated,
@@ -161,10 +161,8 @@ async function endsAfterMove(
 }
 
 /**
- * The edge a door names by id and its source item, answered as a missing
- * edge where the credential may not read that source: an edge is its
- * source's statement. The source is read past the trash, so trashing it
- * does not lift the gate; a source with no row leaves nothing to ask.
+ * The edge a door names by id and its source, answered as no edge where the
+ * credential may not read the source, trashed or not: an edge is its source's.
  */
 async function readableEdge(
   c: Context<AppEnv>,
@@ -284,7 +282,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
+    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `id_reused`, and one naming an edge the caller may not read says the id is taken and nothing of that edge.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -403,7 +401,10 @@ const getEdgeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
         },
       },
       description:
@@ -662,7 +663,14 @@ export function edgeRoutes(storage: Storage) {
     const repeatedEdge = async (): Promise<Edge | null> => {
       if (body.id === undefined) return null;
       const existing = await storage.edges.get(body.id);
-      if (!existing) return null;
+      // An edge the caller may not read goes on to the insert's collision,
+      // which says the id is taken and nothing of the edge.
+      if (
+        !existing ||
+        !(await edgeReadable(storage, requireAuth(c), existing))
+      ) {
+        return null;
+      }
       const sameEdge =
         existing.source_id === body.source_id &&
         existing.target_id === body.target_id &&

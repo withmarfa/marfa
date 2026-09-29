@@ -710,6 +710,9 @@ async function processBulkItem(
       mode === "create_only"
         ? await storage.items.getIncludingTrashed(raw.id)
         : await storage.items.get(raw.id);
+    // Under `upsert`, a row the key may not read goes on to the create's
+    // `conflict`, as `POST /items` answers it, whatever state the row is in.
+    if (mode === "upsert" && existing && !mayRead(existing)) existing = null;
     if (existing) matchedBy = "id";
   }
 

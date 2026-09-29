@@ -459,6 +459,68 @@ describe("an item the key cannot read answers as a missing one", () => {
     });
   });
 
+  it("POST /items/bulk naming the id of an item it cannot read answers alike whether the item is live or trashed, and not with its type", async () => {
+    const upsert = async (id: string): Promise<Seen> =>
+      without(
+        await ask(key, "POST", "/items/bulk", {
+          mode: "upsert",
+          items: [{ ...createNote(), id }],
+        }),
+        id,
+      );
+    const live = await upsert(hidden);
+    const binned = await upsert(hiddenTrashed);
+    expect(live.status).toBe(binned.status);
+    expect(live.body).toEqual(binned.body);
+    expect(live.body).toMatchObject({
+      error: { code: "bulk_atomic_rollback", details: { code: "conflict" } },
+    });
+    expect(JSON.stringify(live.body)).not.toContain("core.bookmark");
+
+    // The witness: an id held by a type the key reads is refused the write.
+    const read = await ask(key, "POST", "/items/bulk", {
+      mode: "upsert",
+      items: [{ ...createNote(), id: task }],
+    });
+    expect(read.status).toBe(403);
+    expect(read.body).toMatchObject({
+      error: { details: { code: "type_not_permitted" } },
+    });
+  });
+
+  it("POST /edges and POST /edges/bulk naming the id of an edge it cannot read learn the id is taken, and nothing of the edge", async () => {
+    const source = await note();
+    const body = (id: string) => ({
+      id,
+      source_id: source,
+      target_id: task,
+      edge_type: "about",
+    });
+    const single = await ask(key, "POST", "/edges", body(hiddenEdge));
+    expect(single.status).toBe(409);
+    expect(single.body).toEqual({
+      error: {
+        code: "id_reused",
+        message: `Edge id ${hiddenEdge} already names a different edge`,
+        details: { existing_id: hiddenEdge },
+      },
+    });
+    const bulk = await ask(key, "POST", "/edges/bulk", {
+      atomic: false,
+      edges: [body(hiddenEdge)],
+    });
+    expect(bulk.status).toBe(200);
+    expect(JSON.stringify(bulk.body)).not.toContain("differs");
+
+    // The witness: an edge it may read is described, with what differs.
+    const own = await edge(await note(), task);
+    const named = await ask(key, "POST", "/edges", body(own));
+    expect(named.status).toBe(409);
+    expect(named.body).toMatchObject({
+      error: { code: "id_reused", details: { differs: ["source_id"] } },
+    });
+  });
+
   it("a write to a type the key reads and does not write is still refused 403", async () => {
     const refused = await ask(key, "PATCH", `/items/${task}`, {
       version: 1,
@@ -471,7 +533,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     expect((await ask(key, "GET", `/items/${task}`)).status).toBe(200);
   });
 
-  it("a key reaching no type is refused a single row before any row is looked up", async () => {
+  it("a key reaching no type is refused a single row, whatever the id names", async () => {
     const operator = process.env.MARFA_OPERATOR_KEY;
     if (!operator) throw new Error("MARFA_OPERATOR_KEY is required");
     const refused = without(

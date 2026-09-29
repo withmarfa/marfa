@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted` before any row is read.
+         * @description Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.
          *
          *     `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.
          *
@@ -433,7 +433,7 @@ export interface paths {
         put?: never;
         /**
          * Create an edge
-         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.
+         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `id_reused`, and one naming an edge the caller may not read says the id is taken and nothing of that edge.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -7117,7 +7117,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Edge not found */
@@ -7598,7 +7598,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Write access denied for a source type or edge type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives. */
+            /** @description Write access denied for a source type the credential may read, or for an edge type; `type_not_permitted` also, before any entry is judged, where its type permissions reach no type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

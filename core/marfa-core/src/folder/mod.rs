@@ -433,17 +433,21 @@ impl Folder {
         let Some((row, _)) = read else {
             // The server answers a folder the key cannot read as no folder at
             // all, so the key's own map says which of the two this is.
-            if let Some(key) = http.current_key()?
-                && !placement::reads(&key, FOLDER_TYPE)
-            {
-                return Err(cannot_read());
-            }
-            return Err(CoreError::NotFound {
-                code: "item_not_found".into(),
-                message: format!(
+            let message = match http.current_key()? {
+                Some(key) if !placement::reads(&key, FOLDER_TYPE) => return Err(cannot_read()),
+                Some(_) => format!(
                     "the server holds no folder {}; `folders create` makes one",
                     self.folder
                 ),
+                // A credential that is not a key cannot read its own map.
+                None => format!(
+                    "the server holds no folder {} that this credential may read: it needs `{FOLDER_TYPE}:read`, or `folders create` makes one",
+                    self.folder
+                ),
+            };
+            return Err(CoreError::NotFound {
+                code: "item_not_found".into(),
+                message,
             });
         };
         Settings::read(

@@ -41,6 +41,7 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
+import { edgeReadable } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
   edgeTargetNotFound,
@@ -143,7 +144,7 @@ const edgesBulkRoute = createRoute({
         },
       },
       description:
-        "Write access denied for a source type or edge type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives.",
+        "Write access denied for a source type the credential may read, or for an edge type; `type_not_permitted` also, before any entry is judged, where its type permissions reach no type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives.",
     },
   },
 });
@@ -193,17 +194,19 @@ async function processBulkEdge(
     /**
      * Per-edge write authorization, mirroring single-edge `POST /edges`:
      * write on the source item's type AND write on the edge type. An
-     * unknown source resolves to `null` and the edge-type gate alone
-     * applies (matching `PATCH /edges/:id`).
+     * unknown source, or one the credential may not read, gets the
+     * edge-type gate alone and meets the create's not-found.
      * Throws on denial; the caller routes that to an `errored` outcome /
      * atomic rollback.
      */
     checkEdgeWrite: (sourceType: string | null, edgeType: string) => void;
     /** Whether the credential may read an end of this type. */
     mayRead: (type: string) => boolean;
+    /** Whether the credential may be told about this stored edge. */
+    mayTell: (edge: Edge) => Promise<boolean>;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
-  const { mode, existingByTriple, checkEdgeWrite, mayRead } = options;
+  const { mode, existingByTriple, checkEdgeWrite, mayRead, mayTell } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -249,8 +252,7 @@ async function processBulkEdge(
 
   // Authorize the write before any mutation. Resolve the source item's
   // type (getIncludingTrashed so a trashed source still runs the gate,
-  // matching PATCH /edges/:id). An unknown source resolves to null and the
-  // edge-type gate alone applies.
+  // matching PATCH /edges/:id).
   const srcItem = await storage.items.getIncludingTrashed(raw.source_id);
   const sourceHidden = srcItem !== null && !mayRead(srcItem.type);
   try {
@@ -280,7 +282,8 @@ async function processBulkEdge(
   // collision with nothing saying what disagreed.
   if (raw.id !== undefined) {
     const held = await storage.edges.get(raw.id);
-    if (held) {
+    // One the caller may not read meets the insert's collision instead.
+    if (held && (await mayTell(held))) {
       try {
         refuseReusedEdgeId(held, raw);
       } catch (err) {
@@ -567,6 +570,7 @@ export function edgesBulkRoutes(storage: Storage) {
             existingByTriple,
             checkEdgeWrite,
             mayRead,
+            mayTell: (edge) => edgeReadable(storage, requireAuth(c), edge),
           },
         );
         if (atomic && result.outcome === "errored") {
