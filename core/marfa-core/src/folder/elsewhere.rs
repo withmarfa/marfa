@@ -127,6 +127,18 @@ impl Peer {
             .map(|members| members.contains(item_id))
     }
 
+    /// Whether the item left this folder by its state or the bin, whose file
+    /// that folder takes away, or pauses, rather than lets go (`folders.md` 35).
+    fn left_by_state(&self, item_id: &str) -> bool {
+        let Some(folder) = &self.folder else {
+            return true;
+        };
+        match (folder.settings(), folder.core.get(item_id)) {
+            (Ok(settings), Ok(Some(item))) => !settings.holds_state(item.state),
+            _ => true,
+        }
+    }
+
     fn bound_to(&self, item_id: &str) -> Option<state::Bound> {
         let folder = self.folder.as_ref()?;
         state::bound_to_item(&*folder.core.conn().ok()?, item_id)
@@ -469,6 +481,7 @@ impl<'a> Peers<'a> {
                 || bound.written_hash.as_deref() != Some(bound.content_hash.as_str())
                 || !peer.present(&bound.path)
                 || peer.holds(item_id) != Some(false)
+                || peer.left_by_state(item_id)
             {
                 continue;
             }

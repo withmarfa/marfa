@@ -180,12 +180,17 @@ impl Folder {
         // is merged against what it was written from.
         let version = edited
             .get(VERSION_KEY)
-            .and_then(Value::as_i64)
-            .filter(|line| *line > 0)
+            .and_then(super::version_named)
             .unwrap_or(written_version);
-        let stale = version != written_version;
         let base = document::read_map(&written).unwrap_or_default();
         let setting = |key: &String| key != FOLDER_KEY && key != VERSION_KEY;
+        // A file naming the settings in force changes none, whatever its line.
+        let in_force = edited.iter().filter(|(key, _)| setting(key)).count()
+            == base.keys().filter(|key| setting(key)).count()
+            && edited
+                .iter()
+                .all(|(key, value)| !setting(key) || base.get(key) == Some(value));
+        let stale = version != written_version && !in_force;
         // What a stale file leaves out may be what was added since; the door
         // keeps a setting nobody sends.
         if !stale

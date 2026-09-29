@@ -542,10 +542,30 @@ impl Folder {
     }
 
     /// Whether a pull writes a file at `path`: plainly inside the folder,
-    /// where the lists take it and no package holds it.
+    /// where the lists take it and no package or folder inside it holds it.
     fn writes_at(&self, lists: &Lists, path: &str) -> bool {
-        plainly_inside(&self.root, path) && lists.takes(path) && !in_package(&self.root, path)
+        plainly_inside(&self.root, path)
+            && lists.takes(path)
+            && !in_package(&self.root, path)
+            && !in_nested_folder(&self.root, path)
     }
+}
+
+/// Whether a directory on the way to `relative` holds another folder's
+/// `.marfa/`, whose files the walk passes over (`folders.md` 41).
+fn in_nested_folder(root: &Path, relative: &str) -> bool {
+    let mut here = root.to_path_buf();
+    let mut names = relative.split('/').peekable();
+    while let Some(name) = names.next() {
+        if names.peek().is_none() {
+            break;
+        }
+        here.push(name);
+        if here.join(STATE_DIR).is_dir() {
+            return true;
+        }
+    }
+    false
 }
 
 /// The edge types a folder's copy holds whole, since their other ends may lie
@@ -1214,8 +1234,11 @@ impl Folder {
                 continue;
             }
             // Not reached is not gone: the item of a file the lists stopped
-            // taking, or one the walk could not read, is not trashed.
-            if !lists.takes(&row.path) || walked.passed_over(&row.path) {
+            // taking, or one the walk could not read or passed over, is not trashed.
+            if !lists.takes(&row.path)
+                || walked.passed_over(&row.path)
+                || in_nested_folder(&self.root, &row.path)
+            {
                 if journaled.contains(&row.path) {
                     let conn = self.core.conn()?;
                     state::journal_clear(&conn, &row.path)?;
@@ -2771,17 +2794,12 @@ impl Folder {
                     });
                 match on_disk {
                     Some(found) => (found, Vec::new(), Vec::new()),
-                    None => match self.core.blob(blob) {
-                        Ok(held) => (
-                            std::fs::read(&held).map_err(|error| {
-                                CoreError::Store(format!("cannot read {}: {error}", held.display()))
-                            })?,
-                            Vec::new(),
-                            Vec::new(),
-                        ),
+                    None => match self.core.blob(blob).map(std::fs::read) {
+                        Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
                         // A refused credential refuses every file alike.
                         Err(error @ CoreError::Unauthorized { .. }) => return Err(error),
-                        Err(_) => {
+                        // A held copy that cannot be read is one file's failure too.
+                        Ok(Err(_)) | Err(_) => {
                             report.absent += 1;
                             return Ok(false);
                         }
@@ -2983,6 +3001,11 @@ impl Folder {
     ) -> Result<bool> {
         let path = self.root.join(want);
         if path.exists() {
+            return Ok(false);
+        }
+        // Read again, since fetching other files' bytes since the pull chose
+        // it leaves time for an edit its folder has yet to send.
+        if !std::fs::read(from).is_ok_and(|bytes| state::hash(&bytes) == theirs.content_hash) {
             return Ok(false);
         }
         let binding = |identity: Option<String>| state::Bound {
@@ -3435,7 +3458,7 @@ enum Standing {
     Spent,
     /// An older version: merged against it, with no own-field change.
     Behind(i64),
-    /// No version line, or one the copy never held.
+    /// No version line, or one newer than the copy's.
     Lineless,
 }
 
@@ -3693,8 +3716,12 @@ pub const LINK_EDGE: &str = "references";
 /// The version a file's line names, where it is one the server could have
 /// minted (`versions.md` 18).
 fn line_of(front: &Map<String, Value>) -> Option<i64> {
+    version_named(front.get(VERSION_FIELD)?)
+}
+
+/// The version a version line's value names, the settings file's included.
+fn version_named(line: &Value) -> Option<i64> {
     // An editor typing the line as text writes it quoted.
-    let line = front.get(VERSION_FIELD)?;
     let number = match line {
         Value::String(text) => text.trim().parse::<f64>().ok()?,
         other => other.as_f64()?,
