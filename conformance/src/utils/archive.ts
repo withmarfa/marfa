@@ -153,18 +153,13 @@ export function blobHash(data: Uint8Array): string {
 }
 
 /**
- * A minimal version 2 archive carrying `items`, and the `blobs` given,
- * and nothing else.
- *
- * `edges.ndjson` and `types.ndjson` are emitted empty rather than omitted,
- * which is what the server's own exporter does and what lets the restore
- * tell a damaged archive from an empty one. The blob entries sit between
- * the items and the edges, so a member follows every blob and a blob whose
- * padding was wrong would put the reader off that member.
+ * A minimal version 2 archive: `items`, and the `blobs` and `types` given.
+ * Emitted empty, not omitted, so a restore can tell damaged from empty.
  */
 export function itemsArchive(
   items: ArchiveItem[],
   blobs: ArchiveBlob[] = [],
+  types: Record<string, unknown>[] = [],
 ): Uint8Array {
   const manifest = {
     version: 2,
@@ -173,7 +168,7 @@ export function itemsArchive(
     item_count: items.length,
     edge_count: 0,
     blob_count: blobs.length,
-    type_count: 0,
+    type_count: types.length,
     edge_type_count: 0,
     blobs: Object.fromEntries(
       blobs.map((blob) => [
@@ -195,6 +190,9 @@ export function itemsArchive(
       body: blob.data,
     })),
     { name: "edges.ndjson", body: "" },
-    { name: "types.ndjson", body: "" },
+    {
+      name: "types.ndjson",
+      body: types.map((type) => `${JSON.stringify({ type })}\n`).join(""),
+    },
   ]);
 }

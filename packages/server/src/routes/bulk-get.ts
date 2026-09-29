@@ -64,12 +64,11 @@ const BulkGetRequestSchema = z.object({
 });
 
 const BulkGetResponseSchema = z.object({
-  /**
-   * The resolved items, in no guaranteed order relative to the request. Items
-   * the caller cannot read (type not permitted, trashed, or
-   * non-existent) are omitted, so `items.length <= ids.length`.
-   */
-  items: z.array(ItemSchema),
+  items: z
+    .array(ItemSchema)
+    .describe(
+      "The items the caller may read, in the order `ids` named them, an id named twice answered once. Ids that do not resolve, or name a trashed item or one whose type the caller may not read, are left out.",
+    ),
   /**
    * Present only when `include` carries `metadata`. One entry per returned
    * item, keyed by `item_id`, filtered to what the caller may see.
@@ -91,7 +90,8 @@ const bulkGetRoute = createRoute({
     "Reads up to 100 items by id in one round-trip, permission-filtered " +
     "exactly like the single-item GET: ids the caller " +
     "cannot read (type not permitted, trashed, or missing) " +
-    "are silently omitted rather than erroring the whole request. Optional " +
+    "are silently omitted rather than erroring the whole request, and the " +
+    "rest come back in the order the request named them, each once. Optional " +
     "`include` takes the same tokens as GET /items: `edges`, `metadata` and " +
     "`extensions` hydrate an extra inline, while `system` widens the result " +
     "to include `system.*` items, which are omitted by default.\n\n" +

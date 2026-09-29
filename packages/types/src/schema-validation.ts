@@ -785,6 +785,15 @@ export function validateTypeSchema(
       : [];
   if (fields) {
     validateDescendantShapes(fields, requiredNames, descendants, errors);
+    validateDescendantLinks(
+      obj.id,
+      fields,
+      requiredNames,
+      ancestorFields,
+      descendants,
+      ctx,
+      errors,
+    );
   }
 
   const visibleFields = new Set<string>([
@@ -817,6 +826,7 @@ export function validateTypeSchema(
     thumbnailNames(fields, ancestorFields),
     errors,
   );
+  validateLinkField(obj, fields, requiredNames, ancestorFields, errors);
   validateVersionPolicy(obj, errors);
   validateMergePolicy(obj, visibleFields, errors);
   validateCompatibleWith(
@@ -878,6 +888,7 @@ export function validateTypeSchema(
     if (typeof hints.body_field === "string") dh.body_field = hints.body_field;
     if (Object.keys(dh).length > 0) schema.display_hints = dh;
   }
+  if (typeof obj.link_field === "string") schema.link_field = obj.link_field;
   const versionPolicy = asRecord(obj.version_policy);
   if (versionPolicy) {
     schema.version_policy = versionPolicy;
@@ -1116,6 +1127,130 @@ function validateDisplayHints(
       );
     }
   }
+}
+
+function validateLinkField(
+  obj: Record<string, unknown>,
+  fields: Record<string, unknown> | undefined,
+  requiredNames: ReadonlySet<string>,
+  ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
+  errors: SchemaValidationIssue[],
+): void {
+  if (obj.link_field === undefined) return;
+  const name = obj.link_field;
+  if (typeof name !== "string") {
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a string naming a string field on this type",
+        actual: describe(name),
+        hint: "Point link_field at the field holding the vendor's own id, or omit it.",
+      }),
+    );
+    return;
+  }
+  if (/["\\]/.test(name)) {
+    // The index reads the field through a JSON path, where a `"` ends the
+    // name and a `\` starts an escape.
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a field whose name holds no double quote or backslash",
+        actual: describe(name),
+        hint: "Rename the field, or point link_field at another string field.",
+      }),
+    );
+    return;
+  }
+  const definition = visibleDefinition(
+    name,
+    fields,
+    requiredNames,
+    ancestorFields,
+  );
+  if (!definition) {
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a field this type declares or inherits",
+        actual: `"${name}", which is neither`,
+        hint: `Declare "${name}" in fields as a string, or point link_field at an existing one.`,
+      }),
+    );
+  } else if (definition.type !== "string") {
+    // A vendor's id is compared as it was sent, and only a plain string
+    // is stored that way.
+    errors.push(
+      issue({
+        field: "link_field",
+        expected: "a field of type string",
+        actual: `"${name}", which is of type ${definition.type}`,
+        hint: `Point link_field at a string field, or declare "${name}" as one.`,
+      }),
+    );
+  }
+}
+
+function visibleDefinition(
+  name: string,
+  fields: Record<string, unknown> | undefined,
+  requiredNames: ReadonlySet<string>,
+  ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
+): FieldDefinition | undefined {
+  const own = asRecord(fields?.[name]);
+  return own
+    ? normalizeFieldDefinition(own, { required: requiredNames.has(name) })
+    : ancestorFields.get(name)?.definition;
+}
+
+/** A change above a type is the other way its link could come to name no
+ *  string field, which its own registration refuses. */
+function validateDescendantLinks(
+  top: unknown,
+  fields: Record<string, unknown>,
+  requiredNames: ReadonlySet<string>,
+  ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
+  descendants: readonly TypeSchema[],
+  ctx: SchemaValidationContext,
+  errors: SchemaValidationIssue[],
+): void {
+  for (const child of descendants) {
+    const name = child.link_field;
+    if (name === undefined || declaredBetween(child, top, name, ctx)) continue;
+    const definition = visibleDefinition(
+      name,
+      fields,
+      requiredNames,
+      ancestorFields,
+    );
+    if (definition?.type === "string") continue;
+    errors.push(
+      issue({
+        field: `fields.${name}`,
+        expected: `a string field "${name}", which "${child.id}" names as its link_field`,
+        actual: definition
+          ? `"${name}" of type ${definition.type}`
+          : `no field "${name}"`,
+        hint: `Keep "${name}" a string field, or point the link_field of "${child.id}" elsewhere first.`,
+      }),
+    );
+  }
+}
+
+function declaredBetween(
+  child: TypeSchema,
+  top: unknown,
+  name: string,
+  ctx: SchemaValidationContext,
+): boolean {
+  const seen = new Set<string>();
+  let cursor: TypeSchema | undefined = child;
+  while (cursor && cursor.id !== top && !seen.has(cursor.id)) {
+    if (Object.hasOwn(cursor.fields, name)) return true;
+    seen.add(cursor.id);
+    cursor = cursor.parent ? ctx.resolveSchema(cursor.parent) : undefined;
+  }
+  return false;
 }
 
 function validateVersionPolicy(
@@ -1764,6 +1899,7 @@ export const TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set([
     fields: true,
     roles: true,
     display_hints: true,
+    link_field: true,
     version_policy: true,
     merge_policy: true,
     compatible_with: true,

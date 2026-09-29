@@ -246,6 +246,9 @@ export enum ErrorCode {
    * item already carries is a no-op success, not a conflict.
    */
   SOURCE_ID_CONFLICT = "source_id_conflict",
+  /** A write would give a row a link another row of its type holds. The
+   *  holder is named: the caller holds write on the type both rows share. */
+  LINK_TAKEN = "link_taken",
   /**
    * A write resolved an existing row whose type is not the one the request
    * declared. The write is refused rather than reinterpreted.
@@ -383,6 +386,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.WRITE_CONTENTION]: 503,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
+  [ErrorCode.LINK_TAKEN]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,
   // A genuine 409: the key is held by a request in flight, or contention
   // kept it changing hands. Something else got there first, which is

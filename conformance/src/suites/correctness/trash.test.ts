@@ -9,14 +9,14 @@ let client: MarfaClient;
 let ctx: TestContext;
 
 beforeAll(async () => {
-  ({ ctx, client } = await createTestContext("correctness", "tombstones"));
+  ({ ctx, client } = await createTestContext("correctness", "trash"));
 });
 
 afterAll(async () => {
   await cleanup(ctx);
 });
 
-describe("tombstones — soft delete and restore", () => {
+describe("trash — soft delete and restore", () => {
   it("deleted item is hidden from default queries", async () => {
     const note = createNote({ source: ctx.source });
     const created = await client.createItem(note);

@@ -159,6 +159,10 @@ export function diffTypeSchemas(prev: TypeSchema, next: TypeSchema): DiffClass {
 
   if (prev.parent !== next.parent) major = true;
 
+  // A link gained refuses writes that used to land, and one withdrawn stops
+  // holding rows apart that a connector relies on being held apart.
+  if (prev.link_field !== next.link_field) major = true;
+
   if (
     prev.display_hints?.title_field !== next.display_hints?.title_field ||
     prev.display_hints?.body_field !== next.display_hints?.body_field

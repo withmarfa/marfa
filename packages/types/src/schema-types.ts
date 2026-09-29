@@ -156,6 +156,9 @@ export interface TypeSchema {
    */
   roles?: TypeRole[];
   display_hints?: DisplayHints;
+  /** The string field holding each row's id at the vendor; unique in the
+   *  type in every state, and the type's own rather than inherited. */
+  link_field?: string;
   version_policy?: VersionPolicy;
   merge_policy?: MergePolicy;
   /**

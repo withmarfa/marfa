@@ -139,6 +139,12 @@ pub struct ListOccurrencesParams {
     pub r#type: Option<String>,
 }
 
+/// struct for passing parameters to the method [`lookup_items`]
+#[derive(Clone, Debug)]
+pub struct LookupItemsParams {
+    pub lookup_items_request: Option<models::LookupItemsRequest>,
+}
+
 /// struct for passing parameters to the method [`purge_item`]
 #[derive(Clone, Debug)]
 pub struct PurgeItemParams {
@@ -166,6 +172,12 @@ pub struct RestoreItemParams {
     pub idempotency_key: Option<String>,
 }
 
+/// struct for passing parameters to the method [`settle_tombstones`]
+#[derive(Clone, Debug)]
+pub struct SettleTombstonesParams {
+    pub settle_tombstones_request: Option<models::SettleTombstonesRequest>,
+}
+
 /// struct for passing parameters to the method [`transition_item`]
 #[derive(Clone, Debug)]
 pub struct TransitionItemParams {
@@ -181,7 +193,7 @@ pub struct TransitionItemParams {
 pub struct UpdateItemParams {
     /// Item id
     pub id: String,
-    /// Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
+    /// Who resolves a version conflict. `auto` resolves it here, in this write's transaction, by the type's merge policy: a `last_writer_wins` field takes this write's value, a `keep_both_copies` field leaves the server's value on the item and the losing value lands on a sibling tagged `conflicted-copy` beside the original's tags, with a copy of the edges that are the original's own, those its own file would write, that a second item may hold and the writer could have made. The sibling carries neither the item's natural key nor its link, so where the type requires its `link_field`, itself or through a parent, nothing is resolved and the write answers the 409 envelope. `manual` and `callback` return the 409 envelope for the caller to resolve. Omitted means `manual`.
     pub conflict: Option<models::ConflictMode>,
     /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
     pub idempotency_key: Option<String>,
@@ -294,6 +306,14 @@ pub enum ListOccurrencesSuccess {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed successes of method [`lookup_items`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LookupItemsSuccess {
+    Status200(models::LookupItems200Response),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed successes of method [`purge_item`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -315,6 +335,14 @@ pub enum RemoveItemTagSuccess {
 #[serde(untagged)]
 pub enum RestoreItemSuccess {
     Status200(models::ItemWithMetadata),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed successes of method [`settle_tombstones`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SettleTombstonesSuccess {
+    Status200(models::SettleTombstones200Response),
     UnknownValue(serde_json::Value),
 }
 
@@ -505,6 +533,19 @@ pub enum ListOccurrencesError {
     UnknownValue(serde_json::Value),
 }
 
+/// struct for typed errors of method [`lookup_items`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum LookupItemsError {
+    Status400(models::InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
+    Status413(models::RequestTooLargeRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
 /// struct for typed errors of method [`purge_item`]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -546,6 +587,19 @@ pub enum RestoreItemError {
     Status409(models::IdempotencyKeyInFlightRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status422(models::IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal),
+    Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
+    UnknownValue(serde_json::Value),
+}
+
+/// struct for typed errors of method [`settle_tombstones`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SettleTombstonesError {
+    Status400(models::MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
+    Status401(models::UnauthorizedRefusal),
+    Status403(models::ForbiddenOrTypeNotPermittedRefusal),
+    Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -671,7 +725,7 @@ pub fn apply_bulk_action(
     }
 }
 
-/// Reads up to 100 items by id in one round-trip, permission-filtered exactly like the single-item GET: ids the caller cannot read (type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request. Optional `include` takes the same tokens as GET /items: `edges`, `metadata` and `extensions` hydrate an extra inline, while `system` widens the result to include `system.*` items, which are omitted by default.  Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
+/// Reads up to 100 items by id in one round-trip, permission-filtered exactly like the single-item GET: ids the caller cannot read (type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request, and the rest come back in the order the request named them, each once. Optional `include` takes the same tokens as GET /items: `edges`, `metadata` and `extensions` hydrate an extra inline, while `system` widens the result to include `system.*` items, which are omitted by default.  Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
 pub fn bulk_get_items(
     configuration: &configuration::Configuration,
     params: BulkGetItemsParams,
@@ -713,7 +767,7 @@ pub fn bulk_get_items(
     }
 }
 
-/// Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.  An entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.  An ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.  Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.
+/// Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.  An entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.  An ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.  Where the entry's type names a `link_field`, an entry that would give its row a value another item of the type holds, in any state, is refused `link_taken` with `details.existing_id` naming the holder, on a create and an update alike, and the same two ways.  Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.
 pub fn bulk_upsert_items(
     configuration: &configuration::Configuration,
     params: BulkUpsertItemsParams,
@@ -936,7 +990,7 @@ pub fn get_bulk_action_job(
     }
 }
 
-/// Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.  `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.  Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
+/// Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.  `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.  Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
 pub fn get_item(
     configuration: &configuration::Configuration,
     params: GetItemParams,
@@ -1024,7 +1078,7 @@ pub fn get_item_stats(
     }
 }
 
-/// Returns the version-snapshot history for one item, newest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.
+/// Returns the version-snapshot history for one item, oldest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.
 pub fn list_item_versions(
     configuration: &configuration::Configuration,
     params: ListItemVersionsParams,
@@ -1195,7 +1249,49 @@ pub fn list_occurrences(
     }
 }
 
-/// Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
+/// Finds rows by one selector, in every state, the bin included, and answers the tombstones purges left for the keys it names. Name exactly one of `links`, `source` with `source_ids`, or `ids`, at most 500 values.  - `links`: the rows of `type` holding those values in the type's `link_field`, which `type` must name. Rows of a subtype are not among them; a subtype names its own link. - `source` and `source_ids`: the rows holding those natural keys, whatever their type, so a row retyped since it was written is found. - `ids`: the rows with those ids, whatever their type.  A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids` and to a credential that may not read `type`. A key held by a row again has no tombstone. A read: nothing is announced or audited.
+pub fn lookup_items(
+    configuration: &configuration::Configuration,
+    params: LookupItemsParams,
+) -> Result<ResponseContent<LookupItemsSuccess>, Error<LookupItemsError>> {
+    let uri_str = format!("{}/items/lookup", configuration.base_path);
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.lookup_items_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<LookupItemsSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<LookupItemsError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.  The purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.
 pub fn purge_item(
     configuration: &configuration::Configuration,
     params: PurgeItemParams,
@@ -1329,6 +1425,48 @@ pub fn restore_item(
     } else {
         let content = resp.text()?;
         let entity: Option<RestoreItemError> = serde_json::from_str(&content).ok();
+        Err(Error::ResponseError(ResponseContent {
+            status,
+            content,
+            entity,
+        }))
+    }
+}
+
+/// Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.
+pub fn settle_tombstones(
+    configuration: &configuration::Configuration,
+    params: SettleTombstonesParams,
+) -> Result<ResponseContent<SettleTombstonesSuccess>, Error<SettleTombstonesError>> {
+    let uri_str = format!("{}/items/tombstones", configuration.base_path);
+    let mut req_builder = configuration
+        .client
+        .request(reqwest::Method::POST, &uri_str);
+
+    if let Some(ref user_agent) = configuration.user_agent {
+        req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
+    }
+    if let Some(ref token) = configuration.bearer_access_token {
+        req_builder = req_builder.bearer_auth(token.to_owned());
+    };
+    req_builder = req_builder.json(&params.settle_tombstones_request);
+
+    let req = req_builder.build()?;
+    let resp = configuration.client.execute(req)?;
+
+    let status = resp.status();
+
+    if !status.is_client_error() && !status.is_server_error() {
+        let content = resp.text()?;
+        let entity: Option<SettleTombstonesSuccess> = serde_json::from_str(&content).ok();
+        Ok(ResponseContent {
+            status,
+            content,
+            entity,
+        })
+    } else {
+        let content = resp.text()?;
+        let entity: Option<SettleTombstonesError> = serde_json::from_str(&content).ok();
         Err(Error::ResponseError(ResponseContent {
             status,
             content,

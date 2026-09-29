@@ -114,6 +114,47 @@ pub enum ItemsCommand {
         #[arg(long, value_name = "NAME")]
         include: Vec<String>,
     },
+    /// Items by link, natural key or id, in every state, with the
+    /// tombstones purges left for the keys named.
+    Lookup {
+        /// The type the links are held in and the tombstones kept under.
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: String,
+        /// A link value; repeat for more.
+        #[arg(long = "link", value_name = "VALUE")]
+        links: Vec<String>,
+        /// The source the `--source-id` natural keys are under.
+        #[arg(long, value_name = "SOURCE")]
+        source: Option<String>,
+        /// A natural key's `source_id`; repeat for more.
+        #[arg(long = "source-id", value_name = "ID")]
+        source_ids: Vec<String>,
+        /// An item id; repeat for more.
+        #[arg(long = "id", value_name = "ID")]
+        ids: Vec<String>,
+        /// Extra to hydrate onto each item: `edges`.
+        #[arg(long, value_name = "NAME")]
+        include: Vec<String>,
+    },
+    /// Settle the tombstones purges left at a later time.
+    Tombstones {
+        /// The type the tombstones are kept under.
+        #[arg(long = "type", value_name = "TYPE")]
+        type_: String,
+        /// A link value; repeat for more.
+        #[arg(long = "link", value_name = "VALUE")]
+        links: Vec<String>,
+        /// The source the `--source-id` natural keys are under.
+        #[arg(long, value_name = "SOURCE")]
+        source: Option<String>,
+        /// A natural key's `source_id`; repeat for more.
+        #[arg(long = "source-id", value_name = "ID")]
+        source_ids: Vec<String>,
+        /// The vendor-side change time, RFC 3339; one earlier than a
+        /// tombstone holds leaves it as it is.
+        #[arg(long = "settled-at", value_name = "TIME")]
+        settled_at: String,
+    },
     /// Apply one action to every item a filter selects, as a job.
     #[command(name = "bulk-action")]
     BulkAction {
@@ -627,6 +668,55 @@ pub fn bulk_get_request(ids: &[String], include: &[String]) -> Request {
     Request::post(&["items", "bulk-get"]).json(body)
 }
 
+/// The selector both key doors take: links, or natural keys under a source.
+fn key_selector(
+    type_: &str,
+    links: &[String],
+    source: Option<&str>,
+    source_ids: &[String],
+) -> Map<String, Value> {
+    let mut body = Map::new();
+    body.insert("type".into(), json!(type_));
+    if !links.is_empty() {
+        body.insert("links".into(), json!(links));
+    }
+    insert_opt(&mut body, "source", source);
+    if !source_ids.is_empty() {
+        body.insert("source_ids".into(), json!(source_ids));
+    }
+    body
+}
+
+pub fn lookup_request(
+    type_: &str,
+    links: &[String],
+    source: Option<&str>,
+    source_ids: &[String],
+    ids: &[String],
+    include: &[String],
+) -> Request {
+    let mut body = key_selector(type_, links, source, source_ids);
+    if !ids.is_empty() {
+        body.insert("ids".into(), json!(ids));
+    }
+    if !include.is_empty() {
+        body.insert("include".into(), json!(include));
+    }
+    Request::post(&["items", "lookup"]).json(Value::Object(body))
+}
+
+pub fn tombstones_request(
+    type_: &str,
+    links: &[String],
+    source: Option<&str>,
+    source_ids: &[String],
+    settled_at: &str,
+) -> Request {
+    let mut body = key_selector(type_, links, source, source_ids);
+    body.insert("settled_at".into(), json!(settled_at));
+    Request::post(&["items", "tombstones"]).json(Value::Object(body))
+}
+
 fn bulk_filter(args: &BulkFilterArgs) -> Map<String, Value> {
     let mut filter = Map::new();
     insert_opt(&mut filter, "type", args.type_.clone());
@@ -769,6 +859,21 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         ItemsCommand::Bulk(args) => bulk_request(args)?,
         ItemsCommand::BulkGet { ids, include } => bulk_get_request(ids, include),
+        ItemsCommand::Lookup {
+            type_,
+            links,
+            source,
+            source_ids,
+            ids,
+            include,
+        } => lookup_request(type_, links, source.as_deref(), source_ids, ids, include),
+        ItemsCommand::Tombstones {
+            type_,
+            links,
+            source,
+            source_ids,
+            settled_at,
+        } => tombstones_request(type_, links, source.as_deref(), source_ids, settled_at),
         ItemsCommand::BulkAction { command } => bulk_action_request(command)?,
     };
     out.value(&remote.json(&request)?)

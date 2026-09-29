@@ -26,7 +26,7 @@ import type { Item } from "@withmarfa/shared";
  * The revoke cascade writes `status: "revoked"` and leaves the lifecycle
  * `state` alone; nothing on the grants surface ever moves `state`. A row
  * with `state: "revoked"` and `status: "active"` is therefore not a
- * tombstone but the strand itself, tokens live and invisible to both read
+ * revoked grant row but the strand itself, tokens live and invisible to both read
  * surfaces, and it is refused like any other live grant: purging it would
  * make the strand permanent, since nothing could ever run the cascade for
  * it again. Anything that is not literally `"revoked"` counts as live, on

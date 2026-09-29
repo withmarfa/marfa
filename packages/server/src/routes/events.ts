@@ -110,7 +110,7 @@ const MAX_TYPE_FILTER_ENTRIES = 10;
  *
  * `all` is the default because an edge is the half of a change a
  * reconciling client cannot reconstruct from items alone: it has no row
- * of its own to re-read and no tombstone when it goes. A type filter used
+ * of its own to re-read and no record when it goes. A type filter used
  * to silence every edge event, so a client watching two types never
  * learned about the edges joining them.
  *

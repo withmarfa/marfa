@@ -167,9 +167,9 @@ export function registerHousekeepingJobs(
     run: async () => ({ deleted: await trashPurger.runOnce() }),
   });
 
-  // Revoked application-grant tombstones, hourly. Unlike trash there is no
+  // Revoked application-grant rows, hourly. Unlike trash there is no
   // /config override for this window, because the reason for its length is
-  // instance-wide: it tracks the audit retention so the tombstone and the
+  // instance-wide: it tracks the audit retention so the revoked grant row and the
   // audit row that recorded the revocation cannot disagree about whether a
   // revocation is still visible. `0` disables.
   const revokedGrantRetentionDays = config.revokedGrantRetentionDays ?? 90;
@@ -187,7 +187,7 @@ export function registerHousekeepingJobs(
   }
 
   // A grant nobody has used for a year is retired through the same cascade
-  // a Disconnect runs, with an audit row saying why. The tombstone it leaves
+  // a Disconnect runs, with an audit row saying why. The revoked grant row it leaves
   // then falls to the revoked-grant purge above, and a client left with no
   // grant to the DCR reaper. `0` disables.
   // Daily, and deliberately not configurable: the window is measured in

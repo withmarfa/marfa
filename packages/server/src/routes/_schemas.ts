@@ -337,7 +337,7 @@ export const VersionSchema = z
   })
   .openapi("Version");
 
-/** An item's history, newest first: the whole of it, so `next_cursor` is
+/** An item's history, oldest first: the whole of it, so `next_cursor` is
  *  always `null`. The same page `GET /items/{id}/versions` answers. */
 export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
 
@@ -361,7 +361,7 @@ export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
  *   which is about a bound; this is about permission. Without it a partial
  *   neighborhood reads as a complete one, and a caller missing an edge scope
  *   renders an item with none of its relations as though it had none.
- * - `versions` — the item's version snapshots, newest first, as the same page
+ * - `versions` — the item's version snapshots, oldest first, as the same page
  *   `GET /items/{id}/versions` answers. Opt in with `include=versions`.
  */
 export const ItemDetailSchema = z

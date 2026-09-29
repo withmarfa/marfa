@@ -12,14 +12,14 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TypeAlreadyExistsRefusal {
+pub struct ConflictOrLinkTakenRefusal {
     #[serde(rename = "error")]
-    pub error: Box<models::TypeAlreadyExistsRefusalError>,
+    pub error: Box<models::ConflictOrLinkTakenRefusalError>,
 }
 
-impl TypeAlreadyExistsRefusal {
-    pub fn new(error: models::TypeAlreadyExistsRefusalError) -> TypeAlreadyExistsRefusal {
-        TypeAlreadyExistsRefusal {
+impl ConflictOrLinkTakenRefusal {
+    pub fn new(error: models::ConflictOrLinkTakenRefusalError) -> ConflictOrLinkTakenRefusal {
+        ConflictOrLinkTakenRefusal {
             error: Box::new(error),
         }
     }

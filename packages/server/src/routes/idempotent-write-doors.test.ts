@@ -243,6 +243,9 @@ const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
   "POST /items/bulk":
     "resolves an existing row by id or natural key and updates it, so a retry converges rather than colliding",
   "POST /items/bulk-get": "read-only batch fetch",
+  "POST /items/lookup": "read-only lookup by link, natural key or id",
+  "POST /items/tombstones":
+    "moves a time only ever later, so a repeat is already a no-op",
   "POST /items/bulk-actions":
     "already reads Idempotency-Key and stores its outcome in the job row that outcome IS; a second mechanism over the same header on the same door is what this change exists to avoid",
   "DELETE /items/bulk-actions/jobs/:id":

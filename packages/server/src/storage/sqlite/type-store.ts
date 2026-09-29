@@ -13,6 +13,7 @@ import { safeJsonParse } from "../json-utils.js";
 import { types } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { toLoadedTypes } from "../loaded-types.js";
+import { buildTypeLinks, forgetType, rebuildTypeLinks } from "./item-links.js";
 
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
@@ -30,39 +31,53 @@ export class SqliteTypeStore implements TypeStore {
     provenance?: TypeProvenance,
   ): Promise<TypeSchema> {
     const now = new Date().toISOString();
-    try {
-      await this.db.run(sql`
-        INSERT INTO types (id, schema, origin, created_at, updated_at)
-        VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${now}, ${now})
-      `);
-    } catch (err: unknown) {
-      if (
-        err instanceof Error &&
-        err.message.includes("UNIQUE constraint failed")
-      ) {
-        throw new MarfaError(
-          ErrorCode.TYPE_ALREADY_EXISTS,
-          `Type "${schema.id}" already exists`,
-        );
+    await this.db.transaction(async (tx) => {
+      try {
+        await tx.run(sql`
+          INSERT INTO types (id, schema, origin, created_at, updated_at)
+          VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${now}, ${now})
+        `);
+      } catch (err: unknown) {
+        if (
+          err instanceof Error &&
+          err.message.includes("UNIQUE constraint failed")
+        ) {
+          throw new MarfaError(
+            ErrorCode.TYPE_ALREADY_EXISTS,
+            `Type "${schema.id}" already exists`,
+          );
+        }
+        throw err;
       }
-      throw err;
-    }
+      // Rows a forced delete left are this type's again; the tombstones their
+      // purges left were the deleted type's.
+      await forgetType(tx, schema.id);
+      await buildTypeLinks(tx, schema.id, schema.link_field);
+    });
     registerTypeSchema(schema);
     return schema;
   }
 
   async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
     const now = new Date().toISOString();
-    await this.db.run(sql`
-      UPDATE types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
-      WHERE id = ${id}
-    `);
+    await this.db.transaction(async (tx) => {
+      await tx.run(sql`
+        UPDATE types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
+        WHERE id = ${id}
+      `);
+      if (getTypeSchema(id)?.link_field !== schema.link_field) {
+        await rebuildTypeLinks(tx, id, schema.link_field);
+      }
+    });
     registerTypeSchema(schema);
     return schema;
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.run(sql`DELETE FROM types WHERE id = ${id}`);
+    await this.db.transaction(async (tx) => {
+      await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
+      await forgetType(tx, id);
+    });
     unregisterTypeSchema(id);
   }
 
