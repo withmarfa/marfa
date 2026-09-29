@@ -41,6 +41,12 @@ pub struct Item {
     pub created_at: String,
     #[serde(rename = "updated_at")]
     pub updated_at: String,
+    /// Always `true` where present: on an item a trash took into the bin through a cascading edge such as `parent-of`, for as long as the item stays in the bin, even once the item that trash named is purged, to any caller that may read the item. Absent on a row trashed on its own and on every row out of the bin. A connector reads it to tell a trash the person made from one a cascade made.
+    #[serde(rename = "trashed_by_cascade", skip_serializing_if = "Option::is_none")]
+    pub trashed_by_cascade: Option<bool>,
+    /// The item whose trash took this one into the bin, beside `trashed_by_cascade`, whatever became of that item since. Answered only to a caller that may read that item's type.
+    #[serde(rename = "trashed_with", skip_serializing_if = "Option::is_none")]
+    pub trashed_with: Option<String>,
     #[serde(rename = "edges", skip_serializing_if = "Option::is_none")]
     pub edges: Option<std::collections::HashMap<String, models::EdgePage>>,
     #[serde(rename = "extensions", skip_serializing_if = "Option::is_none")]
@@ -77,6 +83,8 @@ impl Item {
             occurred_at,
             created_at,
             updated_at,
+            trashed_by_cascade: None,
+            trashed_with: None,
             edges: None,
             extensions: None,
         }

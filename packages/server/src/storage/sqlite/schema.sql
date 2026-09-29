@@ -327,6 +327,13 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
+CREATE TABLE IF NOT EXISTS `cascade_marks` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`trashed_with` text NOT NULL,
+	`trashed_with_type` text NOT NULL,
+	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `connector_agreements` (
 	`source` text NOT NULL,
 	`item_id` text NOT NULL,

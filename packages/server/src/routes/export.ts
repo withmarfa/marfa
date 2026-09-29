@@ -8,6 +8,7 @@ import * as tar from "tar-stream";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import { edgeKindReadable } from "./_edge-visibility.js";
+import { withCascadeMarks } from "./_cascade-marks.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -243,7 +244,11 @@ export function exportRoutes(
                 cursor,
               });
 
-              for (const item of result.data) {
+              for (const item of await withCascadeMarks(
+                storage,
+                callerKey,
+                result.data,
+              )) {
                 const metadata = await storage.metadata.get(item.id);
                 exportedIds.add(item.id);
                 controller.enqueue(
@@ -406,7 +411,11 @@ async function handleArchiveExport(
         limit: 200,
         cursor,
       });
-      for (const item of result.data) {
+      for (const item of await withCascadeMarks(
+        storage,
+        callerKey,
+        result.data,
+      )) {
         const metadata = await storage.metadata.get(item.id);
         exportedIds.add(item.id);
         lines.push(

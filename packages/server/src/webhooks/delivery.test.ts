@@ -817,3 +817,124 @@ describe("WebhookConsumer subscription matching", () => {
     expect(scheduledFor).toEqual(["wh_named"]);
   });
 });
+
+describe("WebhookConsumer payload marks", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("carries every mark where the event names one, and none where it does not", async () => {
+    const payloads: Record<string, unknown>[] = [];
+    const store: WebhookDeliveryStore = {
+      cleanup: () => Promise.resolve(0),
+      list: () => Promise.resolve({ data: [], next_cursor: null }),
+      schedule: (entry) => {
+        payloads.push(JSON.parse(entry.payload) as Record<string, unknown>);
+        return Promise.resolve(`del_mark_${String(payloads.length)}`);
+      },
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+    const webhook: Webhook = {
+      id: "wh_marks",
+      url: "https://example.test/hook",
+      secret: "s",
+      events: ["item.restored", "item.deleted", "edge.deleted"],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+    const item = (id: string) =>
+      ({
+        id,
+        type: "core.note",
+        version: 1,
+        state: "active",
+        tier: "library",
+        source: "test",
+        properties: { title: "marked" },
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }) as unknown as Item;
+    const edge = (id: string) =>
+      ({
+        id,
+        edge_type: "references",
+        source_id: "01HAAAAAAAAAAAAAAAAAAAAAAA",
+        target_id: "01HBBBBBBBBBBBBBBBBBBBBBBB",
+        created_at: new Date().toISOString(),
+      }) as unknown as EdgeEventWithId["edge"];
+
+    const consumer = new WebhookConsumer(webhookStore, store);
+    consumer.start();
+    await publish({
+      type: "restored",
+      item: item("01HFFFFFFFFFFFFFFFFFFFFFFF"),
+      restoredWith: { id: "01HGGGGGGGGGGGGGGGGGGGGGGG", type: "core.task" },
+    });
+    await publish({
+      type: "deleted",
+      item: item("01HHHHHHHHHHHHHHHHHHHHHHHH"),
+      trashedWith: { id: "01HGGGGGGGGGGGGGGGGGGGGGGG", type: "core.task" },
+    });
+    await publish({
+      type: "restored",
+      item: item("01HGGGGGGGGGGGGGGGGGGGGGGG"),
+    });
+    await publishEdge({
+      type: "edge_deleted",
+      edge: edge("edge_purged"),
+      purgedWith: "01HAAAAAAAAAAAAAAAAAAAAAAA",
+    });
+    await publishEdge({ type: "edge_deleted", edge: edge("edge_direct") });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    consumer.stop();
+
+    const sent = (id: string) =>
+      payloads.find(
+        (p) =>
+          (p.item as { id?: string } | undefined)?.id === id ||
+          (p.edge as { id?: string } | undefined)?.id === id,
+      );
+    expect(sent("01HFFFFFFFFFFFFFFFFFFFFFFF")?.restored_with).toBe(
+      "01HGGGGGGGGGGGGGGGGGGGGGGG",
+    );
+    expect(sent("01HFFFFFFFFFFFFFFFFFFFFFFF")).not.toHaveProperty(
+      "restored_with_type",
+    );
+    const taken = sent("01HHHHHHHHHHHHHHHHHHHHHHHH");
+    expect(taken?.item).toMatchObject({
+      trashed_by_cascade: true,
+      trashed_with: "01HGGGGGGGGGGGGGGGGGGGGGGG",
+    });
+    expect(taken).not.toHaveProperty("trashed_with_type");
+    expect(sent("01HGGGGGGGGGGGGGGGGGGGGGGG")).toBeDefined();
+    expect(sent("01HGGGGGGGGGGGGGGGGGGGGGGG")).not.toHaveProperty(
+      "restored_with",
+    );
+    expect(sent("edge_purged")?.purged_with).toBe("01HAAAAAAAAAAAAAAAAAAAAAAA");
+    expect(sent("edge_direct")).toBeDefined();
+    expect(sent("edge_direct")).not.toHaveProperty("purged_with");
+  });
+});

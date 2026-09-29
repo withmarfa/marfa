@@ -167,6 +167,17 @@ export const natural_key_tombstones = sqliteTable(
   ],
 );
 
+// Apart from `trash_cascades`, which a purge re-keys.
+export const cascade_marks = sqliteTable("cascade_marks", {
+  item_id: text("item_id")
+    .primaryKey()
+    .references(() => items.id, { onDelete: "cascade" }),
+  // No key to `items`, and its type kept here: the row named may be purged
+  // while this one stays, and its type decides who may be told its id.
+  trashed_with: text("trashed_with").notNull(),
+  trashed_with_type: text("trashed_with_type").notNull(),
+});
+
 export const edges = sqliteTable(
   "edges",
   {

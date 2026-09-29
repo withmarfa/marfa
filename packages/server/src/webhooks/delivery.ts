@@ -8,6 +8,8 @@ import type {
 } from "../storage/interface.js";
 import {
   fansOut,
+  frameFor,
+  storedFrame,
   subscribe,
   subscribeEdges,
   wireEventName,
@@ -327,9 +329,11 @@ export class WebhookConsumer {
       return true;
     });
     if (matching.length === 0) return;
+    const frame = storedFrame(event);
+    delete frame.type;
     const payload = JSON.stringify({
       event_type: eventType,
-      edge: event.edge,
+      ...frame,
       delivered_at: new Date().toISOString(),
     });
     const results = await Promise.allSettled(
@@ -376,9 +380,13 @@ export class WebhookConsumer {
 
     if (matching.length === 0) return;
 
+    // Every mark: only a credential that reads everything may register a
+    // subscription, and a delivery carries no narrower one to gate on.
+    const frame = frameFor(storedFrame(event), () => true);
+    delete frame.type;
     const payload = JSON.stringify({
       event_type: eventType,
-      item: event.item,
+      ...frame,
       metadata: event.metadata ?? null,
       delivered_at: new Date().toISOString(),
     });

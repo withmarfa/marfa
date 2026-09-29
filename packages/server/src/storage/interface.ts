@@ -635,6 +635,12 @@ export type TombstoneSelector =
   | { links: readonly string[] }
   | { source: string; source_ids: readonly string[] };
 
+/** The row a trash named, as each row its cascade took records it. */
+export interface CascadeRoot {
+  id: string;
+  type: string;
+}
+
 export interface ItemStore {
   create(input: StoredCreateItemInput): Promise<Item>;
   get(id: string): Promise<Item | null>;
@@ -722,7 +728,9 @@ export interface ItemStore {
    * one through a cascading edge, recorded only where this call moves the row
    * into the bin, so a row already there stays its own trash's.
    */
-  delete(id: string, trashedWith?: string): Promise<void>;
+  delete(id: string, trashedWith?: CascadeRoot): Promise<void>;
+  /** The row each cascaded row's trash named, while the bin holds it. */
+  cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>>;
   /** Hard-deletes a trashed row, leaving its tombstones. So do `bulkPurge`
    *  and `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;

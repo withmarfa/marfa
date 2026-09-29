@@ -20,7 +20,7 @@
  * the rows the writes returned rather than reading them back.
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
-import type { Storage } from "../storage/interface.js";
+import type { CascadeRoot, Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
@@ -95,7 +95,7 @@ async function runTransitionChunk({
   const moved: Item[] = [];
   // Rows a restore out of the bin brought back because the trash that took
   // them was undone, announced as the single restore door announces them.
-  const broughtBack: Item[] = [];
+  const broughtBack: { item: Item; restoredWith: CascadeRoot }[] = [];
   const alreadyBack = brought ?? new Set<string>();
   // Joined to the job's set only once this chunk's transaction commits: a
   // chunk rolled back as a whole brought nothing back.
@@ -123,14 +123,17 @@ async function runTransitionChunk({
           input.state === "active"
             ? await storage.items.getIncludingTrashed(id)
             : null;
-        const back =
-          row?.state === "trashed"
-            ? await storage.items.restoreBeneath(id)
-            : [];
+        const root = row?.state === "trashed" ? { id, type: row.type } : null;
+        const back = root
+          ? (await storage.items.restoreBeneath(id)).map((item) => ({
+              item,
+              restoredWith: root,
+            }))
+          : [];
         moved.push(await storage.items.transition(id, input.state));
-        for (const item of back) {
-          broughtBack.push(item);
-          backInChunk.add(item.id);
+        for (const entry of back) {
+          broughtBack.push(entry);
+          backInChunk.add(entry.item.id);
         }
         succeeded.push(id);
       } catch (err) {
@@ -146,10 +149,11 @@ async function runTransitionChunk({
       enableFanout: fansOutFor(input),
     });
   }
-  for (const item of broughtBack) {
+  for (const { item, restoredWith } of broughtBack) {
     await publish({
       type: "restored",
       item,
+      restoredWith,
       enableFanout: fansOutFor(input),
     });
   }
@@ -172,6 +176,8 @@ async function runPurgeChunk({
   // nothing to read afterwards. Staged the same way and discarded by the
   // same gate below.
   const removed: Item[] = [];
+  // Read with the rows, since the purge takes each mark with its row.
+  let marks = new Map<string, CascadeRoot>();
   // Set only when the chunk itself failed, so a chunk that committed still
   // announces what it purged. A holder rather than a bare boolean, because
   // the write happens inside the transaction callback where control-flow
@@ -191,6 +197,7 @@ async function runPurgeChunk({
       collectBlobHashes(item.properties, blob_hashes);
       removed.push(item);
     }
+    marks = await storage.items.cascadeMarks([...found.keys()]);
     // One DELETE per direction + one DELETE on items = 3 statements
     // instead of 3 × ids.length. The two edge deletes return the rows
     // they removed, which is what the announcement below names.
@@ -251,17 +258,24 @@ async function runPurgeChunk({
   //
   // Edges first and rows after, the ordering the single-item door states.
   if (!chunk.failed) {
+    const purgedIds = new Set(ids);
     for (const edge of cascaded) {
       await publishEdge({
         type: "edge_deleted",
         edge,
+        // The source side runs first, taking any edge whose source is purged.
+        purgedWith: purgedIds.has(edge.source_id)
+          ? edge.source_id
+          : edge.target_id,
         enableFanout: fansOutFor(input),
       });
     }
     for (const item of removed) {
+      const trashedWith = marks.get(item.id);
       await publish({
         type: "purged",
         item,
+        ...(trashedWith && { trashedWith }),
         enableFanout: fansOutFor(input),
       });
     }

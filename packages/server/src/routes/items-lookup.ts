@@ -25,6 +25,7 @@ import type {
 } from "../storage/interface.js";
 import { normalizeTimeBound } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { ItemSchema } from "./_schemas.js";
 
@@ -356,13 +357,14 @@ export function itemsLookupRoutes(storage: Storage) {
           : await storage.items.getMany(selector.values, {
               includeTrashed: true,
             });
-    const rows: Item[] = [];
+    const readable: Item[] = [];
     for (const value of selector.values) {
       const item = found.get(value);
       if (!item || item.type.startsWith("system.")) continue;
       if (!mayRead(apiKey, item.type)) continue;
-      rows.push(item);
+      readable.push(item);
     }
+    const rows = await withCascadeMarks(storage, apiKey, readable);
 
     const tombstones =
       selector.kind !== "ids" && mayRead(apiKey, type)
