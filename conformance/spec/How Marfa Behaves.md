@@ -297,7 +297,9 @@ An instance runs periodic housekeeping jobs on itself. The chapter names them: t
 
 **A file the sweep cannot read.** With enrichment and OCR on, an image file item whose bytes start like a PNG and are no image is answered by the enrichment sweep as one failure each time it is offered again, until its attempts run out, and the server goes on answering and the item goes on reading, with no size made up from the bytes.
 
-References: `housekeeping.md` 1, 2, 3, 4, 5.
+**Which items are files.** The enrichment sweep takes an item as a file by what its type inherits, not by its name. With enrichment on, an item of a type registered with `core.file.image` as its `parent` has its `width` and `height` read from its bytes, and one of a type with `core.file` as its parent has its plain text written as `extracted_text`, as a `core.file.image` or a `core.file` item with the same bytes does. A type that declares the same fields and inherits from no file type is not a file, and the sweep passes over it.
+
+References: `housekeeping.md` 1, 2, 3, 4, 5, 6.
 
 ## A connector
 
@@ -349,7 +351,7 @@ References: `errors.md` 1, 2, 3, 4, 5, 6, 7 and the code table; `keys-and-oauth.
 
 A reader should not take silence here for absence. These are behaviors the server has, or may have, that no statement covers, so this account can only name them.
 
-- **Enrichment and OCR** are switched off for a run. What the sweeper does to a file item after the fact is not stated, but for one thing: a file it cannot read is a failure recorded against the item, never the end of the server (`housekeeping.md` 5).
+- **Enrichment and OCR** are switched off for a run. What the sweeper does to a file item after the fact is not stated, but for two things: it takes an item as a file by what its type inherits, writing an image's size and a plain-text file's text (`housekeeping.md` 6), and a file it cannot read is a failure recorded against the item, never the end of the server (`housekeeping.md` 5).
 - **Rate limiting** is switched off for a run and on otherwise. The cap on the key doors is stated and asserted (see **Keys** above); the caps on the `/auth/*` groups are the server's own numbers, which no statement covers and no setting names, and the cap on everything else is the default the window is configured with.
 - **The boot mint.** A fresh instance mints its first key through `POST /keys` with the one-time secret from its boot log as the bearer token. The answer is the operator key. No fixture repeats it, because the secret is consumed by the first mint.
 - **One process.** The event stream and webhook dispatch are process-local. Whether an instance may run as more than one process against one database is not stated, and the rate-limit counters are kept where several processes could share them, while the event stream and webhook dispatch are not shared.

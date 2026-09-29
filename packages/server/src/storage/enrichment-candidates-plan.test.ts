@@ -1,16 +1,10 @@
 /**
- * The enrichment candidate query must be index-served, verified by reading
- * the query plan rather than by reasoning about it. It runs on a timer
- * forever, so on an extracted corpus it has to cost nothing — and it once
- * shipped as a full scan plus a sort behind a comment claiming otherwise.
- *
- * The check captures the SQL the real store issues (via a Drizzle logger
- * wrapped around the same connection) and ask the database how it would
- * run it. That the store inlines its type/state literals is load-bearing:
- * a bound parameter defeats the partial-index implication proof.
+ * Read from the query plan, not reasoning — it silently regressed to a full
+ * scan once. Literals stay inlined; a bound param defeats the proof.
  */
 import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
+import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
 import { SqliteEnrichmentStore } from "./sqlite/enrichment-store.js";
 import { SCHEMA_SQL } from "./sqlite/connection.js";
@@ -30,40 +24,61 @@ function capturingLogger(into: CapturedQuery[]) {
 
 const SIGNATURE = JSON.stringify({ max_blob_bytes: 1, ocr: false });
 
+async function candidatePlan(): Promise<{ plan: string; params: unknown[] }> {
+  const client = createClient({ url: ":memory:" });
+  try {
+    await client.executeMultiple(SCHEMA_SQL);
+    const captured: CapturedQuery[] = [];
+    const db = drizzleSqlite(client, { logger: capturingLogger(captured) });
+    const store = new SqliteEnrichmentStore(db as never);
+    await store.listCandidates(1, 3, 8, SIGNATURE);
+
+    const query = captured.at(-1);
+    expect(query).toBeDefined();
+    // Explained unsubstituted: SQLite plans at prepare time, before binding,
+    // so pre-substituting params would hide the mistake this guards against.
+    const plan = await client.execute(
+      `EXPLAIN QUERY PLAN ${query!.sql}`,
+      query!.params as never[],
+    );
+    return {
+      plan: plan.rows
+        .map((r) => String((r as Record<string, unknown>).detail))
+        .join("\n"),
+      params: query!.params,
+    };
+  } finally {
+    client.close();
+  }
+}
+
+// The desired shape: an ordered walk of the partial index, already sorted
+// by created_at, the queue's serving order — not a scan plus a temp sort.
+function expectIndexServed(plan: string): void {
+  expect(plan).toContain("SCAN items USING INDEX idx_items_enrichment_queue");
+  expect(plan).not.toContain("TEMP B-TREE");
+}
+
 describe("sqlite candidate query plan", () => {
   it("is served by the partial index, per EXPLAIN QUERY PLAN", async () => {
-    const client = createClient({ url: ":memory:" });
-    try {
-      await client.executeMultiple(SCHEMA_SQL);
-      const captured: CapturedQuery[] = [];
-      const db = drizzleSqlite(client, { logger: capturingLogger(captured) });
-      const store = new SqliteEnrichmentStore(db as never);
-      await store.listCandidates(1, 3, 8, SIGNATURE);
+    const { plan, params } = await candidatePlan();
+    expect(params).not.toContain("acme.photo");
+    expectIndexServed(plan);
+  });
 
-      const query = captured.at(-1);
-      expect(query).toBeDefined();
-      // Explain the parameterized statement as-is. SQLite plans at prepare
-      // time, before any value is bound, so substituting the params first
-      // would show a plan production never gets — the exact mistake the
-      // literal inlining in the store exists to avoid.
-      const plan = await client.execute(
-        `EXPLAIN QUERY PLAN ${query!.sql}`,
-        query!.params as never[],
-      );
-      const detail = plan.rows
-        .map((r) => String((r as Record<string, unknown>).detail))
-        .join("\n");
-      // "SCAN items USING INDEX idx_…" is the desired shape: an ordered
-      // walk of the partial index, already sorted by the column the index is
-      // keyed on — created_at, which is when a file arrived and the order
-      // the queue is served in. The bad plan is a bare table scan plus a
-      // temporary sort.
-      expect(detail).toContain(
-        "SCAN items USING INDEX idx_items_enrichment_candidates",
-      );
-      expect(detail).not.toContain("TEMP B-TREE");
+  it("is served by the partial index when a type inherits its way to a file", async () => {
+    registerTypeSchema({
+      id: "acme.photo",
+      version: 1,
+      parent: "core.file.image",
+      fields: {},
+    });
+    try {
+      const { plan, params } = await candidatePlan();
+      expect(params).toContain("acme.photo");
+      expectIndexServed(plan);
     } finally {
-      client.close();
+      unregisterTypeSchema("acme.photo");
     }
   });
 });

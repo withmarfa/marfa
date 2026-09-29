@@ -490,7 +490,7 @@ CREATE INDEX IF NOT EXISTS `idx_items_updated_at_id` ON `items` (`updated_at`,`i
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,`source_id`) WHERE source IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_starts_at` ON `items` (`starts_at`) WHERE starts_at IS NOT NULL;
-CREATE INDEX IF NOT EXISTS `idx_items_enrichment_candidates` ON `items` (`created_at`) WHERE (type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
+CREATE INDEX IF NOT EXISTS `idx_items_enrichment_queue` ON `items` (`created_at`) WHERE state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
 CREATE TABLE IF NOT EXISTS `metadata` (
 	`item_id` text PRIMARY KEY NOT NULL,
 	`tags` text DEFAULT '[]' NOT NULL,

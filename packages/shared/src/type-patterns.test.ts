@@ -246,6 +246,8 @@ describe("declared descendants", () => {
 
   afterEach(() => {
     unregisterTypeSchema("user.alpha_child");
+    unregisterTypeSchema("user.cycle_a");
+    unregisterTypeSchema("user.cycle_b");
   });
 
   it("names a child declared outside the root's namespace", () => {
@@ -258,5 +260,14 @@ describe("declared descendants", () => {
   it("returns nothing for a root nothing declares", () => {
     registerTypeSchema(child("user.alpha_child", "core.note"));
     expect(declaredDescendantsOutsideNamespace("core.bookmark")).toEqual([]);
+  });
+
+  it("skips a type whose declared chain cycles, rather than throwing", () => {
+    registerTypeSchema(child("user.alpha_child", "core.note"));
+    registerTypeSchema(child("user.cycle_a", "user.cycle_b"));
+    registerTypeSchema(child("user.cycle_b", "user.cycle_a"));
+    expect(declaredDescendantsOutsideNamespace("core.note")).toEqual([
+      "user.alpha_child",
+    ]);
   });
 });

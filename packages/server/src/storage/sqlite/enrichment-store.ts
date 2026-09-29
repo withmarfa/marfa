@@ -1,4 +1,5 @@
-import { and, asc, eq, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
+import { declaredDescendantsOutsideNamespace } from "@withmarfa/shared";
 import type {
   EnrichmentCandidate,
   EnrichmentStateInput,
@@ -18,6 +19,9 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
     configSignature: string,
   ): Promise<EnrichmentCandidate[]> {
     const blobRef = sql<string>`json_extract(${items.properties}, '$.blob_ref')`;
+    // A file by name or by declared parent, the set `?type=core.file` lists:
+    // a connector's image type is a file whatever it is called.
+    const inherited = declaredDescendantsOutsideNamespace("core.file");
     const rows = await this.db
       .select({
         item_id: items.id,
@@ -31,11 +35,13 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
       .leftJoin(enrichmentState, eq(enrichmentState.item_id, items.id))
       .where(
         and(
-          // Literals, not bound parameters, and textually identical to
-          // idx_items_enrichment_candidates' predicate: SQLite only uses a
-          // partial index when the query provably implies its predicate,
-          // and a bound parameter can never be proven.
-          sql`(${items.type} = 'core.file' OR ${items.type} LIKE 'core.file.%')`,
+          or(
+            sql`${items.type} = 'core.file'`,
+            sql`${items.type} LIKE 'core.file.%'`,
+            ...(inherited.length > 0 ? [inArray(items.type, inherited)] : []),
+          ),
+          // Literals, textually identical to idx_items_enrichment_queue's
+          // predicate: only literals prove the partial index applies here.
           sql`${items.state} <> 'trashed'`,
           sql`${blobRef} IS NOT NULL`,
           or(
