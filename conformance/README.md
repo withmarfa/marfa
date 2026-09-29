@@ -37,7 +37,8 @@ From this directory, in a checkout where `pnpm install` has been run at the
 root:
 
 ```bash
-# Boot the object store the server attaches beside its disk (brew install garage)
+# Boot the object store the server attaches beside its disk (brew install garage,
+# or a release binary from garagehq.deuxfleurs.fr)
 pnpm garage:up
 set -a; . .marfa-state/garage/garage.env; set +a
 

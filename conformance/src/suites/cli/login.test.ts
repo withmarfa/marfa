@@ -9,8 +9,9 @@ import type { CliContext } from "./harness.js";
  * here the way the server's own device-grant test drives it: the approval
  * is a signed-in browser session posting to the consent door. The token is
  * printed rather than kept, and the client is registered over HTTP and
- * handed to the binary, so the binary reads the run's keychain and finds
- * nothing there. The keychain round trip is the crate's own test.
+ * handed to the binary, so the binary finds nothing in the run's keychain,
+ * or off macOS is refused one and reads that as nothing. The keychain round
+ * trip is the crate's own test.
  *
  * What stays on the server: the owner, whom no door removes, and the
  * grant, whose refresh token is revoked when the file ends.

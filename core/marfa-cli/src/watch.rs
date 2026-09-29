@@ -31,6 +31,15 @@ fn full_due(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.duration_since(last) >= FULL_PASS)
 }
 
+/// Whether an event the loop passes over lets the tick's pass run: only once
+/// a tick has gone by since the last pass ended and since the last change,
+/// as a receive that timed out would. inotify reports every open of a file,
+/// so a reader faster than the tick would otherwise keep the receive from
+/// ever timing out.
+fn passed_over_is_due(since_pass: Duration, since_change: Duration) -> bool {
+    since_pass >= TICK && since_change >= TICK
+}
+
 /// Watches a folder and keeps it in step. Every pass, the first included,
 /// decides identity by the same rule (`folders.md` 18).
 pub fn watch(
@@ -153,9 +162,6 @@ fn watch_files(
 
     let started = Instant::now();
     let mut quiet_since = Instant::now();
-    // An event passed over below wakes no pass, but must not hold off the
-    // tick's either: inotify reports every open and close of a file, and a
-    // reader faster than the tick would keep the receive from ever timing out.
     let mut last_pass = Instant::now();
     // What stood after the last pass that printed, so a standing condition
     // is said once rather than once a second.
@@ -184,7 +190,7 @@ fn watch_files(
                     });
                 if !passed_over {
                     quiet_since = Instant::now();
-                } else if last_pass.elapsed() < TICK {
+                } else if !passed_over_is_due(last_pass.elapsed(), quiet_since.elapsed()) {
                     continue;
                 }
             }
@@ -216,13 +222,14 @@ fn watch_files(
         if full {
             last_full = Some(Instant::now());
         }
-        last_pass = Instant::now();
         match step(folder, json, full, &mut standing) {
             // The follow is hydrating the copy, or will try again, and a
             // later pass finds it whole.
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }
+        // From the end, because a pass's own reads are events passed over.
+        last_pass = Instant::now();
         lists = folder.settings().and_then(|settings| settings.lists()).ok();
     }
     Ok(())
@@ -453,6 +460,28 @@ mod tests {
     use super::*;
 
     const SECOND: Duration = Duration::from_secs(1);
+
+    #[test]
+    fn a_stream_of_reads_lets_the_pass_run_once_a_tick_has_gone_by() {
+        let read_every = Duration::from_millis(100);
+        let mut since = Duration::ZERO;
+        let mut due_at = None;
+        while since < 3 * SECOND && due_at.is_none() {
+            since += read_every;
+            if passed_over_is_due(since, since) {
+                due_at = Some(since);
+            }
+        }
+        assert_eq!(due_at, Some(SECOND));
+    }
+
+    #[test]
+    fn an_event_passed_over_runs_no_pass_within_a_tick_of_a_pass_or_a_change() {
+        let under = Duration::from_millis(900);
+        assert!(!passed_over_is_due(under, 5 * SECOND));
+        assert!(!passed_over_is_due(5 * SECOND, under));
+        assert!(passed_over_is_due(5 * SECOND, 5 * SECOND));
+    }
 
     #[test]
     fn a_failed_hydration_is_tried_again_after_a_wait_that_doubles_to_thirty_seconds() {
