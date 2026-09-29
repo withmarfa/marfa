@@ -9747,6 +9747,55 @@ describe("where a file sits", () => {
     expect(edges.placements(harness.settings.id).size).toBe(1);
   });
 
+  it("keeps a person's journaled delete when another item is placed at its path", async () => {
+    const [gone, other] = [
+      "01a00000-0000-7000-8000-0000000016k1",
+      "01a00000-0000-7000-8000-0000000016k2",
+    ];
+    const placed = await placedHarness(
+      "placement-over-journaled-delete",
+      [
+        { id: gone, title: "Gone", path: "Gone.md" },
+        { id: other, title: "Other", path: "Other.md" },
+      ],
+      { search: { types: ["core.note"], state: ["active"] } },
+    );
+    harness = placed.harness;
+    expect((await harness.folder.pull()).ok).toBe(true);
+    rmSync(join(harness.dir, "Gone.md"));
+    const journaled = await harness.folder.scan();
+    expect(journaled.ok && journaled.value.missing).toBe(1);
+    // Elsewhere the deleted file's item is archived, and the other item is
+    // moved to the path it left.
+    placed.edges.events.push(
+      itemEvent(
+        String(placed.edges.events.length + 2),
+        "item.state_changed",
+        wireItem({
+          id: gone,
+          properties: { title: "Gone", body: "Gone\n" },
+          state: "archived",
+        }),
+      ),
+    );
+    placed.edges.relocate(other, harness.settings.id, "Gone.md");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    // The witness: the other item's file now sits at the path.
+    expect(idIn(harness, "Gone.md")).toBe(other);
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok &&
+        queued.value
+          .filter((row) => row.kind === "delete_item")
+          .map((row) => row.item_id),
+      "writing another item at a deleted file's path dropped that file's journaled delete",
+    ).toEqual([gone]);
+  });
+
   it("gives a contested path to a placed item before an unplaced one, and to a file already there before a new one", async () => {
     const [placedId, fresh] = [
       "01a00000-0000-7000-8000-0000000016j1",
@@ -12183,6 +12232,46 @@ describe("what a pull does with a file whose item stops matching", () => {
       queued.ok && queued.value.filter((row) => row.kind === "delete_item"),
       "a delete was sent for an item changed elsewhere after the person deleted its file",
     ).toEqual([]);
+  });
+
+  it("sends a person's delete of a file whose item moved on elsewhere in nothing the file shows", async () => {
+    const item = {
+      id: "01a00000-0000-7000-8000-0000000000d5",
+      properties: { title: "stepped", body: "body\n" },
+    };
+    harness = await folderHarness("folder-journaled-version-step", {
+      rows: { "core.note": [{ item }] },
+      events: [
+        replay("2", [
+          itemEvent("2", "item.updated", wireItem({ ...item, version: 2 })),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    rmSync(join(harness.dir, "stepped.md"));
+    const journaled = await harness.folder.scan();
+    expect(journaled.ok && journaled.value.missing).toBe(1);
+    // The witness: the copy takes a version step no file shows.
+    const caught = await harness.folder.device().catchUp();
+    expect(caught.ok ? caught.value.applied : 0).toBe(1);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      [pulled.value.revived, existsSync(join(harness.dir, "stepped.md"))],
+      "a version step the file cannot show wrote a deleted file back and dropped the person's delete",
+    ).toEqual([0, false]);
+
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const queued = await harness.folder.device().queue();
+    expect(
+      queued.ok &&
+        queued.value
+          .filter((row) => row.kind === "delete_item")
+          .map((row) => row.item_id),
+    ).toEqual([item.id]);
   });
 
   it("takes away a file put back after its delete was journaled, once its item leaves by state, and sends no delete", async () => {

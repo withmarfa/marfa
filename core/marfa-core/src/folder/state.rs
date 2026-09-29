@@ -348,6 +348,15 @@ pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Takes a path out of the journal where the delete there is this item's.
+pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
+        [path, item_id],
+    )?;
+    Ok(())
+}
+
 /// Every journaled delete: the path, the item and when it was first missing.
 pub fn journaled(conn: &Connection) -> Result<Vec<(String, String, String)>, CoreError> {
     let mut statement =
