@@ -2455,28 +2455,41 @@ describe("a local read answers the listing grammar as the server does", () => {
         status: "open",
         flag: false,
         note: "a heron by the pond",
+        t: 5,
       },
       ["birds", "garden"],
     );
     const stranger = await seed(
-      { title: "marsh stranger", status: "open", rating: 9, flag: true },
+      {
+        title: "marsh stranger",
+        status: "open",
+        rating: 9,
+        flag: true,
+        t: "5.0",
+      },
       [],
       undefined,
       "5.0",
     );
     const child = await seed(
-      { title: "marsh child", status: "closed", rating: 2, flag: true },
+      {
+        title: "marsh child",
+        status: "closed",
+        rating: 2,
+        flag: true,
+        t: "1.0",
+      },
       ["birds"],
       { "parent-of": [grandchild], references: [stranger] },
       "5",
     );
     const root = await seed(
-      { title: "marsh root", status: "open", rating: 5 },
+      { title: "marsh root", status: "open", rating: 5, t: 1 },
       ["garden"],
       { "parent-of": [child] },
     );
-    // Text a numeric bound casts, a source_id a boolean's REAL matches or
-    // not, and floats inside a container that JavaScript spells in full.
+    // Text a numeric bound casts, text a REAL matches by affinity (source_id)
+    // or never (`t`), and floats in a container JavaScript spells in full.
     const five = await seed({ title: "five", s: "5" }, [], undefined, "1.0");
     const ten = await seed({ title: "ten", s: "10" }, [], undefined, "1");
     const letters = await seed(
@@ -2527,6 +2540,8 @@ describe("a local read answers the listing grammar as the server does", () => {
       "edge[parent-of] not_exists",
       "properties.s gt 4",
       "source_id eq true",
+      "properties.t eq 5",
+      "properties.t eq true",
       'properties.list contains "100000000000000000000"',
       'properties.list contains "0.0000015"',
       `id eq "${stranger}"`,
@@ -2571,6 +2586,8 @@ describe("a local read answers the listing grammar as the server does", () => {
     for (const [filter, rows] of [
       ["properties.s gt 4", ["five", "ten"]],
       ["source_id eq true", ["five"]],
+      ["properties.t eq 5", ["grandchild"]],
+      ["properties.t eq true", ["root"]],
       ['properties.list contains "100000000000000000000"', ["letters"]],
       ['properties.list contains "0.0000015"', ["blank"]],
     ] as const) {
@@ -2624,5 +2641,93 @@ describe("a local read answers the listing grammar as the server does", () => {
         `the device refuses ${filter} otherwise than the server does`,
       ).toBe(served.error?.error.code);
     }
+  });
+
+  it("answers from the copy an edge term the server refuses to a key that may not read its type", async () => {
+    const type = `user.edge-unread-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      display_hints: { title_field: "title" },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const seed = async (
+      title: string,
+      edges?: Record<string, string[]>,
+    ): Promise<string> => {
+      const created = await client.createItem({
+        type,
+        source: ctx.source,
+        properties: { title },
+        ...(edges === undefined ? {} : { edges }),
+      });
+      expect(created.ok, JSON.stringify(created.error)).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      return created.data.item.id;
+    };
+    const target = await seed("target");
+    const linked = await seed("linked", { references: [target] });
+
+    // The key reads the type and `parent-of`, not `references`.
+    const minted = await client.createKey({
+      label: `${ctx.source}-edge-unread`,
+      source: `${ctx.source}-edge-unread`,
+      type_permissions: { [type]: "read" },
+      edge_permissions: { "parent-of": "read" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    // The witnesses: the edge is there, and the key's listing answers a term
+    // naming an edge type it may read.
+    const drawn = await client.listItems({
+      type,
+      filter: "edge[references] exists",
+    });
+    expect(drawn.ok && drawn.data.data.map((item) => item.id)).toEqual([
+      linked,
+    ]);
+    const readable = await narrow.listItems({
+      type,
+      filter: "edge[parent-of] not_exists",
+    });
+    expect(readable.status).toBe(200);
+    const refused = await narrow.listItems({
+      type,
+      filter: "edge[references] not_exists",
+    });
+    expect(
+      [refused.status, refused.error?.error.code],
+      "the server answered a term naming an edge type the key may not read",
+    ).toEqual([403, "edge_permission_denied"]);
+
+    // The device keeps nothing of the key's edge permissions, and holds no
+    // edge of that type, so it answers the term from what it holds.
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("fidelity-edge-unread"),
+      url: apiUrl,
+      key: minted.data.key,
+    });
+    const hydrated = await device.hydrate([type], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    const absent = await device.list({ filter: "edge[references] not_exists" });
+    expect(
+      absent.ok ? absent.value.map((item) => item.id).sort() : absent,
+    ).toEqual([linked, target].sort());
+    const present = await device.list({ filter: "edge[references] exists" });
+    expect(present.ok ? present.value : present).toEqual([]);
+    const other = await device.list({
+      filter: `edge[references] neq "${target}"`,
+    });
+    expect(
+      other.ok ? other.value.map((item) => item.id).sort() : other,
+    ).toEqual([linked, target].sort());
+    const to = await device.list({ filter: `edge[references] eq "${target}"` });
+    expect(to.ok ? to.value : to).toEqual([]);
   });
 });

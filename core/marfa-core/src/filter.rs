@@ -38,7 +38,9 @@ pub(crate) const PARENT_OF: &str = "parent-of";
 /// Narrows a local read by a listing-grammar expression and by `beneath`,
 /// each one clause ANDed with the rest, as the server ANDs its `filter` with
 /// its other parameters. An expression the grammar refuses is refused here,
-/// never dropped, and so is one the copy cannot answer as the server would.
+/// never dropped, and so is one the copy cannot answer as the server would,
+/// but for an edge type the key may not read, which the copy cannot know
+/// (`device.md` 24).
 pub(crate) fn narrow(
     filter: Option<&str>,
     beneath: Option<&str>,
