@@ -1571,9 +1571,9 @@ export class SqliteItemStore implements ItemStore {
    * Keeps what a trash took restorable when the row it is keyed to is purged.
    * Each row that trash took becomes its own trash's root unless another of
    * them lies above it, and the rows beneath a root are keyed to it, so
-   * restoring a row still brings back what lay beneath it. Without this the
-   * records went with the purged row, and a row restored from the middle of
-   * the subtree came back alone.
+   * restoring a row still brings back what lay beneath it. Left to go with
+   * the purged row, a row restored from the middle of the subtree would come
+   * back alone.
    */
   private async rehomeTrashRecords(
     purged: readonly string[],
