@@ -212,6 +212,7 @@ async function up(args: Args): Promise<void> {
   if (!keyId || !secret) {
     throw new Error("garage key create printed no key id and secret");
   }
+  maskInActions(keyId, secret);
   garage(p.config, [
     "bucket",
     "allow",
@@ -234,7 +235,6 @@ async function up(args: Args): Promise<void> {
     "",
   ].join("\n");
   writeFileSync(p.env, env);
-  maskInActions(keyId, secret);
   if (process.env.GITHUB_ENV) {
     appendFileSync(process.env.GITHUB_ENV, env);
   }

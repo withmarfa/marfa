@@ -61,8 +61,12 @@ describe("maskInActions", () => {
   });
 
   it("prints nothing outside GitHub Actions", () => {
-    vi.stubEnv("GITHUB_ACTIONS", "");
     const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    maskInActions("marfa_k1_one");
+    expect(log).toHaveBeenCalledTimes(1);
+    log.mockClear();
+    vi.stubEnv("GITHUB_ACTIONS", "");
     maskInActions("marfa_k1_one");
     expect(log).not.toHaveBeenCalled();
   });

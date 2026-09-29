@@ -2,7 +2,7 @@
  * The parts of booting a local Marfa server for the suite that need no
  * server: reading the one-time bootstrap secret out of the boot log, choosing
  * the key the suite runs as, rendering the env file the run sources, and
- * keeping the keys out of a CI log.
+ * keeping the keys and the bootstrap secret out of a CI log.
  *
  * Kept apart from the process handling in `scripts/marfa-server.ts` so they
  * can be tested without a server.

@@ -673,9 +673,8 @@ async function main(): Promise<void> {
     );
   } catch (err) {
     say("");
-    // The first line only: a boot's failure quotes the server log, which
-    // can carry the bootstrap secret, and this report is kept as an
-    // artifact.
+    // The first line only: a boot's failure goes on to quote the server
+    // log, which belongs in the step's output rather than the report.
     const message = err instanceof Error ? err.message : String(err);
     say(`Aborted: ${message.split("\n")[0] ?? ""}`);
     failures.push("the drill aborted before its comparison");
