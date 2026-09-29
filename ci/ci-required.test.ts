@@ -75,7 +75,7 @@ describe("CI path selection", () => {
     expect(classify("pull_request", "invalid", docs)).toBe("required=true\n");
     expect(classify("pull_request", docs, docs)).toBe("required=true\n");
   });
-  it.each(["push", "workflow_dispatch"])(
+  it.each(["push", "schedule", "workflow_dispatch"])(
     "keeps %s fully validated",
     (event) => {
       expect(classify(event, base, docs)).toBe("required=true\n");
