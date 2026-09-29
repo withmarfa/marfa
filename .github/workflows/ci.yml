@@ -5,7 +5,18 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Conformance and CLI scenarios run on Ubuntu for pull requests, which is
+  # quicker, and on macOS every night and when `macos` is set, so that what
+  # only macOS has stays tested by them: file watching, name case, Finder
+  # packages and a real keychain.
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      macos:
+        description: Run Conformance and CLI scenarios on macOS
+        type: boolean
+        default: false
 
 # Superseded PR runs cancel; each main commit keeps its own validation.
 concurrency:
@@ -129,7 +140,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: Conformance
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -163,12 +174,16 @@ jobs:
       # The object store the server attaches beside its disk, so the
       # object-store half of the blob chapters is asserted rather than
       # skipped. `garage:up` writes S3 settings to GITHUB_ENV for the server.
-      # The same release the restore drill installs.
+      # Off macOS it is the release the restore drill installs.
       - name: Put an object store beside the server
         working-directory: conformance
         run: |
-          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
-          sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
+          if [ "$RUNNER_OS" = macOS ]; then
+            brew install garage
+          else
+            curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+            sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
+          fi
           pnpm garage:up --state "$RUNNER_TEMP/garage"
 
       - name: Boot the server from this checkout
@@ -179,7 +194,12 @@ jobs:
 
       - name: Run the default selection
         working-directory: conformance
-        run: pnpm test:conformance
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            ../core/scripts/login-keychain-unchanged.sh pnpm test:conformance
+          else
+            pnpm test:conformance
+          fi
 
       # Reads the log of the server the selection just drove, so it runs
       # here rather than as a job of its own and before the stop, which
@@ -226,7 +246,7 @@ jobs:
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
     name: CLI scenarios
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -255,7 +275,12 @@ jobs:
 
       - name: Run the scenarios
         working-directory: conformance
-        run: pnpm test:cli
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            ../core/scripts/login-keychain-unchanged.sh pnpm test:cli
+          else
+            pnpm test:cli
+          fi
 
       - name: Hold every status observed to its declaration
         working-directory: conformance

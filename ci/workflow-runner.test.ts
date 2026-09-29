@@ -1,4 +1,7 @@
-/** Literal routing keeps public pull requests off personal and paid runners. */
+/**
+ * Literal routing keeps public pull requests off personal and paid runners.
+ * The one expression is the nightly macOS choice of two jobs, pinned whole.
+ */
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -16,6 +19,16 @@ const MAC_JOBS = new Set([
   "ci.yml:core-checks",
   "core.yml:core",
   "release.yml:build",
+]);
+
+// Ubuntu for a pull request, a push and a dispatch that does not ask, macOS
+// for the nightly and a dispatch that does.
+const NIGHTLY_MAC_RUNNER =
+  "${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}";
+
+const NIGHTLY_MAC_JOBS = new Set([
+  "ci.yml:conformance",
+  "ci.yml:cli-scenarios",
 ]);
 
 interface Workflow {
@@ -43,9 +56,12 @@ describe("jobs use standard GitHub-hosted runners", () => {
     for (const [job, config] of Object.entries(
       jobsOf(readFileSync(join(WORKFLOWS, file), "utf8")),
     )) {
-      const expected = MAC_JOBS.has(`${file}:${job}`)
+      const key = `${file}:${job}`;
+      const expected = MAC_JOBS.has(key)
         ? "macos-26"
-        : "ubuntu-latest";
+        : NIGHTLY_MAC_JOBS.has(key)
+          ? NIGHTLY_MAC_RUNNER
+          : "ubuntu-latest";
       expect(config["runs-on"], `${file}: ${job}`).toEqual(expected);
       expect(config.concurrency, `${file}: ${job}`).toBeUndefined();
     }
@@ -65,8 +81,23 @@ describe("jobs use standard GitHub-hosted runners", () => {
     },
   );
 
+  it("runs on macOS once a night and when asked by hand, never by default", () => {
+    const { on } = parse(readFileSync(join(WORKFLOWS, "ci.yml"), "utf8")) as {
+      on: {
+        schedule?: { cron: string }[];
+        workflow_dispatch?: { inputs?: Record<string, unknown> };
+      };
+    };
+    expect(on.schedule).toHaveLength(1);
+    expect(on.schedule?.[0]?.cron).toMatch(/^\d{1,2} \d{1,2} \* \* \*$/);
+    expect(on.workflow_dispatch?.inputs?.macos).toMatchObject({
+      type: "boolean",
+      default: false,
+    });
+  });
+
   it("finds every macOS job named by the policy", () => {
-    for (const key of MAC_JOBS.keys()) {
+    for (const key of [...MAC_JOBS, ...NIGHTLY_MAC_JOBS]) {
       const [file = "", job = ""] = key.split(":");
       expect(
         jobsOf(readFileSync(join(WORKFLOWS, file), "utf8"))[job],
