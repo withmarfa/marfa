@@ -2389,6 +2389,8 @@ impl Folder {
                             refused.save >= save || !change.supersedes(&refused.change)
                         });
                     }
+                    // Answered, its own value set aside in a copy beside the row.
+                    Some(crate::model::Verdict::Conflicted) => {}
                     // Kept with its line spent, since it may have landed;
                     // released, it is answered here again (`folders.md` 23).
                     Some(crate::model::Verdict::Dead) => continue,
@@ -2936,13 +2938,18 @@ impl Folder {
             .map(|bound| bound.writes.clone())
             .unwrap_or_default();
         let mut edit_line = bound.as_ref().and_then(|bound| bound.edit_line);
-        if carries_frontmatter(Path::new(&want))
-            && crate::store::item_waits(&*self.core.conn()?, &item.id)?
-        {
+        let waiting: HashSet<String> =
+            crate::store::waiting_writes_for_item(&*self.core.conn()?, &item.id)?
+                .into_iter()
+                .map(|write| write.id)
+                .collect();
+        if carries_frontmatter(Path::new(&want)) && !waiting.is_empty() {
             let mut lifted = false;
+            // An answered or dead edit's entry is no edit the file holds unanswered.
             for line in writes
                 .queued
                 .iter_mut()
+                .filter(|queued| waiting.contains(&queued.id))
                 .filter_map(|queued| queued.line.as_mut())
             {
                 *line = (*line).max(item.version);

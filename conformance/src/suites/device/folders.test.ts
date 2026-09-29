@@ -11120,6 +11120,136 @@ describe("writing", () => {
     ).toBe(2);
   });
 
+  it("lifts no answered edit's line when a pull writes over a waiting one, a conflicted edit's included", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c2";
+    const { door, edges, update } = await spentLineHarness(
+      "folder-version-conflicted-not-lifted",
+      id,
+    );
+    const lineOf = (text: string) =>
+      Number(/^marfa_version: (\d+)$/m.exec(text)?.[1]);
+    const held = read(harness!, "Note.md");
+    // Another machine changes the body, and the pull writes it out.
+    edges.logItem(
+      "item.updated",
+      update(id, { properties: { body: "theirs\n" }, version: 1 }),
+    );
+    expect((await harness!.folder.push()).ok).toBe(true);
+
+    // An old buffer's save collides with it, and is set aside.
+    put(harness!, "Note.md", held.replace("as read", "mine"));
+    const collided = await harness!.folder.push();
+    // The witness: the first edit was answered conflicted.
+    expect(
+      collided.ok &&
+        collided.value.drain.verdicts.map((entry) => entry.verdict),
+    ).toContain("conflicted");
+
+    // A second edit meets a failing server, and the pull writes a change
+    // another machine made over it; the server then refuses the edit.
+    const answers_: Answer[] = [
+      refusal(503, "service_unavailable", "later"),
+      refusal(422, "validation_failed", "not this"),
+    ];
+    door.update = ((...args: Parameters<FolderDoor["update"]>) =>
+      answers_.shift() ?? update(...args)) as FolderDoor["update"];
+    const current = read(harness!, "Note.md");
+    put(harness!, "Note.md", current.replace(/\n$/, "\nsecond\n"));
+    const version = () => door.rows.get(id)?.version ?? 0;
+    edges.logItem(
+      "item.updated",
+      update(id, { properties: { extra: "theirs" }, version: version() }),
+    );
+    expect((await harness!.folder.push()).ok).toBe(true);
+    const buffer = read(harness!, "Note.md");
+    expect(buffer).toContain("second");
+    const refused = await harness!.folder.push();
+    expect(
+      refused.ok && refused.value.drain.verdicts.map((entry) => entry.reason),
+    ).toEqual(["validation_failed"]);
+
+    // Another machine moves the item on, and the editor saves its buffer.
+    edges.logItem(
+      "item.updated",
+      update(id, { properties: { later: "theirs too" }, version: version() }),
+    );
+    expect((await harness!.folder.push()).ok).toBe(true);
+    put(harness!, "Note.md", buffer.replace("second", "second, mended"));
+    const mended = await harness!.folder.push();
+    expect(mended.ok, JSON.stringify(mended)).toBe(true);
+    expect(
+      sentUpdates(harness!).at(-1)?.body.version,
+      "a conflicted edit's line, lifted by a pull written over a later edit the server refused, stayed spent, so the mended save went over another machine's change unmerged",
+    ).toBe(lineOf(buffer));
+  });
+
+  it("lifts no dead edit's line when a pull writes over a later waiting one", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c3";
+    const { door, edges, update } = await spentLineHarness(
+      "folder-version-dead-not-lifted",
+      id,
+    );
+    const lineOf = (text: string) =>
+      Number(/^marfa_version: (\d+)$/m.exec(text)?.[1]);
+    const version = () => door.rows.get(id)?.version ?? 0;
+    const held = read(harness!, "Note.md");
+    door.update = (() => ({
+      kind: "json",
+      status: 200,
+      body: "not json at all",
+    })) as unknown as FolderDoor["update"];
+    put(harness!, "Note.md", held.replace("as read", "first"));
+    let dead = false;
+    for (let pass = 0; pass < 6 && !dead; pass += 1) {
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+      dead =
+        pushed.ok &&
+        pushed.value.drain.verdicts.some((entry) => entry.verdict === "dead");
+    }
+    // The witness: the first edit died, its line kept spent.
+    expect(dead).toBe(true);
+
+    // A second edit meets a failing server, and the pull writes a change
+    // another machine made over it; the server then refuses the edit.
+    const answers_: Answer[] = [
+      refusal(503, "service_unavailable", "later"),
+      refusal(422, "validation_failed", "not this"),
+    ];
+    door.update = ((...args: Parameters<FolderDoor["update"]>) =>
+      answers_.shift() ?? update(...args)) as FolderDoor["update"];
+    put(
+      harness!,
+      "Note.md",
+      read(harness!, "Note.md").replace(/\n$/, "\nsecond\n"),
+    );
+    edges.logItem(
+      "item.updated",
+      update(id, { properties: { extra: "theirs" }, version: version() }),
+    );
+    expect((await harness!.folder.push()).ok).toBe(true);
+    const buffer = read(harness!, "Note.md");
+    expect(buffer).toContain("second");
+    expect(lineOf(buffer)).toBe(version());
+    const refused = await harness!.folder.push();
+    expect(
+      refused.ok && refused.value.drain.verdicts.map((entry) => entry.reason),
+    ).toEqual(["validation_failed"]);
+
+    edges.logItem(
+      "item.updated",
+      update(id, { properties: { later: "theirs too" }, version: version() }),
+    );
+    expect((await harness!.folder.push()).ok).toBe(true);
+    put(harness!, "Note.md", buffer.replace("second", "second, mended"));
+    const mended = await harness!.folder.push();
+    expect(mended.ok, JSON.stringify(mended)).toBe(true);
+    expect(
+      sentUpdates(harness!).at(-1)?.body.version,
+      "a dead edit's line, lifted by a pull written over a later edit the server refused, stayed spent, so the mended save went over another machine's change unmerged",
+    ).toBe(lineOf(buffer));
+  });
+
   it("keeps the line a pull wrote over an edit queued outside the file spent, once that edit lands", async () => {
     const id = "01a00000-0000-7000-8000-0000000000bf";
     const { door, edges, update } = await spentLineHarness(
