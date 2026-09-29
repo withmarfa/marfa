@@ -228,17 +228,25 @@ describe("blob correctness", () => {
     const upload = await client.uploadBlob(content, "text/plain");
     expect(upload.ok).toBe(true);
 
-    const link = await client.getBlobUrl(upload.data.hash, 1);
-    expect(link.status).toBe(200);
-    // The witness: the same link fetches while it lives.
-    const live = await fetchLink(link.data.url);
+    // The witness: a link from the same door to the same blob fetches while
+    // it lives, with a lifetime no fetch outruns.
+    const live = await client.getBlobUrl(upload.data.hash, 60);
     expect(live.status).toBe(200);
-    expect(live.bytes).toEqual(content);
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    expectRefused(await fetchLink(link.data.url), content);
+    const served = await fetchLink(live.data.url);
+    expect(served.status).toBe(200);
+    expect(served.bytes).toEqual(content);
 
-    const fresh = await client.getBlobUrl(upload.data.hash, 60);
-    const altered = new URL(fresh.data.url);
+    // Fetched only once surely dead: a signer counts a lifetime from a whole
+    // second, so a second more, and a little, covers its rounding either way.
+    const short = await client.getBlobUrl(upload.data.hash, 1);
+    expect(short.status).toBe(200);
+    expect(short.data.expires_in).toBe(1);
+    await new Promise((resolve) =>
+      setTimeout(resolve, (short.data.expires_in + 1) * 1000 + 100),
+    );
+    expectRefused(await fetchLink(short.data.url), content);
+
+    const altered = new URL(live.data.url);
     // The instance signs under `signature`; an object store under SigV4's
     // own name. Whichever it is, one character of it changes.
     const name = altered.searchParams.has("signature")

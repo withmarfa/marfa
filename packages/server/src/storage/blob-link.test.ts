@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mintBlobLink, verifyBlobLink } from "./blob-link.js";
+import { blobLinkExpiry, mintBlobLink, verifyBlobLink } from "./blob-link.js";
 
 const HASH = `sha256:${"ab".repeat(32)}`;
 const NOW = 1_800_000_000;
@@ -25,6 +25,24 @@ describe("the instance-served blob link", () => {
     expect(verifyBlobLink(HASH, expires, signature, NOW)).toBe(true);
     expect(verifyBlobLink(HASH, expires, signature, NOW + 59)).toBe(true);
     expect(verifyBlobLink(HASH, expires, signature, NOW + 60)).toBe(false);
+  });
+
+  it("lives its whole lifetime however late in a second it is minted, and dies within a second after", () => {
+    const at = (ms: number) => Math.floor(ms / 1000);
+    for (const into of [0, 1, 500, 999]) {
+      const mintedMs = NOW * 1000 + into;
+      const expiresAt = blobLinkExpiry(mintedMs, 1);
+      const { expires, signature } = query(
+        mintBlobLink("https://marfa.example", HASH, expiresAt),
+      );
+      expect(verifyBlobLink(HASH, expires, signature, at(mintedMs))).toBe(true);
+      expect(verifyBlobLink(HASH, expires, signature, at(mintedMs + 999))).toBe(
+        true,
+      );
+      expect(
+        verifyBlobLink(HASH, expires, signature, at(mintedMs + 2000)),
+      ).toBe(false);
+    }
   });
 
   it("refuses a signature that was altered, is not hex, or is the wrong length", () => {

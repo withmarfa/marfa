@@ -23,6 +23,15 @@ function signature(hash: string, expiresAt: number): Buffer {
 }
 
 /**
+ * When a link minted at `nowMs` for `ttlSeconds` stops working, in Unix
+ * seconds. Rounded up, because one rounded down loses the rest of the
+ * second it was minted in and can die before the caller's first fetch.
+ */
+export function blobLinkExpiry(nowMs: number, ttlSeconds: number): number {
+  return Math.ceil(nowMs / 1000) + ttlSeconds;
+}
+
+/**
  * The link's URL. `origin` is the scheme and host the instance is reached
  * at; `expiresAt` is Unix seconds.
  */

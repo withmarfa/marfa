@@ -19,6 +19,7 @@ import {
   type BlobStore,
 } from "../storage/blob-store.js";
 import {
+  blobLinkExpiry,
   MAX_BLOB_LINK_TTL_SECONDS,
   mintBlobLink,
   verifyBlobLink,
@@ -787,8 +788,7 @@ export function blobRoutes(
       return c.json({ url, expires_in: ttl }, 200);
     }
 
-    const expiresAt = Math.floor(Date.now() / 1000) + ttl;
-    const url = mintBlobLink(linkOrigin, hash, expiresAt);
+    const url = mintBlobLink(linkOrigin, hash, blobLinkExpiry(Date.now(), ttl));
     return c.json({ url, expires_in: ttl }, 200);
   });
 
