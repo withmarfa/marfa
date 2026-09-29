@@ -1,3 +1,4 @@
+import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
@@ -6,13 +7,15 @@ import {
   getEdgeTypeSchema,
   isValidId,
 } from "@withmarfa/shared";
-import type { Edge } from "@withmarfa/shared";
+import type { Edge, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   getTypeFilter,
-  mayReadEdgeTarget,
+  mayReadEdgeEnd,
+  mayReadRow,
   requireAuth,
   requireEdgePermission,
+  requireReadableRow,
   requireTypeAccess,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -32,6 +35,7 @@ import { readableEdges } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
   assertEdgesCanBeCreated,
+  edgeSourceNotFound,
   edgeTargetNotFound,
 } from "../storage/edge-constraints.js";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
@@ -141,21 +145,41 @@ async function endsAfterMove(
     );
   }
   if (movesSource) {
-    const source = await storage.items.get(ends.source_id);
-    if (!source) {
-      throw new MarfaError(
-        ErrorCode.ITEM_NOT_FOUND,
-        `Edge source item not found: ${ends.source_id}`,
-      );
-    }
+    const source = requireReadableRow(
+      c,
+      await storage.items.get(ends.source_id),
+      () => edgeSourceNotFound(ends.source_id),
+    );
     requireTypeAccess(c, source.type, "write");
   }
   // Before any check that reads the target, so an unreadable one says no more than a missing one.
   const target = await storage.items.get(ends.target_id);
-  if (!target || !mayReadEdgeTarget(c)(target.type)) {
+  if (!target || !mayReadEdgeEnd(c)(target.type)) {
     throw edgeTargetNotFound(ends.target_id);
   }
   return ends;
+}
+
+/**
+ * The edge a door names by id and its source item, answered as a missing
+ * edge where the credential may not read that source: an edge is its
+ * source's statement. The source is read past the trash, so trashing it
+ * does not lift the gate; a source with no row leaves nothing to ask.
+ */
+async function readableEdge(
+  c: Context<AppEnv>,
+  storage: Storage,
+  id: string,
+): Promise<{ edge: Edge; source: Item | null }> {
+  getTypeFilter(c);
+  const edge = await storage.edges.get(id);
+  const source = edge
+    ? await storage.items.getIncludingTrashed(edge.source_id)
+    : null;
+  if (!edge || (source && !mayReadRow(c, source))) {
+    throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+  }
+  return { edge, source };
 }
 
 function moveRefusal(field: string, message: string): MarfaError {
@@ -260,7 +284,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
+    "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -333,7 +357,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type.",
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. `type_not_permitted` also where its type permissions reach no type.",
     },
     404: {
       content: {
@@ -344,7 +368,8 @@ const createEdgeRoute = createRoute({
           ]),
         },
       },
-      description: "Source, target, or edge type not found",
+      description:
+        "The source, the target or the edge type is not found. A source or target of a type the credential may not read answers alike, with the same code and message.",
     },
     409: {
       content: {
@@ -382,7 +407,7 @@ const getEdgeRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions do not reach an endpoint's type.",
+        "`edge_permission_denied` without read on the edge type; `type_not_permitted` where the credential's type permissions reach no type.",
     },
     404: {
       content: {
@@ -481,7 +506,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type, and on the new one's where the source moves. A trashed source still gates on its type.",
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
     },
     404: {
       content: {
@@ -494,7 +519,7 @@ const updateEdgeRoute = createRoute({
         },
       },
       description:
-        "`edge_not_found` for the edge; `item_not_found` for an end it would move to that does not exist, a target the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
+        "`edge_not_found` for the edge, and for one whose source item is of a type the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by.",
     },
   },
 });
@@ -524,7 +549,7 @@ const deleteEdgeRoute = createRoute({
         },
       },
       description:
-        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. A trashed source still gates on its type.",
+        "The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type.",
     },
     404: {
       content: {
@@ -604,13 +629,11 @@ export function edgeRoutes(storage: Storage) {
     // any other credential whose maps do not cover it. The one carve-out
     // either helper makes is for a reserved namespace, and that does not fire
     // for an ordinary type.
-    const sourceItem = await storage.items.get(body.source_id);
-    if (!sourceItem) {
-      throw new MarfaError(
-        ErrorCode.ITEM_NOT_FOUND,
-        `Edge source item not found: ${body.source_id}`,
-      );
-    }
+    const sourceItem = requireReadableRow(
+      c,
+      await storage.items.get(body.source_id),
+      () => edgeSourceNotFound(body.source_id),
+    );
     requireTypeAccess(c, sourceItem.type, "write");
     requireEdgePermission(c, body.edge_type, "write");
 
@@ -675,7 +698,7 @@ export function edgeRoutes(storage: Storage) {
             edge_type: body.edge_type,
             properties: body.properties,
           },
-          mayReadEdgeTarget(c),
+          mayReadEdgeEnd(c),
         );
         return storage.edges.createRaw({
           id: body.id,
@@ -718,21 +741,9 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(getEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const existing = await storage.edges.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
-    }
-    // The same two gates update and delete apply, at `read` rather than
-    // `write`. Reading an edge discloses both endpoints and the properties
-    // on it, so a caller who may not read the source's type may not learn
-    // the relationship either.
-    //
-    // getIncludingTrashed for the reason the write paths use it: a plain
-    // `items.get` returns null for a trashed source, and a null source
-    // skips the type gate entirely rather than failing it. Trashing the
-    // source item would otherwise turn a refusal into a disclosure.
-    const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
-    if (srcItem) requireTypeAccess(c, srcItem.type, "read");
+    // Reading an edge discloses both endpoints and the properties on it, so
+    // a caller who may not read the source's type may not learn it either.
+    const { edge: existing } = await readableEdge(c, storage, id);
     requireEdgePermission(c, existing.edge_type, "read");
     return c.json({ edge: existing }, 200);
   });
@@ -741,16 +752,11 @@ export function edgeRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const existing = await storage.edges.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
-    }
-    // Use getIncludingTrashed so edges whose source item is trashed
-    // still run the source-type permission check. A plain
-    // storage.items.get() returns null for trashed sources, which would
-    // silently skip the gate and let a credential without the source
-    // type's write permission mutate the edge.
-    const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
+    const { edge: existing, source: srcItem } = await readableEdge(
+      c,
+      storage,
+      id,
+    );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
     // A stale write is refused for what it was based on, before anything it names is judged.
@@ -793,7 +799,7 @@ export function edgeRoutes(storage: Storage) {
                   ),
                 },
               ],
-              mayReadEdgeTarget(c),
+              mayReadEdgeEnd(c),
               { replacing: current },
             );
             return storage.edges.updateProperties(
@@ -855,16 +861,11 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(deleteEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const existing = await storage.edges.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
-    }
-    // Use getIncludingTrashed so edges whose source item is trashed
-    // still run the source-type permission check. A plain
-    // storage.items.get() returns null for trashed sources, which would
-    // silently skip the gate and let a credential without the source
-    // type's write permission mutate the edge.
-    const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
+    const { edge: existing, source: srcItem } = await readableEdge(
+      c,
+      storage,
+      id,
+    );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
     await storage.edges.delete(id);
@@ -949,7 +950,7 @@ const listFromSourceRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "No read access to the anchor item's type",
+      description: READ_REFUSED,
     },
     404: {
       content: {
@@ -957,7 +958,7 @@ const listFromSourceRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1021,7 +1022,7 @@ const listBackrefsRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "No read access to the anchor item's type",
+      description: READ_REFUSED,
     },
     404: {
       content: {
@@ -1029,7 +1030,7 @@ const listBackrefsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1064,25 +1065,11 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // a trashed one is added. Worth stating because the two method
     // names invite reading `get` as "active only", and a reader who
     // believes that will look for a widening here that is not present.
-    const item = await storage.items.getIncludingTrashed(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-    // The anchor decides what this call returns, so reading it is a read
-    // of the anchor — the same check every write door in this file makes
-    // against its source item, and the one the item read doors make. It
-    // is stated here rather than left to the credential resolver because
-    // authentication and the type map answer different questions: a caller
-    // can be authenticated and still hold no grant on this type.
-    //
-    // After the read rather than before it, because the check needs the
-    // row's `type` and only the row carries it. The cost is that a
-    // caller without the grant can tell 403 from 404 and
-    // so learns the row exists. Accepted rather than overlooked: the item
-    // read door resolves in the same order for the same reason, and
-    // trading that away means answering 404 for a row the caller may not
-    // read — a change to every typed read door at once, not to these two.
-    requireTypeAccess(c, item.type, "read");
+    requireReadableRow(
+      c,
+      await storage.items.getIncludingTrashed(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
@@ -1125,25 +1112,11 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // a trashed one is added. Worth stating because the two method
     // names invite reading `get` as "active only", and a reader who
     // believes that will look for a widening here that is not present.
-    const item = await storage.items.getIncludingTrashed(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-    // The anchor decides what this call returns, so reading it is a read
-    // of the anchor — the same check every write door in this file makes
-    // against its source item, and the one the item read doors make. It
-    // is stated here rather than left to the credential resolver because
-    // authentication and the type map answer different questions: a caller
-    // can be authenticated and still hold no grant on this type.
-    //
-    // After the read rather than before it, because the check needs the
-    // row's `type` and only the row carries it. The cost is that a
-    // caller without the grant can tell 403 from 404 and
-    // so learns the row exists. Accepted rather than overlooked: the item
-    // read door resolves in the same order for the same reason, and
-    // trading that away means answering 404 for a row the caller may not
-    // read — a change to every typed read door at once, not to these two.
-    requireTypeAccess(c, item.type, "read");
+    requireReadableRow(
+      c,
+      await storage.items.getIncludingTrashed(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),

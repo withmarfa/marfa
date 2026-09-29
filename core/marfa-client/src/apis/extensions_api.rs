@@ -180,7 +180,7 @@ pub fn delete_item_extension(
     }
 }
 
-/// Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.
+/// Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, where an item of a type the caller may not read answers `404 item_not_found` as `GET /items/{id}` answers it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.
 pub fn get_item_extension(
     configuration: &configuration::Configuration,
     params: GetItemExtensionParams,
@@ -224,7 +224,7 @@ pub fn get_item_extension(
     }
 }
 
-/// Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
+/// Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
 pub fn list_item_extensions(
     configuration: &configuration::Configuration,
     params: ListItemExtensionsParams,

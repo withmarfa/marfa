@@ -120,6 +120,14 @@ export function edgeTargetNotFound(targetId: string): MarfaError {
   );
 }
 
+/** The same one answer for a source. */
+export function edgeSourceNotFound(sourceId: string): MarfaError {
+  return new MarfaError(
+    ErrorCode.ITEM_NOT_FOUND,
+    `Edge source item not found: ${sourceId}`,
+  );
+}
+
 export interface EdgeProposal {
   source_id: string;
   target_id: string;
@@ -131,8 +139,8 @@ export interface EdgeProposal {
  * Enforces edge-creation invariants across a batch of proposed edges:
  *
  * 1. Edge type exists (core or custom registry).
- * 2. Source and target items both exist, and the caller may read the
- *    target's type: one it may not is answered as missing.
+ * 2. Source and target items both exist, and the caller may read both
+ *    types: an end it may not read is answered as missing.
  * 3. Source type satisfies source_type_constraints (inheritance-aware).
  * 4. Target type satisfies target_type_constraints (inheritance-aware).
  * 5. Cardinality holds per edge type (DB edges + earlier proposals in the batch).
@@ -157,7 +165,7 @@ export async function assertEdgesCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   proposals: EdgeProposal[],
-  mayReadTarget: (type: string) => boolean,
+  mayRead: (type: string) => boolean,
   opts: { replay?: boolean; replacing?: Edge } = {},
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
@@ -192,15 +200,12 @@ export async function assertEdgesCanBeCreated(
   for (const { p, schema } of resolved) {
     const source = itemMap.get(p.source_id);
     const target = itemMap.get(p.target_id);
-    if (!source) {
-      throw new MarfaError(
-        ErrorCode.ITEM_NOT_FOUND,
-        `Edge source item not found: ${p.source_id}`,
-      );
-    }
-    // Before every check that reads the target, so a caller cannot tell a
+    // Before every check that reads either end, so a caller cannot tell a
     // row it may not read from no row, nor learn the type of one.
-    if (!target || !mayReadTarget(target.type)) {
+    if (!source || !mayRead(source.type)) {
+      throw edgeSourceNotFound(p.source_id);
+    }
+    if (!target || !mayRead(target.type)) {
       throw edgeTargetNotFound(p.target_id);
     }
     // Endpoint types resolve through the registry, exactly as the edge type
@@ -461,13 +466,13 @@ export async function assertEdgeCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   input: EdgeProposal,
-  mayReadTarget: (type: string) => boolean,
+  mayRead: (type: string) => boolean,
 ): Promise<EdgeTypeSchema> {
   const schemas = await assertEdgesCanBeCreated(
     edgeStore,
     itemStore,
     [input],
-    mayReadTarget,
+    mayRead,
   );
   const [only] = schemas;
   if (!only) {

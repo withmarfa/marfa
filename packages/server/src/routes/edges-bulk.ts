@@ -31,7 +31,8 @@ import { BulkResponseSchema } from "./_schemas.js";
 import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  mayReadEdgeTarget,
+  getTypeFilter,
+  mayReadEdgeEnd,
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
@@ -87,7 +88,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Bulk upsert edges",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
+    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -198,11 +199,11 @@ async function processBulkEdge(
      * atomic rollback.
      */
     checkEdgeWrite: (sourceType: string | null, edgeType: string) => void;
-    /** Whether the credential may read a target of this type. */
-    mayReadTarget: (type: string) => boolean;
+    /** Whether the credential may read an end of this type. */
+    mayRead: (type: string) => boolean;
   },
 ): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
-  const { mode, existingByTriple, checkEdgeWrite, mayReadTarget } = options;
+  const { mode, existingByTriple, checkEdgeWrite, mayRead } = options;
 
   if (!isValidId(raw.source_id)) {
     return {
@@ -250,8 +251,9 @@ async function processBulkEdge(
   // type (getIncludingTrashed so a trashed source still runs the gate,
   // matching PATCH /edges/:id). An unknown source resolves to null and the
   // edge-type gate alone applies.
+  const srcItem = await storage.items.getIncludingTrashed(raw.source_id);
+  const sourceHidden = srcItem !== null && !mayRead(srcItem.type);
   try {
-    const srcItem = await storage.items.getIncludingTrashed(raw.source_id);
     checkEdgeWrite(srcItem?.type ?? null, raw.edge_type);
   } catch (err) {
     if (isEntryVerdict(err)) {
@@ -301,13 +303,15 @@ async function processBulkEdge(
   }
 
   const tripleKey = `${raw.source_id}|${raw.target_id}|${raw.edge_type}`;
-  const existing = existingByTriple.get(tripleKey);
+  // A hidden source has no edges a missing one could have, so its entry is
+  // judged as a create, which answers it as missing.
+  const existing = sourceHidden ? undefined : existingByTriple.get(tripleKey);
 
   if (existing) {
     // A matched edge would otherwise say, with its id, that the target is
     // live; one the caller may not read answers as the create path does.
     const target = await storage.items.getIncludingTrashed(raw.target_id);
-    if (!target || !mayReadTarget(target.type)) {
+    if (!target || !mayRead(target.type)) {
       const refusal = edgeTargetNotFound(raw.target_id);
       return {
         result: {
@@ -400,7 +404,7 @@ async function processBulkEdge(
         edge_type: raw.edge_type,
         properties: raw.properties,
       },
-      mayReadTarget,
+      mayRead,
     );
     const createInput = {
       source_id: raw.source_id,
@@ -443,11 +447,17 @@ export function edgesBulkRoutes(storage: Storage) {
     // Authenticated + per-edge dual gate (source-type write + edge-type
     // write), mirroring single-edge `POST /edges`.
     requireAuth(c);
+    getTypeFilter(c);
+    const mayRead = mayReadEdgeEnd(c);
+    // A source the key may not read is gated as an unknown one is, and
+    // meets the same not-found when the entry is judged.
     const checkEdgeWrite = (
       sourceType: string | null,
       edgeType: string,
     ): void => {
-      if (sourceType !== null) requireTypeAccess(c, sourceType, "write");
+      if (sourceType !== null && mayRead(sourceType)) {
+        requireTypeAccess(c, sourceType, "write");
+      }
       requireEdgePermission(c, edgeType, "write");
     };
 
@@ -556,7 +566,7 @@ export function edgesBulkRoutes(storage: Storage) {
             mode,
             existingByTriple,
             checkEdgeWrite,
-            mayReadTarget: mayReadEdgeTarget(c),
+            mayRead,
           },
         );
         if (atomic && result.outcome === "errored") {

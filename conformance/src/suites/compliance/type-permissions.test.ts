@@ -115,8 +115,8 @@ describe("type-scoped permissions", () => {
 
   it("none permission hides the type from a listing, not only from a write", async () => {
     // A `none` entry has to reach the list filter, not only the write gate:
-    // a caller refused a row by id and handed that same row in a listing is
-    // the divergence a permission map exists to prevent.
+    // a caller told a row is not there by id and handed that same row in a
+    // listing is the divergence a permission map exists to prevent.
     const seededNote = await client.createItem(
       createNote({ source: ctx.source }),
     );
@@ -159,7 +159,7 @@ describe("type-scoped permissions", () => {
     // under test rather than either half on its own.
     const byId = await scopedClient.getItem(seededBookmark.data.item.id);
     expect(byId.ok).toBe(false);
-    expect(byId.status).toBe(403);
+    expect(byId.status).toBe(404);
   });
 
   it("read-only key cannot create items", async () => {
@@ -236,7 +236,7 @@ describe("type-scoped permissions", () => {
     expect(delTrashed.error?.error.code).toBe("item_not_found");
   });
 
-  it("a key without reach on the item's type is refused its edges and backrefs", async () => {
+  it("a key without reach on the item's type is answered as if the item, its edges and its backrefs were not there", async () => {
     const note = await client.createItem(createNote({ source: ctx.source }));
     expect(note.ok).toBe(true);
     trackItem(ctx, note.data.item.id);
@@ -254,14 +254,19 @@ describe("type-scoped permissions", () => {
     });
 
     const byId = await scopedClient.getItem(note.data.item.id);
-    expect(byId.status).toBe(403);
-    expect(byId.error?.error.code).toBe("type_not_permitted");
+    expect(byId.status).toBe(404);
+    expect(byId.error?.error.code).toBe("item_not_found");
     const edges = await scopedClient.listItemEdges(note.data.item.id);
-    expect(edges.status).toBe(403);
-    expect(edges.error?.error.code).toBe("type_not_permitted");
+    expect(edges.status).toBe(404);
+    expect(edges.error?.error.code).toBe("item_not_found");
     const backrefs = await scopedClient.listItemBackrefs(note.data.item.id);
-    expect(backrefs.status).toBe(403);
-    expect(backrefs.error?.error.code).toBe("type_not_permitted");
+    expect(backrefs.status).toBe(404);
+    expect(backrefs.error?.error.code).toBe("item_not_found");
+
+    // The key reads its own map, which is where it learns why.
+    const own = await scopedClient.getCurrentKey();
+    expect(own.ok).toBe(true);
+    expect(own.data.type_permissions).toEqual({ "core.bookmark": "read" });
   });
 
   // `items.purge` opens the door; the type map says which rows it destroys,

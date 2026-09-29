@@ -450,30 +450,61 @@ describe("a credential without write on the type", () => {
     );
   });
 
-  it("is refused 403 on every metadata, tag and version door, and on an inline edge it does not hold", async () => {
+  it("is refused on every metadata, tag and version door by what it holds on the type, and on an inline edge it does not hold", async () => {
     const id = await seedItem("type-blind");
-    const blind = await client.createKey({
-      label: `${ctx.source}-type-blind`,
-      source: `${ctx.source}-type-blind`,
-      permissions: [],
-      type_permissions: { "core.bookmark": "read" },
-    });
-    expect(blind.ok).toBe(true);
-    trackKey(ctx, blind.data.id);
-    const key = blind.data.key;
-    const doors: [string, string, string, unknown][] = [
+    const mint = async (
+      label: string,
+      types: Record<string, string>,
+    ): Promise<string> => {
+      const minted = await client.createKey({
+        label: `${ctx.source}-${label}`,
+        source: `${ctx.source}-${label}`,
+        permissions: [],
+        type_permissions: types,
+      });
+      expect(minted.ok).toBe(true);
+      trackKey(ctx, minted.data.id);
+      return minted.data.key;
+    };
+    const reads: [string, string, string, unknown][] = [
       ["GET", "/items/{id}/metadata", `/items/${id}/metadata`, undefined],
+      ["GET", "/items/{id}/versions", `/items/${id}/versions`, undefined],
+    ];
+    const writes: [string, string, string, unknown][] = [
       ["PUT", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
       ["PATCH", "/items/{id}/metadata", `/items/${id}/metadata`, { tags: [] }],
       ["POST", "/items/{id}/tags", `/items/${id}/tags`, { tags: ["x"] }],
       ["DELETE", "/items/{id}/tags/{tag}", `/items/${id}/tags/x`, undefined],
-      ["GET", "/items/{id}/versions", `/items/${id}/versions`, undefined],
     ];
-    for (const [method, template, path, body] of doors) {
+    // Blind to the type: the item answers as missing, on reads and writes.
+    const blind = await mint("type-blind", { "core.bookmark": "read" });
+    for (const [method, template, path, body] of [...reads, ...writes]) {
       await expectRefusal(
         method,
         template,
-        await call(method, path, { key, body }),
+        await call(method, path, { key: blind, body }),
+        404,
+        "item_not_found",
+      );
+    }
+    // Reading the type and not writing it: the writes are refused.
+    const reader = await mint("type-reader", { "core.note": "read" });
+    for (const [method, template, path, body] of writes) {
+      await expectRefusal(
+        method,
+        template,
+        await call(method, path, { key: reader, body }),
+        403,
+        "type_not_permitted",
+      );
+    }
+    // Reaching no type: refused before the item is looked up.
+    const nowhere = await mint("type-nowhere", { "*": "none" });
+    for (const [method, template, path, body] of reads) {
+      await expectRefusal(
+        method,
+        template,
+        await call(method, path, { key: nowhere, body }),
         403,
         "type_not_permitted",
       );

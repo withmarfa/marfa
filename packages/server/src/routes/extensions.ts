@@ -2,7 +2,8 @@
  * Extension routes — namespaced metadata on items.
  *
  * Every door first asks the key's type map for the item's type, at `read` or
- * `write` as the item doors do, and nothing about the namespace skips it.
+ * `write` as the item doors do, answering an item it may not read as a
+ * missing one, and nothing about the namespace skips it.
  *
  * The namespace is the second gate. A key's label names a namespace it holds
  * write on (a key labeled "noter" writes "noter"), because the label is the
@@ -13,6 +14,7 @@
  * the storage layer, which is also what writes a `system.*` row.
  */
 
+import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { extensionLabelOf } from "../auth/extension-label.js";
 import {
@@ -26,7 +28,11 @@ import {
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireReadableRow,
+  requireTypeAccess,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -58,7 +64,7 @@ const listExtensionsRoute = createRoute({
   tags: ["Extensions"],
   summary: "List extension namespaces for an item",
   description:
-    "Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
+    "Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -96,7 +102,7 @@ const listExtensionsRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "No read access to the item's type",
+      description: READ_REFUSED,
     },
     404: {
       content: {
@@ -104,7 +110,7 @@ const listExtensionsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -116,7 +122,7 @@ const getExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Get an extension namespace",
   description:
-    "Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.",
+    "Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, where an item of a type the caller may not read answers `404 item_not_found` as `GET /items/{id}` answers it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -156,7 +162,7 @@ const getExtensionRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` without read on the item's type; `forbidden` without read on the namespace",
+        "`type_not_permitted` where the credential's type permissions reach no type; `forbidden` without read on the namespace",
     },
     404: {
       content: {
@@ -164,7 +170,7 @@ const getExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -227,7 +233,7 @@ const setExtensionRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` without write on the item's type; `forbidden` without write on the namespace",
+        "`type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace",
     },
     404: {
       content: {
@@ -235,7 +241,7 @@ const setExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -287,7 +293,7 @@ const deleteExtensionRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` without write on the item's type; `forbidden` without write on the namespace",
+        "`type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace",
     },
     404: {
       content: {
@@ -295,7 +301,7 @@ const deleteExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -315,11 +321,11 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
-    }
-    requireTypeAccess(c, item.type, "read");
+    requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    );
 
     const extensions = await storage.metadata.getExtensions(id);
     const filtered = filterExtensionsByPermission(
@@ -339,11 +345,11 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
-    }
-    requireTypeAccess(c, item.type, "read");
+    requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    );
 
     const perm = resolveExtensionPermission(
       namespace,
@@ -371,10 +377,11 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
-    }
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    );
     // An extension is part of the item's row, so the item's type gate runs
     // first, as it does on the tag doors, whatever the namespace grants.
     requireTypeAccess(c, item.type, "write");
@@ -445,10 +452,11 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
-    }
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    );
     // An extension is part of the item's row, so the item's type gate runs
     // first, as it does on the tag doors, whatever the namespace grants.
     requireTypeAccess(c, item.type, "write");

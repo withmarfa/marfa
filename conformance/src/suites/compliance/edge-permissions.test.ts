@@ -243,18 +243,41 @@ describe("per-edge-type permissions", () => {
       apiKey: targetOnly.key,
     });
 
+    // It may not read the source, so the edge answers as no edge at all.
     const patch = await targetOnlyClient.updateEdge(edge.data.edge.id, {
       properties: { note: "should not land" },
       version: edge.data.edge.version,
     });
     expect(patch.ok).toBe(false);
-    expect(patch.status).toBe(403);
-    expect(patch.error?.error.code).toBe("type_not_permitted");
+    expect(patch.status).toBe(404);
+    expect(patch.error?.error.code).toBe("edge_not_found");
 
     const del = await targetOnlyClient.deleteEdge(edge.data.edge.id);
     expect(del.ok).toBe(false);
-    expect(del.status).toBe(403);
-    expect(del.error?.error.code).toBe("type_not_permitted");
+    expect(del.status).toBe(404);
+    expect(del.error?.error.code).toBe("edge_not_found");
+
+    // One that reads the source and does not write it is refused the write.
+    const sourceReader = await makeKey("source-reader", {
+      type_permissions: { [sourceType]: "read", [targetType]: "write" },
+      edge_permissions: { about: "write" },
+    });
+    const sourceReaderClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: sourceReader.key,
+    });
+    const refusedPatch = await sourceReaderClient.updateEdge(
+      edge.data.edge.id,
+      {
+        properties: { note: "should not land" },
+        version: edge.data.edge.version,
+      },
+    );
+    expect(refusedPatch.status).toBe(403);
+    expect(refusedPatch.error?.error.code).toBe("type_not_permitted");
+    const refusedDel = await sourceReaderClient.deleteEdge(edge.data.edge.id);
+    expect(refusedDel.status).toBe(403);
+    expect(refusedDel.error?.error.code).toBe("type_not_permitted");
 
     const sourceOnly = await makeKey("source-only", {
       type_permissions: { [sourceType]: "write", [targetType]: "read" },
@@ -500,9 +523,9 @@ describe("the edge listing answers only what the credential may read", () => {
         .data,
       "trashing the source item turned the refusal into a disclosure",
     ).toEqual([]);
-    // And the door this one is meant to agree with still refuses it, so
+    // And the door this one is meant to agree with answers it as no edge, so
     // the two read a trashed source the same way.
-    expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(403);
+    expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(404);
   });
 
   it("pages to the end of the listing though whole pages are dropped", async () => {

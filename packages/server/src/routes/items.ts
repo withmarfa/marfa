@@ -1,3 +1,8 @@
+import {
+  ITEM_NOT_FOUND,
+  READ_REFUSED,
+  WRITE_REFUSED,
+} from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -40,6 +45,8 @@ import {
   requireAuth,
   requirePermission,
   requireTypeAccess,
+  requireReadableRow,
+  mayReadRow,
   mayWriteEdge,
   requireResolvedRowWrite,
   itemProvenanceSource,
@@ -48,7 +55,7 @@ import {
   checkTypePermission,
   requireEdgePermission,
   getTypeFilter,
-  mayReadEdgeTarget,
+  mayReadEdgeEnd,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -623,7 +630,7 @@ const getItemRoute = createRoute({
   tags: ["Items"],
   summary: "Get an item",
   description:
-    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.\n\n" +
+    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted` before any row is read.\n\n" +
     "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
@@ -667,7 +674,7 @@ const getItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
     403: {
       content: {
@@ -675,8 +682,7 @@ const getItemRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "The credential's type permissions do not reach the item's type.",
+      description: READ_REFUSED,
     },
   },
 });
@@ -827,7 +833,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "`type_not_permitted` when the credential does not hold write on the item's type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
+        "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
     },
     404: {
       content: {
@@ -838,7 +844,7 @@ const updateItemRoute = createRoute({
           ]),
         },
       },
-      description: "Item not found",
+      description: `${ITEM_NOT_FOUND} An inline edge naming an edge type that does not exist answers \`edge_type_not_found\`, and one naming a target that does not exist or whose type the caller may not read answers \`item_not_found\`, the two targets alike.`,
     },
     409: {
       content: {
@@ -906,8 +912,7 @@ const deleteItemRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "The credential's type permissions do not reach the item's type with write.",
+      description: WRITE_REFUSED,
     },
     404: {
       content: {
@@ -915,7 +920,7 @@ const deleteItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -928,7 +933,7 @@ function metadataTypeRefusal(level: "read" | "write") {
         schema: makeErrorResponseSchema(["type_not_permitted"]),
       },
     },
-    description: `The credential's type permissions do not reach the item's type with ${level}.`,
+    description: level === "read" ? READ_REFUSED : WRITE_REFUSED,
   };
 }
 
@@ -976,7 +981,7 @@ const getMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1038,7 +1043,7 @@ const putMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1100,7 +1105,7 @@ const patchMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1164,7 +1169,7 @@ const addTagsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1216,7 +1221,7 @@ const removeTagRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -1268,7 +1273,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`items.purge` is missing; the credential may not write the item's type, asked whatever state the row is in, as restore asks; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed.",
+        "`items.purge` is missing; the credential may read the item's type and not write it, asked whatever state the row is in, as restore asks, or reaches no type; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed.",
     },
     404: {
       content: {
@@ -1276,7 +1281,8 @@ const purgeItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "No such item, including one this door has already purged.",
+      description:
+        "No such item, including one this door has already purged. An item of a type the credential may not read answers alike.",
     },
   },
 });
@@ -1658,7 +1664,7 @@ export function itemRoutes(storage: Storage) {
                 (edgeType) => {
                   requireEdgePermission(c, edgeType, "write");
                 },
-                mayReadEdgeTarget(c),
+                mayReadEdgeEnd(c),
               )
             : undefined;
 
@@ -1758,12 +1764,9 @@ export function itemRoutes(storage: Storage) {
       // forever, and the retry is not asking to revive it. The row comes
       // back in whatever state it holds.
       const existing = await storage.items.getIncludingTrashed(clientId);
-      // Nothing visible means the id belongs to a row this caller cannot
-      // read — a type it holds no permission for. It stays a conflict
-      // because the server cannot tell whether this is the caller's own
-      // earlier write, and the caller learns only that the id it chose is
-      // taken, which it already told us.
-      if (!existing) return null;
+      // A row this caller cannot read goes on to the insert's plain
+      // `conflict`, which says the id is taken and nothing of the row.
+      if (!existing || !mayReadRow(c, existing)) return null;
 
       // **No type gate of its own here, and its absence is the honest
       // shape.** The comparison below is exact, so a row that is
@@ -1858,7 +1861,7 @@ export function itemRoutes(storage: Storage) {
               storage.edges,
               storage.items,
               proposals,
-              mayReadEdgeTarget(c),
+              mayReadEdgeEnd(c),
             );
             for (const p of proposals) {
               createdEdges.push(
@@ -2152,12 +2155,11 @@ export function itemRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
-    requireTypeAccess(c, item.type, "read");
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     // Non-optional, which `c.get("apiKey")` is not: the edge blocks
     // below are narrowed against it, and the gate above has already
     // refused a request carrying none.
@@ -2346,11 +2348,11 @@ export function itemRoutes(storage: Storage) {
         "occurred_at must be an ISO 8601 string",
       );
     }
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, item.type, "write");
 
     // Held to the same rule as every other door rather than refused
@@ -2518,7 +2520,7 @@ export function itemRoutes(storage: Storage) {
     // Before the version check inside the transaction, so a stale write
     // cannot tell a target the key may not read from a missing one.
     if (hasEdges && body.edges) {
-      const mayReadTarget = mayReadEdgeTarget(c);
+      const mayReadTarget = mayReadEdgeEnd(c);
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         const schema = getEdgeTypeSchema(edgeType);
         if (!schema) {
@@ -2654,7 +2656,7 @@ export function itemRoutes(storage: Storage) {
           (edgeType) => {
             requireEdgePermission(c, edgeType, "write");
           },
-          mayReadEdgeTarget(c),
+          mayReadEdgeEnd(c),
         );
       }
 
@@ -2736,10 +2738,11 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
 
-    const targetItem = await storage.items.get(id);
-    if (!targetItem) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
+    const targetItem = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, targetItem.type, "write");
     // **No live-connection refusal on the named row, because the cascade
     // below already covers it.** `planCascadeDelete` walks post-order and
@@ -2819,12 +2822,11 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
-    requireTypeAccess(c, item.type, "read");
+    requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     const metadata = await storage.metadata.get(id);
     return c.json(
       { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
@@ -2838,11 +2840,11 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
@@ -2875,11 +2877,11 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
@@ -2931,11 +2933,11 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
@@ -2976,8 +2978,12 @@ export function itemRoutes(storage: Storage) {
     requirePermission(c, "items.purge");
     // Read including trashed: on the ordinary path (trash, then purge) a
     // plain `get` answers `null`, leaving no type to ask about. The same read
-    // `storage.items.purge` gates on.
-    const purgeTarget = await storage.items.getIncludingTrashed(id);
+    // `storage.items.purge` gates on, and the message it answers.
+    const purgeTarget = requireReadableRow(
+      c,
+      await storage.items.getIncludingTrashed(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    );
     refuseUnlessUninstalled(purgeTarget);
 
     // The key's type map is asked whatever state the row is in, as restore
@@ -2994,12 +3000,10 @@ export function itemRoutes(storage: Storage) {
     // The state is the type's own soft-deleted state, not the literal
     // `trashed`: a `system.connection` ends `revoked`, and
     // `storage.items.purge` gates on the same derived state.
-    if (purgeTarget) {
-      if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
-        checkTypePermission(c.get("apiKey"), purgeTarget.type, "write");
-      } else {
-        checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
-      }
+    if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
+      checkTypePermission(c.get("apiKey"), purgeTarget.type, "write");
+    } else {
+      checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
     }
 
     // **No provenance guard here**, and that is a finding rather than an
@@ -3046,9 +3050,7 @@ export function itemRoutes(storage: Storage) {
     //
     // The snapshot read before the purge, because there is nothing left to
     // read afterwards.
-    if (purgeTarget) {
-      await publish({ type: "purged", item: purgeTarget });
-    }
+    await publish({ type: "purged", item: purgeTarget });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -3071,11 +3073,11 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
+    const item = requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.

@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404. A row whose type the credential's type map does not reach answers `403 type_not_permitted`, which is read after the row, so the two are distinguishable.
+         * @description Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted` before any row is read.
          *
          *     `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots newest-first. Tokens are comma-separated and compose.
          *
@@ -331,7 +331,7 @@ export interface paths {
         };
         /**
          * List extension namespaces for an item
-         * @description Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
+         * @description Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.
          */
         get: operations["listItemExtensions"];
         put?: never;
@@ -351,7 +351,7 @@ export interface paths {
         };
         /**
          * Get an extension namespace
-         * @description Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, refused `403 type_not_permitted` as `GET /items/{id}` refuses it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.
+         * @description Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, where an item of a type the caller may not read answers `404 item_not_found` as `GET /items/{id}` answers it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.
          */
         get: operations["getItemExtension"];
         /**
@@ -433,7 +433,7 @@ export interface paths {
         put?: never;
         /**
          * Create an edge
-         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.
+         * @description Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.
          */
         post: operations["createEdge"];
         delete?: never;
@@ -485,7 +485,7 @@ export interface paths {
         put?: never;
         /**
          * Bulk upsert edges
-         * @description Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
+         * @description Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.
          */
         post: operations["bulkUpsertEdges"];
         delete?: never;
@@ -3573,7 +3573,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3588,7 +3588,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3697,7 +3697,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with write. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3712,7 +3712,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3900,7 +3900,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` when the credential does not hold write on the item's type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on. */
+            /** @description `type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3915,7 +3915,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An inline edge naming an edge type that does not exist answers `edge_type_not_found`, and one naming a target that does not exist or whose type the caller may not read answers `item_not_found`, the two targets alike. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4071,7 +4071,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may not write the item's type. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4086,7 +4086,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4249,7 +4249,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may not write the item's type. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4264,7 +4264,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4415,7 +4415,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with read. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4430,7 +4430,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4534,7 +4534,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with read. */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4549,7 +4549,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4660,7 +4660,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with write. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4675,7 +4675,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4797,7 +4797,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with write. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4812,7 +4812,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4934,7 +4934,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with write. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4949,7 +4949,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5070,7 +5070,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `items.purge` is missing; the credential may not write the item's type, asked whatever state the row is in, as restore asks; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed. */
+            /** @description `items.purge` is missing; the credential may read the item's type and not write it, asked whatever state the row is in, as restore asks, or reaches no type; or the item is in a reserved namespace and not soft-deleted, which no working credential could have trashed. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5085,7 +5085,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No such item, including one this door has already purged. */
+            /** @description No such item, including one this door has already purged. An item of a type the credential may not read answers alike. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5238,7 +5238,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach the item's type with write. */
+            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5253,7 +5253,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6040,7 +6040,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No read access to the item's type */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6055,7 +6055,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6166,7 +6166,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` without read on the item's type; `forbidden` without read on the namespace */
+            /** @description `type_not_permitted` where the credential's type permissions reach no type; `forbidden` without read on the namespace */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6181,7 +6181,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6293,7 +6293,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` without write on the item's type; `forbidden` without write on the namespace */
+            /** @description `type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6308,7 +6308,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6426,7 +6426,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `type_not_permitted` without write on the item's type; `forbidden` without write on the namespace */
+            /** @description `type_not_permitted` where the credential may read the item's type and not write it, or reaches no type; `forbidden` without write on the namespace */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6441,7 +6441,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6564,7 +6564,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No read access to the anchor item's type */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6579,7 +6579,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6690,7 +6690,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No read access to the anchor item's type */
+            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6705,7 +6705,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description Item not found */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6954,7 +6954,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. */
+            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. `type_not_permitted` also where its type permissions reach no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6969,7 +6969,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description Source, target, or edge type not found */
+            /** @description The source, the target or the edge type is not found. A source or target of a type the credential may not read answers alike, with the same code and message. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7105,7 +7105,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions do not reach an endpoint's type. */
+            /** @description `edge_permission_denied` without read on the edge type; `type_not_permitted` where the credential's type permissions reach no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7229,7 +7229,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type. A trashed source still gates on its type. */
+            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7415,7 +7415,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on the source item's type, and on the new one's where the source moves. A trashed source still gates on its type. */
+            /** @description The dual gate refused one of its halves: `edge_permission_denied` on the edge type, `type_not_permitted` on a source item whose type the credential may read and not write, and on the new one's where the source moves. A trashed source still gates on its type. `type_not_permitted` also where its type permissions reach no type. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7430,7 +7430,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description `edge_not_found` for the edge; `item_not_found` for an end it would move to that does not exist, a target the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by. */
+            /** @description `edge_not_found` for the edge, and for one whose source item is of a type the caller may not read; `item_not_found` for an end it would move to that does not exist or is of a type the caller may not read, or an end that stays and is in the bin, which a create of the edge would be refused for too; `edge_type_not_found` for an edge whose type is no longer registered, which has no cardinality to move it by. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
