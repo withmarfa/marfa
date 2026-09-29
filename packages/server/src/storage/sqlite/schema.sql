@@ -327,24 +327,11 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
 CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
-CREATE TABLE IF NOT EXISTS `connector_agreements` (
-	`source` text NOT NULL,
-	`item_id` text NOT NULL,
-	`waiting` integer NOT NULL,
-	`record` text NOT NULL,
-	`updated_at` text NOT NULL,
-	PRIMARY KEY(`source`, `item_id`),
+CREATE TABLE IF NOT EXISTS `cascade_marks` (
+	`item_id` text PRIMARY KEY NOT NULL,
+	`trashed_with` text NOT NULL,
+	`trashed_with_type` text NOT NULL,
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
-);
-
-CREATE INDEX IF NOT EXISTS `idx_connector_agreements_waiting` ON `connector_agreements` (`source`,`waiting`,`updated_at`,`item_id`);
-CREATE INDEX IF NOT EXISTS `idx_connector_agreements_updated` ON `connector_agreements` (`source`,`updated_at`,`item_id`);
-CREATE INDEX IF NOT EXISTS `idx_connector_agreements_item` ON `connector_agreements` (`item_id`);
-CREATE TABLE IF NOT EXISTS `connector_holds` (
-	`connector_id` text PRIMARY KEY NOT NULL,
-	`process` text NOT NULL,
-	`expires_at` text NOT NULL,
-	FOREIGN KEY (`connector_id`) REFERENCES `connectors`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
 CREATE TABLE IF NOT EXISTS `connector_runs` (
@@ -360,12 +347,6 @@ CREATE TABLE IF NOT EXISTS `connector_runs` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_connector_runs_connector_reported` ON `connector_runs` (`connector_id`,`reported_at`);
-CREATE TABLE IF NOT EXISTS `connector_states` (
-	`source` text PRIMARY KEY NOT NULL,
-	`state` text NOT NULL,
-	`updated_at` text NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS `connectors` (
 	`id` text PRIMARY KEY NOT NULL,
 	`key_id` text NOT NULL,
@@ -488,15 +469,6 @@ CREATE TABLE IF NOT EXISTS `inbound_endpoints` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `inbound_endpoints_token_hash_unique` ON `inbound_endpoints` (`token_hash`);
 CREATE INDEX IF NOT EXISTS `idx_inbound_endpoints_connector` ON `inbound_endpoints` (`connector_id`);
-CREATE TABLE IF NOT EXISTS `item_links` (
-	`type` text NOT NULL,
-	`value` text NOT NULL,
-	`item_id` text NOT NULL,
-	PRIMARY KEY(`type`, `value`),
-	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_item_links_item` ON `item_links` (`item_id`);
 CREATE TABLE IF NOT EXISTS `items` (
 	`id` text PRIMARY KEY NOT NULL,
 	`type` text NOT NULL,
@@ -526,14 +498,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS `idx_items_source_dedup` ON `items` (`source`,
 CREATE INDEX IF NOT EXISTS `idx_items_source_id_prefix` ON `items` ("source_id" COLLATE NOCASE) WHERE source_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_starts_at` ON `items` (`starts_at`) WHERE starts_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS `idx_items_enrichment_queue` ON `items` (`created_at`) WHERE state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
-CREATE TABLE IF NOT EXISTS `link_tombstones` (
-	`type` text NOT NULL,
-	`value` text NOT NULL,
-	`purged_at` text NOT NULL,
-	`settled_at` text NOT NULL,
-	PRIMARY KEY(`type`, `value`)
-);
-
 CREATE TABLE IF NOT EXISTS `metadata` (
 	`item_id` text PRIMARY KEY NOT NULL,
 	`tags` text DEFAULT '[]' NOT NULL,
@@ -541,16 +505,6 @@ CREATE TABLE IF NOT EXISTS `metadata` (
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
-CREATE TABLE IF NOT EXISTS `natural_key_tombstones` (
-	`type` text NOT NULL,
-	`source` text NOT NULL,
-	`source_id` text NOT NULL,
-	`purged_at` text NOT NULL,
-	`settled_at` text NOT NULL,
-	PRIMARY KEY(`type`, `source`, `source_id`)
-);
-
-CREATE INDEX IF NOT EXISTS `idx_natural_key_tombstones_key` ON `natural_key_tombstones` (`source`,`source_id`);
 CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`webhook_id` text NOT NULL,

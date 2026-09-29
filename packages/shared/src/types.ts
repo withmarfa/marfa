@@ -70,6 +70,12 @@ export interface Item {
   schema_version: number;
   capture_latitude?: number;
   capture_longitude?: number;
+  /** Present on a row a cascading edge took into the bin, for as long as it
+   *  stays there. */
+  trashed_by_cascade?: true;
+  /** The row that trash named, answered beside `trashed_by_cascade` only
+   *  to a reader of that row's type. */
+  trashed_with?: string;
 }
 
 /** Input for creating a new item. */

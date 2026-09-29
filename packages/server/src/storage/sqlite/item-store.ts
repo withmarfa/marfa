@@ -61,6 +61,7 @@ import type {
   PaginatedResult,
 } from "@withmarfa/shared";
 import type {
+  CascadeRoot,
   ItemStore,
   ResolvedItem,
   ItemFilters,
@@ -90,6 +91,7 @@ import {
 } from "../conflict.js";
 import type { ItemFieldValues, SnapshotItemFields } from "../conflict.js";
 import {
+  cascade_marks,
   edges,
   item_links,
   items,
@@ -671,6 +673,23 @@ export class SqliteItemStore implements ItemStore {
     for (const row of rows) {
       if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
       out.set(row.id, rowToItem(row));
+    }
+    return out;
+  }
+
+  async cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>> {
+    const out = new Map<string, CascadeRoot>();
+    if (ids.length === 0) return out;
+    const rows = await this.db
+      .select()
+      .from(cascade_marks)
+      .where(inArray(cascade_marks.item_id, Array.from(new Set(ids))))
+      .all();
+    for (const row of rows) {
+      out.set(row.item_id, {
+        id: row.trashed_with,
+        type: row.trashed_with_type,
+      });
     }
     return out;
   }
@@ -1390,7 +1409,7 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
-  async delete(id: string, trashedWith?: string): Promise<void> {
+  async delete(id: string, trashedWith?: CascadeRoot): Promise<void> {
     const row = await this.getRaw(id);
     if (!row) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
@@ -1426,7 +1445,15 @@ export class SqliteItemStore implements ItemStore {
     if (trashedWith !== undefined && target === "trashed") {
       await this.db
         .insert(trash_cascades)
-        .values({ item_id: id, trashed_with: trashedWith })
+        .values({ item_id: id, trashed_with: trashedWith.id })
+        .run();
+      await this.db
+        .insert(cascade_marks)
+        .values({
+          item_id: id,
+          trashed_with: trashedWith.id,
+          trashed_with_type: trashedWith.type,
+        })
         .run();
     }
 
@@ -1638,14 +1665,23 @@ export class SqliteItemStore implements ItemStore {
       })
       .where(eq(items.id, id))
       .run();
-    await this.db
-      .delete(trash_cascades)
-      .where(eq(trash_cascades.item_id, id))
-      .run();
+    await this.clearTrashRecords(id);
 
     await this.searchStore.index(id, row.properties, row.type);
 
     return { ...row, state: "active" as ItemState, updated_at: now };
+  }
+
+  /** What a row leaving the bin leaves behind of the trash that took it. */
+  private async clearTrashRecords(id: string): Promise<void> {
+    await this.db
+      .delete(trash_cascades)
+      .where(eq(trash_cascades.item_id, id))
+      .run();
+    await this.db
+      .delete(cascade_marks)
+      .where(eq(cascade_marks.item_id, id))
+      .run();
   }
 
   async restoreBeneath(id: string): Promise<Item[]> {
@@ -1672,10 +1708,7 @@ export class SqliteItemStore implements ItemStore {
       if (row?.state !== "trashed") {
         // Out of the bin by a door that kept no record of it, which leaves
         // nothing to bring back and a record that says otherwise.
-        await this.db
-          .delete(trash_cascades)
-          .where(eq(trash_cascades.item_id, item_id))
-          .run();
+        await this.clearTrashRecords(item_id);
         continue;
       }
       restored.push(await this.restore(item_id));
@@ -1790,10 +1823,7 @@ export class SqliteItemStore implements ItemStore {
     if (state === "trashed") {
       await this.searchStore.remove(id);
     } else if (row.state === "trashed") {
-      await this.db
-        .delete(trash_cascades)
-        .where(eq(trash_cascades.item_id, id))
-        .run();
+      await this.clearTrashRecords(id);
       await this.searchStore.index(id, row.properties, row.type);
     }
 

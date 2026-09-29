@@ -78,6 +78,7 @@ import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
+import { withCascadeMarks } from "./_cascade-marks.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -883,7 +884,7 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1244,7 +1245,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1297,30 +1298,17 @@ const purgeItemRoute = createRoute({
   },
 });
 
-/**
- * The body of an acknowledged re-send: the row as it already stands.
- *
- * Two doors reach this, and they are the same answer to the same
- * question — a create the server has already performed, arriving again.
- * One resolves the row by `(source, source_id)` after the user trashed
- * it; the other resolves it by an `id` the caller minted and is sending
- * a second time because it never learned the first attempt landed.
- * Neither writes, and neither publishes.
- *
- * Shared rather than written twice because the disclosure rules are the
- * subtle part: the metadata is filtered to the caller's own extension
- * permissions, and the orphan state is resolved the way every other
- * own-write response resolves it. A second copy is a second place for
- * one of those to be forgotten.
- */
+/** One answer for both re-sent creates, so what it discloses (extension
+ *  metadata, a cascade's mark) is decided in one place. */
 async function acknowledgedItemBody(
   storage: Storage,
-  apiKey: ApiKey | undefined,
+  apiKey: ApiKey,
   existing: Item,
 ): Promise<{ item: Item; metadata: Metadata; acknowledged: true }> {
   const metadata = await storage.metadata.get(existing.id);
+  const [item = existing] = await withCascadeMarks(storage, apiKey, [existing]);
   return {
-    item: existing,
+    item,
     metadata: filterMetadataForCaller(metadata, apiKey),
     acknowledged: true,
   };
@@ -1566,7 +1554,7 @@ export function itemRoutes(storage: Storage) {
         // type is refused here as the route's 409 description says.
         requireDeclaredTypeMatches(type, existing);
         return c.json(
-          await acknowledgedItemBody(storage, c.get("apiKey"), existing),
+          await acknowledgedItemBody(storage, requireAuth(c), existing),
           200,
         );
       }
@@ -1831,7 +1819,7 @@ export function itemRoutes(storage: Storage) {
     const alreadyHeld = await repeatedRow();
     if (alreadyHeld) {
       return c.json(
-        await acknowledgedItemBody(storage, c.get("apiKey"), alreadyHeld),
+        await acknowledgedItemBody(storage, requireAuth(c), alreadyHeld),
         200,
       );
     }
@@ -1909,7 +1897,7 @@ export function itemRoutes(storage: Storage) {
       const raced = await repeatedRow();
       if (!raced) throw err;
       return c.json(
-        await acknowledgedItemBody(storage, c.get("apiKey"), raced),
+        await acknowledgedItemBody(storage, requireAuth(c), raced),
         200,
       );
     }
@@ -2111,8 +2099,9 @@ export function itemRoutes(storage: Storage) {
       limit: query.limit,
       cursor: query.cursor,
     });
+    const rows = await withCascadeMarks(storage, requireAuth(c), result.data);
 
-    const ids = result.data.map((item) => item.id);
+    const ids = rows.map((item) => item.id);
     const apiKey = c.get("apiKey");
     const edgesMap = includeEdges
       ? await hydrateEdgesForItems(storage, requireAuth(c), ids)
@@ -2120,7 +2109,7 @@ export function itemRoutes(storage: Storage) {
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, ids, apiKey)
       : null;
-    const decorate = (item: (typeof result.data)[number]) => {
+    const decorate = (item: (typeof rows)[number]) => {
       const withEdges = edgesMap
         ? { ...item, edges: edgesMap.get(item.id) ?? {} }
         : item;
@@ -2135,7 +2124,7 @@ export function itemRoutes(storage: Storage) {
       const apiKey = c.get("apiKey");
       return c.json(
         {
-          data: result.data.map((item) => ({
+          data: rows.map((item) => ({
             item: decorate(item),
             metadata: filterMetadataForCaller(
               metadataMap.get(item.id) ?? {
@@ -2154,7 +2143,7 @@ export function itemRoutes(storage: Storage) {
 
     return c.json(
       {
-        data: result.data.map(decorate),
+        data: rows.map(decorate),
         next_cursor: result.next_cursor,
       },
       200,
@@ -2757,6 +2746,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, targetItem.type, "write");
+    const root = { id, type: targetItem.type };
     // **No live-connection refusal on the named row, because the cascade
     // below already covers it.** `planCascadeDelete` walks post-order and
     // pushes the root itself, so `toDelete` always contains the row named in
@@ -2792,7 +2782,7 @@ export function itemRoutes(storage: Storage) {
         refuseUnlessUninstalled(snap);
       }
       for (const delId of toDelete) {
-        await storage.items.delete(delId, delId === id ? undefined : id);
+        await storage.items.delete(delId, delId === id ? undefined : root);
       }
       return snaps;
     });
@@ -2800,13 +2790,14 @@ export function itemRoutes(storage: Storage) {
     // Publish post-commit — a rollback must never leak a `deleted` event.
     for (const snapshot of snapshots) {
       if (snapshot) {
+        // A bounded lifecycle soft-deletes to `revoked`.
+        const state = softDeleteState(snapshot.type);
         await publish({
           type: "deleted",
-          // The state the store actually wrote, derived per type rather
-          // than stated: a type with a bounded lifecycle soft-deletes to
-          // `revoked`, so announcing `trashed` told a subscriber about a
-          // state the row never entered and no transition can leave.
-          item: { ...snapshot, state: softDeleteState(snapshot.type) },
+          item: { ...snapshot, state },
+          // The mark `storage.items.delete` records, on the same terms.
+          ...(snapshot.id !== id &&
+            state === "trashed" && { trashedWith: root }),
         });
       }
     }
@@ -3038,6 +3029,8 @@ export function itemRoutes(storage: Storage) {
     // that throws still commits, because the error is caught inside the
     // composed chain and the transaction closes normally. A door that wants
     // atomicity has to open its own.
+    // Read before the purge, which takes the mark with the row.
+    const trashedWith = (await storage.items.cascadeMarks([id])).get(id);
     const cascaded = await storage.runInTransaction(async () => {
       const removed = [
         ...(await storage.edges.deleteBySource(id)),
@@ -3047,7 +3040,7 @@ export function itemRoutes(storage: Storage) {
       return removed;
     });
     for (const edge of cascaded) {
-      await publishEdge({ type: "edge_deleted", edge });
+      await publishEdge({ type: "edge_deleted", edge, purgedWith: id });
     }
     // The item itself, which the cascade above does not cover. A trashed
     // row announced `item.deleted`, which says recoverable; nothing else
@@ -3063,7 +3056,11 @@ export function itemRoutes(storage: Storage) {
     // The snapshot read before the purge, because there is nothing left to
     // read afterwards.
     if (purgeTarget) {
-      await publish({ type: "purged", item: purgeTarget });
+      await publish({
+        type: "purged",
+        item: purgeTarget,
+        ...(trashedWith && { trashedWith }),
+      });
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
