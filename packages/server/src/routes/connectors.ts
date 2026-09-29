@@ -649,7 +649,7 @@ export function connectorRoutes(storage: Storage) {
         "A connector registers under a key, not under an app's session token",
       );
     }
-    if (key.is_operator === true) {
+    if (key.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "The operator key runs the instance and does not register as a connector",

@@ -442,10 +442,12 @@ describe("the hold on an instance that names its window", () => {
     const again = await own.holdConnector(id, second);
     expect(again.status).toBe(200);
     await lapse(again.data);
-    for (const stale of await write(reg, first, "stale")) {
-      expect(stale.status).toBe(409);
-      expect(stale.error?.error.code).toBe("connector_held");
-      expect(stale.error?.error.details?.["expires_at"]).toBeUndefined();
+    for (const process of [first, second]) {
+      for (const stale of await write(reg, process, "stale")) {
+        expect(stale.status).toBe(409);
+        expect(stale.error?.error.code).toBe("connector_held");
+        expect(stale.error?.error.details?.["expires_at"]).toBeUndefined();
+      }
     }
     expect(await kept(reg)).toEqual(theirs);
   });
