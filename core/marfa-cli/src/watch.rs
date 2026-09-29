@@ -153,6 +153,10 @@ fn watch_files(
 
     let started = Instant::now();
     let mut quiet_since = Instant::now();
+    // An event passed over below wakes no pass, but must not hold off the
+    // tick's either: inotify reports every open and close of a file, and a
+    // reader faster than the tick would keep the receive from ever timing out.
+    let mut last_pass = Instant::now();
     // What stood after the last pass that printed, so a standing condition
     // is said once rather than once a second.
     let mut standing: Option<Standing> = None;
@@ -168,21 +172,21 @@ fn watch_files(
         match events.recv_timeout(TICK) {
             Ok(Wake::File(Ok(event))) => {
                 // `Access` is a read, and a folder does not push a file
-                // because somebody opened it.
-                if matches!(event.kind, EventKind::Access(_)) {
+                // because somebody opened it. A dot-led path is watched only
+                // where the include list names it (`folders.md` 25), and
+                // `.marfa` only for the settings file (28); this stops a write
+                // under `.marfa` waking a pass.
+                let passed_over = matches!(event.kind, EventKind::Access(_))
+                    || event.paths.iter().all(|path| {
+                        dot_led(dir, path)
+                            && !settings_file(dir, path)
+                            && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
+                    });
+                if !passed_over {
+                    quiet_since = Instant::now();
+                } else if last_pass.elapsed() < TICK {
                     continue;
                 }
-                // A dot-led path is watched only where the include list names
-                // it (`folders.md` 25), and `.marfa` only for the settings file
-                // (28); this stops a write under `.marfa` waking a pass.
-                if event.paths.iter().all(|path| {
-                    dot_led(dir, path)
-                        && !settings_file(dir, path)
-                        && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
-                }) {
-                    continue;
-                }
-                quiet_since = Instant::now();
             }
             Ok(Wake::File(Err(error))) => eprintln!("watch error: {error}"),
             // A change from elsewhere is written out on the pass below.
@@ -212,6 +216,7 @@ fn watch_files(
         if full {
             last_full = Some(Instant::now());
         }
+        last_pass = Instant::now();
         match step(folder, json, full, &mut standing) {
             // The follow is hydrating the copy, or will try again, and a
             // later pass finds it whole.
