@@ -1340,12 +1340,12 @@ describe("the scripted answers match the server's", () => {
     const unread = await narrowed.rawRequest(
       `/items/${note.data.item.id}?include=edges,metadata`,
     );
-    expect(unread.status).toBe(403);
+    expect(unread.status).toBe(404);
     expectFidelity(
       "a row of a type the key does not hold, read by id",
       { status: unread.status, body: unread.error },
-      answers.forbidden("type_not_permitted"),
-      { same: ["error.code"], shape: ["error.message"] },
+      answers.itemNotFound(note.data.item.id),
+      { same: ["error.code", "error.message"] },
     );
 
     const bare = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });

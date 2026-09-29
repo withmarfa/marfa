@@ -320,19 +320,32 @@ pub(super) fn places(key: &Value) -> bool {
 
 const OPERATOR: &str = "operator";
 
-/// A key's grant on `in-folder`, resolved as the server resolves an edge
-/// grant: the exact name, then the longest `x.*`, then `*`.
+/// Whether a key reads items of `item_type`.
+pub(super) fn reads(key: &Value, item_type: &str) -> bool {
+    matches!(
+        resolved(key, "type_permissions", item_type).as_deref(),
+        Some("read" | "write")
+    )
+}
+
+/// A key's grant on `in-folder`.
 fn grant(key: &Value) -> Option<String> {
     if key.get("is_operator").and_then(Value::as_bool) == Some(true) {
         return Some(OPERATOR.into());
     }
-    let grants = key.get("edge_permissions").and_then(Value::as_object)?;
-    let resolved = grants.get(PLACEMENT_EDGE).or_else(|| {
+    resolved(key, "edge_permissions", PLACEMENT_EDGE)
+}
+
+/// A key's grant on `name` in one of its maps, resolved as the server
+/// resolves one: the exact name, then the longest `x.*`, then `*`.
+fn resolved(key: &Value, map: &str, name: &str) -> Option<String> {
+    let grants = key.get(map).and_then(Value::as_object)?;
+    let resolved = grants.get(name).or_else(|| {
         grants
             .iter()
             .filter_map(|(pattern, level)| {
                 let root = pattern.strip_suffix(".*")?;
-                (PLACEMENT_EDGE == root || PLACEMENT_EDGE.starts_with(&format!("{root}.")))
+                (name == root || name.starts_with(&format!("{root}.")))
                     .then_some((root.len(), level))
             })
             .max_by_key(|(length, _)| *length)

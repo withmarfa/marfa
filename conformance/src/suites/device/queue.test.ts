@@ -2259,8 +2259,9 @@ describe("an answer the device applies keeps what it has not had answered", () =
   });
 
   it("blocks a create whose natural key names a row it cannot read", async () => {
-    // The envelope names a row that is gone by the time the device reads it,
-    // so there is nothing to move onto, and the create stops as any write
+    // The envelope names a row the device then reads as gone, which is how
+    // the server answers a row the key can no longer read as well as a
+    // deleted one, so there is nothing to move onto, and the create stops as any write
     // refused this way does (`queue-and-verdicts.md` 22, 23): on each of the
     // two refusals a create's natural key can meet.
     const GONE = "01a00000-0000-7000-8000-0000000000c9";
@@ -2279,14 +2280,6 @@ describe("an answer the device applies keeps what it has not had answered", () =
         answers.ancestorUnavailable(current, 0),
         "ancestor_unavailable",
         refusal(404, "item_not_found", "Item not found"),
-      ],
-      // Out of this credential's reach: a read the server refuses `403` is
-      // not one to ask again on every pass.
-      [
-        "unreadable",
-        answers.ancestorUnavailable(current, 0),
-        "ancestor_unavailable",
-        refusal(403, "type_not_permitted", "No access to this type"),
       ],
       [
         "stale",

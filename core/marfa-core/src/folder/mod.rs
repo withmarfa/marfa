@@ -418,20 +418,26 @@ impl Folder {
     /// The folder's row as the server holds it now, refused where its
     /// settings are not ones this folder can follow.
     fn row_on_server(&self) -> Result<crate::wire::WireItemWithMetadata> {
-        let read = crate::hydrate::read_with_edges(self.core.http()?, &self.folder).map_err(
-            |error| match error {
-                CoreError::Forbidden { code, .. } if code == "type_not_permitted" => {
-                    CoreError::Forbidden {
-                        code,
-                        message: format!(
-                            "this key cannot read {FOLDER_TYPE}, so the folder cannot follow its settings: it needs `{FOLDER_TYPE}:read`"
-                        ),
-                    }
-                }
+        let cannot_read = || CoreError::Forbidden {
+            code: "type_not_permitted".into(),
+            message: format!(
+                "this key cannot read {FOLDER_TYPE}, so the folder cannot follow its settings: it needs `{FOLDER_TYPE}:read`"
+            ),
+        };
+        let http = self.core.http()?;
+        let read =
+            crate::hydrate::read_with_edges(http, &self.folder).map_err(|error| match error {
+                CoreError::Forbidden { code, .. } if code == "type_not_permitted" => cannot_read(),
                 other => other,
-            },
-        )?;
+            })?;
         let Some((row, _)) = read else {
+            // The server answers a folder the key cannot read as no folder at
+            // all, so the key's own map says which of the two this is.
+            if let Some(key) = http.current_key()?
+                && !placement::reads(&key, FOLDER_TYPE)
+            {
+                return Err(cannot_read());
+            }
             return Err(CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: format!(

@@ -2441,7 +2441,7 @@ describe("catch-up keeps the copy to its slice", () => {
       "GET",
       "/items/settings",
       answers.updated(wireItem({ id: "settings", type: "core.bookmark" })),
-      answers.forbidden("type_not_permitted"),
+      answers.itemNotFound("settings"),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
