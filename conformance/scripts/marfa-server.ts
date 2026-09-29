@@ -40,8 +40,10 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   chooseCredentials,
+  maskInActions,
   parseEnvFile,
   readBootstrapSecret,
+  redactBootstrapSecret,
   renderEnvFile,
 } from "../src/utils/target.js";
 import { FRESH_SERVER_LOGS } from "../src/utils/fresh-server.js";
@@ -185,7 +187,9 @@ async function waitForHealth(url: string, log: string): Promise<void> {
     await new Promise((r) => setTimeout(r, HEALTH_POLL_MS));
   }
   const tail = existsSync(log)
-    ? readFileSync(log, "utf8").split("\n").slice(-40).join("\n")
+    ? redactBootstrapSecret(
+        readFileSync(log, "utf8").split("\n").slice(-40).join("\n"),
+      )
     : "(no log written)";
   throw new Error(
     `server did not answer ${url}/health within ${String(HEALTH_BUDGET_MS)}ms. Log tail:\n${tail}`,
@@ -308,6 +312,10 @@ export async function bootServer(args: BootOptions): Promise<void> {
       );
     }
     const previous = parseEnvFile(readFileSync(p.env, "utf8"));
+    maskInActions(
+      previous.MARFA_API_KEY ?? "",
+      previous.MARFA_OPERATOR_KEY ?? "",
+    );
     writeFileSync(
       p.env,
       renderEnvFile(
@@ -326,6 +334,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
 
   const response = await mint(url, secret);
   const credentials = chooseCredentials(response);
+  maskInActions(credentials.apiKey, credentials.operatorKey);
   writeFileSync(p.env, renderEnvFile(url, credentials, p.blobs, p.statusLogs));
   console.log(`[marfa-server] minted the first key; env file at ${p.env}`);
 }

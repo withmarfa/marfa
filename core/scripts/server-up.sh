@@ -146,7 +146,8 @@ write_env ""
 fail() {
   echo "server-up: $1" >&2
   echo "server-up: log follows" >&2
-  cat "${log}" >&2 || true
+  # The log may hold the bootstrap secret, and CI logs are public.
+  sed -E 's/Bearer [0-9a-f]{64}/Bearer [redacted]/g' "${log}" >&2 || true
   "$(dirname "$0")/server-down.sh" "${env_file}" >/dev/null 2>&1 || true
   exit 1
 }

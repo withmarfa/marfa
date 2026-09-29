@@ -1,8 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   chooseCredentials,
+  maskInActions,
   parseEnvFile,
   readBootstrapSecret,
+  redactBootstrapSecret,
   renderEnvFile,
 } from "./target.js";
 
@@ -28,6 +30,41 @@ describe("readBootstrapSecret", () => {
     expect(
       readBootstrapSecret(`Authorization: Bearer ${"b".repeat(40)}`),
     ).toBeUndefined();
+  });
+});
+
+describe("redactBootstrapSecret", () => {
+  it("leaves no secret in a log that held one", () => {
+    const log = `{"level":"info","message":"starting"}\n${BOOT_LINE}\n`;
+    expect(readBootstrapSecret(log)).toBe(SECRET);
+    const redacted = redactBootstrapSecret(log);
+    expect(redacted).not.toContain(SECRET);
+    expect(redacted).toContain("Bearer [redacted]");
+    expect(readBootstrapSecret(redacted)).toBeUndefined();
+  });
+});
+
+describe("maskInActions", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("registers each value as a secret inside GitHub Actions", () => {
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    maskInActions("marfa_k1_one", "", "s3-secret", "marfa_k1_one");
+    expect(log.mock.calls).toEqual([
+      ["::add-mask::marfa_k1_one"],
+      ["::add-mask::s3-secret"],
+    ]);
+  });
+
+  it("prints nothing outside GitHub Actions", () => {
+    vi.stubEnv("GITHUB_ACTIONS", "");
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    maskInActions("marfa_k1_one");
+    expect(log).not.toHaveBeenCalled();
   });
 });
 

@@ -1,7 +1,8 @@
 /**
- * The pure parts of booting a local Marfa server for the suite: reading the
- * one-time bootstrap secret out of the boot log, choosing the key the suite
- * runs as, and rendering the env file the run sources.
+ * The parts of booting a local Marfa server for the suite that need no
+ * server: reading the one-time bootstrap secret out of the boot log, choosing
+ * the key the suite runs as, rendering the env file the run sources, and
+ * keeping the keys out of a CI log.
  *
  * Kept apart from the process handling in `scripts/marfa-server.ts` so they
  * can be tested without a server.
@@ -18,6 +19,27 @@ const BOOTSTRAP_SECRET = /Authorization: Bearer ([0-9a-f]{64})/;
  */
 export function readBootstrapSecret(log: string): string | undefined {
   return BOOTSTRAP_SECRET.exec(log)?.[1];
+}
+
+/**
+ * The log with every bootstrap secret replaced, for a failure message that
+ * quotes it: a public CI log would otherwise carry the secret of a server
+ * that never took its first mint.
+ */
+export function redactBootstrapSecret(log: string): string {
+  return log.replace(/Bearer [0-9a-f]{64}/g, "Bearer [redacted]");
+}
+
+/**
+ * Registers each value with GitHub Actions as a secret, so no later line of
+ * the job shows it. The values reach `GITHUB_ENV`, and Actions prints that
+ * file's variables at the head of every later step's log.
+ */
+export function maskInActions(...values: string[]): void {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  for (const value of new Set(values)) {
+    if (value.length > 0) console.log(`::add-mask::${value}`);
+  }
 }
 
 export interface MintedKey {

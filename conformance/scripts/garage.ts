@@ -29,6 +29,7 @@ import {
 } from "node:fs";
 import { createServer } from "node:net";
 import { resolve } from "node:path";
+import { maskInActions } from "../src/utils/target.js";
 
 const READY_BUDGET_MS = 30_000;
 const POLL_MS = 250;
@@ -233,6 +234,7 @@ async function up(args: Args): Promise<void> {
     "",
   ].join("\n");
   writeFileSync(p.env, env);
+  maskInActions(keyId, secret);
   if (process.env.GITHUB_ENV) {
     appendFileSync(process.env.GITHUB_ENV, env);
   }
