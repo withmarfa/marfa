@@ -29,8 +29,8 @@ const META_REFUSED: &str = "folder_placements_refused";
 /// the settings change, or the item's placement moves on.
 pub(super) type Withheld = BTreeMap<String, Held>;
 
-/// A refused placement: the path it named, and the placement the copy held
-/// for the item once it was refused, by id and version.
+/// A refused placement: the path it named, and the refused write's `edge_id`
+/// and `base_version`, none for a create.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct Held {
     path: String,
