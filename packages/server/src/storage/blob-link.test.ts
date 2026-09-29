@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { blobLinkExpiry, mintBlobLink, verifyBlobLink } from "./blob-link.js";
+import {
+  blobLinkExpiry,
+  MAX_BLOB_LINK_TTL_SECONDS,
+  mintBlobLink,
+  verifyBlobLink,
+} from "./blob-link.js";
 
 const HASH = `sha256:${"ab".repeat(32)}`;
 const NOW = 1_800_000_000;
@@ -41,6 +46,27 @@ describe("the instance-served blob link", () => {
       );
       expect(
         verifyBlobLink(HASH, expires, signature, at(mintedMs + 2000)),
+      ).toBe(false);
+    }
+  });
+
+  it("never outlives the seven-day cap, however late in a second it is minted", () => {
+    const at = (ms: number) => Math.floor(ms / 1000);
+    const capMs = MAX_BLOB_LINK_TTL_SECONDS * 1000;
+    for (const into of [0, 1, 500, 999]) {
+      const mintedMs = NOW * 1000 + into;
+      const { expires, signature } = query(
+        mintBlobLink(
+          "https://marfa.example",
+          HASH,
+          blobLinkExpiry(mintedMs, MAX_BLOB_LINK_TTL_SECONDS),
+        ),
+      );
+      expect(
+        verifyBlobLink(HASH, expires, signature, at(mintedMs + capMs - 1000)),
+      ).toBe(true);
+      expect(
+        verifyBlobLink(HASH, expires, signature, at(mintedMs + capMs)),
       ).toBe(false);
     }
   });

@@ -228,19 +228,23 @@ describe("blob correctness", () => {
     const upload = await client.uploadBlob(content, "text/plain");
     expect(upload.ok).toBe(true);
 
-    // The witness: a link from the same door to the same blob fetches while
-    // it lives, with a lifetime no fetch outruns.
+    // The altered link's witness: the link as minted fetches the bytes.
     const live = await client.getBlobUrl(upload.data.hash, 60);
     expect(live.status).toBe(200);
     const served = await fetchLink(live.data.url);
     expect(served.status).toBe(200);
     expect(served.bytes).toEqual(content);
 
-    // Fetched only once surely dead: a signer counts a lifetime from a whole
-    // second, so a second more, and a little, covers its rounding either way.
-    const short = await client.getBlobUrl(upload.data.hash, 1);
+    // Its own witness first, with seconds to spare for a store's link, which
+    // may stop up to a second short of `expires_in`.
+    const short = await client.getBlobUrl(upload.data.hash, 3);
     expect(short.status).toBe(200);
-    expect(short.data.expires_in).toBe(1);
+    expect(short.data.expires_in).toBe(3);
+    const alive = await fetchLink(short.data.url);
+    expect(alive.status).toBe(200);
+    expect(alive.bytes).toEqual(content);
+    // A signer counts a lifetime from a whole second, so a second more, and
+    // a little, covers its rounding either way.
     await new Promise((resolve) =>
       setTimeout(resolve, (short.data.expires_in + 1) * 1000 + 100),
     );
