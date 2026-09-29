@@ -14,8 +14,6 @@ const WORKFLOWS = resolve(
 
 const MAC_JOBS = new Set([
   "ci.yml:core-checks",
-  "ci.yml:conformance",
-  "ci.yml:cli-scenarios",
   "core.yml:core",
   "release.yml:build",
 ]);

@@ -12329,28 +12329,33 @@ describe("what a folder takes", () => {
     );
     put(harness, "Thing.mystery/inner.md", "---\ntitle: Marked\n---\nbody\n");
     // The Finder's bundle bit: a package by the system's word, not its name.
-    const info = Buffer.alloc(32);
-    info[8] = 0x20;
-    execFileSync("xattr", [
-      "-wx",
-      "com.apple.FinderInfo",
-      info.toString("hex"),
-      join(harness.dir, "Thing.mystery"),
-    ]);
+    // Only macOS has one, so elsewhere the directory is an ordinary one and
+    // its file is walked into like any other.
+    const marked = process.platform === "darwin";
+    if (marked) {
+      const info = Buffer.alloc(32);
+      info[8] = 0x20;
+      execFileSync("xattr", [
+        "-wx",
+        "com.apple.FinderInfo",
+        info.toString("hex"),
+        join(harness.dir, "Thing.mystery"),
+      ]);
+    }
     put(harness, "notes/note.md", "---\ntitle: Note\n---\nbody\n");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
     expect(
-      sentTitles(harness),
+      sentTitles(harness).sort(),
       "a file inside a package was sent as a note, so a presentation or an app reaches the server piece by piece",
-    ).toEqual(["Note"]);
+    ).toEqual(marked ? ["Note"] : ["Marked", "Note"]);
     expect(
       pushed.value.scan.directories.map((dir) => [dir.path, dir.flag]).sort(),
       "a package the folder did not walk into was not reported, so its files are missing without a word",
     ).toEqual([
       ["Deck.key", "package"],
-      ["Thing.mystery", "package"],
+      ...(marked ? [["Thing.mystery", "package"]] : []),
       ["Tool.APP", "package"],
     ]);
     expect(
