@@ -21,8 +21,18 @@ const SETTLE: Duration = Duration::from_millis(250);
 /// (`folders.md` 21).
 const TICK: Duration = Duration::from_secs(1);
 
-/// Watches a folder and keeps it in step. Every pass, the first included, is
-/// the same scan (`folders.md` 18).
+/// How often a pass reads every file, rather than only those whose size,
+/// time or identity changed (`folders.md` 49).
+const FULL_PASS: Duration = Duration::from_secs(60);
+
+/// Whether this pass reads every file: the first does, and then one a
+/// minute, which finds a change the size and time did not show.
+fn full_due(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|last| now.duration_since(last) >= FULL_PASS)
+}
+
+/// Watches a folder and keeps it in step. Every pass, the first included,
+/// decides identity by the same rule (`folders.md` 18).
 pub fn watch(
     dir: &Path,
     server: Server,
@@ -146,6 +156,7 @@ fn watch_files(
     // What stood after the last pass that printed, so a standing condition
     // is said once rather than once a second.
     let mut standing: Option<Standing> = None;
+    let mut last_full: Option<Instant> = None;
     // Read again after each pass, which is when the settings can change.
     let mut lists = folder.settings().and_then(|settings| settings.lists()).ok();
     loop {
@@ -197,7 +208,11 @@ fn watch_files(
         if quiet_since.elapsed() < SETTLE {
             continue;
         }
-        match step(folder, json, &mut standing) {
+        let full = full_due(last_full, Instant::now());
+        if full {
+            last_full = Some(Instant::now());
+        }
+        match step(folder, json, full, &mut standing) {
             // The follow is hydrating the copy, or will try again, and a
             // later pass finds it whole.
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
@@ -233,9 +248,18 @@ struct Standing {
 }
 
 /// One pass: read the folder, send what it queued, write back what came in.
-fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<(), CliError> {
+fn step(
+    folder: &Folder,
+    json: bool,
+    full: bool,
+    standing: &mut Option<Standing>,
+) -> Result<(), CliError> {
     let settings = folder.send_settings_edit()?;
-    let scanned = folder.scan()?;
+    let scanned = if full {
+        folder.scan()?
+    } else {
+        folder.scan_quick()?
+    };
     let drained = folder.drain()?;
     let pulled = folder.pull()?;
     // Quiet unless something happened or what stands changed. Files already
@@ -283,7 +307,19 @@ fn step(folder: &Folder, json: bool, standing: &mut Option<Standing>) -> Result<
             flagged
         },
         uncarried: pulled.uncarried.clone(),
-        embeds: crate::folders::embed_lines(scanned.embeds.iter().chain(&pulled.embeds)),
+        embeds: {
+            let mut embeds =
+                crate::folders::embed_lines(scanned.embeds.iter().chain(&pulled.embeds));
+            // A quick pass reads no unchanged file, so says none of its embeds.
+            if !full && let Some(before) = standing.as_ref() {
+                for line in &before.embeds {
+                    if !embeds.contains(line) {
+                        embeds.push(line.clone());
+                    }
+                }
+            }
+            embeds
+        },
         registry: scanned.registry.clone(),
         unsure: scanned.unsure.clone(),
     };
@@ -429,6 +465,14 @@ mod tests {
             (45 * SECOND, 2 * SECOND)
         );
         assert_eq!(retry_schedule(4 * SECOND, &limited(1)).0, 4 * SECOND);
+    }
+
+    #[test]
+    fn the_first_pass_reads_every_file_and_then_one_a_minute() {
+        let now = Instant::now();
+        assert!(full_due(None, now));
+        assert!(!full_due(Some(now), now + 59 * SECOND));
+        assert!(full_due(Some(now), now + FULL_PASS));
     }
 
     #[test]

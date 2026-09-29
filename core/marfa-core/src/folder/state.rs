@@ -393,6 +393,40 @@ fn list(conn: &Connection, key: &str) -> Result<Vec<String>, CoreError> {
         .unwrap_or_default())
 }
 
+/// The size and time a file had when the scan last read it.
+pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT stat FROM folder_stats WHERE path = ?1",
+            [path],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// Records the stats each file read had before its read. A full pass's
+/// record replaces every row, so a row outlives its file only until then.
+pub fn set_stats(
+    conn: &Connection,
+    stats: &[(String, String)],
+    whole: bool,
+) -> Result<(), CoreError> {
+    // One commit, not one per file of a large folder.
+    let tx = conn.unchecked_transaction()?;
+    if whole {
+        tx.execute("DELETE FROM folder_stats", [])?;
+    }
+    for (path, stat) in stats {
+        tx.execute(
+            "INSERT INTO folder_stats (path, stat) VALUES (?1, ?2)
+             ON CONFLICT (path) DO UPDATE SET stat = excluded.stat",
+            [path, stat],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn set_paused(conn: &Connection, removal: Removal, paths: &[String]) -> Result<(), CoreError> {
     set_list(conn, removal.key(), paths)
 }

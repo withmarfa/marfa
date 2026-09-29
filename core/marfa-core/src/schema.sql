@@ -295,6 +295,13 @@ CREATE TABLE IF NOT EXISTS folder_files (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
 
+-- Each file's size and modification time as the scan last read it, taken
+-- before the read: a quick pass skips a file they still match (`folders.md` 49).
+CREATE TABLE IF NOT EXISTS folder_stats (
+  path TEXT PRIMARY KEY,
+  stat TEXT NOT NULL
+) WITHOUT ROWID;
+
 -- Deletes, journaled and deferred (`folders.md` 21, 22). A file that
 -- disappears is recorded here rather than sent, because the first half of a
 -- rename looks exactly like a delete; the grace is what tells them apart.
