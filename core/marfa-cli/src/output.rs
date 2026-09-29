@@ -335,7 +335,15 @@ fn describe(value: &Value) -> Result<String, CliError> {
                 }
             }
             if let Some(Value::Array(rows)) = map.get("data") {
-                return lines(rows, map);
+                // A lookup's tombstones are what say a key was purged rather
+                // than never written.
+                let tombstones = map.get("tombstones").and_then(Value::as_array);
+                let all: Vec<Value> = rows
+                    .iter()
+                    .chain(tombstones.into_iter().flatten())
+                    .cloned()
+                    .collect();
+                return lines(&all, map);
             }
             // A bulk write's per-entry outcomes, `{counts, results}`, and
             // `items bulk-get`'s `{items, metadata}`.
@@ -371,6 +379,14 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     for row in rows {
         if row.get("id").is_some() {
             text.push(record_line(row));
+        } else if let (Some(key), Some(purged)) = (
+            row.get("key").and_then(Value::as_str),
+            row.get("purged_at").and_then(Value::as_str),
+        ) {
+            let settled = row.get("settled_at").and_then(Value::as_str).unwrap_or("");
+            text.push(format!(
+                "tombstone  {key}  purged {purged}  settled {settled}"
+            ));
         } else if let (Some(starts), Some(item)) = (row.get("starts_at"), row.get("item")) {
             // An occurrence: when it falls is the point of the view.
             let ends = row
@@ -488,6 +504,32 @@ mod tests {
             text,
             "2026-01-02T09:00:00Z to 2026-01-02T10:00:00Z  e1  core.event    Standup"
         );
+    }
+
+    #[test]
+    fn a_lookup_names_the_tombstones_beside_the_rows() {
+        let tombstone = json!({
+            "key": "v2",
+            "purged_at": "2026-01-01T00:00:00.000Z",
+            "settled_at": "2026-01-02T00:00:00.000Z",
+        });
+        let text = describe(&json!({
+            "data": [{"id": "i1", "type": "user.issue", "created_at": "2026-01-01T00:00:00Z"}],
+            "tombstones": [tombstone],
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "i1  user.issue  2026-01-01T00:00:00Z\n\
+             tombstone  v2  purged 2026-01-01T00:00:00.000Z  settled 2026-01-02T00:00:00.000Z"
+        );
+        let purged_only = describe(&json!({"data": [], "tombstones": [tombstone]})).unwrap();
+        assert_eq!(
+            purged_only,
+            "tombstone  v2  purged 2026-01-01T00:00:00.000Z  settled 2026-01-02T00:00:00.000Z"
+        );
+        let moved = describe(&json!({"tombstones": [tombstone]})).unwrap();
+        assert_eq!(moved, purged_only);
     }
 
     #[test]

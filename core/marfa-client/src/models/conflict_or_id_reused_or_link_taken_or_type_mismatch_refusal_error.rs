@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SourceIdConflictOrTypeMismatchRefusalError {
+pub struct ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusalError {
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,9 +21,12 @@ pub struct SourceIdConflictOrTypeMismatchRefusalError {
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl SourceIdConflictOrTypeMismatchRefusalError {
-    pub fn new(code: Code, message: String) -> SourceIdConflictOrTypeMismatchRefusalError {
-        SourceIdConflictOrTypeMismatchRefusalError {
+impl ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusalError {
+    pub fn new(
+        code: Code,
+        message: String,
+    ) -> ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusalError {
+        ConflictOrIdReusedOrLinkTakenOrTypeMismatchRefusalError {
             code,
             message,
             details: None,
@@ -33,14 +36,18 @@ impl SourceIdConflictOrTypeMismatchRefusalError {
 ///
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Code {
-    #[serde(rename = "source_id_conflict")]
-    SourceIdConflict,
+    #[serde(rename = "conflict")]
+    Conflict,
+    #[serde(rename = "id_reused")]
+    IdReused,
+    #[serde(rename = "link_taken")]
+    LinkTaken,
     #[serde(rename = "type_mismatch")]
     TypeMismatch,
 }
 
 impl Default for Code {
     fn default() -> Code {
-        Self::SourceIdConflict
+        Self::Conflict
     }
 }

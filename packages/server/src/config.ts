@@ -134,12 +134,12 @@ export interface AppConfig {
   enableHsts: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
-  /** Days a revoked application-grant tombstone survives before the purger
+  /** Days a revoked application-grant row survives before the purger
    *  drops it. Default 90; env override `MARFA_REVOKED_GRANT_RETENTION_DAYS`.
    *  `0` switches the housekeeping job off.
    *
    *  **Ninety rather than a number of its own, and matching
-   *  `AUDIT_RETENTION_DAYS` on purpose.** The tombstone and the audit row that
+   *  `AUDIT_RETENTION_DAYS` on purpose.** The revoked grant row and the audit row that
    *  recorded the revocation are the same fact written twice, so keeping them
    *  for different lengths would let the two disagree about whether a
    *  revocation is still visible.

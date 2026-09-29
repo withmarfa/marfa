@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -755,15 +756,28 @@ describe("what a folder is", () => {
   });
 
   it("refuses to follow an item that is not a live folder", async () => {
-    for (const { what, row } of [
+    const id = "01a00000-0000-7000-8000-0000000001f2";
+    for (const { what, row, refused } of [
+      // The witness: the same add of a live folder is taken.
+      {
+        what: "a live folder",
+        row: () =>
+          folderItem({
+            id,
+            version: 1,
+            settings: { search: { types: ["core.note"] } },
+          }),
+        refused: undefined,
+      },
       {
         what: "an item of another type",
-        row: (id: string) =>
+        row: () =>
           wireItem({ id, properties: { title: "a note", body: "x\n" } }),
+        refused: "not a system.folder",
       },
       {
         what: "a revoked folder",
-        row: (id: string) =>
+        row: () =>
           wireItem({
             id,
             type: "system.folder",
@@ -773,12 +787,17 @@ describe("what a folder is", () => {
               revoked_at: "2026-09-01T00:00:00.000Z",
             },
           }),
+        refused: "is revoked",
       },
     ]) {
       const server = await ScriptedServer.start();
       scriptHydration(server, { head: "1" });
-      const id = "01a00000-0000-7000-8000-0000000001f2";
-      server.answer("GET", `/items/${id}`, answers.updated(row(id)));
+      server.answer(
+        "GET",
+        "/keys/current",
+        answers.currentKey("fixture-key", { "*": "write" }),
+      );
+      server.answer("GET", `/items/${id}`, answers.updated(row()));
       const dir = join(
         mkdtempSync(join(tmpdir(), "marfa-folder-not-a-folder-")),
         "notes",
@@ -790,7 +809,16 @@ describe("what a folder is", () => {
       });
       try {
         const added = await folder.add(id);
+        if (refused === undefined) {
+          expect(
+            added.ok,
+            `${what} was refused: ${JSON.stringify(added)}`,
+          ).toBe(true);
+          continue;
+        }
         expect(added.ok, `a directory was bound to ${what}`).toBe(false);
+        if (added.ok) return;
+        expect(added.refusal.raw, what).toContain(refused);
       } finally {
         await server.stop();
       }
@@ -911,6 +939,69 @@ describe("what a folder is", () => {
       "a file whose edit changed no setting stayed an edit, flagged or sent at every pass",
     ).toBe(written);
     expect(pushed.value.settings.written).toBe(true);
+
+    // An edit that lands moves the file to version 2, the witness that an
+    // edit is sent at all.
+    writeFileSync(
+      settingsFile(harness),
+      written + "defaults:\n  tags:\n    - landed\n",
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sent).toHaveLength(1);
+    const current = readFileSync(settingsFile(harness), "utf8");
+    expect(current).toContain("version: 2");
+
+    // A file older than the settings that names the settings in force
+    // changes none of them.
+    writeFileSync(
+      settingsFile(harness),
+      current.replace("version: 2", "version: 1"),
+    );
+    const stale = await harness.folder.push();
+    expect(stale.ok, JSON.stringify(stale)).toBe(true);
+    if (!stale.ok) return;
+    expect(
+      sent,
+      "a file naming only the settings in force was sent because its version line is older",
+    ).toHaveLength(1);
+    expect(readFileSync(settingsFile(harness), "utf8")).toBe(current);
+    expect(stale.value.settings.written).toBe(true);
+
+    // One changed value makes it an older file's edit, sent whole.
+    writeFileSync(
+      settingsFile(harness),
+      current
+        .replace("version: 2", "version: 1")
+        .replace("title: folder", "title: renamed"),
+    );
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sent.at(-1)).toEqual({
+      version: 1,
+      title: "renamed",
+      search: { types: ["core.note"] },
+      defaults: { tags: ["landed"] },
+    });
+
+    // So is one that only leaves a setting out, which may be one added
+    // since; the door keeps a setting nobody sends.
+    const third = readFileSync(settingsFile(harness), "utf8");
+    expect(third).toContain("version: 3");
+    writeFileSync(
+      settingsFile(harness),
+      third.replace("version: 3", "version: 2").replace(/title: .*\n/, ""),
+    );
+    const left = await harness.folder.push();
+    expect(left.ok, JSON.stringify(left)).toBe(true);
+    if (!left.ok) return;
+    expect(left.value.settings.flagged).toBeNull();
+    expect(sent.at(-1)).toEqual({
+      version: 2,
+      search: { types: ["core.note"] },
+      defaults: { tags: ["landed"] },
+    });
+    expect(readFileSync(settingsFile(harness), "utf8")).toContain(
+      "title: renamed",
+    );
   });
 
   it("sends a settings edit the folder door could not take for now at the next push", async () => {
@@ -1203,6 +1294,26 @@ describe("what a folder is", () => {
     );
     expect((await harness.folder.push()).ok).toBe(true);
     expect(sent[1]).toEqual({ version: 3, title: "again" });
+
+    // A line written as text, or as `3.0`, names that version, as a
+    // Markdown file's does.
+    for (const [line, title] of [
+      ['version: "3"', "quoted"],
+      ["version: 3.0", "decimal"],
+    ] as const) {
+      writeFileSync(
+        settingsFile(harness),
+        readFileSync(settingsFile(harness), "utf8")
+          .replace(/version: \d+/, line)
+          .replace(/title: \w+/, `title: ${title}`),
+      );
+      expect((await harness.folder.push()).ok).toBe(true);
+      expect(
+        sent.at(-1)?.version,
+        `a version line written ${line} was read as no line`,
+      ).toBe(3);
+      expect(sent.at(-1)?.title).toBe(title);
+    }
   });
 
   it("makes a new document the search's first type that is not a file type", async () => {
@@ -1219,13 +1330,14 @@ describe("what a folder is", () => {
   });
 
   it("refuses defaults its search would not hold", async () => {
-    for (const { what, settings } of [
+    for (const { what, settings, named } of [
       {
         what: "a type",
         settings: {
           search: { types: ["core.note"] },
           defaults: { type: "core.bookmark" },
         },
+        named: "core.bookmark",
       },
       {
         what: "a tier",
@@ -1233,10 +1345,16 @@ describe("what a folder is", () => {
           search: { types: ["core.note"] },
           defaults: { tier: "feed" as const },
         },
+        named: "feed",
       },
     ]) {
       const server = await ScriptedServer.start();
       scriptHydration(server, { head: "1" });
+      server.answer(
+        "GET",
+        "/keys/current",
+        answers.currentKey("fixture-key", { "*": "write" }),
+      );
       const row = scriptFolderRow(server, settings);
       const dir = join(
         mkdtempSync(join(tmpdir(), "marfa-folder-defaults-refused-")),
@@ -1253,6 +1371,8 @@ describe("what a folder is", () => {
           added.ok,
           `a folder took defaults naming ${what} its search does not hold, so every new file would fall outside it`,
         ).toBe(false);
+        if (added.ok) return;
+        expect(added.refusal.raw, what).toContain(named);
       } finally {
         await server.stop();
       }
@@ -1308,7 +1428,12 @@ describe("what a folder is", () => {
         defaults: {
           type: "core.note",
           tier: "feed",
-          properties: { language: "en", status: "draft" },
+          properties: {
+            language: "en",
+            status: "draft",
+            body: "a default body",
+            title: "Untitled",
+          },
           tags: ["inbox"],
           edges: { references: [target], "parent-of": [parent] },
         },
@@ -1354,6 +1479,19 @@ describe("what a folder is", () => {
       note?.properties,
       "a default went over what the file's own frontmatter says, or left a blank unfilled",
     ).toMatchObject({ status: "mine", language: "en" });
+    expect(
+      (note?.properties as Record<string, unknown>).body,
+      "a default for the body field went over the file's body",
+    ).toBe("body\n");
+    // A default title is a property the file leaves blank, taken over the
+    // file's name.
+    const plain = creates.find(
+      (sent) =>
+        (sent.properties as Record<string, unknown>).body === "a text file\n",
+    );
+    expect((plain?.properties as Record<string, unknown>).title).toBe(
+      "Untitled",
+    );
     expect(creates).toHaveLength(4);
     expect(
       creates.map((sent) => sent.tier),
@@ -1489,7 +1627,8 @@ describe("what a folder is", () => {
       "the folder queued the work and sent none of it, so discarding the container would lose it",
     ).toBeGreaterThan(0);
 
-    // Discarded. Nothing outside the directory held anything.
+    // Discarded. Outside the directory only the registry's entry names the
+    // folder, and it holds none of the folder's state.
     rmSync(harness.dir, { recursive: true, force: true });
     expect(
       (await harness.folder.scan()).ok,
@@ -1571,6 +1710,19 @@ describe("what a folder's search holds", () => {
         ],
       },
       held: ["fed.md"],
+    },
+    {
+      condition: "no tier, which holds the library tier",
+      settings: { search: { types: ["core.note"] } },
+      rows: {
+        "core.note": [
+          note("01a00000-0000-7000-8000-000000000223", "fed", {
+            tier: "feed",
+          }),
+          note("01a00000-0000-7000-8000-000000000224", "kept"),
+        ],
+      },
+      held: ["kept.md"],
     },
     {
       condition: "state",
@@ -2033,7 +2185,8 @@ describe("files and items", () => {
     put(
       harness,
       "note.md",
-      "---\ntitle: A note\ncount: 3\nundeclared_field: kept\nnested:\n  deep: true\n---\nThe body.\n",
+      // A line named for the body field is overwritten by the body.
+      "---\ntitle: A note\ncount: 3\nundeclared_field: kept\nnested:\n  deep: true\nbody: a line of its own\n---\nThe body.\n",
     );
     expect((await harness.folder.push()).ok).toBe(true);
 
@@ -2242,11 +2395,12 @@ describe("files and items", () => {
     harness = await folderHarness("folder-unresolved-link");
     scriptFolderWrites(harness);
     put(harness, "target.md", "---\ntitle: Target\n---\nthe other end\n");
+    put(harness, "other.md", "---\ntitle: Other\n---\nanother end\n");
     expect((await harness.folder.scan()).ok).toBe(true);
     put(
       harness,
       "source.md",
-      "---\ntitle: Source\n---\nsee [[target]] for more\n",
+      "---\ntitle: Source\n---\nsee [[target]] for more, and [[other]]\n",
     );
     expect((await harness.folder.push()).ok).toBe(true);
 
@@ -2254,17 +2408,16 @@ describe("files and items", () => {
     const before = await device.queue();
     expect(before.ok).toBe(true);
     if (!before.ok) return;
+    const made = withoutPlacements(harness, before.value).filter(
+      (row) => row.kind === "create_edge",
+    );
     expect(
-      withoutPlacements(harness, before.value).filter(
-        (row) => row.kind === "create_edge",
-      ).length,
-      "the link never became an edge, so there is nothing here for a later scan to remove",
-    ).toBe(1);
+      made.length,
+      "the links never became edges, so there is nothing here for a later scan to remove",
+    ).toBe(2);
 
-    // Tidying: the target is renamed and the source is edited in one window,
-    // which is what people do. The link still says `target` and now resolves
-    // to nothing — and a link that names nothing looks exactly like a link
-    // that has gone.
+    // A link naming nothing looks like one gone, so while `target` names
+    // nothing, taking out `other` removes nothing.
     renameSync(join(harness.dir, "target.md"), join(harness.dir, "moved.md"));
     writeFileSync(
       join(harness.dir, "source.md"),
@@ -2285,8 +2438,29 @@ describe("files and items", () => {
       withoutPlacements(harness, queued.value).filter(
         (row) => row.kind === "delete_edge",
       ),
-      "the folder destroyed the edge because the link stopped resolving, so renaming a file while editing another quietly cuts the connection between them and the line stays in the body saying otherwise",
+      "the folder destroyed an edge while a link stopped resolving, so renaming a file while editing another quietly cuts a connection, the one whose link is gone as well as the one whose link still says otherwise",
     ).toEqual([]);
+
+    // The witness: once every link resolves, the removal of `other`'s edge
+    // lands, and only that one.
+    writeFileSync(
+      join(harness.dir, "source.md"),
+      "---\ntitle: Source\n---\nsee [[moved]] for more, and a word\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    const after = await device.queue();
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    const other = sentCreates(harness).find(
+      (sent) => (sent.properties as Record<string, unknown>).title === "Other",
+    );
+    const toOther = made.find((row) => row.target_id === other?.id);
+    expect(toOther).toBeDefined();
+    expect(
+      withoutPlacements(harness, after.value)
+        .filter((row) => row.kind === "delete_edge")
+        .map((row) => row.edge_id),
+    ).toEqual([toOther?.edge_id]);
   });
 
   it("remembers a link it stood down over, so a later removal still lands", async () => {
@@ -2434,10 +2608,18 @@ describe("files and items", () => {
 
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
     expect(
       read(harness, "elsewhere.md"),
       "a push wrote the folder out from a copy that never heard of the change another device made",
     ).toContain("changed on another device");
+    // Taken from the log: the witness that a push can hydrate is `› hydrates
+    // again at a push whose cursor the log has aged past`.
+    expect(pushed.value.catch_up.caught_up?.applied).toBe(1);
+    expect(
+      [pushed.value.hydrated, pushed.value.catch_up.hydrated ?? null],
+      "the push hydrated to take a change the log held",
+    ).toEqual([null, null]);
   });
 
   it("takes another device's change while watching, without a hydration", async () => {
@@ -2727,26 +2909,39 @@ describe("files and items", () => {
     harness = await folderHarness("folder-links-same-scan");
     scriptFolderWrites(harness);
     // Both new in one scan, each naming the other. The walk returns them
-    // sorted, so one is reached before the other is bound.
-    put(harness, "alpha.md", "---\ntitle: Alpha\n---\nsee [[omega]]\n");
+    // sorted, so one is reached before the other is bound; the first names
+    // the second in a line too.
+    put(
+      harness,
+      "alpha.md",
+      '---\ntitle: Alpha\nchild-of: "[[omega]]"\n---\nsee [[omega]]\n',
+    );
     put(harness, "omega.md", "---\ntitle: Omega\n---\nsee [[alpha]]\n");
     expect((await harness.folder.push()).ok).toBe(true);
 
-    const queued = await harness.folder.device().queue();
-    expect(queued.ok).toBe(true);
-    if (!queued.ok) return;
-    const edges = withoutPlacements(harness, queued.value).filter(
-      (row) => row.kind === "create_edge",
-    );
     const creates = sentCreates(harness);
     expect(
       creates.length,
       "the two files never became items, so there is nothing for an edge to join",
     ).toBe(2);
+    const id = (title: string): string =>
+      String(
+        creates.find(
+          (sent) =>
+            (sent.properties as Record<string, unknown>).title === title,
+        )?.id,
+      );
+    const [alpha, omega] = [id("Alpha"), id("Omega")];
     expect(
-      edges.length,
-      "a link to a file that arrived in the same scan never became an edge, and no later scan retries it because both files are unchanged from then on",
-    ).toBe(2);
+      sentEdgeWrites(harness).sort(),
+      "a link or a line naming a file that arrived in the same scan never became an edge, and no later scan retries it because both files are unchanged from then on",
+    ).toEqual(
+      [
+        `create ${alpha} references ${omega}`,
+        `create ${omega} references ${alpha}`,
+        `create ${omega} parent-of ${alpha}`,
+      ].sort(),
+    );
   });
 
   it("carries body links to edges, and an edge no link names to a line", async () => {
@@ -5124,10 +5319,12 @@ describe("embedded files", () => {
     writeFileSync(join(harness.dir, "a.png"), png(1));
     writeFileSync(join(harness.dir, "b.png"), png(2));
     put(harness, "Dr. Smith.md", "---\ntitle: Dr. Smith\n---\na person\n");
+    // A `.txt` file here is a document, so its embed is a note's too.
+    put(harness, "plain.txt", "a text file\n");
     put(
       harness,
       "Note.md",
-      "---\ntitle: Note\n---\n![](a.png)\n![](b.png)\n![[Dr. Smith]] ![[v1.2 plan]] ![[2024.05.01]] ![](Dr.%20Smith.md) ![](Other Note.md) ![](../away.png)\n",
+      "---\ntitle: Note\n---\n![](a.png)\n![](b.png)\n![[Dr. Smith]] ![[v1.2 plan]] ![[2024.05.01]] ![](Dr.%20Smith.md) ![](Other Note.md) ![](plain.txt) ![](../away.png)\n",
     );
     const first = await harness.folder.push();
     expect(first.ok, JSON.stringify(first)).toBe(true);
@@ -5406,6 +5603,40 @@ describe("embedded files", () => {
         [scan, "notes/logo.png"],
       ]),
     );
+  });
+
+  it("writes a file embedded by name where another embed's path names it", async () => {
+    // A fresh machine: nothing placed, nothing bound.
+    const made = await placedEmbeds(
+      "folder-embed-named-path",
+      [
+        {
+          id: host,
+          properties: { title: "One", body: "a logo ![](sub/logo.png)\n" },
+        },
+        {
+          id: other,
+          properties: { title: "Two", body: "the same ![[logo.png]]\n" },
+        },
+        fileRow(scan, "logo.png", png(4)),
+      ],
+      [
+        attached("01a00000-0000-7000-8000-00000000e2f1", scan, host),
+        attached("01a00000-0000-7000-8000-00000000e2f2", scan, other),
+      ],
+      {},
+    );
+    harness = made.harness;
+    scriptBlob(harness.server, png(4));
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(readFileSync(join(harness.dir, "sub", "logo.png"))).toEqual(png(4));
+    expect(
+      existsSync(join(harness.dir, "logo.png")),
+      "a name another embed's path answers to was written beside its note",
+    ).toBe(false);
+    expect(pulled.value.embeds).toEqual([]);
   });
 
   it("follows an embedded file renamed away from its link, and says the link names nothing", async () => {
@@ -6260,17 +6491,33 @@ describe("what frontmatter says", () => {
       "---\nbase: &b {x: 1}\nmerged:\n  <<: *b\n---\nbody\n",
     );
     put(harness, "Keyed.md", "---\n1: one\n---\nbody\n");
+    // Empty text is neither a tag nor a state, so these are held; only YAML's
+    // null means none.
+    put(
+      harness,
+      "EmptyTags.md",
+      '---\ntitle: EmptyTags\ntags: ""\n---\nbody\n',
+    );
+    put(
+      harness,
+      "EmptyState.md",
+      '---\ntitle: EmptyState\nstate: ""\n---\nbody\n',
+    );
+    // The witness: a new file that parses, in the same push, is sent.
+    put(harness, "Readable.md", "---\ntitle: Readable\n---\nbody\n");
 
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     if (!pushed.ok) return;
     expect(
-      [sentUpdates(harness).length, sentCreates(harness).length],
+      [sentUpdates(harness).length, sentTitles(harness)],
       "frontmatter that does not parse was sent, its lines as body text or its fields lost",
-    ).toEqual([0, 0]);
+    ).toEqual([0, ["Readable"]]);
     expect(
       pushed.value.scan.flagged.map((file) => [file.path, file.flag]),
     ).toEqual([
+      ["EmptyState.md", "unreadable"],
+      ["EmptyTags.md", "unreadable"],
       ["Held.md", "unreadable"],
       ["Keyed.md", "unreadable"],
       ["Merged.md", "unreadable"],
@@ -6295,12 +6542,15 @@ describe("what frontmatter says", () => {
     ).toBe(broken);
     expect(rows.get(id)?.properties.body).toBe("as it was\n");
 
-    // Moved while unreadable, it is still that item's file.
+    // Moved while unreadable, it is still that item's file; the witness is
+    // a readable file taken out in the same pass, which is missing.
     renameSync(join(harness.dir, "Held.md"), join(harness.dir, "Moved.md"));
+    rmSync(join(harness.dir, "Readable.md"));
     const moved = await harness.folder.push();
     expect(moved.ok).toBe(true);
     if (!moved.ok) return;
-    expect(moved.value.scan.missing).toBe(0);
+    expect(moved.value.scan.missing).toBe(1);
+    expect(sentUpdates(harness)).toEqual([]);
 
     // Mended, it is sent.
     writeFileSync(
@@ -6309,6 +6559,8 @@ describe("what frontmatter says", () => {
     );
     const mended = await harness.folder.push();
     expect(mended.ok, JSON.stringify(mended)).toBe(true);
+    // The witness to every absent update above: once it parses, it is sent.
+    expect(sentUpdates(harness).map((sent) => sent.id)).toEqual([id]);
     expect(rows.get(id)?.properties.body).toBe("edited\n");
     expect(
       mended.ok && mended.value.pull?.flagged,
@@ -8243,12 +8495,15 @@ describe("identity", () => {
 
     // Two files that share an identity yield none for either: a hard link is
     // one inode, device and birth time on two paths.
+    await harness.stop();
+    harness = await folderHarness("folder-shared-identity");
+    scriptFolderWrites(harness);
     put(harness, "original.txt", "linked\n");
     expect((await harness.folder.scan()).ok).toBe(true);
     linkSync(join(harness.dir, "original.txt"), join(harness.dir, "hard.txt"));
     renameSync(
       join(harness.dir, "original.txt"),
-      join(harness.dir, "moved.txt"),
+      join(harness.dir, "renamed.txt"),
     );
     const shared = await harness.folder.scan();
     expect(shared.ok).toBe(true);
@@ -8257,6 +8512,21 @@ describe("identity", () => {
       shared.value.renamed,
       "a file whose identity two paths share was followed as a rename, and the folder cannot know which of the two it remembers",
     ).toBe(0);
+    expect([shared.value.created, shared.value.missing]).toEqual([2, 1]);
+
+    // Back at its own bound path, still with no identity, it keeps its item.
+    renameSync(
+      join(harness.dir, "renamed.txt"),
+      join(harness.dir, "original.txt"),
+    );
+    const back = await harness.folder.scan();
+    expect(back.ok).toBe(true);
+    if (!back.ok) return;
+    expect(
+      back.value.created,
+      "a file with no identity at the path its item is bound to became a new item",
+    ).toBe(0);
+    expect(back.value.missing).toBe(1);
   });
 
   it("resolves identity over the files it holds, not every file in the tree", async () => {
@@ -10136,6 +10406,69 @@ describe("writing", () => {
     expect(read(harness!, "Note.md")).toMatch(/^status: draft$/m);
   });
 
+  it("merges a file whose line names a version the copy skipped against that line", async () => {
+    const id = "01a00000-0000-7000-8000-000000001493";
+    harness = await folderHarness("folder-skipped-version", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Note", body: "as read\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("3", [
+          itemEvent(
+            "3",
+            "item.updated",
+            wireItem({
+              id,
+              version: 3,
+              properties: { title: "Retitled", body: "as read\n" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    let door: FolderDoor | undefined;
+    scriptFolderWrites(harness, {
+      door: (made) => {
+        door = made;
+      },
+    });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    door?.update(id, { properties: { title: "Titled" }, version: 1 });
+    door?.update(id, { properties: { title: "Retitled" }, version: 2 });
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The copy went from 1 to 3 and never held 2.
+    const written = read(harness, "Note.md");
+    expect(written).toContain("marfa_version: 3");
+    put(
+      harness,
+      "Note.md",
+      written
+        .replace("marfa_version: 3", "marfa_version: 2")
+        .replace("as read", "my edit"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    const [edit] = sentUpdates(harness).filter((sent) => sent.id === id);
+    expect(
+      [edit?.body.version, edit?.body.properties_mode],
+      "a line lower than the copy's that it never held went on the copy's version, or whole",
+    ).toEqual([2, undefined]);
+    expect(pushed.value.scan.flagged, "the merge was flagged").toEqual([]);
+    expect(door?.rows.get(id)?.properties).toEqual({
+      title: "Retitled",
+      body: "my edit\n",
+    });
+  });
+
   it("sends a save after a refused edit as behind, keeping what another machine changed or added", async () => {
     const id = "01a00000-0000-7000-8000-000000001492";
     const edges = new EdgeDoor();
@@ -11064,6 +11397,89 @@ describe("what a folder takes", () => {
     ).toEqual([0, 0]);
   });
 
+  it("takes nothing under a dot-led directory a negated include line names", async () => {
+    harness = await folderHarness("folder-include-negated", {
+      settings: {
+        search: { types: ["core.note"] },
+        include: ["*", "!.git/"],
+      },
+    });
+    scriptFolderWrites(harness);
+    put(harness, ".git/notes.md", "---\ntitle: Hidden\n---\nbody\n");
+    put(harness, "plain.md", "---\ntitle: Plain\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the file beside it is taken.
+    expect(
+      sentTitles(harness),
+      "a file under a directory a `!` line names was taken",
+    ).toEqual(["Plain"]);
+  });
+
+  it("writes nothing under a dot-led directory its walk does not enter", async () => {
+    const id = "01a00000-0000-7000-8000-0000000018a1";
+    const placed = (include: string[]) => ({
+      settings: {
+        search: { types: ["core.note"] },
+        include,
+        first_placement: { "core.note": ".notes/.hidden" },
+      },
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "Placed", body: "b\n" } } },
+        ],
+      },
+    });
+    // The witness: where both dot-led names are included, the file is
+    // written there.
+    const both = await folderHarness(
+      "folder-dot-led-both",
+      placed([".notes/", ".hidden/"]),
+    );
+    try {
+      expect((await both.folder.pull()).ok).toBe(true);
+      expect(existsSync(join(both.dir, ".notes/.hidden/Placed.md"))).toBe(true);
+    } finally {
+      await both.stop();
+    }
+    harness = await folderHarness("folder-dot-led-one", placed([".notes/"]));
+    scriptFolderWrites(harness);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(
+      existsSync(join(harness.dir, ".notes/.hidden/Placed.md")),
+      "a pull wrote under a dot-led directory no scan walks, where the next scan would read it as gone",
+    ).toBe(false);
+  });
+
+  it("says a refused secret in words once while watching", async () => {
+    harness = await folderHarness("folder-secret-watch");
+    scriptFolderWrites(harness);
+    put(harness, ".env", "TOKEN=not-a-real-one\n");
+    const watching = harness.folder.watchText();
+    let quiet = "";
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain(".env: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+      // Passes enough for a line said at every one to show more than once.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      quiet = watching.stdout;
+      // One arriving while it watches is said as it arrives.
+      put(harness, "id_ed25519", "not a real key\n");
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("id_ed25519: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      quiet.split(".env: not taken").length - 1,
+      `a watch said the same refused secret at every pass: ${quiet}`,
+    ).toBe(1);
+  });
+
   it("does not walk into a package", async () => {
     harness = await folderHarness("folder-package", {
       settings: {
@@ -11236,9 +11652,13 @@ describe("what a folder takes", () => {
   });
 
   it("keeps its own state in .marfa and never pushes it", async () => {
-    harness = await folderHarness("folder-state");
+    // An include line naming `.marfa/` takes nothing under it either.
+    harness = await folderHarness("folder-state", {
+      settings: { search: { types: ["core.note"] }, include: [".marfa/", "*"] },
+    });
     scriptFolderWrites(harness);
     put(harness, "note.md", "---\ntitle: A note\n---\nbody\n");
+    put(harness, ".marfa/stray.md", "---\ntitle: Stray\n---\nbody\n");
     expect((await harness.folder.push()).ok).toBe(true);
 
     expect(
@@ -11372,6 +11792,17 @@ describe("what a folder takes", () => {
       pulled.value.unwritten,
       "the folder left the file alone and said nothing about it, so the item it could not write reads as an ordinary quiet pull",
     ).toBeGreaterThan(0);
+
+    // The next scan pushes the file as a new item, and never as the item
+    // that wanted its path.
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(sentTitles(harness)).toEqual(["Mine"]);
+    expect(
+      sentUpdates(harness),
+      "the file went to the item that wanted its path",
+    ).toEqual([]);
+    expect(read(harness, "note.md")).toContain("an afternoon of it");
   });
 
   it("takes back a file of its own the mapping had lost", async () => {
@@ -11454,6 +11885,12 @@ describe("what a folder takes", () => {
     // A file the folder does not carry: not a document, so not a note.
     put(harness, "photo.png", "not text at all");
     put(harness, "inside.md", "---\ntitle: Inside\n---\nin the slice\n");
+    // A document is pushed whatever type its line names.
+    put(
+      harness,
+      "typed.md",
+      "---\ntitle: Typed\ntype: core.bookmark\n---\nnamed outside\n",
+    );
     const pushed = await harness.folder.push();
     expect(pushed.ok).toBe(true);
     if (!pushed.ok) return;
@@ -11462,9 +11899,19 @@ describe("what a folder takes", () => {
       "a file outside the folder's slice was pushed as a note, so anything dropped in the directory becomes an item of whatever type the folder defaults to",
     ).toBe(1);
     expect(
-      sentTitles(harness),
-      "the file outside the slice reached the server",
-    ).toEqual(["Inside"]);
+      sentCreates(harness).map((sent) => [
+        (sent.properties as Record<string, unknown>).title,
+        sent.type,
+      ]),
+      "the file outside the slice reached the server, or a document naming a type outside it did not",
+    ).toEqual([
+      ["Inside", "core.note"],
+      ["Typed", "core.bookmark"],
+    ]);
+    expect(
+      pushed.value.pull?.unmatched,
+      "a document pushed as a type the search does not hold was not flagged outside it",
+    ).toBe(1);
     expect(
       readFileSync(join(harness.dir, "photo.png"), "utf8"),
       "the folder rewrote a file it does not carry",
@@ -12293,6 +12740,61 @@ describe("a file that is not a document", () => {
     ).toEqual(photo);
   });
 
+  it("counts absent the bytes a failing server, a rate limit or an unreadable held copy cannot give", async () => {
+    const image = (id: string, title: string, bytes: Buffer) => ({
+      item: {
+        id,
+        type: "core.file.image",
+        properties: { title, blob_ref: hashOf(bytes), mime_type: "image/png" },
+      },
+    });
+    const [failing, limited, held] = [2, 3, 4].map((last) =>
+      Buffer.concat([photo, Buffer.from([last])]),
+    ) as [Buffer, Buffer, Buffer];
+    harness = await folderHarness("folder-file-absent", {
+      settings,
+      rows: {
+        "core.file": [
+          image("01a00000-0000-7000-8000-0000000000fa", "failing.png", failing),
+          image("01a00000-0000-7000-8000-0000000000fb", "limited.png", limited),
+          image("01a00000-0000-7000-8000-0000000000fc", "held.png", held),
+        ],
+      },
+    });
+    for (const [bytes, answer] of [
+      [failing, refusal(503, "service_unavailable", "try again")],
+      [limited, answers.rateLimited()],
+    ] as const) {
+      harness.server.answer("GET", `/blobs/${hashOf(bytes)}/url`, answer);
+      scriptBlob(harness.server, bytes);
+    }
+    // Held beside the copy already, and unreadable there.
+    const blobs = join(harness.dir, ".marfa", "core.sqlite.blobs");
+    mkdirSync(blobs, { recursive: true });
+    const copy = join(blobs, hashOf(held).slice("sha256:".length));
+    writeFileSync(copy, held);
+    chmodSync(copy, 0o000);
+    try {
+      const pulled = await harness.folder.pull();
+      expect(
+        pulled.ok,
+        `a file whose bytes could not be had ended the pull: ${JSON.stringify(pulled)}`,
+      ).toBe(true);
+      if (!pulled.ok) return;
+      expect(pulled.value.absent).toBe(3);
+      expect(pulled.value.written).toBe(0);
+    } finally {
+      chmodSync(copy, 0o600);
+    }
+    // The witness: with the server answering and the copy readable, each is
+    // written.
+    const again = await harness.folder.pull();
+    expect(again.ok && [again.value.absent, again.value.written]).toEqual([
+      0, 3,
+    ]);
+    expect(readFileSync(join(harness.dir, "held.png"))).toEqual(held);
+  });
+
   it("holds a file's move behind an edit of its bytes that waits on their upload", async () => {
     const id = "01a00000-0000-7000-8000-0000000000f7";
     const text = Buffer.from("plain text a server holds as a file\n");
@@ -13006,6 +13508,54 @@ describe("folders on one Mac", () => {
     ).toBe(1);
   });
 
+  it("keeps a file saved back where another folder took the item's file from as the item's while its binding lasts", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000023b1",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "saved-back",
+      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan, tags: ["a"] }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    const held = read(a, "Plan.md");
+    edges.events.push(
+      itemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(plan),
+        { tags: ["b"] },
+      ),
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    const took = await b.folder.push();
+    expect(took.ok && took.value.pull?.taken).toBe(1);
+
+    // An editor that held the file saves it back, inside the grace: the
+    // binding of that path still names the item.
+    const scanned = await a.folder.scan();
+    expect(scanned.ok && scanned.value.missing).toBe(1);
+    writeFileSync(
+      join(a.dir, "Plan.md"),
+      held.replace("the plan\n", "saved back\n"),
+    );
+    const creates = sentCreates(a).length;
+    const pushed = await a.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value.scan.created,
+      "a file saved back while its binding lasted was read as a copy",
+    ).toBe(0);
+    expect(sentCreates(a)).toHaveLength(creates);
+    expect(
+      sentUpdates(a).map((sent) => sent.id),
+      "the saved-back file's edit did not reach the item",
+    ).toContain(plan.id);
+  });
+
   it("does not take another folder's file with the same bytes for a moved one", async () => {
     const { a, b } = await onOneMac(
       "same-bytes",
@@ -13106,7 +13656,22 @@ describe("folders on one Mac", () => {
   });
 
   it("refuses a folder inside another, and walks past a folder inside it", async () => {
-    harness = await folderHarness("nested-outer");
+    harness = await folderHarness("nested-outer", {
+      settings: {
+        search: { types: ["core.note"] },
+        first_placement: { "core.note": "inner/" },
+      },
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000043a1",
+              properties: { title: "Placed", body: "from elsewhere\n" },
+            },
+          },
+        ],
+      },
+    });
     // Before the item doors, whose read would answer for any id.
     const innerRow = scriptFolderRow(harness.server, {
       search: { types: ["core.note"] },
@@ -13138,11 +13703,60 @@ describe("folders on one Mac", () => {
     mkdirSync(join(harness.dir, "inner", ".marfa"));
     put(harness, "inner/theirs.md", "---\ntitle: Theirs\n---\nnot ours\n");
     put(harness, "ours.md", "---\ntitle: Ours\n---\nours\n");
-    expect((await harness.folder.push()).ok).toBe(true);
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
     expect(
       sentTitles(harness),
       "the walk went into a folder inside this one",
     ).toEqual(["Ours"]);
+    // Nor does a pull write where its walk never reads back.
+    expect(
+      existsSync(join(harness.dir, "inner", "Placed.md")),
+      "a pull wrote into a folder inside this one",
+    ).toBe(false);
+    expect(pushed.value.pull?.outside).toBe(1);
+    // The witness: with no folder there, the pull writes it.
+    rmSync(join(harness.dir, "inner", ".marfa"), { recursive: true });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(existsSync(join(harness.dir, "inner", "Placed.md"))).toBe(true);
+  });
+
+  it("holds a bound file whose directory becomes a folder inside this one, and trashes nothing", async () => {
+    harness = await folderHarness("nested-later");
+    scriptFolderWrites(harness);
+    put(harness, "inner/kept.md", "---\ntitle: Kept\n---\nbound here\n");
+    put(harness, "gone.md", "---\ntitle: Gone\n---\ndeleted outright\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = (title: string): string =>
+      String(
+        sentCreates(harness!).find(
+          (sent) =>
+            (sent.properties as Record<string, unknown>).title === title,
+        )?.id,
+      );
+
+    // Another folder's state lands in the directory, and a file goes.
+    mkdirSync(join(harness.dir, "inner", ".marfa"));
+    rmSync(join(harness.dir, "gone.md"));
+    const first = await harness.folder.push();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect([first.value.scan.unreached, first.value.scan.missing]).toEqual([
+      1, 1,
+    ]);
+    await pastTheGrace();
+    const swept = await harness.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    // The witness: the file deleted outright in the same pass is trashed.
+    expect(swept.value.scan.trashed).toEqual(["gone.md"]);
+    expect(deletesOf(harness.server, id("Gone"))).toBe(1);
+    expect(
+      deletesOf(harness.server, id("Kept")),
+      "a file bound under a directory that became a folder was trashed",
+    ).toBe(0);
+    expect(swept.value.scan.unreached).toBe(1);
   });
 
   it("refuses to remove a folder a watch holds", async () => {
@@ -13539,11 +14153,62 @@ describe("folders on one Mac", () => {
       id: "01a00000-0000-7000-8000-0000000041d1",
       properties: { title: "Plan", body: "the plan\n" },
     };
+    const brief = {
+      id: "01a00000-0000-7000-8000-0000000041d3",
+      properties: { title: "Brief", body: "the brief\n" },
+    };
+    const picture = Buffer.from(
+      "a picture fetched before the brief is taken\n",
+    );
+    // Made later than the brief, so the pull that takes the brief in
+    // fetches it first.
+    const image = {
+      id: "01a00000-0000-7000-8000-0000000041d4",
+      type: "core.file.image",
+      created_at: "2026-09-19T00:00:00.000Z",
+      properties: {
+        title: "picture.png",
+        blob_ref: hashOf(picture),
+        mime_type: "image/png",
+      },
+    };
     const { a, b, edges } = await onOneMac(
       "let-go-edited",
       { search: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
-      { "core.note": [{ item: plan, tags: ["a"] }] },
+      {
+        search: {
+          types: ["core.note", "core.file"],
+          filter: 'tags contains "b"',
+        },
+      },
+      {
+        "core.note": [
+          { item: plan, tags: ["a"] },
+          { item: brief, tags: ["a"] },
+        ],
+        "core.file": [{ item: image }],
+      },
+      (server) => {
+        // The brief is edited while the pull that would take it in fetches
+        // this picture, after it read the brief and before it moves it.
+        const hex = hashOf(picture).slice("sha256:".length);
+        server.answer(
+          "GET",
+          `/blobs/${hashOf(picture)}/url`,
+          writeAnswers.link(`${server.url}/links/${hex}`),
+        );
+        server.answer("GET", `/links/${hex}`, () => {
+          const path = join(harness!.dir, "Brief.md");
+          writeFileSync(
+            path,
+            readFileSync(path, "utf8").replace(
+              "the brief\n",
+              "edited mid-pull\n",
+            ),
+          );
+          return { kind: "bytes", status: 200, body: picture };
+        });
+      },
     );
     expect((await a.folder.pull()).ok).toBe(true);
     edges.events.push(
@@ -13567,6 +14232,74 @@ describe("folders on one Mac", () => {
       "a let-go file was taken in with an edit its folder had not read, so the edit is never sent",
     ).toBe(0);
     expect(read(a, "Plan.md")).toContain("edited, not yet read\n");
+
+    // Edited after the pull that takes it in read it, it is read again just
+    // before it is taken.
+    for (const item of [brief, image]) {
+      edges.events.push(
+        itemEvent(
+          String(edges.events.length + 2),
+          "metadata.changed",
+          wireItem(item),
+          { tags: ["b"] },
+        ),
+      );
+    }
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(read(a, "Brief.md")).toContain("the brief\n");
+    const racing = await b.folder.push();
+    expect(racing.ok, JSON.stringify(racing)).toBe(true);
+    if (!racing.ok) return;
+    expect(
+      existsSync(join(b.dir, "picture.png")),
+      "the picture was not fetched, so nothing edited the brief mid-pull",
+    ).toBe(true);
+    expect(
+      racing.value.pull?.taken,
+      "a let-go file edited after the pull read it was taken in, its edit with it",
+    ).toBe(0);
+    expect(read(a, "Brief.md")).toContain("edited mid-pull\n");
+    expect(read(b, "Brief.md")).toContain("the brief\n");
+  });
+
+  it("does not take in the file of an item that left its folder by state", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-0000000041d2",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "left-by-state",
+      { search: { types: ["core.note"], state: ["active"] } },
+      { search: { types: ["core.note"], state: ["archived"] } },
+      { "core.note": [{ item: plan }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect((await b.folder.pull()).ok).toBe(true);
+    expect(existsSync(join(b.dir, "Plan.md"))).toBe(false);
+    edges.events.push(
+      itemEvent(
+        String(edges.events.length + 2),
+        "item.updated",
+        wireItem({ ...plan, version: 2, state: "archived" }),
+      ),
+    );
+    // The folder it left has heard, and not pulled yet: its file is still
+    // there, its own bytes, for a pull to take away (35).
+    const heard = await a.folder.device().catchUp();
+    expect(heard.ok && heard.value.applied).toBe(1);
+    const pulled = await b.folder.push();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(
+      pulled.value.pull?.taken,
+      "a file its folder was taking away by state was taken in, as though it had been let go",
+    ).toBe(0);
+    expect(pulled.value.pull?.written).toBe(1);
+    expect(read(b, "Plan.md")).toContain("state: archived");
+    expect(existsSync(join(a.dir, "Plan.md"))).toBe(true);
+    const left = await a.folder.pull();
+    expect(left.ok && left.value.removed).toBe(1);
+    expect(existsSync(join(a.dir, "Plan.md"))).toBe(false);
   });
 
   it("refuses to remove a folder with a blocked write", async () => {
@@ -13741,11 +14474,19 @@ describe("folders on one Mac", () => {
         deletesOf(a.server, gone),
         "a folder that could not be read was dropped, and a missing file trashed",
       ).toBe(0);
+      expect(held.value.scan.unsure.map((file) => file.path)).toEqual([
+        "Gone.md",
+      ]);
       const listed = await a.folder.list();
       expect(listed.ok && listed.value.length).toBe(2);
     } finally {
       chmodSync(b.dir, 0o755);
     }
+    // The witness: readable again, the folder holds no file, and the delete
+    // goes.
+    const swept = await a.folder.push();
+    expect(swept.ok && swept.value.scan.trashed).toEqual(["Gone.md"]);
+    expect(deletesOf(a.server, gone)).toBe(1);
   });
 
   it("holds a delete while another folder cannot be read whole", async () => {
@@ -13839,6 +14580,43 @@ describe("folders on one Mac", () => {
       "deleting one of two folders' files for one item did not trash it, so the other folder's file was taken for this one moved",
     ).toBe(1);
     expect(swept.value.scan.trashed).toEqual(["Shared.md"]);
+  });
+
+  it("finds a file moved into a dot-led directory the other folder includes", async () => {
+    const moved = "01a00000-0000-7000-8000-0000000018b1";
+    const deleted = "01a00000-0000-7000-8000-0000000018b2";
+    const { a, b } = await onOneMac(
+      "move-dot-led",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] }, include: [".notes/"] },
+      {
+        "core.note": [
+          { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
+          {
+            item: {
+              id: deleted,
+              properties: { title: "Deleted", body: "d\n" },
+            },
+          },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    mkdirSync(join(b.dir, ".notes"), { recursive: true });
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, ".notes", "Moved.md"));
+    rmSync(join(a.dir, "Deleted.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(
+      deletesOf(a.server, moved),
+      "a file moved into a dot-led directory the other folder includes was read as a delete",
+    ).toBe(0);
+    expect(swept.value.scan.moved_away).toBe(1);
+    // The witness: the same sweep trashes a file found nowhere.
+    expect(deletesOf(a.server, deleted)).toBe(1);
   });
 
   it("looks for a paused removal's files in the other folders before confirming it", async () => {
@@ -14199,5 +14977,152 @@ describe("reading only what changed", () => {
     expect(idOf(harness, "copy.md")).toBe(copy);
     expect(idOf(harness, "note.md")).toBe(id);
     expect(sentUpdates(harness)).toEqual([]);
+  });
+});
+
+describe("a file's permission", () => {
+  const runs = (h: FolderHarness, name: string) =>
+    (statSync(join(h.dir, name)).mode & 0o100) !== 0;
+
+  it("keeps a file's executable permission", async () => {
+    harness = await folderHarness("folder-executable-push", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    writeFileSync(join(harness.dir, "run.sh"), "#!/bin/sh\necho run\n");
+    chmodSync(join(harness.dir, "run.sh"), 0o755);
+    writeFileSync(join(harness.dir, "data.bin"), Buffer.from([1, 2, 3]));
+    chmodSync(join(harness.dir, "data.bin"), 0o644);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const created = (title: string) =>
+      sentCreates(harness!).find(
+        (create) =>
+          (create.properties as Record<string, unknown>).title === title,
+      );
+    expect(
+      (created("run.sh")?.properties as Record<string, unknown>).executable,
+      "a file its owner may run went without its permission",
+    ).toBe(true);
+    // The witness: a file its owner may not run carries no property.
+    expect(created("data.bin")?.properties).not.toHaveProperty("executable");
+
+    // Changed alone, under a watch past its first pass.
+    const watching = harness.folder.watch();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      chmodSync(join(harness.dir, "run.sh"), 0o644);
+      chmodSync(join(harness.dir, "data.bin"), 0o755);
+      await vi.waitFor(() => expect(sentUpdates(harness!)).toHaveLength(2), {
+        timeout: 20_000,
+        interval: 100,
+      });
+    } finally {
+      await watching.stop();
+    }
+    const sent = Object.fromEntries(
+      sentUpdates(harness).map((update) => [
+        update.id,
+        (update.body.properties as Record<string, unknown>).executable,
+      ]),
+    );
+    expect(sent).toEqual({
+      [String(created("run.sh")?.id)]: false,
+      [String(created("data.bin")?.id)]: true,
+    });
+    expect(sentUpdates(harness)).toHaveLength(2);
+  });
+
+  it("gives a pulled file the permission its item holds", async () => {
+    const tool = "01a00000-0000-7000-8000-00000000f501";
+    const plain = "01a00000-0000-7000-8000-00000000f502";
+    const later = "01a00000-0000-7000-8000-00000000f503";
+    const fileItem = (
+      id: string,
+      title: string,
+      bytes: Buffer,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      id,
+      version: 1,
+      type: "core.file",
+      properties: {
+        title,
+        blob_ref: hashOf(bytes),
+        mime_type: "application/octet-stream",
+        ...extra,
+      },
+    });
+    const [toolBytes, plainBytes, laterBytes] = [1, 2, 3].map((n) =>
+      Buffer.from([n, n, n]),
+    );
+    harness = await folderHarness("folder-executable-pull", {
+      settings: { search: { types: ["core.file"] } },
+      rows: {
+        "core.file": [
+          { item: fileItem(tool, "tool.bin", toolBytes, { executable: true }) },
+          { item: fileItem(plain, "plain.bin", plainBytes) },
+          { item: fileItem(later, "later.bin", laterBytes) },
+        ],
+      },
+      events: [
+        liveReplay("3", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              ...fileItem(later, "later.bin", laterBytes, { executable: true }),
+              version: 2,
+            }),
+          ),
+          itemEvent(
+            "3",
+            "item.updated",
+            wireItem({
+              ...fileItem(tool, "tool.bin", toolBytes, { executable: false }),
+              version: 2,
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    for (const bytes of [toolBytes, plainBytes, laterBytes]) {
+      scriptBlob(harness.server, bytes);
+    }
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(runs(harness, "tool.bin"), "a pulled file lost its permission").toBe(
+      true,
+    );
+    // The witness: an item that says nothing is written as not run.
+    expect(runs(harness, "plain.bin")).toBe(false);
+    expect(runs(harness, "later.bin")).toBe(false);
+
+    // The push's catch-up brings the changes, and its pull gives them to
+    // the files in place, sending nothing back.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      [runs(harness, "later.bin"), runs(harness, "tool.bin")],
+      "a permission changed elsewhere did not reach the file in place",
+    ).toEqual([true, false]);
+    expect(runs(harness, "plain.bin")).toBe(false);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness)).toEqual([]);
+
+    // Changed by the person since the scan read it, the permission is theirs:
+    // a pull leaves it, and the next push sends it.
+    chmodSync(join(harness.dir, "plain.bin"), 0o755);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      runs(harness, "plain.bin"),
+      "a pull undid the person's permission",
+    ).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      sentUpdates(harness).map((update) => [
+        update.id,
+        (update.body.properties as Record<string, unknown>).executable,
+      ]),
+    ).toEqual([[plain, true]]);
   });
 });

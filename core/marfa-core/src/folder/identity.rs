@@ -3,7 +3,8 @@
 //!
 //! Fail-closed: a file is the same file when its device, inode and birth time
 //! all match. A zero birth time yields no identity, an identity two files
-//! share yields none, and no identity means a new item, never a guess.
+//! share yields none, and no identity means no rename within the folder is
+//! followed, never a guess.
 
 use std::collections::HashMap;
 use std::fs::Metadata;

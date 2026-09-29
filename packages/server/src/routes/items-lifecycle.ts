@@ -8,7 +8,7 @@ import {
   requireReadableRow,
   requireTypeAccess,
 } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import type { CascadeRoot, Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
@@ -33,7 +33,7 @@ const restoreItemRoute = createRoute({
   tags: ["Items"],
   summary: "Restore a trashed item",
   description:
-    "Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored`; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
+    "Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -92,7 +92,7 @@ const transitionItemRoute = createRoute({
   tags: ["Items"],
   summary: "Transition item state",
   description:
-    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first.",
+    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -164,6 +164,7 @@ const transitionItemRoute = createRoute({
  */
 async function publishBroughtBack(
   storage: Storage,
+  restoredWith: CascadeRoot,
   broughtBack: readonly Item[],
 ): Promise<void> {
   for (const item of broughtBack) {
@@ -171,6 +172,7 @@ async function publishBroughtBack(
       type: "restored",
       item,
       metadata: await storage.metadata.get(item.id),
+      restoredWith,
     });
   }
 }
@@ -209,7 +211,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
       item: restored,
       metadata,
     });
-    await publishBroughtBack(storage, broughtBack);
+    await publishBroughtBack(storage, { id, type: pending.type }, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -280,7 +282,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
       item: updated,
       metadata,
     });
-    await publishBroughtBack(storage, broughtBack);
+    await publishBroughtBack(storage, { id, type: item.type }, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

@@ -2,7 +2,7 @@ import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import { envNumber } from "./config.js";
-import type { EventLogStore } from "./storage/interface.js";
+import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
@@ -47,14 +47,89 @@ export interface ItemEvent extends FanoutControl {
     | "metadata_changed";
   item: Item;
   metadata?: Metadata;
+  /** On `deleted` and `purged` of a row a cascade trashed: the row the
+   *  trash named. */
+  trashedWith?: CascadeRoot;
+  /** On `restored` alone: the row whose restore brought this one back. */
+  restoredWith?: CascadeRoot;
 }
 
 export interface EdgeEvent extends FanoutControl {
   type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
+  /** On `edge_deleted` alone: the item whose purge took the edge. */
+  purgedWith?: string;
 }
 
 export type PubsubEvent = ItemEvent | EdgeEvent;
+
+/**
+ * The frame as the log stores it: what a reader of every type is sent, plus
+ * the type of each row a mark names, which `frameFor` reads and strips.
+ */
+export function storedFrame(event: PubsubEvent): Record<string, unknown> {
+  if (isEdgeEvent(event)) {
+    return {
+      type: wireEventName(event.type),
+      edge: event.edge,
+      ...(event.purgedWith !== undefined && { purged_with: event.purgedWith }),
+    };
+  }
+  const { trashedWith, restoredWith } = event;
+  return {
+    type: wireEventName(event.type),
+    item: trashedWith
+      ? { ...event.item, ...cascadeMark(trashedWith, () => true) }
+      : event.item,
+    ...(trashedWith && { trashed_with_type: trashedWith.type }),
+    ...(restoredWith && {
+      restored_with: restoredWith.id,
+      restored_with_type: restoredWith.type,
+    }),
+    ...(event.metadata && { metadata: event.metadata }),
+  };
+}
+
+/**
+ * The mark on a row a cascade trashed: the flag to every reader, the id only
+ * to one that may read the named row's type.
+ */
+export function cascadeMark(
+  root: CascadeRoot,
+  mayRead: (type: string) => boolean,
+): { trashed_by_cascade: true; trashed_with?: string } {
+  return {
+    trashed_by_cascade: true,
+    ...(mayRead(root.type) && { trashed_with: root.id }),
+  };
+}
+
+/**
+ * A mark stays only where its named row's type is readable, since a frame
+ * decoded from the log gets no more trust than one built live.
+ */
+export function frameFor(
+  stored: Record<string, unknown>,
+  mayRead: (type: string) => boolean,
+): Record<string, unknown> {
+  const {
+    trashed_with_type: trashedType,
+    restored_with_type: restoredType,
+    ...frame
+  } = stored;
+  const readable = (type: unknown): boolean =>
+    typeof type === "string" && mayRead(type);
+  const item: unknown = frame.item;
+  if (typeof item === "object" && item !== null && "trashed_with" in item) {
+    const { trashed_with: named, ...rest } = item as Record<string, unknown>;
+    frame.item =
+      typeof named === "string" && readable(trashedType) ? item : rest;
+  }
+  if ("restored_with" in frame && !readable(restoredType)) {
+    delete frame.restored_with;
+  }
+  return frame;
+}
 
 export interface ItemEventWithId extends ItemEvent {
   /** event_log.id assigned by storage. `bigint` so values above
@@ -139,11 +214,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   let eventId: bigint | undefined;
 
   if (eventLogStore) {
-    const payload = JSON.stringify({
-      type: wireEventName(event.type),
-      item: event.item,
-      ...(event.metadata && { metadata: event.metadata }),
-    });
+    const payload = JSON.stringify(storedFrame(event));
     eventId = await eventLogStore.append({
       event_type: event.type,
       item_id: event.item.id,
@@ -170,7 +241,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
  * edges joining them. `?edges=none` is the opt-out, and it is
  * independent of the type filter. Silencing every edge under a type
  * filter would leave a filtered client with no way to reconstruct its
- * graph — an edge has no row to re-read and leaves no tombstone when it
+ * graph — an edge has no row to re-read and leaves no record when it
  * goes.
  */
 export async function publishEdge(
@@ -181,10 +252,7 @@ export async function publishEdge(
   let eventId: bigint | undefined;
 
   if (eventLogStore) {
-    const payload = JSON.stringify({
-      type: wireEventName(event.type),
-      edge: event.edge,
-    });
+    const payload = JSON.stringify(storedFrame(event));
     eventId = await eventLogStore.append({
       event_type: event.type,
       item_id: null,

@@ -120,6 +120,64 @@ export const trash_cascades = sqliteTable(
   (table) => [index("idx_trash_cascades_with").on(table.trashed_with)],
 );
 
+// Each row's link, in every state: the primary key is the uniqueness a
+// `link_field` promises, rebuilt for a type whenever it names another.
+export const item_links = sqliteTable(
+  "item_links",
+  {
+    type: text("type").notNull(),
+    value: text("value").notNull(),
+    item_id: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.type, table.value] }),
+    uniqueIndex("idx_item_links_item").on(table.item_id),
+  ],
+);
+
+// What a purge leaves of a row's link, until re-claimed or the type's link
+// changes or is dropped. Never swept: a vendor may still hold the item.
+export const link_tombstones = sqliteTable(
+  "link_tombstones",
+  {
+    type: text("type").notNull(),
+    value: text("value").notNull(),
+    purged_at: text("purged_at").notNull(),
+    settled_at: text("settled_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.type, table.value] })],
+);
+
+// What a purge leaves of a row's natural key, until any type holds the key
+// again (unique across types) or the type is deleted. Never swept, as above.
+export const natural_key_tombstones = sqliteTable(
+  "natural_key_tombstones",
+  {
+    type: text("type").notNull(),
+    source: text("source").notNull(),
+    source_id: text("source_id").notNull(),
+    purged_at: text("purged_at").notNull(),
+    settled_at: text("settled_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.type, table.source, table.source_id] }),
+    index("idx_natural_key_tombstones_key").on(table.source, table.source_id),
+  ],
+);
+
+// Apart from `trash_cascades`, which a purge re-keys.
+export const cascade_marks = sqliteTable("cascade_marks", {
+  item_id: text("item_id")
+    .primaryKey()
+    .references(() => items.id, { onDelete: "cascade" }),
+  // No key to `items`, and its type kept here: the row named may be purged
+  // while this one stays, and its type decides who may be told its id.
+  trashed_with: text("trashed_with").notNull(),
+  trashed_with_type: text("trashed_with_type").notNull(),
+});
+
 export const edges = sqliteTable(
   "edges",
   {

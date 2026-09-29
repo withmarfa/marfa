@@ -101,6 +101,7 @@ impl Peer {
                     folder,
                     core,
                     key: std::sync::OnceLock::new(),
+                    permissions: std::sync::OnceLock::new(),
                 })
             });
         Peer {
@@ -124,6 +125,18 @@ impl Peer {
             })
             .as_ref()
             .map(|members| members.contains(item_id))
+    }
+
+    /// Whether the item left this folder by its state or the bin, whose file
+    /// that folder takes away, or pauses, rather than lets go (`folders.md` 35).
+    fn left_by_state(&self, item_id: &str) -> bool {
+        let Some(folder) = &self.folder else {
+            return true;
+        };
+        match (folder.settings(), folder.core.get(item_id)) {
+            (Ok(settings), Ok(Some(item))) => !settings.holds_state(item.state),
+            _ => true,
+        }
     }
 
     fn bound_to(&self, item_id: &str) -> Option<state::Bound> {
@@ -153,9 +166,13 @@ impl Peer {
         self.walked.get_or_init(|| {
             let mut walked = super::Walked::default();
             let partial = if self.root.is_dir() {
-                // The built-in lists alone: a look for a moved file may look
-                // wider than that folder's own lists, never narrower.
-                match Lists::new(&[], &[]) {
+                let include = self
+                    .folder
+                    .as_ref()
+                    .and_then(|folder| folder.settings().ok())
+                    .map(|settings| settings.include)
+                    .unwrap_or_default();
+                match Lists::wider(&include) {
                     Ok(lists) => {
                         super::walk(&self.root, &self.root, &lists, &mut walked);
                         walked
@@ -464,6 +481,7 @@ impl<'a> Peers<'a> {
                 || bound.written_hash.as_deref() != Some(bound.content_hash.as_str())
                 || !peer.present(&bound.path)
                 || peer.holds(item_id) != Some(false)
+                || peer.left_by_state(item_id)
             {
                 continue;
             }

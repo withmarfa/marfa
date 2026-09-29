@@ -166,6 +166,9 @@ export function resolveTypeSchema(
   if (self.label !== undefined) resolved.label = self.label;
   if (self.description !== undefined) resolved.description = self.description;
   if (displayHints) resolved.display_hints = displayHints;
+  // The type's own and never an ancestor's: a link identifies rows of
+  // exactly the type that names it.
+  if (self.link_field !== undefined) resolved.link_field = self.link_field;
   if (versionPolicy) resolved.version_policy = versionPolicy;
   if (hasMergePolicy) resolved.merge_policy = mergePolicy;
   if (roles) resolved.roles = roles;

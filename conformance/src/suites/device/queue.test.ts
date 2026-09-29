@@ -2519,6 +2519,10 @@ describe("an answer the device applies keeps what it has not had answered", () =
     });
     expect(control.ok && onto.ok).toBe(true);
     if (!control.ok || !onto.ok) return;
+    expect(
+      (await device.get(onto.value.item_id ?? "")).ok,
+      "the row the create was queued as was not held before the drain, so its absence after says nothing",
+    ).toBe(true);
     const drained = await device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
     if (!drained.ok) return;
@@ -5590,6 +5594,125 @@ describe("an edit behind an edit of the same row", () => {
     ).toEqual({ title: "held", body: "created", notes: "elsewhere" });
     expect(verdictsOf(report, "update_item", KEYED.id)).toEqual(["conflicted"]);
     expect(copies(door)).toEqual(["edited"]);
+  });
+
+  it("sends an edit of its own create on the answer where the server applied it over another device's write that left what the edit changed alone", async () => {
+    harness = await hydratedHarness("edit-behind-merged-create-apart", {
+      rows: rows(),
+    });
+    const { device } = harness;
+    const created = {
+      type: "core.note",
+      source: SERVED_SOURCE,
+      properties: { title: "held", body: "created" },
+    };
+    const keyed = await device.create({
+      ...created,
+      sourceId: KEYED.sourceId,
+      version: KEYED.version,
+    });
+    expect(keyed.ok, JSON.stringify(keyed)).toBe(true);
+    if (!keyed.ok) return;
+    await edit(device, keyed.value.item_id ?? "k", { body: "edited" }, 0);
+    const door = scriptDoor(harness);
+    // A write the edit does not touch, so the answer to the create still holds
+    // what the edit was made against.
+    elsewhere(door, KEYED.id, { notes: "elsewhere" });
+    const report = await drained(device);
+
+    // The witness: sent on the version the create was based on, the edit
+    // collides with the create's own body and is set aside in a copy.
+    const control = newDoor();
+    elsewhere(control, KEYED.id, { notes: "elsewhere" });
+    control.create({
+      ...created,
+      source_id: KEYED.sourceId,
+      version: KEYED.version,
+    });
+    control.update(
+      KEYED.id,
+      { properties: { body: "edited" }, version: KEYED.version },
+      { resolve: true },
+    );
+    expect(copies(control)).toEqual(["edited"]);
+
+    expect(verdictsOf(report, "create_item", KEYED.id)).toEqual(["accepted"]);
+    expect(
+      sentOn(harness, `/items/${KEYED.id}`),
+      "the edit went out on the version the create was based on, though the answer to the create held the body the edit was made against",
+    ).toEqual([KEYED.version + 2]);
+    expect(verdictsOf(report, "update_item", KEYED.id)).toEqual(["accepted"]);
+    expect(copies(door)).toEqual([]);
+    expect(door.rows.get(KEYED.id)?.properties).toEqual({
+      title: "held",
+      body: "edited",
+      notes: "elsewhere",
+    });
+  });
+
+  it("keeps the row a create refused version_conflict lands on as it read it", async () => {
+    harness = await hydratedHarness("keyed-create-stale", { rows: rows() });
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      source: SERVED_SOURCE,
+      sourceId: KEYED.sourceId,
+      version: KEYED.version,
+      properties: { title: "mine", body: "mine" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const minted = created.value.item_id ?? "";
+    expect(
+      (await device.get(minted)).ok,
+      "the row the create was queued as was not held, so its absence below says nothing",
+    ).toBe(true);
+
+    // Another device has moved the row on twice since this copy read it,
+    // and the server still holds the version the create was based on.
+    const theirs = {
+      id: KEYED.id,
+      version: KEYED.version + 2,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: KEYED.sourceId,
+      type: "core.note",
+    };
+    scriptWrites(server, {
+      create: [
+        answers.versionConflict(
+          theirs,
+          {
+            ...theirs,
+            version: KEYED.version,
+            properties: { title: "held", body: "held" },
+          },
+          ["body", "title"],
+          { fields: {}, default: "last_writer_wins" },
+        ),
+      ],
+      // The witness: a read of the row would bring the newer one.
+      read: [answers.updated(wireItem(theirs))],
+    });
+    const report = await drained(device);
+
+    const verdict = report.verdicts.find(
+      (entry) => entry.id === created.value.id,
+    );
+    expect([verdict?.verdict, verdict?.reason, verdict?.item_id]).toEqual([
+      "refused",
+      "version_conflict",
+      KEYED.id,
+    ]);
+    expect((await device.get(minted)).ok).toBe(false);
+    const holding = await device.get(KEYED.id);
+    expect(holding.ok, JSON.stringify(holding)).toBe(true);
+    if (!holding.ok) return;
+    expect(
+      [holding.value.version, holding.value.properties],
+      "the copy took the server's newer row after a version_conflict, so the next edit of it would be based on content this device never read",
+    ).toEqual([KEYED.version, { title: "held", body: "held" }]);
   });
 
   it("sends an edit of its own create on the version that create made where the server answers a repeat of it", async () => {

@@ -318,6 +318,8 @@ describe("first-class field shadow rejection", () => {
     "schema_version",
     "capture_latitude",
     "capture_longitude",
+    "trashed_by_cascade",
+    "trashed_with",
   ] as const;
 
   for (const name of SHADOWED_FIELD_NAMES) {

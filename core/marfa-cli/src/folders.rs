@@ -536,6 +536,14 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
     lines.join("\n")
 }
 
+/// The files the secrets list refused, one line each (`folders.md` 25).
+pub(crate) fn secret_lines(secrets: &[String]) -> Vec<String> {
+    secrets
+        .iter()
+        .map(|path| format!("{path}: not taken, because its name is one a secret goes by"))
+        .collect()
+}
+
 /// A large removal waiting to be confirmed, from the disk or from a pull
 /// (`folders.md` 46).
 pub fn paused_line(count: usize, from_pull: bool) -> String {
@@ -612,12 +620,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
                 .iter()
                 .map(|file| format!("{}: {}", file.path, file.reason)),
         )
-        .chain(
-            report
-                .secrets
-                .iter()
-                .map(|path| format!("{path}: not taken, because its name is one a secret goes by")),
-        )
+        .chain(secret_lines(&report.secrets))
     {
         line.push('\n');
         line.push_str(&said);

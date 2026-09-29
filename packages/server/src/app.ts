@@ -22,6 +22,7 @@ import { itemRoutes } from "./routes/items.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
+import { itemsLookupRoutes } from "./routes/items-lookup.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
 import { edgesBulkRoutes } from "./routes/edges-bulk.js";
 import { edgeTypeRoutes } from "./routes/edge-types.js";
@@ -539,6 +540,7 @@ export function createApp(
   app.route("/items", itemRoutes(storage));
   app.route("/items", bulkRoutes(storage));
   app.route("/items", bulkGetRoutes(storage));
+  app.route("/items", itemsLookupRoutes(storage));
   app.route("/items", extensionRoutes(storage));
   app.route("/items", itemEdgeListingRoutes(storage));
   app.route("/edges", edgeRoutes(storage));

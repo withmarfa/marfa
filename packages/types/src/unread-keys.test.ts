@@ -100,6 +100,7 @@ describe("unreadTopLevelKeys", () => {
       required: ["title"],
       roles: [],
       display_hints: { title_field: "title" },
+      link_field: "title",
       version_policy: { max_versions: 10 },
       merge_policy: { default: "last_writer_wins" },
       compatible_with: [parentSchema.id],

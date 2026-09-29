@@ -135,6 +135,8 @@ const NOT_A_STATE_CREATE_DOOR: Record<string, string> = {
   "POST /items/bulk-actions":
     "its transition action runs through `storage.items.transition`, so the graph is enforced per row in the store",
   "POST /items/bulk-get": "read-only batch fetch",
+  "POST /items/lookup": "read-only lookup by link, natural key or id",
+  "POST /items/tombstones": "writes a purge's record, reaches no row's state",
   "POST /items/:id/tags": "metadata layer, reaches no state",
   "PUT /items/:id/metadata": "metadata layer, reaches no state",
   "PATCH /items/:id/metadata": "metadata layer, reaches no state",

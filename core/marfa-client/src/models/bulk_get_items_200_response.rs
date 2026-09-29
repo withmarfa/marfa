@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BulkGetItems200Response {
+    /// The items the caller may read, in the order `ids` named them, an id named twice answered once. Ids that do not resolve, or name a trashed item or one whose type the caller may not read, are left out.
     #[serde(rename = "items")]
     pub items: Vec<models::Item>,
     #[serde(rename = "metadata", skip_serializing_if = "Option::is_none")]

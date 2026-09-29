@@ -26,7 +26,7 @@ const listVersionsRoute = createRoute({
   tags: ["Items"],
   summary: "List item versions",
   description:
-    "Returns the version-snapshot history for one item, newest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.",
+    "Returns the version-snapshot history for one item, oldest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,

@@ -112,8 +112,8 @@ export class TrashPurger {
 }
 
 /**
- * Hard-deletes revoked application-grant tombstones once they are older than
- * the configured window.
+ * Hard-deletes revoked application-grant rows once they are older than the
+ * configured window.
  *
  * **The row it sweeps is not trash and is not in a terminal lifecycle state.**
  * A grant revoked through the user-facing path keeps `state: "active"` — the
@@ -125,8 +125,8 @@ export class TrashPurger {
  * revoked, so an operator soft-delete is permanent rather than reusable, and
  * each revoke-then-reconnect cycle leaves one behind.
  *
- * **The window is the audit window and that is deliberate.** A tombstone and
- * the audit row that recorded the revocation are the same fact written twice,
+ * **The window is the audit window and that is deliberate.** A revoked grant
+ * row and the audit row that recorded the revocation are the same fact written twice,
  * so keeping them for different lengths of time would let the two disagree
  * about whether a revocation is still visible. Ninety days, matching
  * `AUDIT_RETENTION_DAYS`, and `0` switches the housekeeping job off as it
@@ -149,7 +149,7 @@ export class RevokedGrantPurger {
     ).toISOString();
     const deleted = await this.items.purgeRevokedAppGrantsOlderThan(cutoff);
     if (deleted > 0) {
-      log("info", "Revoked grant tombstones purged", { deleted });
+      log("info", "Revoked grant rows purged", { deleted });
     }
     return deleted;
   }
@@ -172,7 +172,7 @@ export class RevokedGrantPurger {
  * once-a-year app should still be connected in the spring.
  *
  * **What follows from a retirement is a chain already in place.** The
- * cascade leaves a tombstone with `status: "revoked"`; `RevokedGrantPurger`
+ * cascade leaves a revoked grant row, `status: "revoked"`; `RevokedGrantPurger`
  * removes that after its own window; and a client with no grant left then
  * falls to `DcrClientCleaner`. Nothing here reaches into either.
  *

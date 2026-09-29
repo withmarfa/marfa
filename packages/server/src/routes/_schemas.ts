@@ -171,6 +171,18 @@ export const ItemSchema = z
     occurred_at: z.string(),
     created_at: z.string(),
     updated_at: z.string(),
+    trashed_by_cascade: z
+      .boolean()
+      .optional()
+      .describe(
+        "Always `true` where present: on an item a trash took into the bin through a cascading edge such as `parent-of`, for as long as the item stays in the bin, even once the item that trash named is purged, to any caller that may read the item. Absent on a row trashed on its own and on every row out of the bin. A connector reads it to tell a trash the person made from one a cascade made.",
+      ),
+    trashed_with: z
+      .string()
+      .optional()
+      .describe(
+        "The item whose trash took this one into the bin, beside `trashed_by_cascade`, whatever became of that item since. Answered only to a caller that may read that item's type.",
+      ),
     /**
      * Hydrated outbound edges per type. Always populated on single-item GETs;
      * opt-in on list GETs via ?include=edges. An empty object means no edges
@@ -337,7 +349,7 @@ export const VersionSchema = z
   })
   .openapi("Version");
 
-/** An item's history, newest first: the whole of it, so `next_cursor` is
+/** An item's history, oldest first: the whole of it, so `next_cursor` is
  *  always `null`. The same page `GET /items/{id}/versions` answers. */
 export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
 
@@ -361,7 +373,7 @@ export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
  *   which is about a bound; this is about permission. Without it a partial
  *   neighborhood reads as a complete one, and a caller missing an edge scope
  *   renders an item with none of its relations as though it had none.
- * - `versions` — the item's version snapshots, newest first, as the same page
+ * - `versions` — the item's version snapshots, oldest first, as the same page
  *   `GET /items/{id}/versions` answers. Opt in with `include=versions`.
  */
 export const ItemDetailSchema = z

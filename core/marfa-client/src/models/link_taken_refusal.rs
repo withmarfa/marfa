@@ -12,16 +12,14 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SourceIdConflictOrTypeMismatchRefusal {
+pub struct LinkTakenRefusal {
     #[serde(rename = "error")]
-    pub error: Box<models::SourceIdConflictOrTypeMismatchRefusalError>,
+    pub error: Box<models::LinkTakenRefusalError>,
 }
 
-impl SourceIdConflictOrTypeMismatchRefusal {
-    pub fn new(
-        error: models::SourceIdConflictOrTypeMismatchRefusalError,
-    ) -> SourceIdConflictOrTypeMismatchRefusal {
-        SourceIdConflictOrTypeMismatchRefusal {
+impl LinkTakenRefusal {
+    pub fn new(error: models::LinkTakenRefusalError) -> LinkTakenRefusal {
+        LinkTakenRefusal {
             error: Box::new(error),
         }
     }

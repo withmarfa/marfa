@@ -9,9 +9,11 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { requireAuth, getTypeFilter } from "../middleware/auth.js";
+import { requireAuth, getTypeFilter, mayReadType } from "../middleware/auth.js";
 import {
   eventMatchesTypeFilter,
+  frameFor,
+  storedFrame,
   subscribeAll,
   wireEventName,
 } from "../pubsub.js";
@@ -110,7 +112,7 @@ const MAX_TYPE_FILTER_ENTRIES = 10;
  *
  * `all` is the default because an edge is the half of a change a
  * reconciling client cannot reconstruct from items alone: it has no row
- * of its own to re-read and no tombstone when it goes. A type filter used
+ * of its own to re-read and no record when it goes. A type filter used
  * to silence every edge event, so a client watching two types never
  * learned about the edges joining them.
  *
@@ -254,41 +256,23 @@ export interface EventRoutesOptions {
 }
 
 /**
- * Narrow a decoded replay payload to what this subscriber may read.
- *
- * The replay re-sends `event_log.payload` verbatim, so the live path's
- * filter never sees it. `parsed` is the row the replay loop already
- * decoded, or null when it decoded nothing — an edge frame carries no
- * metadata, and a caller with no credential at all has no map to narrow
- * against, so neither is worth a decode. The stored string is
- * returned as written in both cases, and in every case where the payload
- * turns out to carry no extensions to narrow.
- *
- * A payload that does not decode never reaches here: the loop skips that
- * row rather than sending it. Passing the bytes through would hand a
- * subscriber whatever they hold regardless of its permissions, which is
- * the one thing this function exists to prevent, and a string that is not
- * JSON would not decode on the client either — so withholding it costs
- * the subscriber nothing it could have used.
+ * Shared by the live path and the replay, so a frame reads the same either
+ * way: marks and metadata both narrowed to what this subscriber may read.
  */
-function filterReplayPayload(
-  payload: string,
-  parsed: Record<string, unknown> | null,
-  apiKey: ApiKey | undefined,
-): string {
-  if (parsed === null) return payload;
-  // Shape-checked rather than presence-checked. `filterMetadataForCaller`
-  // hands `.extensions` to a filter that iterates its keys, so a stored
-  // payload whose `metadata` lacks that block — an older shape, or a
-  // hand-written row — would throw inside `replay()`, whose catch ends
-  // the catch-up silently and leaves the client short of events it will
-  // never ask for again.
-  const metadata: unknown = parsed.metadata;
-  if (metadata === null || typeof metadata !== "object") return payload;
+function itemFrameFor(stored: Record<string, unknown>, apiKey: ApiKey): string {
+  const frame = frameFor(stored, (type) => mayReadType(apiKey, type));
+  // Shape-checked: `filterMetadataForCaller` iterates `.extensions`, and a
+  // throw here would end a replay short of events the client never re-asks for.
+  const metadata: unknown = frame.metadata;
+  if (metadata === null || typeof metadata !== "object") {
+    return JSON.stringify(frame);
+  }
   const extensions: unknown = (metadata as Record<string, unknown>).extensions;
-  if (extensions === null || typeof extensions !== "object") return payload;
+  if (extensions === null || typeof extensions !== "object") {
+    return JSON.stringify(frame);
+  }
   return JSON.stringify({
-    ...parsed,
+    ...frame,
     metadata: filterMetadataForCaller(metadata as Metadata, apiKey),
   });
 }
@@ -584,31 +568,11 @@ export function eventRoutes(
             }
 
             const wireType = wireEventName(event.type);
-            const sseData = {
-              type: wireType,
-              item: event.item,
-              // The same narrowing every REST read of metadata goes
-              // through. Without it a credential holding nothing on a
-              // namespace still received its contents, for every item
-              // whose type it could read — the type filter above is not
-              // a substitute, because it says nothing about namespaces.
-              //
-              // **Every item frame that carries metadata, not just
-              // `metadata.changed`.** `item.created`, `item.updated`,
-              // `item.restored` and `item.state_changed` all publish
-              // with the row attached, and they all serialize here. A
-              // filter keyed on the wire name would have left four
-              // frames unnarrowed while reading as complete.
-              ...(event.metadata && {
-                metadata: filterMetadataForCaller(event.metadata, apiKey),
-              }),
-            };
-
             const idField =
               eventId !== undefined ? `id: ${String(eventId)}\n` : "";
             if (eventId !== undefined) lastSentId = eventId;
             send(
-              `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
+              `${idField}event: ${wireType}\ndata: ${itemFrameFor(storedFrame(event), apiKey)}\n\n`,
             );
           };
 
@@ -660,12 +624,11 @@ export function eventRoutes(
             if (!edgeKindReadable(apiKey, event.edge)) return;
             if (!(await edgeReadable(storage, apiKey, event.edge))) return;
             const wireType = wireEventName(event.type);
-            const sseData = { type: wireType, edge: event.edge };
             const idField =
               eventId !== undefined ? `id: ${String(eventId)}\n` : "";
             if (eventId !== undefined) lastSentId = eventId;
             send(
-              `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
+              `${idField}event: ${wireType}\ndata: ${JSON.stringify(storedFrame(event))}\n\n`,
             );
           };
 
@@ -1045,27 +1008,8 @@ export function eventRoutes(
                     lastRead = event.id;
                     continue;
                   }
-                  // Decoded once for the whole row, shared by the type
-                  // checks and the narrowing below. An edge frame
-                  // carries no item type and no metadata, and
-                  // `typeFilter.allowed` is undefined for one caller
-                  // only — one presenting no credential, which
-                  // `requireAuth` has already refused before this route
-                  // reaches here — so neither needs the row decoded
-                  // here. An edge row's own decode happens once for the
-                  // whole batch above, where the query it feeds is one
-                  // query. Nothing bypasses the maps. Typed as
-                  // unknown-valued rather than as an event: this is a
-                  // stored string, so its declared shape is a claim
-                  // about it rather than a fact, and the checks that
-                  // keep a mis-shaped row from throwing would read as
-                  // unnecessary against a declared type.
                   let parsed: Record<string, unknown> | null = null;
-                  if (
-                    !isEdge &&
-                    (typeParam !== undefined ||
-                      typeFilter.allowed !== undefined)
-                  ) {
+                  if (!isEdge) {
                     try {
                       parsed = JSON.parse(event.payload) as Record<
                         string,
@@ -1191,19 +1135,9 @@ export function eventRoutes(
                     event.event_type as
                       ItemEventWithId["type"] | EdgeEventWithId["type"],
                   );
-                  // The stored payload is re-sent as a string, so the
-                  // live path's filter never touched it: this is a
-                  // second, independent copy of the same disclosure
-                  // and needs its own narrowing. It applies to every
-                  // stored frame carrying metadata, which is four
-                  // event types besides `metadata.changed`. Only a
-                  // payload that actually carries a metadata block is
-                  // re-serialized, so an edge frame pays nothing for
-                  // this narrowing in particular. Its own gate above is
-                  // what it pays for, and that is batched.
                   lastSentId = event.id;
                   send(
-                    `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
+                    `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${parsed === null ? event.payload : itemFrameFor(parsed, apiKey)}\n\n`,
                   );
                   // Only here. A row the loop skipped above was not
                   // sent, so its live copy is not a duplicate.

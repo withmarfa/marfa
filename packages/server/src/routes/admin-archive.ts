@@ -120,7 +120,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v2.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v2.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -187,11 +187,11 @@ const restoreArchiveRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["conflict"]),
+          schema: makeErrorResponseSchema(["conflict", "link_taken"]),
         },
       },
       description:
-        "The archive redefines a type this instance already registers differently, or carries a core edge type. Nothing was written.",
+        "`conflict`: the archive redefines a type this instance already registers differently, or carries a core edge type, and nothing was written. `link_taken`: the archive registers a type naming a `link_field` that two rows a forced delete left under the identifier share a value in, and the restore stops there, before any row or blob is written.",
     },
   },
 });
@@ -747,10 +747,13 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
               },
             });
           } catch (err) {
+            // A link held by another row names the same vendor record, as a
+            // natural key held does.
             if (
               err instanceof MarfaError &&
               (err.code === ErrorCode.DUPLICATE_SOURCE ||
-                err.code === ErrorCode.CONFLICT)
+                err.code === ErrorCode.CONFLICT ||
+                err.code === ErrorCode.LINK_TAKEN)
             ) {
               duplicates++;
               // A duplicate leaves the existing row untouched — its tags

@@ -31,6 +31,9 @@ pub struct TypeDefinition {
     pub version: f64,
     #[serde(rename = "display_hints", skip_serializing_if = "Option::is_none")]
     pub display_hints: Option<Box<models::DisplayHints>>,
+    /// The string field, declared or inherited, holding each row's own id at the vendor that writes this type. The server keeps a value to one row of the type in every state, answers `409 link_taken` to a write giving a second row a value another holds, and records the value as a tombstone when the row is purged. It applies to rows of exactly this type: a subtype names its own. The field's name holds neither a double quote nor a backslash.
+    #[serde(rename = "link_field", skip_serializing_if = "Option::is_none")]
+    pub link_field: Option<String>,
     #[serde(rename = "version_policy", skip_serializing_if = "Option::is_none")]
     pub version_policy: Option<models::VersionPolicy>,
     #[serde(rename = "merge_policy", skip_serializing_if = "Option::is_none")]
@@ -53,6 +56,7 @@ impl TypeDefinition {
             fields,
             version,
             display_hints: None,
+            link_field: None,
             version_policy: None,
             merge_policy: None,
         }

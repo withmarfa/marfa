@@ -362,7 +362,15 @@ describe("the replay's shape guard", () => {
     return text;
   }
 
-  it("replays a payload carrying no metadata block byte-identical", async () => {
+  /** The decoded `data:` of the replayed frame naming `id`. */
+  function replayed(text: string, id: string): unknown {
+    const line = text
+      .split("\n")
+      .find((l) => l.startsWith("data: ") && l.includes(`"${id}"`));
+    return line === undefined ? undefined : JSON.parse(line.slice(6));
+  }
+
+  it("replays a payload carrying no metadata block unchanged", async () => {
     // Reddens if the `metadata` shape check goes: the filter would read
     // `.extensions` off nothing, and the throw ends the catch-up so the
     // frame never arrives at all.
@@ -374,14 +382,14 @@ describe("the replay's shape guard", () => {
         item: { id: "shape-anchor-no-metadata", type: "core.note" },
       }),
     );
-    // Spaced where `JSON.stringify` would not, so byte-identical
-    // is something the assertion can see rather than something it assumes.
-    const payload =
-      '{"type":"item.updated", "item":{"id":"shape-no-metadata","type":"core.note"}}';
-    await appendRow("updated", "shape-no-metadata", payload);
+    const payload = {
+      type: "item.updated",
+      item: { id: "shape-no-metadata", type: "core.note" },
+    };
+    await appendRow("updated", "shape-no-metadata", JSON.stringify(payload));
 
     const text = await replayAfter(cursor, "shape-no-metadata");
-    expect(text).toContain(`data: ${payload}\n`);
+    expect(replayed(text, "shape-no-metadata")).toEqual(payload);
   });
 
   it("replays a metadata block carrying no extensions unchanged", async () => {
@@ -396,12 +404,19 @@ describe("the replay's shape guard", () => {
         item: { id: "shape-anchor-no-extensions", type: "core.note" },
       }),
     );
-    const payload =
-      '{"type":"metadata.changed", "item":{"id":"shape-no-extensions","type":"core.note"}, "metadata":{"tags":["kept"]}}';
-    await appendRow("metadata_changed", "shape-no-extensions", payload);
+    const payload = {
+      type: "metadata.changed",
+      item: { id: "shape-no-extensions", type: "core.note" },
+      metadata: { tags: ["kept"] },
+    };
+    await appendRow(
+      "metadata_changed",
+      "shape-no-extensions",
+      JSON.stringify(payload),
+    );
 
     const text = await replayAfter(cursor, "shape-no-extensions");
-    expect(text).toContain(`data: ${payload}\n`);
+    expect(replayed(text, "shape-no-extensions")).toEqual(payload);
   });
 
   it("skips a payload that does not parse and replays past it", async () => {

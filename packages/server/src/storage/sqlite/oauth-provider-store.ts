@@ -640,7 +640,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * Refusing the row here rather than in the route is what makes the two
    * re-consent paths agree: the device flow and the code flow both resolve
    * through this method, so a fix in one route would have left the other
-   * holding the same defect. It also leaves the tombstone alone — a lookup
+   * holding the same defect. It also leaves the revoked grant row alone — a lookup
    * that cannot see it is a lookup that cannot resurrect it, and the fresh
    * insert every caller falls through to is the only remaining branch.
    */

@@ -36,12 +36,12 @@ describe("POST /items/bulk-get", () => {
     const a = await createTrackedNote();
     const b = await createTrackedNote();
 
-    const res = await client.bulkGet([a, b]);
+    const res = await client.bulkGet([b, a, b]);
     expect(res.status).toBe(200);
     await expectMatchesSchema("POST", "/items/bulk-get", 200, res.data);
     expect(Object.keys(res.data)).toEqual(["items"]);
-    const ids = res.data.items.map((i) => i.id).sort();
-    expect(ids).toEqual([a, b].sort());
+    // In the order named, and an id named twice answered once.
+    expect(res.data.items.map((i) => i.id)).toEqual([b, a]);
   });
 
   it("omits ids that do not resolve rather than erroring", async () => {

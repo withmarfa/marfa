@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TypeAlreadyExistsRefusalError {
+pub struct InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusalError {
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,9 +21,12 @@ pub struct TypeAlreadyExistsRefusalError {
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl TypeAlreadyExistsRefusalError {
-    pub fn new(code: Code, message: String) -> TypeAlreadyExistsRefusalError {
-        TypeAlreadyExistsRefusalError {
+impl InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusalError {
+    pub fn new(
+        code: Code,
+        message: String,
+    ) -> InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusalError {
+        InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusalError {
             code,
             message,
             details: None,
@@ -33,12 +36,18 @@ impl TypeAlreadyExistsRefusalError {
 ///
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Code {
-    #[serde(rename = "type_already_exists")]
-    TypeAlreadyExists,
+    #[serde(rename = "invalid_id")]
+    InvalidId,
+    #[serde(rename = "missing_required_field")]
+    MissingRequiredField,
+    #[serde(rename = "unknown_type")]
+    UnknownType,
+    #[serde(rename = "validation_error")]
+    ValidationError,
 }
 
 impl Default for Code {
     fn default() -> Code {
-        Self::TypeAlreadyExists
+        Self::InvalidId
     }
 }

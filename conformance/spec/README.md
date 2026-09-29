@@ -6,8 +6,8 @@ The specification has two halves.
 
 **The server's half** states the server's behavior over HTTP, and the server is the source: where it contradicts its own OpenAPI document, the statement says so and `findings.md` carries the detail.
 
-- `items.md`: items, their lifecycle, bulk doors, metadata, tags and extensions, and the folder door that writes `system.folder`.
-- `types.md`: the type registry, its grammar, inheritance and enforcement levers.
+- `items.md`: items, their lifecycle, bulk doors, metadata, tags and extensions, the folder door that writes `system.folder`, and links and the tombstones a purge leaves.
+- `types.md`: the type registry, its grammar, inheritance, enforcement levers and a type's link.
 - `edges.md`: edges, edge types, hydration and traversal.
 - `versions.md`: versions, snapshots, the 409 envelopes and server-side merge.
 - `blobs.md`: uploads, downloads, ranges and the link door.
@@ -16,7 +16,7 @@ The specification has two halves.
 - `connectors.md`: a process outside the server registering under its key, heartbeating, reporting its runs, holding its registration, and keeping its state and agreements on the instance.
 - `inbound-webhooks.md`: a connector's webhook endpoints, the door a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
-- `search-and-filters.md`: search, export, occurrences and the query grammar every listing shares.
+- `search-and-filters.md`: search, export, occurrences, the lookup by link, natural key or id, and the query grammar every listing shares.
 - `keys-and-oauth.md`: keys, permissions, the operator key and the OAuth provider.
 - `instance.md`: what one deployment says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the fixtures produce.
