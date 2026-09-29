@@ -10,6 +10,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -14202,5 +14203,152 @@ describe("reading only what changed", () => {
     expect(idOf(harness, "copy.md")).toBe(copy);
     expect(idOf(harness, "note.md")).toBe(id);
     expect(sentUpdates(harness)).toEqual([]);
+  });
+});
+
+describe("a file's permission", () => {
+  const runs = (h: FolderHarness, name: string) =>
+    (statSync(join(h.dir, name)).mode & 0o100) !== 0;
+
+  it("keeps a file's executable permission", async () => {
+    harness = await folderHarness("folder-executable-push", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    writeFileSync(join(harness.dir, "run.sh"), "#!/bin/sh\necho run\n");
+    chmodSync(join(harness.dir, "run.sh"), 0o755);
+    writeFileSync(join(harness.dir, "data.bin"), Buffer.from([1, 2, 3]));
+    chmodSync(join(harness.dir, "data.bin"), 0o644);
+    expect((await harness.folder.push()).ok).toBe(true);
+    const created = (title: string) =>
+      sentCreates(harness!).find(
+        (create) =>
+          (create.properties as Record<string, unknown>).title === title,
+      );
+    expect(
+      (created("run.sh")?.properties as Record<string, unknown>).executable,
+      "a file its owner may run went without its permission",
+    ).toBe(true);
+    // The witness: a file its owner may not run carries no property.
+    expect(created("data.bin")?.properties).not.toHaveProperty("executable");
+
+    // Changed alone, under a watch past its first pass.
+    const watching = harness.folder.watch();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      chmodSync(join(harness.dir, "run.sh"), 0o644);
+      chmodSync(join(harness.dir, "data.bin"), 0o755);
+      await vi.waitFor(() => expect(sentUpdates(harness!)).toHaveLength(2), {
+        timeout: 20_000,
+        interval: 100,
+      });
+    } finally {
+      await watching.stop();
+    }
+    const sent = Object.fromEntries(
+      sentUpdates(harness).map((update) => [
+        update.id,
+        (update.body.properties as Record<string, unknown>).executable,
+      ]),
+    );
+    expect(sent).toEqual({
+      [String(created("run.sh")?.id)]: false,
+      [String(created("data.bin")?.id)]: true,
+    });
+    expect(sentUpdates(harness)).toHaveLength(2);
+  });
+
+  it("gives a pulled file the permission its item holds", async () => {
+    const tool = "01a00000-0000-7000-8000-00000000f501";
+    const plain = "01a00000-0000-7000-8000-00000000f502";
+    const later = "01a00000-0000-7000-8000-00000000f503";
+    const fileItem = (
+      id: string,
+      title: string,
+      bytes: Buffer,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      id,
+      version: 1,
+      type: "core.file",
+      properties: {
+        title,
+        blob_ref: hashOf(bytes),
+        mime_type: "application/octet-stream",
+        ...extra,
+      },
+    });
+    const [toolBytes, plainBytes, laterBytes] = [1, 2, 3].map((n) =>
+      Buffer.from([n, n, n]),
+    );
+    harness = await folderHarness("folder-executable-pull", {
+      settings: { search: { types: ["core.file"] } },
+      rows: {
+        "core.file": [
+          { item: fileItem(tool, "tool.bin", toolBytes, { executable: true }) },
+          { item: fileItem(plain, "plain.bin", plainBytes) },
+          { item: fileItem(later, "later.bin", laterBytes) },
+        ],
+      },
+      events: [
+        liveReplay("3", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              ...fileItem(later, "later.bin", laterBytes, { executable: true }),
+              version: 2,
+            }),
+          ),
+          itemEvent(
+            "3",
+            "item.updated",
+            wireItem({
+              ...fileItem(tool, "tool.bin", toolBytes, { executable: false }),
+              version: 2,
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    for (const bytes of [toolBytes, plainBytes, laterBytes]) {
+      scriptBlob(harness.server, bytes);
+    }
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(runs(harness, "tool.bin"), "a pulled file lost its permission").toBe(
+      true,
+    );
+    // The witness: an item that says nothing is written as not run.
+    expect(runs(harness, "plain.bin")).toBe(false);
+    expect(runs(harness, "later.bin")).toBe(false);
+
+    // The push's catch-up brings the changes, and its pull gives them to
+    // the files in place, sending nothing back.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      [runs(harness, "later.bin"), runs(harness, "tool.bin")],
+      "a permission changed elsewhere did not reach the file in place",
+    ).toEqual([true, false]);
+    expect(runs(harness, "plain.bin")).toBe(false);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness)).toEqual([]);
+
+    // Changed by the person since the scan read it, the permission is theirs:
+    // a pull leaves it, and the next push sends it.
+    chmodSync(join(harness.dir, "plain.bin"), 0o755);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect(
+      runs(harness, "plain.bin"),
+      "a pull undid the person's permission",
+    ).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(
+      sentUpdates(harness).map((update) => [
+        update.id,
+        (update.body.properties as Record<string, unknown>).executable,
+      ]),
+    ).toEqual([[plain, true]]);
   });
 });

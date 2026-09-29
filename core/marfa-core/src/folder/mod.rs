@@ -8,6 +8,7 @@ pub mod document;
 pub mod edge_types;
 mod elsewhere;
 mod embeds;
+mod executable;
 pub mod fields;
 pub mod identity;
 mod lines;
@@ -97,6 +98,8 @@ pub struct Folder {
     core: Core,
     /// The key the credential is, once asked.
     key: std::sync::OnceLock<placement::KeyState>,
+    /// Whether the folder's volume keeps a file's permission, once asked.
+    permissions: std::sync::OnceLock<bool>,
 }
 
 /// What a scan did.
@@ -242,6 +245,7 @@ impl Folder {
             folder: folder.to_string(),
             core,
             key: std::sync::OnceLock::new(),
+            permissions: std::sync::OnceLock::new(),
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -311,6 +315,7 @@ impl Folder {
             folder,
             core,
             key: std::sync::OnceLock::new(),
+            permissions: std::sync::OnceLock::new(),
         };
         // A lost registry is the scan's to notice before listing again.
         if let Some(registry) = Registry::located()
@@ -690,6 +695,8 @@ struct Scanned {
     line: Option<i64>,
     /// Why its frontmatter cannot be read as an item's, where it cannot.
     unreadable: Option<String>,
+    /// `None` on a volume that keeps no permission (`folders.md` 50).
+    executable: Option<bool>,
 }
 
 impl Scanned {
@@ -941,12 +948,14 @@ impl Folder {
                 .as_ref()
                 .filter(|read| read.unreadable.is_none())
                 .and_then(|read| line_of(&read.front));
+            let metadata = std::fs::symlink_metadata(&path).ok();
             files.push(Scanned {
                 key: identity::relative(&self.root, &path)?,
                 mark: identities.get(&path).map(|found| found.key()),
-                born: std::fs::symlink_metadata(&path)
-                    .ok()
-                    .and_then(|metadata| identity::born(&metadata)),
+                born: metadata.as_ref().and_then(identity::born),
+                executable: self
+                    .keeps_permissions()
+                    .then(|| metadata.as_ref().is_some_and(executable::of)),
                 hash: state::hash(&bytes),
                 text,
                 id,
@@ -1050,6 +1059,17 @@ impl Folder {
                     bound: Some(bound),
                 }) if bound.path == file.key => {
                     if bound.content_hash == file.hash {
+                        // A permission changed alone leaves the bytes as they
+                        // were (`folders.md` 50).
+                        if let Some(runs) = file.executable
+                            && let Some(held) = self.core.get(&item_id)?
+                            && bytes_of(&held, &catalog).is_some()
+                            && executable::held(&held) != runs
+                        {
+                            self.queue_update_file(&bound, file, &held, &catalog)?;
+                            report.updated += 1;
+                            continue;
+                        }
                         // Lines only the server can resolve are asked again
                         // at each scan that can ask it.
                         if bound
@@ -1690,6 +1710,9 @@ impl Folder {
             fields::title_field(catalog, &file_type).into(),
             Value::String(name_of(&file.key).into()),
         );
+        if file.executable == Some(true) {
+            properties.insert(executable::FIELD.into(), Value::Bool(true));
+        }
         let draft = Draft {
             r#type: file_type,
             properties,
@@ -1977,6 +2000,12 @@ impl Folder {
         {
             edit.properties
                 .insert(title.into(), Value::String(new_name.into()));
+        }
+        if let Some(runs) = file.executable
+            && executable::held(held) != runs
+        {
+            edit.properties
+                .insert(executable::FIELD.into(), Value::Bool(runs));
         }
         let queued = if bound.content_hash != file.hash {
             self.core
@@ -2680,6 +2709,30 @@ impl Folder {
         Ok(report)
     }
 
+    /// Gives a file in place the permission its item holds, unless the file
+    /// changed since the scan read it, which makes the permission the person's.
+    fn keep_executable(&self, item: &Item, want: &str) -> Result<()> {
+        let path = self.root.join(want);
+        let wanted = executable::held(item);
+        if !self.keeps_permissions()
+            || std::fs::symlink_metadata(&path).is_ok_and(|found| executable::of(&found) == wanted)
+        {
+            return Ok(());
+        }
+        let read = state::stat_of(&*self.core.conn()?, want)?;
+        if read.is_some() && read == stat_of(&path) {
+            // As a write's is: a refused permission is not the pull's to fail.
+            let _ = executable::set(&path, wanted);
+        }
+        Ok(())
+    }
+
+    fn keeps_permissions(&self) -> bool {
+        *self
+            .permissions
+            .get_or_init(|| executable::kept(&self.root.join(STATE_DIR)))
+    }
+
     /// Writes one item's file where its pull placed it, and answers whether
     /// it waits for the file at that path to move away first.
     fn write_placed(
@@ -2820,6 +2873,9 @@ impl Folder {
             return Ok(false);
         }
         if in_place {
+            if bytes_of(item, catalog).is_some() {
+                self.keep_executable(item, &want)?;
+            }
             report.placed += usize::from(self.place(&item.id, &want, withheld)?);
             report.unchanged += 1;
             return Ok(false);
@@ -2858,6 +2914,11 @@ impl Folder {
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| std::fs::write(&path, &bytes));
+        if written.is_ok() && bytes_of(item, catalog).is_some() && self.keeps_permissions() {
+            // The bytes are written and bound whatever the permission does: a
+            // volume that keeps none is the stated limit (`folders.md` 50).
+            let _ = executable::set(&path, executable::held(item));
+        }
         if written.is_err() {
             // A file of its own here keeps the binding it had, or a scan that
             // can reach it again would make it a new item.
@@ -3577,8 +3638,8 @@ fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
-/// A file's size and modification time, which a quick pass compares with
-/// those its last read recorded (`folders.md` 49).
+/// A file's size, modification time and executable permission, which a
+/// quick pass compares with those its last read recorded (`folders.md` 49).
 fn stat_of(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let modified = metadata
@@ -3587,7 +3648,11 @@ fn stat_of(path: &Path) -> Option<String> {
         .duration_since(std::time::UNIX_EPOCH)
         .ok()?
         .as_nanos();
-    Some(format!("{}:{modified}", metadata.len()))
+    Some(format!(
+        "{}:{modified}:{}",
+        metadata.len(),
+        executable::of(&metadata)
+    ))
 }
 
 /// Whether a file is a document, which a folder reads as an item's fields
