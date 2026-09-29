@@ -68,6 +68,24 @@ export const DEFAULT_INBOUND_LIMITS: InboundLimits = {
   pendingRetentionDays: 30,
 };
 
+export const DEFAULT_CONNECTOR_HOLD_MS = 180_000;
+
+/**
+ * Refuses a window under a second, which a live process cannot renew in
+ * time, or over an hour, which a crashed one would keep its successor out for.
+ */
+export function parseConnectorHoldMs(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === "") return DEFAULT_CONNECTOR_HOLD_MS;
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (!/^\d+$/.test(trimmed) || value < 1_000 || value > 3_600_000) {
+    throw new Error(
+      `MARFA_CONNECTOR_HOLD_MS must be a whole number of milliseconds from 1000 to 3600000; got "${raw}"`,
+    );
+  }
+  return value;
+}
+
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -85,11 +103,8 @@ export interface AppConfig {
    *  no cap: its body streams to disk.
    *  Read from `MARFA_MAX_REQUEST_BYTES`; default 1MB. */
   maxRequestBytes: number;
-  /** Maximum request body size in bytes for the bulk write endpoints
-   *  (`/items/bulk*`, `/edges/bulk`), which carry up to 5000 items/edges in a
-   *  single body and so need a larger cap than the per-request default. Read
-   *  from `MARFA_MAX_BULK_REQUEST_BYTES`; default 16MB. Optional — falls back
-   *  to the 16MB default when unset. */
+  /** Max body size in bytes for the doors `bodyCapFor` names bulk; batches
+   *  outgrow the per-request cap. `MARFA_MAX_BULK_REQUEST_BYTES`, 16MB. */
   maxBulkRequestBytes?: number;
   /** The object store, attached when this is set: a second place the bytes
    *  live, and the one that signs its own fetch links. */
@@ -341,6 +356,9 @@ export interface AppConfig {
   /** Optional on the type so a test context's `AppConfig` literal takes
    *  `DEFAULT_INBOUND_LIMITS`. */
   inbound?: InboundLimits;
+  /** Optional on the type so a test context's `AppConfig` literal takes
+   *  `DEFAULT_CONNECTOR_HOLD_MS`. */
+  connectorHoldMs?: number;
   /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
    *  by `index.ts` from `version.json` at startup; defaults to `"dev"`
    *  when no version file is present (local development). It is not the
@@ -897,6 +915,7 @@ export function loadConfig(): AppConfig {
         DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
       ),
     },
+    connectorHoldMs: parseConnectorHoldMs(process.env.MARFA_CONNECTOR_HOLD_MS),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
     otelEnvironment: process.env.MARFA_OTEL_ENVIRONMENT,

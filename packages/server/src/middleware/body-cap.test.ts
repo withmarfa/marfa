@@ -19,6 +19,10 @@ describe("bodyCapFor", () => {
         "/admin/restore-archive",
         "/inbound/{token}",
         "/inbound/:token",
+        "/connectors/{id}/agreements",
+        "/connectors/:id/agreements",
+        "/connectors/{id}/agreements/find",
+        "/connectors/{id}/state",
       ].map((path) => [path, bodyCapFor(path)]),
     );
     expect(caps).toEqual({
@@ -36,6 +40,10 @@ describe("bodyCapFor", () => {
       "/admin/restore-archive": "none",
       "/inbound/{token}": "inbound",
       "/inbound/:token": "inbound",
+      "/connectors/{id}/agreements": "bulk",
+      "/connectors/:id/agreements": "bulk",
+      "/connectors/{id}/agreements/find": "request",
+      "/connectors/{id}/state": "request",
     });
   });
 });

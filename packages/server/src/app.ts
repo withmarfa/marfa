@@ -32,6 +32,7 @@ import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { housekeepingRoutes } from "./routes/housekeeping.js";
 import { connectorRoutes } from "./routes/connectors.js";
+import { connectorStateRoutes } from "./routes/connector-state.js";
 import { inboundRoutes } from "./routes/inbound.js";
 import { folderRoutes } from "./routes/folders.js";
 import type { Housekeeping } from "./housekeeping/scheduler.js";
@@ -550,6 +551,7 @@ export function createApp(
   app.route("/blobs", blobRoutes(storage, blobs, housekeeping, config));
   app.route("/housekeeping", housekeepingRoutes(housekeeping));
   app.route("/connectors", connectorRoutes(storage));
+  app.route("/connectors", connectorStateRoutes(storage, config));
   app.route("/folders", folderRoutes(storage));
   app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/config", configRoutes(storage, instanceId));

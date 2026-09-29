@@ -13,7 +13,7 @@ The specification has two halves.
 - `blobs.md`: uploads, downloads, ranges and the link door.
 - `stores.md`: where a blob's bytes live, the location log, and the rules that keep them.
 - `housekeeping.md`: the housekeeping jobs the server runs on itself, listed and run on demand.
-- `connectors.md`: a process outside the server registering under its key, heartbeating and reporting its runs.
+- `connectors.md`: a process outside the server registering under its key, heartbeating, reporting its runs, holding its registration, and keeping its state and agreements on the instance.
 - `inbound-webhooks.md`: a connector's webhook endpoints, the door a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: search, export, occurrences and the query grammar every listing shares.

@@ -57,6 +57,7 @@ describe("registration", () => {
     expect(created.data.updated_at).toBe(created.data.registered_at);
     expect(created.data.last_heartbeat_at).toBeNull();
     expect(created.data.last_run).toBeNull();
+    expect(created.data.hold_expires_at).toBeNull();
 
     await new Promise((resolve) => setTimeout(resolve, 5));
     const theirs = await register(other, `${ctx.runId} calendar reader`);
@@ -76,6 +77,22 @@ describe("registration", () => {
 
     expect((await client.deleteConnector(created.data.id)).status).toBe(200);
     expect((await other.deleteConnector(theirs.data.id)).status).toBe(200);
+  });
+
+  it("refuses to register the operator key", async () => {
+    const operator = getOperatorClient();
+    // The witness: the same door registers a working key.
+    const witness = await createSecondClient(ctx, "register-witness");
+    const mine = await witness.registerConnector({
+      name: `${ctx.runId} witness`,
+    });
+    expect(mine.status).toBe(201);
+    const refused = await operator.registerConnector({
+      name: `${ctx.runId} operator`,
+    });
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect((await witness.deleteConnector(mine.data.id)).status).toBe(200);
   });
 
   it("refuses a name or a description outside the bounds", async () => {
@@ -138,6 +155,30 @@ describe("registration", () => {
       201,
     );
     expect((await client.listConnectorRuns(real.data.id)).status).toBe(200);
+    expect((await client.holdConnector(real.data.id, "p")).status).toBe(200);
+    expect((await client.getConnectorState(real.data.id)).status).toBe(200);
+    expect((await client.listConnectorAgreements(real.data.id)).status).toBe(
+      200,
+    );
+    expect(
+      (await client.findConnectorAgreements(real.data.id, ["x"])).status,
+    ).toBe(200);
+    expect(
+      (await client.writeConnectorAgreements(real.data.id, { process: "p" }))
+        .status,
+    ).toBe(200);
+    expect(
+      (
+        await client.replaceConnectorState(real.data.id, {
+          process: "p",
+          state: {},
+        })
+      ).status,
+    ).toBe(200);
+    expect((await client.releaseConnectorHold(real.data.id, "p")).status).toBe(
+      200,
+    );
+    expect((await client.clearConnectorState(real.data.id)).status).toBe(200);
 
     const unknown = "01a0c000-0000-7000-8000-000000000000";
     for (const [door, res] of [
@@ -151,6 +192,35 @@ describe("registration", () => {
         await client.reportConnectorRun(unknown, run),
       ],
       ["GET /connectors/{id}/runs", await client.listConnectorRuns(unknown)],
+      ["POST /connectors/{id}/hold", await client.holdConnector(unknown, "p")],
+      [
+        "DELETE /connectors/{id}/hold",
+        await client.releaseConnectorHold(unknown, "p"),
+      ],
+      ["GET /connectors/{id}/state", await client.getConnectorState(unknown)],
+      [
+        "PUT /connectors/{id}/state",
+        await client.replaceConnectorState(unknown, {
+          process: "p",
+          state: {},
+        }),
+      ],
+      [
+        "DELETE /connectors/{id}/state",
+        await client.clearConnectorState(unknown),
+      ],
+      [
+        "POST /connectors/{id}/agreements",
+        await client.writeConnectorAgreements(unknown, { process: "p" }),
+      ],
+      [
+        "POST /connectors/{id}/agreements/find",
+        await client.findConnectorAgreements(unknown, ["x"]),
+      ],
+      [
+        "GET /connectors/{id}/agreements",
+        await client.listConnectorAgreements(unknown),
+      ],
       ["DELETE /connectors/{id}", await client.deleteConnector(unknown)],
     ] as const) {
       expect(res.status, door).toBe(404);

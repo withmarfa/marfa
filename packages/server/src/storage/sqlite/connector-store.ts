@@ -1,8 +1,9 @@
-import { and, desc, eq, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, lt, or, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
 import type {
   Connector,
+  ConnectorHoldOutcome,
   ConnectorRun,
   ConnectorRunInput,
   ConnectorStore,
@@ -12,7 +13,7 @@ import {
   decodeKeyedCursor,
   encodeKeyedCursor,
 } from "../interface.js";
-import { connectorRuns, connectors } from "./schema.js";
+import { connectorHolds, connectorRuns, connectors } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /** Runs kept per connector: a bound on the table, not a retention. */
@@ -37,13 +38,23 @@ function toRun(row: RunRow): ConnectorRun {
 export class SqliteConnectorStore implements ConnectorStore {
   constructor(private db: DrizzleDb) {}
 
-  private async withLastRun(row: ConnectorRow): Promise<Connector> {
+  private async toConnector(row: ConnectorRow): Promise<Connector> {
     const last = await this.db
       .select()
       .from(connectorRuns)
       .where(eq(connectorRuns.connector_id, row.id))
       .orderBy(desc(connectorRuns.reported_at), desc(connectorRuns.id))
       .limit(1)
+      .get();
+    const hold = await this.db
+      .select({ expires_at: connectorHolds.expires_at })
+      .from(connectorHolds)
+      .where(
+        and(
+          eq(connectorHolds.connector_id, row.id),
+          gt(connectorHolds.expires_at, new Date().toISOString()),
+        ),
+      )
       .get();
     return {
       id: row.id,
@@ -55,6 +66,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       updated_at: row.updated_at,
       last_heartbeat_at: row.last_heartbeat_at,
       last_run: last ? toRun(last) : null,
+      hold_expires_at: hold?.expires_at ?? null,
     };
   }
 
@@ -83,7 +95,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       .returning()
       .all();
     if (inserted[0]) {
-      return { connector: await this.withLastRun(inserted[0]), created: true };
+      return { connector: await this.toConnector(inserted[0]), created: true };
     }
     const updated = await this.db
       .update(connectors)
@@ -94,7 +106,7 @@ export class SqliteConnectorStore implements ConnectorStore {
     // The row went between the two statements, a removal landing in the
     // gap: this call registers afresh.
     if (!updated[0]) return this.register(key, name, description);
-    return { connector: await this.withLastRun(updated[0]), created: false };
+    return { connector: await this.toConnector(updated[0]), created: false };
   }
 
   async list(): Promise<Connector[]> {
@@ -104,7 +116,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       .orderBy(desc(connectors.registered_at), desc(connectors.id))
       .all();
     const out: Connector[] = [];
-    for (const row of rows) out.push(await this.withLastRun(row));
+    for (const row of rows) out.push(await this.toConnector(row));
     return out;
   }
 
@@ -114,7 +126,7 @@ export class SqliteConnectorStore implements ConnectorStore {
       .from(connectors)
       .where(eq(connectors.id, id))
       .get();
-    return row ? this.withLastRun(row) : null;
+    return row ? this.toConnector(row) : null;
   }
 
   async remove(id: string): Promise<boolean> {
@@ -167,6 +179,54 @@ export class SqliteConnectorStore implements ConnectorStore {
       )
       .run();
     return toRun(row);
+  }
+
+  async takeHold(
+    id: string,
+    process: string,
+    holdMs: number,
+  ): Promise<ConnectorHoldOutcome | null> {
+    return this.db.transaction(async (tx) => {
+      const registered = await tx
+        .select({ id: connectors.id })
+        .from(connectors)
+        .where(eq(connectors.id, id))
+        .get();
+      if (!registered) return null;
+      const now = new Date();
+      const current = await tx
+        .select()
+        .from(connectorHolds)
+        .where(eq(connectorHolds.connector_id, id))
+        .get();
+      const live =
+        current !== undefined && current.expires_at > now.toISOString();
+      if (live && current.process !== process) {
+        return { taken: false, expires_at: current.expires_at };
+      }
+      const expiresAt = new Date(now.getTime() + holdMs).toISOString();
+      await tx
+        .insert(connectorHolds)
+        .values({ connector_id: id, process, expires_at: expiresAt })
+        .onConflictDoUpdate({
+          target: connectorHolds.connector_id,
+          set: { process, expires_at: expiresAt },
+        })
+        .run();
+      return { taken: true, expires_at: expiresAt, renewed: live };
+    });
+  }
+
+  async releaseHold(id: string, process: string): Promise<void> {
+    await this.db
+      .delete(connectorHolds)
+      .where(
+        and(
+          eq(connectorHolds.connector_id, id),
+          eq(connectorHolds.process, process),
+        ),
+      )
+      .run();
   }
 
   async listRuns(
