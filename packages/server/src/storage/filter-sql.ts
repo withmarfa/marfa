@@ -7,7 +7,11 @@
  */
 
 import { sql, type SQL } from "drizzle-orm";
-import { typeSubtreeToSql } from "@withmarfa/shared";
+import {
+  typeFilterTerms,
+  typePatternToSql,
+  typeSubtreeToSql,
+} from "@withmarfa/shared";
 import type {
   FilterExpression,
   FilterCondition,
@@ -17,6 +21,63 @@ import type {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/** The types whose edges a filter's `backref` terms may count, as a map reads. */
+export interface ReadableSources {
+  allowed?: string[];
+  excluded: string[];
+}
+
+/** One type pattern as a clause on a raw column, for either compiler. */
+function patternClause(
+  column: string,
+  pattern: string,
+  params: unknown[],
+): string {
+  const { global, exact, descendantPattern } = typePatternToSql(pattern);
+  if (global) return "1=1";
+  if (!exact) return "1=0";
+  if (!descendantPattern) {
+    params.push(exact);
+    return `${column} = ?`;
+  }
+  params.push(exact, descendantPattern);
+  return `(${column} = ? OR ${column} LIKE ? ESCAPE '\\')`;
+}
+
+/**
+ * The clause a `backref` term adds so it counts only edges whose source the
+ * caller may read, as every door that serves an edge does; `null` for none.
+ */
+function readableSourceRawSql(
+  sources: ReadableSources | undefined,
+  params: unknown[],
+): string | null {
+  if (!sources?.allowed) return null;
+  if (sources.allowed.length === 0) return "AND 1=0";
+  const terms = typeFilterTerms(sources.allowed, sources.excluded).map(
+    ({ pattern, minus }) => {
+      const granted = patternClause("s.type", pattern, params);
+      if (minus.length === 0) return granted;
+      const carved = minus.map((m) => patternClause("s.type", m, params));
+      return `(${granted} AND NOT (${carved.join(" OR ")}))`;
+    },
+  );
+  return `AND EXISTS (SELECT 1 FROM items s WHERE s.id = e.source_id AND (${terms.join(" OR ")}))`;
+}
+
+/** The same clause as a Drizzle fragment. */
+function readableSourceSql(sources: ReadableSources | undefined): SQL {
+  const params: unknown[] = [];
+  const raw = readableSourceRawSql(sources, params);
+  if (raw === null) return sql``;
+  const parts = raw.split("?");
+  return sql.join(
+    parts.flatMap((part, i) =>
+      i < params.length ? [sql.raw(part), sql`${params[i]}`] : [sql.raw(part)],
+    ),
+  );
+}
 
 /**
  * Escape LIKE pattern characters so they are treated as literals.
@@ -90,7 +151,11 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
 // Drizzle SQL condition generator (for item stores)
 // ---------------------------------------------------------------------------
 
-function conditionToSql(condition: FilterCondition, table: ItemsTableRef): SQL {
+function conditionToSql(
+  condition: FilterCondition,
+  table: ItemsTableRef,
+  sources: ReadableSources | undefined,
+): SQL {
   const { field, op, value } = condition;
 
   if (field.kind === "system") {
@@ -103,7 +168,14 @@ function conditionToSql(condition: FilterCondition, table: ItemsTableRef): SQL {
   }
 
   if (field.kind === "edge") {
-    return edgeFieldSql(table.id, field.edge_type, field.direction, op, value);
+    return edgeFieldSql(
+      table.id,
+      field.edge_type,
+      field.direction,
+      op,
+      value,
+      sources,
+    );
   }
 
   // tags
@@ -121,6 +193,7 @@ function edgeFieldSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
+  sources: ReadableSources | undefined,
 ): SQL {
   if (direction === "outbound") {
     switch (op) {
@@ -152,31 +225,32 @@ function edgeFieldSql(
         throw new Error(`Unsupported operator "${op}" for edge reference`);
     }
   }
-  // backref
+  // backref: an edge's readability is its source's, which is the far end here.
+  const readable = readableSourceSql(sources);
   switch (op) {
     case "eq":
       return sql`EXISTS (
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}
+          AND e.source_id = ${value} ${readable}
       )`;
     case "neq":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
         WHERE e.target_id = ${idCol}
           AND e.edge_type = ${edgeType}
-          AND e.source_id = ${value}
+          AND e.source_id = ${value} ${readable}
       )`;
     case "exists":
       return sql`EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType} ${readable}
       )`;
     case "not_exists":
       return sql`NOT EXISTS (
         SELECT 1 FROM edges e
-        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType}
+        WHERE e.target_id = ${idCol} AND e.edge_type = ${edgeType} ${readable}
       )`;
     default:
       throw new Error(`Unsupported operator "${op}" for edge reference`);
@@ -298,8 +372,9 @@ function tagsFieldSql(idCol: unknown, op: ComparisonOp, value: unknown): SQL {
 export function filterToSqlConditions(
   expr: FilterExpression,
   table: ItemsTableRef,
+  sources?: ReadableSources,
 ): SQL[] {
-  return expr.conditions.map((c) => conditionToSql(c, table));
+  return expr.conditions.map((c) => conditionToSql(c, table, sources));
 }
 
 // ---------------------------------------------------------------------------
@@ -310,6 +385,7 @@ function conditionToRawSql(
   condition: FilterCondition,
   tableAlias: string,
   params: unknown[],
+  sources: ReadableSources | undefined,
 ): string {
   const { field, op, value } = condition;
 
@@ -329,6 +405,7 @@ function conditionToRawSql(
       op,
       value,
       params,
+      sources,
     );
   }
 
@@ -343,21 +420,26 @@ function edgeFieldRawSql(
   op: ComparisonOp,
   value: unknown,
   params: unknown[],
+  sources: ReadableSources | undefined,
 ): string {
   const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
   const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
+  const readable = (): string =>
+    direction === "backref"
+      ? ` ${readableSourceRawSql(sources, params) ?? ""}`
+      : "";
 
   if (op === "exists" || op === "not_exists") {
     params.push(edgeType);
     const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
-    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ?)`;
+    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ?${readable()})`;
   }
 
   if (op === "eq" || op === "neq") {
     params.push(edgeType);
     params.push(value);
     const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
-    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ? AND ${otherColumn} = ?)`;
+    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ? AND ${otherColumn} = ?${readable()})`;
   }
 
   throw new Error(`Unsupported operator "${op}" for edge reference in raw SQL`);
@@ -492,12 +574,13 @@ function tagsFieldRawSql(
 export function filterToRawSql(
   expr: FilterExpression,
   tableAlias: string,
+  sources?: ReadableSources,
 ): RawSqlResult {
   const params: unknown[] = [];
   const fragments: string[] = [];
 
   for (const condition of expr.conditions) {
-    fragments.push(conditionToRawSql(condition, tableAlias, params));
+    fragments.push(conditionToRawSql(condition, tableAlias, params, sources));
   }
 
   const joiner = expr.logical === "OR" ? " OR " : " AND ";

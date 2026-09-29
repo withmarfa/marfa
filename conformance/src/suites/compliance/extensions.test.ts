@@ -179,7 +179,7 @@ describe("metadata extensions", () => {
     expect(remove.error?.error.code).toBe("forbidden");
   });
 
-  it("refuses every door on an item whose type the key does not hold, as the item doors refuse it", async () => {
+  it("answers every door on an item whose type the key does not hold as a missing item, as the item doors answer it", async () => {
     const ns = "type-gated";
     const note = await client.createItem(createNote({ source: ctx.source }));
     expect(note.ok).toBe(true);
@@ -227,14 +227,14 @@ describe("metadata extensions", () => {
 
       // What the item doors answer this key for the same row.
       const itemRead = await writer.getItem(target.id);
-      expect(itemRead.status).toBe(403);
-      expect(itemRead.error?.error.code).toBe("type_not_permitted");
+      expect(itemRead.status).toBe(404);
+      expect(itemRead.error?.error.code).toBe("item_not_found");
       const itemWrite = await writer.updateItem(target.id, {
         version: target.version,
         properties: { title: "not written" },
       });
-      expect(itemWrite.status).toBe(403);
-      expect(itemWrite.error?.error.code).toBe("type_not_permitted");
+      expect(itemWrite.status).toBe(404);
+      expect(itemWrite.error?.error.code).toBe("item_not_found");
 
       for (const r of [
         await writer.listItemExtensions(target.id),

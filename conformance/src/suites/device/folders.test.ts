@@ -826,35 +826,46 @@ describe("what a folder is", () => {
   });
 
   it("refuses to follow settings its key cannot read, naming the permission", async () => {
-    const server = await ScriptedServer.start();
     const id = "01a00000-0000-7000-8000-0000000001f1";
-    server.answer(
-      "GET",
-      `/items/${id}`,
-      refusal(403, "type_not_permitted", "Read access to type denied"),
-    );
-    const dir = join(
-      mkdtempSync(join(tmpdir(), "marfa-folder-unreadable-")),
-      "notes",
-    );
-    const folder = new CliFolder(dir, {
-      binary: requireBinary(),
-      url: server.url,
-      key: KEY,
-    });
-    try {
-      const added = await folder.add(id);
-      expect(
-        added.ok,
-        "a folder was added that cannot read its own settings",
-      ).toBe(false);
-      if (added.ok) return;
-      expect(added.refusal.raw).toContain("system.folder:read");
-      // Written by every add that succeeds (`› writes its settings out as one
-      // file in .marfa/`).
-      expect(existsSync(join(dir, ".marfa", "folder.yaml"))).toBe(false);
-    } finally {
-      await server.stop();
+    // The server answers a folder the key cannot read as no folder, so the
+    // two keys differ only in what `GET /keys/current` says they hold.
+    for (const [types, named] of [
+      [{ "core.*": "write" }, true],
+      [{ "*": "write" }, false],
+    ] as const) {
+      const server = await ScriptedServer.start();
+      server.answer("GET", `/items/${id}`, answers.itemNotFound(id));
+      server.answer(
+        "GET",
+        "/keys/current",
+        answers.currentKey("fixture-key", { "*": "write" }, types),
+      );
+      const dir = join(
+        mkdtempSync(join(tmpdir(), "marfa-folder-unreadable-")),
+        "notes",
+      );
+      const folder = new CliFolder(dir, {
+        binary: requireBinary(),
+        url: server.url,
+        key: KEY,
+      });
+      try {
+        const added = await folder.add(id);
+        expect(
+          added.ok,
+          "a folder was added that cannot read its own settings",
+        ).toBe(false);
+        if (added.ok) return;
+        expect(
+          added.refusal.raw.includes("system.folder:read"),
+          `the refusal to a key holding ${JSON.stringify(types)}: ${added.refusal.raw}`,
+        ).toBe(named);
+        // Written by every add that succeeds (`› writes its settings out as
+        // one file in .marfa/`).
+        expect(existsSync(join(dir, ".marfa", "folder.yaml"))).toBe(false);
+      } finally {
+        await server.stop();
+      }
     }
   });
 
@@ -14928,8 +14939,8 @@ describe("folders on one Mac", () => {
 
   it("gives a fresh id to a moved file whose item the server will not show, and pins one it shows", async () => {
     const shown = "01a00000-0000-7000-8000-0000000039d1";
-    const trashed = "01a00000-0000-7000-8000-0000000039d2";
-    const hidden = "01a00000-0000-7000-8000-0000000039d3";
+    // Trashed, or of a type this key cannot read: the server answers both alike.
+    const unseen = "01a00000-0000-7000-8000-0000000039d2";
     const note = (id: string, title: string) => ({
       item: { id, properties: { title, body: `${title}\n` } },
     });
@@ -14938,27 +14949,14 @@ describe("folders on one Mac", () => {
       { search: { types: ["core.note"] } },
       { search: { types: ["core.bookmark"] } },
       {
-        "core.note": [
-          note(shown, "Shown"),
-          note(trashed, "Trashed"),
-          note(hidden, "Hidden"),
-        ],
+        "core.note": [note(shown, "Shown"), note(unseen, "Unseen")],
       },
       (server) => {
-        server.answer(
-          "GET",
-          `/items/${trashed}`,
-          refusal(404, "item_not_found", "No such item"),
-        );
-        server.answer(
-          "GET",
-          `/items/${hidden}`,
-          refusal(403, "type_not_permitted", "Not this type"),
-        );
+        server.answer("GET", `/items/${unseen}`, answers.itemNotFound(unseen));
       },
     );
     expect((await a.folder.pull()).ok).toBe(true);
-    for (const name of ["Shown.md", "Trashed.md", "Hidden.md"]) {
+    for (const name of ["Shown.md", "Unseen.md"]) {
       renameSync(join(a.dir, name), join(b.dir, name));
     }
     const from = b.server.requests.length;
@@ -14969,9 +14967,8 @@ describe("folders on one Mac", () => {
         .map((sent) => (sent.properties as { title?: string }).title)
         .sort(),
       "a moved file whose item the server will not show kept an id this folder cannot write to",
-    ).toEqual(["Hidden", "Trashed"]);
-    expect(creates.map((sent) => sent.id)).not.toContain(trashed);
-    expect(creates.map((sent) => sent.id)).not.toContain(hidden);
+    ).toEqual(["Unseen"]);
+    expect(creates.map((sent) => sent.id)).not.toContain(unseen);
     expect(idIn(b, "Shown.md")).toBe(shown);
     const status = await b.folder.device().status();
     expect(status.ok && status.value.pinned).toContain(shown);

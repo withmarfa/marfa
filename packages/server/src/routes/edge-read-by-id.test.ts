@@ -158,35 +158,31 @@ describe("GET /edges/:id", () => {
     expect(res.status).toBe(401);
   });
 
-  it("refuses a caller without read on the source item's type", async () => {
+  it("answers a caller without read on the source item's type as it answers no edge", async () => {
     const { id } = await createEdge(keyA);
     const key = await mintKey({
       type_permissions: { "core.file": "read" },
       edge_permissions: { "*": "read" },
     });
     const res = await request(ctx.app, "GET", `/edges/${id}`, { key });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
   });
 
-  it("refuses a caller without read on the edge type", async () => {
+  it("answers a caller without read on the edge type as it answers no edge", async () => {
     const { id } = await createEdge(keyA);
     const key = await mintKey({
       type_permissions: { "*": "read" },
       edge_permissions: { "in-thread": "read" },
     });
     const res = await request(ctx.app, "GET", `/edges/${id}`, { key });
-    expect(res.status).toBe(403);
-    expect(((await res.json()) as ErrorBody).error.code).toBe(
-      "edge_permission_denied",
-    );
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
   });
 
   it("still applies the source-type gate when the source item is trashed", async () => {
-    // The reason update and delete resolve the source with
-    // `getIncludingTrashed`. A plain read returns null for a trashed item,
-    // and the gate is written `if (srcItem)` -- so a null source skips the
-    // check rather than failing it. Without this, trashing an item would
-    // turn a refusal into a disclosure of what it is related to.
+    // A null source skips the check, so reading past the trash is what keeps
+    // a trashed item from disclosing what it is related to.
     const { id, source } = await createEdge(keyA);
     const trashed = await request(
       ctx.app,
@@ -200,7 +196,7 @@ describe("GET /edges/:id", () => {
       edge_permissions: { "*": "read" },
     });
     const res = await request(ctx.app, "GET", `/edges/${id}`, { key });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it("reads an edge whose source item is trashed, for a caller allowed to", async () => {

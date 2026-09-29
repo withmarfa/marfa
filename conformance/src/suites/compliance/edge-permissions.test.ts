@@ -243,18 +243,41 @@ describe("per-edge-type permissions", () => {
       apiKey: targetOnly.key,
     });
 
+    // It may not read the source, so the edge answers as no edge at all.
     const patch = await targetOnlyClient.updateEdge(edge.data.edge.id, {
       properties: { note: "should not land" },
       version: edge.data.edge.version,
     });
     expect(patch.ok).toBe(false);
-    expect(patch.status).toBe(403);
-    expect(patch.error?.error.code).toBe("type_not_permitted");
+    expect(patch.status).toBe(404);
+    expect(patch.error?.error.code).toBe("edge_not_found");
 
     const del = await targetOnlyClient.deleteEdge(edge.data.edge.id);
     expect(del.ok).toBe(false);
-    expect(del.status).toBe(403);
-    expect(del.error?.error.code).toBe("type_not_permitted");
+    expect(del.status).toBe(404);
+    expect(del.error?.error.code).toBe("edge_not_found");
+
+    // One that reads the source and does not write it is refused the write.
+    const sourceReader = await makeKey("source-reader", {
+      type_permissions: { [sourceType]: "read", [targetType]: "write" },
+      edge_permissions: { about: "write" },
+    });
+    const sourceReaderClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: sourceReader.key,
+    });
+    const refusedPatch = await sourceReaderClient.updateEdge(
+      edge.data.edge.id,
+      {
+        properties: { note: "should not land" },
+        version: edge.data.edge.version,
+      },
+    );
+    expect(refusedPatch.status).toBe(403);
+    expect(refusedPatch.error?.error.code).toBe("type_not_permitted");
+    const refusedDel = await sourceReaderClient.deleteEdge(edge.data.edge.id);
+    expect(refusedDel.status).toBe(403);
+    expect(refusedDel.error?.error.code).toBe("type_not_permitted");
 
     const sourceOnly = await makeKey("source-only", {
       type_permissions: { [sourceType]: "write", [targetType]: "read" },
@@ -500,9 +523,9 @@ describe("the edge listing answers only what the credential may read", () => {
         .data,
       "trashing the source item turned the refusal into a disclosure",
     ).toEqual([]);
-    // And the door this one is meant to agree with still refuses it, so
+    // And the door this one is meant to agree with answers it as no edge, so
     // the two read a trashed source the same way.
-    expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(403);
+    expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(404);
   });
 
   it("pages to the end of the listing though whole pages are dropped", async () => {
@@ -990,18 +1013,19 @@ describe("the doors under an item answer only what the credential may read", () 
     ).toBe(403);
     expect(refusedFullForm.error?.error.code).toBe("edge_permission_denied");
 
-    // The inbound direction, where the caller names the source and an
-    // edge's readability is the source's. The edge type here is one this
-    // credential holds, so what refuses it can only be the anchor's type.
-    const refusedSource = await narrowClient.listItems({
+    // An anchor it may not read is not refused: it matches as an anchor no
+    // row holds, so the page says nothing of the item or its edges.
+    const hiddenAnchor = await narrowClient.listItems({
       backref: { [seen]: hiddenSource },
       limit: 100,
     });
-    expect(
-      refusedSource.status,
-      `a backref filter anchored on an unreadable item was answered: ${JSON.stringify(refusedSource.data)}`,
-    ).toBe(403);
-    expect(refusedSource.error?.error.code).toBe("type_not_permitted");
+    const missingAnchor = await narrowClient.listItems({
+      backref: { [seen]: generateId() },
+      limit: 100,
+    });
+    expect(hiddenAnchor.status).toBe(200);
+    expect(hiddenAnchor.data).toEqual(missingAnchor.data);
+    expect(hiddenAnchor.data.data).toEqual([]);
 
     // And its witness: the same direction anchored on an item this
     // credential may read is answered.
@@ -1034,6 +1058,32 @@ describe("the doors under an item answer only what the credential may read", () 
       `search answered a filter naming an unreadable edge type: ${JSON.stringify(searchRefused.data)}`,
     ).toBe(403);
     expect(searchRefused.error?.error.code).toBe("edge_permission_denied");
+
+    // `POST /items/bulk-actions` takes the grammar too, and asks the same.
+    const writerKey = await makeKey("underitem-filter-bulk", {
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { [seen]: "read" },
+    });
+    const bulk = (filter: string) =>
+      new MarfaClient({ baseUrl: apiUrl, apiKey: writerKey.key }).rawRequest<{
+        matched?: number;
+      }>("/items/bulk-actions", {
+        method: "POST",
+        body: {
+          filter: { filter },
+          action: "update_tags",
+          add: ["ep-filter-bulk"],
+          dry_run: true,
+        },
+      });
+    const bulkWitness = await bulk(`edge[${seen}] eq "${target}"`);
+    expect(bulkWitness.status, JSON.stringify(bulkWitness.error)).toBe(200);
+    const bulkRefused = await bulk(`edge[${unseen}] eq "${target}"`);
+    expect(
+      bulkRefused.status,
+      `bulk-actions answered a filter naming an unreadable edge type: ${JSON.stringify(bulkRefused.data)}`,
+    ).toBe(403);
+    expect(bulkRefused.error?.error.code).toBe("edge_permission_denied");
   });
 });
 

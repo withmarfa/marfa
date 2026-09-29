@@ -527,6 +527,9 @@ async function acquire(
  *     refusal at a corrected credential would be a wrong answer to the
  *     question actually being asked. A conflict is the opposite — it says
  *     something about the request, which is why 409 IS recorded.
+ *
+ * A 404 is recorded, a hidden row's included: releasing that one alone
+ * would tell a row the key cannot read from a missing one.
  */
 async function recordOutcome(
   storage: Storage,

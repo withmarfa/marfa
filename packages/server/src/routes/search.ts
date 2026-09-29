@@ -150,9 +150,11 @@ const searchRoute = createRoute({
           "Structured filter expression, as on `GET /items`, including " +
             "its edge terms and their refusals: a term naming an edge " +
             "type the credential may not read is refused " +
-            "`403 edge_permission_denied`, and a `backref` term anchored " +
-            "on an item whose type it may not read is " +
-            "`403 type_not_permitted`.",
+            "`403 edge_permission_denied`. A `backref` term counts only " +
+            "edges whose source the credential may read, so one anchored " +
+            "on an item it may not read matches as one anchored on an id " +
+            "no row holds; an `edge` term matches every edge it may read, " +
+            "one to an item it may not read included.",
         )
         .optional(),
       occurred_after: z
@@ -213,7 +215,7 @@ const searchRoute = createRoute({
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read, and `type_not_permitted` where a `backref` term is anchored on an item whose type it may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
+        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. Also `edge_permission_denied` where a filter term names an edge type the credential may not read: a term naming a relationship is a question, and it is refused rather than answered or dropped.",
     },
   },
 });
@@ -253,7 +255,7 @@ export function searchRoutes(storage: Storage) {
     // compiles an edge term rather than ignoring one, so it asks the same
     // question of it. Two doors that disagreed about one term would be
     // the disclosure reached through the other one.
-    await assertFilterEdgeTermsReadable(c, storage, filter);
+    assertFilterEdgeTermsReadable(c, filter);
 
     const { allowed: allowed_types, excluded: excluded_types } =
       getTypeFilter(c);
@@ -302,6 +304,7 @@ export function searchRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
+      readable_sources: { allowed: allowed_types, excluded: excluded_types },
       occurred_after: occurredAfter,
       occurred_before: occurredBefore,
       allowed_types,

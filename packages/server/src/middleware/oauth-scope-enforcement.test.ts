@@ -155,7 +155,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       ]);
     });
 
-    it("rejects single-item GET on an out-of-scope type with 403", async () => {
+    it("answers single-item GET on an out-of-scope type as a missing item", async () => {
       const seeder = ctx.workingKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
@@ -170,9 +170,9 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const res = await request(ctx.app, "GET", `/items/${created.item.id}`, {
         key: rawToken,
       });
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
       const body = (await res.json()) as { error?: { code?: string } };
-      expect(body.error?.code).toBe("type_not_permitted");
+      expect(body.error?.code).toBe("item_not_found");
     });
 
     it("write scope covers read", async () => {

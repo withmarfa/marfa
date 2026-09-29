@@ -188,7 +188,11 @@ export class SqliteSearchStore implements SearchStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const { clause, params: filterParams } = filterToRawSql(expr, "i");
+      const { clause, params: filterParams } = filterToRawSql(
+        expr,
+        "i",
+        filters.readable_sources,
+      );
       conditions.push(`AND ${clause}`);
       params.push(...filterParams);
     }

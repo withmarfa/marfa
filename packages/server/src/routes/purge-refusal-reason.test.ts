@@ -161,6 +161,22 @@ describe("purging a soft-deleted row", () => {
     expect(await ctx.storage.items.getIncludingTrashed(id)).not.toBeNull();
   }
 
+  /** A row whose type the key may not read answers as no row, and stays. */
+  async function expectHidden(id: string, key: string): Promise<void> {
+    const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+      key,
+    });
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(res.status, JSON.stringify(body)).toBe(404);
+    expect(body.error).toEqual({
+      code: "item_not_found",
+      message: "Item not found",
+    });
+    expect(await ctx.storage.items.getIncludingTrashed(id)).not.toBeNull();
+  }
+
   it("refuses a trashed row of a type the key may only read", async () => {
     const task = await ctx.storage.items.create({
       type: "core.task",
@@ -180,11 +196,11 @@ describe("purging a soft-deleted row", () => {
     expect(purged.status).toBe(200);
   });
 
-  it("refuses a trashed reserved-namespace row to a key whose map does not reach it", async () => {
+  it("answers a trashed reserved-namespace row to a key whose map does not reach it as no row", async () => {
     const id = await seedReservedRow("relic:narrow-map");
     await ctx.storage.items.transition(id, "trashed");
 
-    await expectRefused(id, coreOnlyKey);
+    await expectHidden(id, coreOnlyKey);
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: workingKey,
@@ -208,7 +224,7 @@ describe("purging a soft-deleted row", () => {
       "revoked",
     );
 
-    await expectRefused(conn.id, coreOnlyKey);
+    await expectHidden(conn.id, coreOnlyKey);
 
     const purged = await request(ctx.app, "DELETE", `/items/${conn.id}/purge`, {
       key: workingKey,

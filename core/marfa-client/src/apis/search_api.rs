@@ -32,7 +32,7 @@ pub struct SearchItemsParams {
     pub limit: Option<i32>,
     /// Opaque cursor from a previous page's `next_cursor`.
     pub cursor: Option<String>,
-    /// Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`, and a `backref` term anchored on an item whose type it may not read is `403 type_not_permitted`.
+    /// Structured filter expression, as on `GET /items`, including its edge terms and their refusals: a term naming an edge type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.
     pub filter: Option<String>,
     /// Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time.
     pub occurred_after: Option<String>,

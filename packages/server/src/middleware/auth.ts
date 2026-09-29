@@ -759,6 +759,20 @@ export function requireTypeAccess(
 }
 
 /**
+ * The row a door names by id, answered as its `notFound` where the key cannot
+ * read its type, so a hidden row and no row look alike to the caller.
+ */
+export function requireReadableRow<T extends { type: string }>(
+  c: Context<AppEnv>,
+  row: T | null | undefined,
+  notFound: () => MarfaError,
+): T {
+  getTypeFilter(c);
+  if (!row || !mayReadRow(c, row)) throw notFound();
+  return row;
+}
+
+/**
  * Write access to a row a natural key resolved, refused without naming the
  * row where the credential may not read its type.
  *
@@ -774,7 +788,7 @@ export function requireResolvedRowWrite(
   c: Context<AppEnv>,
   row: { type: string },
 ): void {
-  if (!mayReadResolvedRow(c, row)) {
+  if (!mayReadRow(c, row)) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
       "The natural key resolves a row of a type this credential may not reach",
@@ -783,21 +797,16 @@ export function requireResolvedRowWrite(
   requireTypeAccess(c, row.type, "write");
 }
 
-/** Whether the credential may read a row a natural key resolved. */
-export function mayReadResolvedRow(
-  c: Context<AppEnv>,
-  row: { type: string },
-): boolean {
+/** Whether the credential may read this row's type. */
+export function mayReadRow(c: Context<AppEnv>, row: { type: string }): boolean {
   return mayReadType(checkAuth(c.get("apiKey")), row.type);
 }
 
 /**
- * Whether the credential may read an edge target of this type. An edge write
- * answers a target it may not read exactly as a missing one.
+ * Whether the credential may read an edge end of this type. An edge write
+ * answers an end it may not read exactly as a missing one.
  */
-export function mayReadEdgeTarget(
-  c: Context<AppEnv>,
-): (type: string) => boolean {
+export function mayReadEdgeEnd(c: Context<AppEnv>): (type: string) => boolean {
   const key = checkAuth(c.get("apiKey"));
   return (type) => mayReadType(key, type);
 }
@@ -993,10 +1002,8 @@ export function requirePermission(
  * An empty `allowed` at read level is a credential that may read no type
  * at all. Answering it `200` with an empty page says "there is nothing
  * here", which is not what happened: there is a great deal here and this
- * credential may not see it. The single-row doors say so, since
- * `checkTypeAccess` resolves the same empty map to `none` and throws
- * `type_not_permitted`, and refusing here too answers one question one way
- * however many rows the caller asked for.
+ * credential may not see it. The single-row doors refuse it too, through
+ * `requireReadableRow`, so one question gets one answer however many rows.
  *
  * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
  * where it narrows a match set rather than refusing a row, and a key

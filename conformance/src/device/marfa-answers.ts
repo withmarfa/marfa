@@ -613,6 +613,10 @@ export const answers = {
       "properties is required where no end moves",
       { field: "properties" },
     ),
+  /** An item read by id that the server does not hold, or holds of a type
+   *  the key may not read (`keys-and-oauth.md` 20). */
+  itemNotFound: (id: string): Answer =>
+    refusal(404, "item_not_found", `Item ${id} not found`),
   /** An edge end a move names that the server does not hold (`edges.md` 10). */
   edgeEndNotFound: (end: "source" | "target", id: string): Answer =>
     refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),
@@ -625,11 +629,14 @@ export const answers = {
     refusal(400, "validation_error", message, {
       errors: [{ path: field, message }],
     }),
-  /** `GET /keys/current`: the key the request bears, its edge grants as
-   *  named. */
+  /** `GET /keys/current`: the key the request bears, its edge grants and
+   *  its type grants as named. */
   currentKey: (
     id: string,
     edgePermissions: Record<string, "read" | "write">,
+    typePermissions: Record<string, "read" | "write" | "none"> = {
+      "*": "write",
+    },
   ): Answer => ({
     kind: "json",
     status: 200,
@@ -641,7 +648,7 @@ export const answers = {
       permissions: [],
       default_tier: "library",
       is_operator: false,
-      type_permissions: { "*": "write" },
+      type_permissions: typePermissions,
       extension_permissions: {},
       edge_permissions: edgePermissions,
       metadata_permissions: {},

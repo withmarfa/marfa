@@ -1,8 +1,13 @@
+import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, requireTypeAccess } from "../middleware/auth.js";
+import {
+  requireAuth,
+  requireReadableRow,
+  requireTypeAccess,
+} from "../middleware/auth.js";
 import type { CascadeRoot, Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -67,7 +72,7 @@ const restoreItemRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "The credential may not write the item's type.",
+      description: WRITE_REFUSED,
     },
     404: {
       content: {
@@ -75,7 +80,7 @@ const restoreItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -135,7 +140,7 @@ const transitionItemRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description: "The credential may not write the item's type.",
+      description: WRITE_REFUSED,
     },
     404: {
       content: {
@@ -143,7 +148,7 @@ const transitionItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -188,10 +193,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // leave the item restored with no rollback if the gate throws.
     // `getIncludingTrashed` sees past the normal trashed-is-invisible
     // filter.
-    const pending = await storage.items.getIncludingTrashed(id);
-    if (!pending) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
+    const pending = requireReadableRow(
+      c,
+      await storage.items.getIncludingTrashed(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     requireTypeAccess(c, pending.type, "write");
     const { restored, broughtBack } = await storage.runInTransaction(
       async () => {
@@ -239,10 +245,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // it is judged by the type's graph: `trashed` admits `active` alone, and
     // the store's refusal names the move. Read through the trashed-invisible
     // getter, every trashed row answered 404 and the graph never spoke.
-    const item = await storage.items.getIncludingTrashed(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
-    }
+    const item = requireReadableRow(
+      c,
+      await storage.items.getIncludingTrashed(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    );
     requireTypeAccess(c, item.type, "write");
     // **No live-connection refusal here, and two rules make it unreachable.**
     // The nearer one is in this file: a `system.*` type's lifecycle admits

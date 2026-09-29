@@ -25,6 +25,7 @@
  * subscriber is not what the caller asked for.
  */
 
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
@@ -51,13 +52,14 @@ import {
   requireAuth,
   requireTypeAccess,
   requireResolvedRowWrite,
-  mayReadResolvedRow,
-  mayReadEdgeTarget,
+  mayReadRow,
+  mayReadEdgeEnd,
   requireEdgePermission,
   mayWriteReserved,
   requireDeclaredTypeMatches,
   itemProvenanceSource,
   getTypeFilter,
+  computeTypeFilter,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
@@ -283,10 +285,14 @@ const bulkActionRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "forbidden",
+          ]),
         },
       },
-      description: "`items.purge` required (purge only)",
+      description:
+        "`forbidden` where `items.purge` is missing (purge only); `edge_permission_denied` where a filter term names an edge type the credential may not read, refused as `GET /items` refuses it.",
     },
   },
 });
@@ -710,6 +716,9 @@ async function processBulkItem(
       mode === "create_only"
         ? await storage.items.getIncludingTrashed(raw.id)
         : await storage.items.get(raw.id);
+    // Under `upsert`, a row the key may not read goes on to the create's
+    // `conflict`, as `POST /items` answers it, whatever state the row is in.
+    if (mode === "upsert" && existing && !mayRead(existing)) existing = null;
     if (existing) matchedBy = "id";
   }
 
@@ -1286,9 +1295,9 @@ export function bulkRoutes(storage: Storage) {
           retype,
           checkWrite,
           checkUpdate,
-          mayRead: (existing) => mayReadResolvedRow(c, existing),
+          mayRead: (existing) => mayReadRow(c, existing),
           checkEdgeWrite,
-          mayReadTarget: mayReadEdgeTarget(c),
+          mayReadTarget: mayReadEdgeEnd(c),
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
           enforcement,
         });
@@ -1474,6 +1483,7 @@ export function bulkRoutes(storage: Storage) {
     }
 
     const callerKey = c.get("apiKey");
+    assertFilterEdgeTermsReadable(c, filter.filter);
 
     // Narrowed to what the caller may *write*, which this comment claimed
     // before the code did it. The filter compiled readable patterns, so a
@@ -1525,6 +1535,8 @@ export function bulkRoutes(storage: Storage) {
         tier: filter.tier,
         tags: filter.tags,
         filter: filter.filter,
+        // What the caller reads, not writes: an edge is readable by its source.
+        readable_sources: computeTypeFilter(callerKey, "read"),
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
         // Per row, from the row's own type, as on every read door.

@@ -537,18 +537,23 @@ describe("GET /items/:id/edges + /backrefs", () => {
     }
 
     for (const door of ["edges", "backrefs"]) {
-      it(`${door} refuses a key with no read grant on the anchor's type`, async () => {
+      it(`${door} answers a key with no read grant on the anchor's type as it answers no anchor`, async () => {
         const anchor = await trashedAnchor();
-        // Granted on a different type, so the refusal is the type map
-        // answering rather than an empty permission set answering.
+        // Granted on a different type, so the answer is the type map's
+        // rather than an empty permission set's.
         const key = await memberKey({ "core.task": "read" });
 
         const res = await request(ctx.app, "GET", `/items/${anchor}/${door}`, {
           key,
         });
-        expect(res.status).toBe(403);
-        const err = (await res.json()) as { error: { code: string } };
-        expect(err.error.code).toBe("type_not_permitted");
+        expect(res.status).toBe(404);
+        const err = (await res.json()) as {
+          error: { code: string; message: string };
+        };
+        expect(err.error).toEqual({
+          code: "item_not_found",
+          message: `Item ${anchor} not found`,
+        });
       });
 
       it(`${door} still serves a key that holds the grant`, async () => {

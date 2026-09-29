@@ -253,8 +253,8 @@ describe("the folder door", () => {
     expect((await reader.client.getItem(id)).status).toBe(200);
     const other = await keyWith("other-reader", { "core.note": "read" });
     const refused = await other.client.getItem(id);
-    expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("type_not_permitted");
+    expect(refused.status).toBe(404);
+    expect(refused.error?.error.code).toBe("item_not_found");
   });
 
   it.each([

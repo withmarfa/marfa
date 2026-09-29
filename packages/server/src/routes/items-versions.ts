@@ -1,7 +1,8 @@
+import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireTypeAccess } from "../middleware/auth.js";
+import { requireReadableRow } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { VersionPageSchema } from "./_schemas.js";
@@ -61,8 +62,7 @@ const listVersionsRoute = createRoute({
           schema: makeErrorResponseSchema(["type_not_permitted"]),
         },
       },
-      description:
-        "The credential's type permissions do not reach the item's type with read.",
+      description: READ_REFUSED,
     },
     404: {
       content: {
@@ -70,7 +70,7 @@ const listVersionsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: "Item not found",
+      description: ITEM_NOT_FOUND,
     },
   },
 });
@@ -89,12 +89,11 @@ export function itemsVersionsRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = await storage.items.get(id);
-    if (!item) {
-      throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
-    }
-
-    requireTypeAccess(c, item.type, "read");
+    requireReadableRow(
+      c,
+      await storage.items.get(id),
+      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    );
     const versions = await storage.versions.list(id);
     return c.json({ data: versions, next_cursor: null }, 200);
   });

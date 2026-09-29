@@ -144,10 +144,8 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
       permissions: [],
     });
 
-    // Expanding grants through declared parentage put these two in
-    // disagreement: the listing returned the denied row while fetching it by id
-    // returned 403. A list that shows what a fetch refuses is the fail-open
-    // direction, so permission patterns resolve names only.
+    // A list showing what a fetch hides fails open, so both agree the denied
+    // row is not there: permission patterns resolve names only.
     const list = await request(ctx.app, "GET", "/items", { key: scoped });
     expect(list.status).toBe(200);
     const types = (
@@ -159,6 +157,6 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     const single = await request(ctx.app, "GET", `/items/${deniedId}`, {
       key: scoped,
     });
-    expect(single.status).toBe(403);
+    expect(single.status).toBe(404);
   });
 });
