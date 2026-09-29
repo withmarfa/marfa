@@ -326,6 +326,12 @@ fn step(
         unsure: scanned.unsure.clone(),
     };
     let changed = standing.as_ref() != Some(&now);
+    // Said when it changes, as what stands is, not at every eventful pass.
+    let unplaced = standing
+        .as_ref()
+        .is_none_or(|before| before.unplaced != now.unplaced)
+        .then(|| crate::folders::unplaced_line(pulled.unplaced))
+        .flatten();
     let said: Vec<String> = crate::folders::trashed_lines(&scanned)
         .into_iter()
         .chain(crate::folders::uncarried_line(&now.uncarried))
@@ -397,7 +403,7 @@ fn step(
                 [
                     (drained.rebased > 0).then(|| crate::folders::rebased_line(drained.rebased)),
                     (drained.gave_way > 0).then(|| crate::folders::gave_way_line(drained.gave_way)),
-                    crate::folders::unplaced_line(pulled.unplaced),
+                    unplaced.clone(),
                 ]
                 .into_iter()
                 .flatten()

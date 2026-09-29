@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -10,6 +11,7 @@ use serde_json::{Map, Value};
 use super::Folder;
 use crate::catalog::Catalog;
 use crate::drain::DrainReport;
+use crate::error::CoreError;
 use crate::model::{
     BlockedReason, Edge, EdgeDraft, EdgeEdit, Item, QueuedWrite, Verdict, WriteKind,
 };
@@ -23,9 +25,27 @@ const PATH_PROPERTY: &str = "path";
 
 const META_REFUSED: &str = "folder_placements_refused";
 
-/// Placements the server refused, each the item's and the path it named:
-/// not sent again until the key or the settings change.
-pub(super) type Withheld = BTreeMap<String, String>;
+/// Placements the server refused, by item: not sent again until the key or
+/// the settings change, or the item's placement moves on.
+pub(super) type Withheld = BTreeMap<String, Held>;
+
+/// A refused placement: the path it named, and the refused write's `edge_id`
+/// and `base_version`, none for a create.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct Held {
+    path: String,
+    at: Option<(String, i64)>,
+}
+
+/// How long a key's answer stands before it is asked again: a running watch
+/// meets a restored grant within it (`folders.md` 19).
+const KEY_REREAD: Duration = Duration::from_secs(60);
+
+/// The key as last asked, and when; `None` where the asking failed.
+pub(super) struct KeyRead {
+    state: Option<KeyState>,
+    at: Instant,
+}
 
 /// The key a credential is, as far as placing goes: its id and its
 /// `in-folder` grant, both `None` for a credential that is not a key.
@@ -46,8 +66,8 @@ impl KeyState {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Refused {
-    /// The key they were refused to.
-    key: KeyState,
+    /// The key they were refused to; `None` until it could be read.
+    key: Option<KeyState>,
     /// The version of the settings they were refused under.
     settings: i64,
     placements: Withheld,
@@ -73,7 +93,10 @@ impl Folder {
     /// Records that the item's file sits at `path`, as an edge create or an
     /// update of its `path` alone. Answers whether anything was queued.
     pub(super) fn place(&self, item_id: &str, path: &str, withheld: &Withheld) -> Result<bool> {
-        if withheld.get(item_id).is_some_and(|refused| refused == path) {
+        if withheld
+            .get(item_id)
+            .is_some_and(|refused| refused.path == path)
+        {
             return Ok(false);
         }
         let mut properties = Map::new();
@@ -107,13 +130,49 @@ impl Folder {
         Ok(true)
     }
 
-    /// The placements the server refused, while the key and the settings
-    /// they were refused under are the ones in force.
+    /// The refused placements, while their key and settings stand; one whose
+    /// item's placement has moved since is let go, so the pull follows it.
     pub(super) fn withheld(&self) -> Result<Withheld> {
+        let Some(mut refused) = self.refused()? else {
+            return Ok(Withheld::new());
+        };
+        let before = refused.placements.len();
+        let mut kept = Withheld::new();
+        for (item, held) in std::mem::take(&mut refused.placements) {
+            if self.placement_at(&item)? == held.at {
+                kept.insert(item, held);
+            }
+        }
+        refused.placements = kept;
+        if refused.placements.len() != before {
+            self.keep_refused(&refused)?;
+        }
+        Ok(refused.placements)
+    }
+
+    /// The item's placement in this folder, by id and version. A create not
+    /// yet answered, at version 0, has landed nowhere.
+    fn placement_at(&self, item_id: &str) -> Result<Option<(String, i64)>> {
         Ok(self
-            .refused()?
-            .map(|refused| refused.placements)
-            .unwrap_or_default())
+            .core
+            .edges_from(item_id)?
+            .into_iter()
+            .filter(|edge| {
+                edge.edge_type == PLACEMENT_EDGE
+                    && edge.target_id == self.folder
+                    && edge.version > 0
+            })
+            .min_by_key(rank_of)
+            .map(|edge| (edge.id, edge.version)))
+    }
+
+    fn keep_refused(&self, refused: &Refused) -> Result<()> {
+        let conn = self.core.conn()?;
+        if refused.placements.is_empty() {
+            store::meta_delete(&conn, META_REFUSED)
+        } else {
+            store::meta_set(&conn, META_REFUSED, &serde_json::to_string(refused)?)
+        }
     }
 
     fn refused(&self) -> Result<Option<Refused>> {
@@ -122,47 +181,57 @@ impl Folder {
         };
         let refused: Option<Refused> = serde_json::from_str(&json).ok();
         let settings = self.core.get(&self.folder)?.map(|row| row.version);
-        match refused {
-            Some(refused)
-                if Some(refused.settings) == settings && !self.key_changed(&refused.key) =>
-            {
-                Ok(Some(refused))
-            }
-            _ => {
+        let Some(mut refused) = refused.filter(|refused| Some(refused.settings) == settings) else {
+            store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
+            return Ok(None);
+        };
+        // A key that cannot be read is unchanged; one unread at the refusal is
+        // the key it was refused to once it can be.
+        match (&refused.key, self.key_state()) {
+            (Some(recorded), Ok(current)) if *recorded != current => {
                 store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
                 Ok(None)
             }
+            (None, Ok(current)) => {
+                refused.key = Some(current);
+                self.keep_refused(&refused)?;
+                Ok(Some(refused))
+            }
+            _ => Ok(Some(refused)),
         }
     }
 
-    /// Whether the credential is another key, or the same key with another
-    /// grant, than `recorded`. Unanswerable, offline say, it is the same.
-    fn key_changed(&self, recorded: &KeyState) -> bool {
-        match self.key_state() {
-            Ok(current) => &current != recorded,
-            Err(_) => false,
-        }
-    }
-
-    /// The key this credential is, asked once per process.
+    /// The key this credential is, asked at most once a `KEY_REREAD`, a
+    /// failed asking included, so a watch spares the server's rate limit.
     fn key_state(&self) -> Result<KeyState> {
-        if let Some(known) = self.key.get() {
-            return Ok(known.clone());
+        let mut last = self
+            .key
+            .lock()
+            .map_err(|_| CoreError::Store("the key's record was poisoned".into()))?;
+        if let Some(read) = last.as_ref()
+            && read.at.elapsed() < KEY_REREAD
+        {
+            return read.state.clone().ok_or_else(|| {
+                CoreError::Network("the key could not be read, and is asked again later".into())
+            });
         }
-        let state = self
+        let asked = self
             .core
-            .http()?
-            .current_key()?
-            .map(|key| KeyState::of(&key))
-            .unwrap_or_default();
-        Ok(self.key.get_or_init(|| state).clone())
+            .http()
+            .and_then(|http| http.current_key())
+            .map(|key| key.map(|key| KeyState::of(&key)).unwrap_or_default());
+        *last = Some(KeyRead {
+            state: asked.as_ref().ok().cloned(),
+            at: Instant::now(),
+        });
+        asked
     }
 
     /// Gives way where another machine placed or moved the item first, and
     /// remembers any other refusal. Answers how many gave way.
     pub(super) fn settle_placements(&self, report: &mut DrainReport) -> Result<usize> {
         let mut gave_way = 0;
-        let mut refused: Vec<(String, String)> = Vec::new();
+        let mut refused: Vec<(String, Held)> = Vec::new();
         let mut kept = Vec::new();
         for verdict in std::mem::take(&mut report.verdicts) {
             let row = {
@@ -208,7 +277,13 @@ impl Folder {
                             .map(str::to_string)
                     })
                     .unwrap_or_default();
-                refused.push((item, path));
+                // The placement the refused write was based on, which the
+                // copy may since have moved past.
+                let at = match row.kind {
+                    WriteKind::UpdateEdge => row.edge_id.clone().zip(row.base_version),
+                    _ => None,
+                };
+                refused.push((item, Held { path, at }));
             }
             kept.push(verdict);
         }
@@ -278,21 +353,17 @@ impl Folder {
         Ok(())
     }
 
-    fn remember_refused(&self, placements: Vec<(String, String)>) -> Result<()> {
+    fn remember_refused(&self, placements: Vec<(String, Held)>) -> Result<()> {
         let mut record = match self.refused()? {
             Some(record) => record,
             None => Refused {
-                key: self.key_state().unwrap_or_default(),
+                key: self.key_state().ok(),
                 settings: self.core.get(&self.folder)?.map_or(0, |row| row.version),
                 placements: Withheld::new(),
             },
         };
         record.placements.extend(placements);
-        store::meta_set(
-            &*self.core.conn()?,
-            META_REFUSED,
-            &serde_json::to_string(&record)?,
-        )
+        self.keep_refused(&record)
     }
 }
 

@@ -9796,6 +9796,290 @@ describe("where a file sits", () => {
     ).toEqual([gone]);
   });
 
+  it("follows another Mac's move of an item whose move it was refused", async () => {
+    let refusing = false;
+    const edges = new EdgeDoor();
+    edges.placing = () =>
+      refusing
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-refused-then-moved", {
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "one.md") ?? "";
+    const moves = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname.startsWith("/edges/"),
+      ).length;
+
+    refusing = true;
+    renameSync(join(harness.dir, "one.md"), join(harness.dir, "renamed.md"));
+    for (let pass = 0; pass < 2; pass += 1) {
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    // The witness: the move was refused, and the file kept where it was put.
+    expect(moves()).toBe(1);
+    expect(idIn(harness, "renamed.md")).toBe(id);
+
+    // Another Mac, whose key may place, moves the item.
+    edges.relocate(id, harness.settings.id, "moved/one.md");
+    const followed = await harness.folder.push();
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    expect(
+      existsSync(join(harness.dir, "moved/one.md")),
+      "a refusal of this Mac's move kept the file where it sat, so another Mac's later move of the item was never followed",
+    ).toBe(true);
+    expect(idIn(harness, "moved/one.md")).toBe(id);
+    expect(existsSync(join(harness.dir, "renamed.md"))).toBe(false);
+    expect(followed.ok && followed.value.pull?.unplaced).toBe(0);
+    expect(
+      moves(),
+      "the folder pushed its own move back over the other Mac's",
+    ).toBe(1);
+  });
+
+  it("sends a refused move again once a later placement of the item lands", async () => {
+    let refusals = 1;
+    const edges = new EdgeDoor();
+    edges.placing = () => {
+      if (refusals === 0) return undefined;
+      refusals -= 1;
+      return refusal(422, "validation_failed", "Not there");
+    };
+    harness = await folderHarness("placement-refused-then-landed", {
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    refusals = 0;
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    const id = idIn(harness, "one.md") ?? "";
+    const folderId = harness.settings.id;
+    const moveTo = async (from: string, to: string) => {
+      renameSync(join(harness!.dir, from), join(harness!.dir, to));
+      const pushed = await harness!.folder.push();
+      expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    };
+
+    refusals = 1;
+    await moveTo("one.md", "there.md");
+    // The witness: the move to there.md was refused.
+    expect(edges.placements(folderId).get(id)).toBe("one.md");
+    await moveTo("there.md", "elsewhere.md");
+    expect(edges.placements(folderId).get(id)).toBe("elsewhere.md");
+
+    await moveTo("elsewhere.md", "there.md");
+    expect(
+      edges.placements(folderId).get(id),
+      "a move refused once was never sent again after a later placement of the item landed, so the server placed the file where it no longer sits",
+    ).toBe("there.md");
+    expect(idIn(harness, "there.md")).toBe(id);
+  });
+
+  it("sends a refused placement again while watching, once the key's grant is restored, reading the key at most once a minute", async () => {
+    let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
+    let refusing = true;
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      refusing && edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-grant-watch", {
+      key: [() => key],
+    });
+    scriptFolderWrites(harness, { edges });
+    // The same key, its grant narrowed once the folder is added.
+    key = answers.currentKey("fixture-key", { references: "write" });
+    const placings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "in-folder",
+      ).length;
+    const keyReads = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === "/keys/current",
+      ).length;
+    const afterAdd = keyReads();
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    const watching = harness.folder.watchText();
+    let restored = 0;
+    try {
+      await vi.waitFor(() => expect(placings()).toBe(1), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // The witness: the watch read the key, for the refusal to be recorded
+      // under.
+      await vi.waitFor(() => expect(keyReads()).toBeGreaterThan(afterAdd), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // Passes enough for a refused placement, or the key, to be asked again
+      // at every one, were either.
+      const readsAtRefusal = keyReads();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      expect(placings(), "a refused placement was sent pass after pass").toBe(
+        1,
+      );
+      expect(
+        keyReads() - readsAtRefusal,
+        "a watch read the key at every pass while a refusal stood, which a server's rate limit does not allow",
+      ).toBe(0);
+
+      key = answers.currentKey("fixture-key", { "*": "write" });
+      refusing = false;
+      restored = Date.now();
+      await vi.waitFor(
+        () => expect(edges.placements(harness!.settings.id).size).toBe(1),
+        { timeout: 70_000, interval: 250 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      Date.now() - restored,
+      "a restored grant was not met within the minute the key is read again in",
+    ).toBeLessThan(65_000);
+    expect(placings()).toBe(2);
+  }, 110_000);
+
+  it("asks a key it could not read again at most once a minute while watching", async () => {
+    let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-key-unreadable-watch", {
+      key: [() => key],
+    });
+    scriptFolderWrites(harness, { edges });
+    key = refusal(503, "unavailable", "Try again");
+    const keyReads = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === "/keys/current",
+      ).length;
+    const afterAdd = keyReads();
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    const watching = harness.folder.watchText();
+    try {
+      // The witness: the watch asked for the key, and was refused an answer.
+      await vi.waitFor(() => expect(keyReads()).toBeGreaterThan(afterAdd), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      const first = keyReads();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      expect(
+        keyReads() - first,
+        "a watch asked again at every pass for a key it could not read",
+      ).toBe(0);
+    } finally {
+      await watching.stop();
+    }
+  });
+
+  it("takes a key it could not read when a placement was refused as unchanged, and does not send the placement again", async () => {
+    let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-key-unread-at-refusal", {
+      key: [() => key],
+    });
+    scriptFolderWrites(harness, { edges });
+    const placings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "in-folder",
+      ).length;
+    // Refused while the key cannot be read.
+    key = refusal(503, "unavailable", "Try again");
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the placement was sent and refused.
+    expect(placings()).toBe(1);
+
+    // The same key, readable again, with the grant it was refused under.
+    key = answers.currentKey("fixture-key", { references: "write" });
+    for (let pass = 0; pass < 2; pass += 1) {
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    expect(
+      placings(),
+      "a key that could not be read at the refusal was taken for another key once it could, and the placement was refused again",
+    ).toBe(1);
+  });
+
+  it("says the placements it holds back once while watching", async () => {
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-unplaced-watch");
+    scriptFolderWrites(harness, { edges });
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    const unplaced = "placement(s) the server refused";
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(() => expect(watching.stdout).toContain(unplaced), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // An eventful pass while the refusal stands: an edit of the file.
+      put(harness, "one.md", read(harness, "one.md") + "more words\n");
+      await vi.waitFor(() => expect(sentUpdates(harness!)).toHaveLength(1), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // Passes enough for the edit's own report to be printed.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+    } finally {
+      await watching.stop();
+    }
+    // The witness: the edit's pass was reported.
+    expect(watching.stdout).toMatch(/0 created, 1 updated/);
+    expect(
+      watching.stdout.split(unplaced).length - 1,
+      `a watch said the same placements held back at every pass that reported: ${watching.stdout}`,
+    ).toBe(1);
+  });
+
   it("gives a contested path to a placed item before an unplaced one, and to a file already there before a new one", async () => {
     const [placedId, fresh] = [
       "01a00000-0000-7000-8000-0000000016j1",

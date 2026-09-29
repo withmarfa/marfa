@@ -96,8 +96,8 @@ pub struct Folder {
     root: PathBuf,
     folder: String,
     core: Core,
-    /// The key the credential is, once asked.
-    key: std::sync::OnceLock<placement::KeyState>,
+    /// The key the credential is, as last asked.
+    key: std::sync::Mutex<Option<placement::KeyRead>>,
     /// Whether the folder's volume keeps a file's permission, once asked.
     permissions: std::sync::OnceLock<bool>,
 }
@@ -244,7 +244,7 @@ impl Folder {
             root,
             folder: folder.to_string(),
             core,
-            key: std::sync::OnceLock::new(),
+            key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
         };
         let row = added.row_on_server()?;
@@ -314,7 +314,7 @@ impl Folder {
             root,
             folder,
             core,
-            key: std::sync::OnceLock::new(),
+            key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
         };
         // A lost registry is the scan's to notice before listing again.
@@ -3845,7 +3845,7 @@ pub struct PullReport {
     /// unwritten (`folders.md` 19).
     pub unsuited: usize,
     /// Placements the server refused, not sent again until the key or the
-    /// settings change (`folders.md` 19).
+    /// settings change, or the item's placement moves on (`folders.md` 19).
     pub unplaced: usize,
     /// Placements written: an `in-folder` edge made, or its `path` moved to
     /// where the file is (`folders.md` 19).
