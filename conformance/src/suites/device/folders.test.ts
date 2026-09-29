@@ -11054,6 +11054,89 @@ describe("what a folder takes", () => {
     ).toEqual([0, 0]);
   });
 
+  it("takes nothing under a dot-led directory a negated include line names", async () => {
+    harness = await folderHarness("folder-include-negated", {
+      settings: {
+        search: { types: ["core.note"] },
+        include: ["*", "!.git/"],
+      },
+    });
+    scriptFolderWrites(harness);
+    put(harness, ".git/notes.md", "---\ntitle: Hidden\n---\nbody\n");
+    put(harness, "plain.md", "---\ntitle: Plain\n---\nbody\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the file beside it is taken.
+    expect(
+      sentTitles(harness),
+      "a file under a directory a `!` line names was taken",
+    ).toEqual(["Plain"]);
+  });
+
+  it("writes nothing under a dot-led directory its walk does not enter", async () => {
+    const id = "01a00000-0000-7000-8000-0000000018a1";
+    const placed = (include: string[]) => ({
+      settings: {
+        search: { types: ["core.note"] },
+        include,
+        first_placement: { "core.note": ".notes/.hidden" },
+      },
+      rows: {
+        "core.note": [
+          { item: { id, properties: { title: "Placed", body: "b\n" } } },
+        ],
+      },
+    });
+    // The witness: where both dot-led names are included, the file is
+    // written there.
+    const both = await folderHarness(
+      "folder-dot-led-both",
+      placed([".notes/", ".hidden/"]),
+    );
+    try {
+      expect((await both.folder.pull()).ok).toBe(true);
+      expect(existsSync(join(both.dir, ".notes/.hidden/Placed.md"))).toBe(true);
+    } finally {
+      await both.stop();
+    }
+    harness = await folderHarness("folder-dot-led-one", placed([".notes/"]));
+    scriptFolderWrites(harness);
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(
+      existsSync(join(harness.dir, ".notes/.hidden/Placed.md")),
+      "a pull wrote under a dot-led directory no scan walks, where the next scan would read it as gone",
+    ).toBe(false);
+  });
+
+  it("says a refused secret in words once while watching", async () => {
+    harness = await folderHarness("folder-secret-watch");
+    scriptFolderWrites(harness);
+    put(harness, ".env", "TOKEN=not-a-real-one\n");
+    const watching = harness.folder.watchText();
+    let quiet = "";
+    try {
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain(".env: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+      // Passes enough for a line said at every one to show more than once.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      quiet = watching.stdout;
+      // One arriving while it watches is said as it arrives.
+      put(harness, "id_ed25519", "not a real key\n");
+      await vi.waitFor(
+        () => expect(watching.stdout).toContain("id_ed25519: not taken"),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      quiet.split(".env: not taken").length - 1,
+      `a watch said the same refused secret at every pass: ${quiet}`,
+    ).toBe(1);
+  });
+
   it("does not walk into a package", async () => {
     harness = await folderHarness("folder-package", {
       settings: {
@@ -11226,9 +11309,13 @@ describe("what a folder takes", () => {
   });
 
   it("keeps its own state in .marfa and never pushes it", async () => {
-    harness = await folderHarness("folder-state");
+    // An include line naming `.marfa/` takes nothing under it either.
+    harness = await folderHarness("folder-state", {
+      settings: { search: { types: ["core.note"] }, include: [".marfa/", "*"] },
+    });
     scriptFolderWrites(harness);
     put(harness, "note.md", "---\ntitle: A note\n---\nbody\n");
+    put(harness, ".marfa/stray.md", "---\ntitle: Stray\n---\nbody\n");
     expect((await harness.folder.push()).ok).toBe(true);
 
     expect(
@@ -13843,6 +13930,43 @@ describe("folders on one Mac", () => {
       "deleting one of two folders' files for one item did not trash it, so the other folder's file was taken for this one moved",
     ).toBe(1);
     expect(swept.value.scan.trashed).toEqual(["Shared.md"]);
+  });
+
+  it("finds a file moved into a dot-led directory the other folder includes", async () => {
+    const moved = "01a00000-0000-7000-8000-0000000018b1";
+    const deleted = "01a00000-0000-7000-8000-0000000018b2";
+    const { a, b } = await onOneMac(
+      "move-dot-led",
+      { search: { types: ["core.note"] } },
+      { search: { types: ["core.bookmark"] }, include: [".notes/"] },
+      {
+        "core.note": [
+          { item: { id: moved, properties: { title: "Moved", body: "m\n" } } },
+          {
+            item: {
+              id: deleted,
+              properties: { title: "Deleted", body: "d\n" },
+            },
+          },
+        ],
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    mkdirSync(join(b.dir, ".notes"), { recursive: true });
+    renameSync(join(a.dir, "Moved.md"), join(b.dir, ".notes", "Moved.md"));
+    rmSync(join(a.dir, "Deleted.md"));
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok, JSON.stringify(swept)).toBe(true);
+    if (!swept.ok) return;
+    expect(
+      deletesOf(a.server, moved),
+      "a file moved into a dot-led directory the other folder includes was read as a delete",
+    ).toBe(0);
+    expect(swept.value.scan.moved_away).toBe(1);
+    // The witness: the same sweep trashes a file found nowhere.
+    expect(deletesOf(a.server, deleted)).toBe(1);
   });
 
   it("looks for a paused removal's files in the other folders before confirming it", async () => {

@@ -154,9 +154,13 @@ impl Peer {
         self.walked.get_or_init(|| {
             let mut walked = super::Walked::default();
             let partial = if self.root.is_dir() {
-                // The built-in lists alone: a look for a moved file may look
-                // wider than that folder's own lists, never narrower.
-                match Lists::new(&[], &[]) {
+                let include = self
+                    .folder
+                    .as_ref()
+                    .and_then(|folder| folder.settings().ok())
+                    .map(|settings| settings.include)
+                    .unwrap_or_default();
+                match Lists::wider(&include) {
                     Ok(lists) => {
                         super::walk(&self.root, &self.root, &lists, &mut walked);
                         walked
