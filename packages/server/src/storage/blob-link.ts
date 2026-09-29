@@ -22,6 +22,15 @@ function signature(hash: string, expiresAt: number): Buffer {
     .digest();
 }
 
+/** Rounded up, or a link loses the rest of its minting second and can die
+ *  unfetched; clamped, since a store's own link cannot outlive the cap. */
+export function blobLinkExpiry(nowMs: number, ttlSeconds: number): number {
+  return Math.min(
+    Math.ceil(nowMs / 1000) + ttlSeconds,
+    Math.floor(nowMs / 1000) + MAX_BLOB_LINK_TTL_SECONDS,
+  );
+}
+
 /**
  * The link's URL. `origin` is the scheme and host the instance is reached
  * at; `expiresAt` is Unix seconds.

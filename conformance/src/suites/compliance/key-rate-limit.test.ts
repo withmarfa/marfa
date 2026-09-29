@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { bootFreshServer, type FreshServer } from "../../utils/fresh-server.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  stopFreshServers,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 
 /**
  * The cap on the key doors, and what a caller past it is told.
@@ -42,12 +47,9 @@ beforeAll(async () => {
   unset = await bootFreshServer("keys-rate-limit-default", {
     RATE_LIMIT_ENABLED: "true",
   });
-}, 300_000);
+}, 4 * FRESH_SERVER_TIMEOUT_MS);
 
-afterAll(() => {
-  server?.stop();
-  unset?.stop();
-});
+afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /**
  * A credential with a window of its own.

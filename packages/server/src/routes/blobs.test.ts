@@ -468,21 +468,31 @@ describe("GET /blobs/:hash/fetch", () => {
     expect(res.status).toBe(401);
   });
 
-  it("refuses an expired link", async () => {
+  it("serves a link its whole lifetime, however late in a second it was minted, and refuses it once expired", async () => {
     const data = new TextEncoder().encode("expiring link");
     await upload(data, "text/plain");
-    const res = await request(
-      ctx.app,
-      "GET",
-      `/blobs/${hashOf(data)}/url?ttl=1`,
-      { key: ctx.workingKey },
-    );
-    const url = new URL(((await res.json()) as { url: string }).url);
-    const live = await ctx.app.request(url.pathname + url.search);
-    expect(live.status).toBe(200);
-    await new Promise((resolve) => setTimeout(resolve, 1100));
-    const fetched = await ctx.app.request(url.pathname + url.search);
-    expect(fetched.status).toBe(401);
+    // The last millisecond of a second, where a link counted from the
+    // second rounded down would have no life left at all.
+    const minted = Math.floor(Date.now() / 1000) * 1000 + 999;
+    vi.useFakeTimers({ toFake: ["Date"], now: minted });
+    try {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/blobs/${hashOf(data)}/url?ttl=1`,
+        { key: ctx.workingKey },
+      );
+      const url = new URL(((await res.json()) as { url: string }).url);
+      vi.setSystemTime(minted + 999);
+      const live = await ctx.app.request(url.pathname + url.search);
+      expect(live.status).toBe(200);
+      expect(new Uint8Array(await live.arrayBuffer())).toEqual(data);
+      vi.setSystemTime(minted + 1001);
+      const fetched = await ctx.app.request(url.pathname + url.search);
+      expect(fetched.status).toBe(401);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("serves a range and a HEAD through the link", async () => {

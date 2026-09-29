@@ -13,7 +13,11 @@ import {
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { tarGz } from "../../utils/archive.js";
-import { approvedAppToken, bootFreshServer } from "../../utils/fresh-server.js";
+import {
+  approvedAppToken,
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
@@ -591,33 +595,37 @@ describe("client registration given a key", () => {
 describe("a deployment that caps live viewers", () => {
   // The cap is a setting, so it is asserted on a server of this file's own
   // rather than on the run's, where every other file's streams would count.
-  it("refuses a viewer past the cap 503", async () => {
-    const server = await bootFreshServer("viewer-cap", {
-      MARFA_SSE_MAX_VIEWERS: "1",
-    });
-    const held = new AbortController();
-    try {
-      const open = (signal?: AbortSignal) =>
-        fetch(`${server.apiUrl}/events`, {
-          headers: {
-            Authorization: `Bearer ${server.workingKey}`,
-            Accept: "text/event-stream",
-          },
-          signal,
-        });
-      const first = await open(held.signal);
-      expect(first.status).toBe(200);
+  it(
+    "refuses a viewer past the cap 503",
+    async () => {
+      const server = await bootFreshServer("viewer-cap", {
+        MARFA_SSE_MAX_VIEWERS: "1",
+      });
+      const held = new AbortController();
+      try {
+        const open = (signal?: AbortSignal) =>
+          fetch(`${server.apiUrl}/events`, {
+            headers: {
+              Authorization: `Bearer ${server.workingKey}`,
+              Accept: "text/event-stream",
+            },
+            signal,
+          });
+        const first = await open(held.signal);
+        expect(first.status).toBe(200);
 
-      const second = await open();
-      expect(second.status).toBe(503);
-      const body = (await second.json()) as { error?: { code?: string } };
-      expect(body.error?.code).toBe("stream_capacity_exhausted");
-      await expectMatchesSchema("GET", "/events", 503, body);
-    } finally {
-      held.abort();
-      server.stop();
-    }
-  });
+        const second = await open();
+        expect(second.status).toBe(503);
+        const body = (await second.json()) as { error?: { code?: string } };
+        expect(body.error?.code).toBe("stream_capacity_exhausted");
+        await expectMatchesSchema("GET", "/events", 503, body);
+      } finally {
+        held.abort();
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });
 
 describe("a session token", () => {
@@ -625,35 +633,39 @@ describe("a session token", () => {
   // refresh, so the door refuses one. A session token is what the device
   // flow hands an app once a signed-in person approves it, so the flow runs
   // here over HTTP on a server of this file's own, which has an owner.
-  it("cannot register a connector", async () => {
-    const server = await bootFreshServer("session-connector");
-    try {
-      const token = await approvedAppToken(server);
-      expect(token).toMatch(/^marfa_at_/);
+  it(
+    "cannot register a connector",
+    async () => {
+      const server = await bootFreshServer("session-connector");
+      try {
+        const token = await approvedAppToken(server);
+        expect(token).toMatch(/^marfa_at_/);
 
-      const refused = await fetch(`${server.apiUrl}/connectors`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ name: "session" }),
-      });
-      expect(refused.status).toBe(403);
-      const body = (await refused.json()) as { error?: { code?: string } };
-      expect(body.error?.code).toBe("forbidden");
-      await expectMatchesSchema("POST", "/connectors", 403, body);
+        const refused = await fetch(`${server.apiUrl}/connectors`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ name: "session" }),
+        });
+        expect(refused.status).toBe(403);
+        const body = (await refused.json()) as { error?: { code?: string } };
+        expect(body.error?.code).toBe("forbidden");
+        await expectMatchesSchema("POST", "/connectors", 403, body);
 
-      // Nor is it a key, so it does not read itself as one.
-      const self = await fetch(`${server.apiUrl}/keys/current`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      expect(self.status).toBe(403);
-      const selfBody = (await self.json()) as { error?: { code?: string } };
-      expect(selfBody.error?.code).toBe("forbidden");
-      await expectMatchesSchema("GET", "/keys/current", 403, selfBody);
-    } finally {
-      server.stop();
-    }
-  });
+        // Nor is it a key, so it does not read itself as one.
+        const self = await fetch(`${server.apiUrl}/keys/current`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(self.status).toBe(403);
+        const selfBody = (await self.json()) as { error?: { code?: string } };
+        expect(selfBody.error?.code).toBe("forbidden");
+        await expectMatchesSchema("GET", "/keys/current", 403, selfBody);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });

@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import {
   copyFileSync,
   existsSync,
@@ -35,7 +35,7 @@ export interface FreshServer {
    *  lock can hold it from outside the process. */
   sqlitePath: string;
   /** Stops the server and removes its state. Safe to call twice. */
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 /**
@@ -53,6 +53,57 @@ const conformanceRoot = resolve(
 /** Past the script's own health budget, so its failure is reported rather
  *  than cut off. */
 const BOOT_BUDGET_MS = 240_000;
+
+/** Budgeted per script run a hook may wait on (a failed boot runs two), past
+ *  the script's own bound and the mint, so the script's diagnostics are kept. */
+export const FRESH_SERVER_TIMEOUT_MS = BOOT_BUDGET_MS + 30_000;
+
+/** Every server booted or booting and not yet stopped, so a file's teardown
+ *  can stop one whose boot outlived the hook that started it. */
+const unstopped = new Set<() => Promise<void>>();
+
+/** Stop every fixture server this file started, reporting every failure. */
+export async function stopFreshServers(): Promise<void> {
+  const stopped = await Promise.allSettled([...unstopped].map((s) => s()));
+  const failures = stopped.flatMap((r) =>
+    r.status === "rejected" ? [r.reason as unknown] : [],
+  );
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(failures, "fixture servers failed to stop");
+  }
+}
+
+/** Not blocking: a worker held for a boot cannot retire its pooled
+ *  connections, and the run's server closes one under the next request. */
+export function runScript(
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv,
+): Promise<{ status: number | null; output: string }> {
+  return new Promise((resolveRun) => {
+    const child = spawn(command, args, {
+      cwd: conformanceRoot,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      // Bounded, so a script that hangs is killed rather than left behind.
+      timeout: BOOT_BUDGET_MS,
+    });
+    let output = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      output += chunk;
+    });
+    child.once("error", (err) => {
+      resolveRun({ status: null, output: `${output}${String(err)}` });
+    });
+    child.once("close", (status) => {
+      resolveRun({ status, output });
+    });
+  });
+}
 
 async function mintWorkingKey(
   apiUrl: string,
@@ -95,74 +146,73 @@ export async function bootFreshServer(
   const script = resolve(conformanceRoot, "scripts/marfa-server.ts");
   const state = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
   const run = (command: "up" | "down") =>
-    spawnSync(tsx, [script, command, "--state", state], {
-      cwd: conformanceRoot,
-      encoding: "utf8",
+    runScript(tsx, [script, command, "--state", state], {
       // The script pins the port to `PORT` when one is set, and the run's
       // own server may already hold it. The limiter is pinned off for the
       // same kind of reason and in the same place: a fixture that does not
       // ask for it should not inherit one from whoever started the run.
       // `extraEnv` comes last, so a fixture that does ask still wins.
-      env: {
-        ...process.env,
-        PORT: "",
-        RATE_LIMIT_ENABLED: "false",
-        MARFA_ENRICHMENT_ENABLED: "false",
-        MARFA_ENRICHMENT_OCR_ENABLED: "false",
-        ...extraEnv,
-      },
-      // Bounded, because the call blocks the worker and vitest's own hook
-      // timeout cannot fire while it does.
-      timeout: BOOT_BUDGET_MS,
+      ...process.env,
+      PORT: "",
+      RATE_LIMIT_ENABLED: "false",
+      MARFA_ENRICHMENT_ENABLED: "false",
+      MARFA_ENRICHMENT_OCR_ENABLED: "false",
+      ...extraEnv,
     });
 
-  const up = run("up");
+  const booting = run("up");
+  let stopping: Promise<void> | undefined;
+  const stop = (): Promise<void> => {
+    stopping ??= (async () => {
+      // `down` finds the server through the pid file `up` writes, so one
+      // still booting is waited for rather than left to come up after.
+      await booting;
+      // Before `down`, which clears the log with the rest of the state. The
+      // run's server boots from the same checkout, so what this one answered
+      // is held to the same document.
+      const destination = process.env.MARFA_STATUS_LOGS;
+      const log = join(state, "server.log");
+      if (destination !== undefined && destination !== "" && existsSync(log)) {
+        mkdirSync(destination, { recursive: true });
+        copyFileSync(log, join(destination, `${basename(state)}.log`));
+      }
+      const down = await run("down");
+      if (down.status !== 0) {
+        throw new Error(
+          `could not stop the server booted into ${state}, whose state is left in place:\n${down.output}`,
+        );
+      }
+      rmSync(state, { recursive: true, force: true });
+    })().finally(() => unstopped.delete(stop));
+    return stopping;
+  };
+  unstopped.add(stop);
+
+  const up = await booting;
   if (up.status !== 0) {
-    // The script spawns the server detached before the health wait and
-    // the mint, either of which can fail, so a failed boot may have left
-    // one running; `down` finds it through the pid file, which is why the
-    // directory goes only after.
-    run("down");
-    rmSync(state, { recursive: true, force: true });
+    // A failed boot may have left a server running, since the script spawns
+    // it before the health wait; `stop` finds it through the pid file.
+    const stopped = await stop().then(
+      () => "",
+      (err: unknown) => `\n${String(err)}`,
+    );
     throw new Error(
-      `could not boot a server into ${state}:\n${up.stdout}${up.stderr}`,
+      `could not boot a server into ${state}:\n${up.output}${stopped}`,
     );
   }
-
-  let stopped = false;
-  const stop = () => {
-    if (stopped) return;
-    stopped = true;
-    // Before `down`, which clears the log with the rest of the state. The
-    // run's server boots from the same checkout, so what this one answered
-    // is held to the same document.
-    const destination = process.env.MARFA_STATUS_LOGS;
-    const log = join(state, "server.log");
-    if (destination !== undefined && destination !== "" && existsSync(log)) {
-      mkdirSync(destination, { recursive: true });
-      copyFileSync(log, join(destination, `${basename(state)}.log`));
-    }
-    const down = run("down");
-    if (down.status !== 0) {
-      throw new Error(
-        `could not stop the server booted into ${state}, whose state is left in place:\n${down.stdout}${down.stderr}`,
-      );
-    }
-    rmSync(state, { recursive: true, force: true });
-  };
 
   const env = parseEnvFile(readFileSync(join(state, "env"), "utf8"));
   const apiUrl = env.MARFA_API_URL;
   const operatorKey = env.MARFA_OPERATOR_KEY;
   if (!apiUrl || !operatorKey) {
-    stop();
+    await stop();
     throw new Error(`the boot into ${state} wrote an incomplete env file`);
   }
   let workingKey: string;
   try {
     workingKey = await mintWorkingKey(apiUrl, operatorKey, label);
   } catch (err) {
-    stop();
+    await stop();
     throw err;
   }
   return {
