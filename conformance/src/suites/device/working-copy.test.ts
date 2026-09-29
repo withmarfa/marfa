@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   KEY,
@@ -1391,6 +1392,35 @@ describe("the working copy belongs to one server", () => {
     } finally {
       await reader.stop();
     }
+  });
+
+  it("refuses to read a store a writer of another schema version made", async () => {
+    harness = await hydratedHarness("reader-schema", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    // The witness: the same store, at the reader's own version, reads.
+    const reading = harness.device.reopen({ reader: true });
+    expect((await reading.get("n1")).ok).toBe(true);
+
+    // What a writer of another version would have left: every table the
+    // reader reads, under a version number that is not its own.
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      const { value } = store
+        .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
+        .get() as { value: string };
+      store
+        .prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'")
+        .run(String(Number(value) - 1));
+    } finally {
+      store.close();
+    }
+    const refused = await reading.get("n1");
+    expect(
+      refused.ok,
+      "a store another schema version made was read as though this one had",
+    ).toBe(false);
+    if (!refused.ok) expect(refused.refusal.code).toBe("wrong_schema");
   });
 
   it("gives a second opener a reading handle that refuses writes", async () => {

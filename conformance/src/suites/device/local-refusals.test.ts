@@ -194,6 +194,12 @@ describe("a device refuses a condition its copy cannot answer as the server does
   it("refuses a backref condition on a list and a search", async () => {
     harness = await hydrated("backref-filter");
     const { device } = harness;
+    // The witness: a refusal the server makes carries its code where the
+    // backref refusals below carry none.
+    expectRefusedAsTheServerDoes(
+      await device.list({ filter: 'title eq "n1"' }),
+      "a field the grammar does not know",
+    );
 
     for (const [outbound, inbound] of [
       ["edge[parent-of] exists", "backref[parent-of] exists"],
@@ -220,10 +226,13 @@ describe("a device refuses a condition its copy cannot answer as the server does
           `${inbound} was answered from a copy that holds no edge drawn to its rows from outside the slice`,
         ).toBe(false);
         if (outcome.ok) continue;
+        const envelope = JSON.parse(outcome.refusal.raw) as {
+          error: { code: string; server?: { code: string | null } | null };
+        };
         expect(
-          outcome.refusal.code,
+          [envelope.error.code, envelope.error.server?.code ?? null],
           `${inbound} was refused as though the server refuses it: ${outcome.refusal.raw}`,
-        ).toBe("invalid");
+        ).toEqual(["invalid", null]);
       }
     }
   });
