@@ -66,8 +66,8 @@ impl KeyState {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Refused {
-    /// The key they were refused to.
-    key: KeyState,
+    /// The key they were refused to; `None` until it could be read.
+    key: Option<KeyState>,
     /// The version of the settings they were refused under.
     settings: i64,
     placements: Withheld,
@@ -130,10 +130,8 @@ impl Folder {
         Ok(true)
     }
 
-    /// The placements the server refused, while the key and the settings
-    /// they were refused under are the ones in force. One whose item's
-    /// placement has moved since, landed from here or elsewhere, is let go,
-    /// so the pull follows it.
+    /// The refused placements, while their key and settings stand; one whose
+    /// item's placement has moved since is let go, so the pull follows it.
     pub(super) fn withheld(&self) -> Result<Withheld> {
         let Some(mut refused) = self.refused()? else {
             return Ok(Withheld::new());
@@ -156,8 +154,15 @@ impl Folder {
     /// yet answered, at version 0, has landed nowhere.
     fn placement_at(&self, item_id: &str) -> Result<Option<(String, i64)>> {
         Ok(self
-            .placement(item_id)?
-            .filter(|edge| edge.version > 0)
+            .core
+            .edges_from(item_id)?
+            .into_iter()
+            .filter(|edge| {
+                edge.edge_type == PLACEMENT_EDGE
+                    && edge.target_id == self.folder
+                    && edge.version > 0
+            })
+            .min_by_key(rank_of)
             .map(|edge| (edge.id, edge.version)))
     }
 
@@ -176,25 +181,23 @@ impl Folder {
         };
         let refused: Option<Refused> = serde_json::from_str(&json).ok();
         let settings = self.core.get(&self.folder)?.map(|row| row.version);
-        match refused {
-            Some(refused)
-                if Some(refused.settings) == settings && !self.key_changed(&refused.key) =>
-            {
-                Ok(Some(refused))
-            }
-            _ => {
+        let Some(mut refused) = refused.filter(|refused| Some(refused.settings) == settings) else {
+            store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
+            return Ok(None);
+        };
+        // A key that cannot be read is unchanged; one unread at the refusal is
+        // the key it was refused to once it can be.
+        match (&refused.key, self.key_state()) {
+            (Some(recorded), Ok(current)) if *recorded != current => {
                 store::meta_delete(&*self.core.conn()?, META_REFUSED)?;
                 Ok(None)
             }
-        }
-    }
-
-    /// Whether the credential is another key, or the same key with another
-    /// grant, than `recorded`. Unanswerable, offline say, it is the same.
-    fn key_changed(&self, recorded: &KeyState) -> bool {
-        match self.key_state() {
-            Ok(current) => &current != recorded,
-            Err(_) => false,
+            (None, Ok(current)) => {
+                refused.key = Some(current);
+                self.keep_refused(&refused)?;
+                Ok(Some(refused))
+            }
+            _ => Ok(Some(refused)),
         }
     }
 
@@ -228,7 +231,7 @@ impl Folder {
     /// remembers any other refusal. Answers how many gave way.
     pub(super) fn settle_placements(&self, report: &mut DrainReport) -> Result<usize> {
         let mut gave_way = 0;
-        let mut refused: Vec<(String, String)> = Vec::new();
+        let mut refused: Vec<(String, Held)> = Vec::new();
         let mut kept = Vec::new();
         for verdict in std::mem::take(&mut report.verdicts) {
             let row = {
@@ -274,7 +277,13 @@ impl Folder {
                             .map(str::to_string)
                     })
                     .unwrap_or_default();
-                refused.push((item, path));
+                // The placement the refused write was based on, which the
+                // copy may since have moved past.
+                let at = match row.kind {
+                    WriteKind::UpdateEdge => row.edge_id.clone().zip(row.base_version),
+                    _ => None,
+                };
+                refused.push((item, Held { path, at }));
             }
             kept.push(verdict);
         }
@@ -344,19 +353,16 @@ impl Folder {
         Ok(())
     }
 
-    fn remember_refused(&self, placements: Vec<(String, String)>) -> Result<()> {
+    fn remember_refused(&self, placements: Vec<(String, Held)>) -> Result<()> {
         let mut record = match self.refused()? {
             Some(record) => record,
             None => Refused {
-                key: self.key_state().unwrap_or_default(),
+                key: self.key_state().ok(),
                 settings: self.core.get(&self.folder)?.map_or(0, |row| row.version),
                 placements: Withheld::new(),
             },
         };
-        for (item, path) in placements {
-            let at = self.placement_at(&item)?;
-            record.placements.insert(item, Held { path, at });
-        }
+        record.placements.extend(placements);
         self.keep_refused(&record)
     }
 }

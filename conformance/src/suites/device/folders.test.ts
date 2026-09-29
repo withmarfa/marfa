@@ -9915,11 +9915,18 @@ describe("where a file sits", () => {
         (request) =>
           request.method === "GET" && request.pathname === "/keys/current",
       ).length;
+    const afterAdd = keyReads();
     put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
     const watching = harness.folder.watchText();
     let restored = 0;
     try {
       await vi.waitFor(() => expect(placings()).toBe(1), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      // The witness: the watch read the key, for the refusal to be recorded
+      // under.
+      await vi.waitFor(() => expect(keyReads()).toBeGreaterThan(afterAdd), {
         timeout: 20_000,
         interval: 100,
       });
@@ -9930,8 +9937,6 @@ describe("where a file sits", () => {
       expect(placings(), "a refused placement was sent pass after pass").toBe(
         1,
       );
-      // The witness: the key was read, for the refusal to be recorded under.
-      expect(readsAtRefusal).toBeGreaterThan(0);
       expect(
         keyReads() - readsAtRefusal,
         "a watch read the key at every pass while a refusal stood, which a server's rate limit does not allow",
@@ -9953,6 +9958,88 @@ describe("where a file sits", () => {
     ).toBeLessThan(65_000);
     expect(placings()).toBe(2);
   }, 110_000);
+
+  it("asks a key it could not read again at most once a minute while watching", async () => {
+    let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-key-unreadable-watch", {
+      key: [() => key],
+    });
+    scriptFolderWrites(harness, { edges });
+    key = refusal(503, "unavailable", "Try again");
+    const keyReads = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === "/keys/current",
+      ).length;
+    const afterAdd = keyReads();
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    const watching = harness.folder.watchText();
+    try {
+      // The witness: the watch asked for the key, and was refused an answer.
+      await vi.waitFor(() => expect(keyReads()).toBeGreaterThan(afterAdd), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      const first = keyReads();
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+      expect(
+        keyReads() - first,
+        "a watch asked again at every pass for a key it could not read",
+      ).toBe(0);
+    } finally {
+      await watching.stop();
+    }
+  });
+
+  it("takes a key it could not read when a placement was refused as unchanged, and does not send the placement again", async () => {
+    let key: Answer = answers.currentKey("fixture-key", { "*": "write" });
+    const edges = new EdgeDoor();
+    edges.placing = (edge) =>
+      edge.edge_type === "in-folder"
+        ? refusal(
+            403,
+            "edge_permission_denied",
+            "Write access to edge type denied",
+          )
+        : undefined;
+    harness = await folderHarness("placement-key-unread-at-refusal", {
+      key: [() => key],
+    });
+    scriptFolderWrites(harness, { edges });
+    const placings = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.method === "POST" &&
+          request.pathname === "/edges" &&
+          (JSON.parse(request.body) as { edge_type?: string }).edge_type ===
+            "in-folder",
+      ).length;
+    // Refused while the key cannot be read.
+    key = refusal(503, "unavailable", "Try again");
+    put(harness, "one.md", "---\ntitle: One\n---\nwords\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    // The witness: the placement was sent and refused.
+    expect(placings()).toBe(1);
+
+    // The same key, readable again, with the grant it was refused under.
+    key = answers.currentKey("fixture-key", { references: "write" });
+    for (let pass = 0; pass < 2; pass += 1) {
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    expect(
+      placings(),
+      "a key that could not be read at the refusal was taken for another key once it could, and the placement was refused again",
+    ).toBe(1);
+  });
 
   it("says the placements it holds back once while watching", async () => {
     const edges = new EdgeDoor();
