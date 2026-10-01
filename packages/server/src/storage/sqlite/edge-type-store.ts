@@ -1,5 +1,11 @@
 import { eq } from "drizzle-orm";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  getEdgeTypeSchema,
+  registerEdgeTypeSchema,
+  unregisterEdgeTypeSchema,
+} from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeTypeStore } from "../interface.js";
 import { edgeTypes } from "./schema.js";
@@ -49,6 +55,17 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.delete(edgeTypes).where(eq(edgeTypes.id, id)).run();
+    const schema = getEdgeTypeSchema(id);
+    try {
+      await this.db.transaction(async (tx) => {
+        await tx.delete(edgeTypes).where(eq(edgeTypes.id, id)).run();
+        // Before the commit, as the type store does, so an edge create
+        // asking the registry inside its own transaction never finds it.
+        unregisterEdgeTypeSchema(id);
+      });
+    } catch (err) {
+      if (schema) registerEdgeTypeSchema(schema);
+      throw err;
+    }
   }
 }

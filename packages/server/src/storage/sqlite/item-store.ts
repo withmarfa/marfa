@@ -439,7 +439,18 @@ export class SqliteItemStore implements ItemStore {
         }
       }
 
-      const schemaVersion = getTypeSchema(input.type)?.version ?? 0;
+      // Asked again here, inside the write lock, because a type deleted
+      // since the check above leaves the registry before its delete commits,
+      // and a row written now would name a type nothing holds.
+      const current = getTypeSchema(input.type);
+      if (!current) {
+        throw new MarfaError(
+          ErrorCode.UNKNOWN_TYPE,
+          `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,
+          { type: input.type },
+        );
+      }
+      const schemaVersion = current.version;
 
       try {
         await tx

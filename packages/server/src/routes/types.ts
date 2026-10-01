@@ -860,26 +860,31 @@ export function typeRoutes(storage: Storage) {
     }
 
     const { force } = c.req.valid("query");
-    if (force !== "true") {
-      const items = await storage.items.list({
-        type: id,
-        // Every state, because the question is whether anything is written
-        // against this type, not whether anything is being worked on. A row
-        // in the bin or the archive still names the type it was validated
-        // against, and deleting it out from under one leaves a row whose
-        // shape nothing can check.
-        all_states: true,
-        limit: 1,
-      });
-      if (items.data.length > 0) {
-        throw new MarfaError(
-          ErrorCode.TYPE_IN_USE,
-          `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
-        );
+    // One transaction, because an item written between the count and the
+    // delete would be left naming a type that no longer exists. A create
+    // asks the registry inside its own transaction, so it either lands
+    // before this one and is counted, or after it and is refused.
+    await storage.runInTransaction(async () => {
+      if (force !== "true") {
+        const items = await storage.items.list({
+          type: id,
+          // Every state, because the question is whether anything is written
+          // against this type, not whether anything is being worked on. A row
+          // in the bin or the archive still names the type it was validated
+          // against, and deleting it out from under one leaves a row whose
+          // shape nothing can check.
+          all_states: true,
+          limit: 1,
+        });
+        if (items.data.length > 0) {
+          throw new MarfaError(
+            ErrorCode.TYPE_IN_USE,
+            `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+          );
+        }
       }
-    }
-
-    await storage.types.delete(id);
+      await storage.types.delete(id);
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

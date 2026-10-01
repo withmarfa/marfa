@@ -458,19 +458,21 @@ export function edgeTypeRoutes(storage: Storage) {
     // The sibling's shape, asked the same way: one row of the type is
     // enough to know, so the query is bounded rather than a count.
     const { force } = c.req.valid("query");
-    if (force !== "true") {
-      const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
-      if (inUse.data.length > 0) {
-        throw new MarfaError(
-          ErrorCode.EDGE_TYPE_IN_USE,
-          `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
-          { edge_type: id },
-        );
+    // One transaction, for the sibling's reason: an edge create asks the
+    // registry inside its own, so it is either counted here or refused.
+    await storage.runInTransaction(async () => {
+      if (force !== "true") {
+        const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
+        if (inUse.data.length > 0) {
+          throw new MarfaError(
+            ErrorCode.EDGE_TYPE_IN_USE,
+            `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
+            { edge_type: id },
+          );
+        }
       }
-    }
-
-    await storage.edgeTypes.delete(id);
-    unregisterEdgeTypeSchema(id);
+      await storage.edgeTypes.delete(id);
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
