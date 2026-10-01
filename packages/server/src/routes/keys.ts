@@ -299,7 +299,7 @@ const currentKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Read the calling key",
   description:
-    "Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources and its tier. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.",
+    "Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
