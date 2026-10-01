@@ -245,7 +245,6 @@ export const apiKeys = sqliteTable(
     is_operator: integer("is_operator", { mode: "boolean" })
       .notNull()
       .default(false),
-    connection_id: text("connection_id"),
     /**
      * The permissions this credential holds, as a JSON array of the
      * literals themselves.

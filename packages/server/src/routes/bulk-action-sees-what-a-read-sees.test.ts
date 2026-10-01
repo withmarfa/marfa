@@ -34,7 +34,7 @@ import type { Item, ItemState } from "@withmarfa/shared";
  * operator key holds no type at all, so the type filter empties its match set
  * before the fence is reached: every reserved type is unopenable on this door
  * by anybody, which is a property of the fence rather than of the row. A
- * `system.webhook` row stands in for them all.
+ * `system.folder` row stands in for them all.
  */
 
 let ctx: TestContext;
@@ -55,11 +55,8 @@ afterAll(async () => {
  */
 function seedReserved(marker: string, state?: ItemState): Promise<Item> {
   return ctx.storage.items.create({
-    type: "system.webhook",
-    properties: {
-      url: `https://example.test/ba-${marker}`,
-      events: ["item.created"],
-    },
+    type: "system.folder",
+    properties: { title: `ba-${marker}` },
     ...(state === undefined ? {} : { state }),
     tags: [marker],
     source: `bulk-action-seed-${marker}-${Math.random().toString(36).slice(2, 8)}`,
@@ -204,7 +201,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
       {
         action: "update_tags",
         add: ["reader-probe"],
-        filter: { type: "system.webhook", tags: [marker] },
+        filter: { type: "system.folder", tags: [marker] },
         dry_run: true,
       },
       raw,

@@ -81,16 +81,16 @@ async function mintKey(opts: {
   return raw;
 }
 
-/** A `system.connection` of kind connector, seeded through storage so
- *  the test doesn't depend on the install pipeline. */
+/** A `system.connection`, seeded through storage so the test doesn't
+ *  depend on the consent pipeline. */
 async function seedConnection(): Promise<string> {
   const conn = await ctx.storage.items.create({
     type: "system.connection",
     properties: {
-      kind: "connector",
+      kind: "app",
       status: "active",
       granted_at: new Date().toISOString(),
-      connector_id: "acme.demo",
+      client_id: "acme.demo",
     },
   });
   return conn.id;

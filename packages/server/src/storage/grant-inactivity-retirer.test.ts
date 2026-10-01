@@ -173,7 +173,7 @@ async function tokenRows(c: TestContext, clientId: string): Promise<number> {
 }
 
 describe("GrantInactivityRetirer.runOnce", () => {
-  it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one and a connector alone", async () => {
+  it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one alone", async () => {
     ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "forgotten@example.com");
@@ -181,25 +181,10 @@ describe("GrantInactivityRetirer.runOnce", () => {
     expect(await tokenRows(ctx, clientId)).toBe(2);
     expect(await consentRows(ctx, clientId)).toBe(1);
 
-    // Beside it: a grant used today, and a connection that is not a grant at
-    // all. The sweep's predicate is `kind = 'app'` and a window; both have to
-    // be there for a widened predicate to show.
+    // Beside it: a grant used today, so a widened window shows.
     const freshClientId = await seedClient(ctx);
     const freshCookie = await signInUser(ctx, "present@example.com");
     await deviceGrant(ctx, freshClientId, freshCookie);
-    const connector = await ctx.storage.items.create({
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "connector",
-        connector_id: "int_dormant",
-        status: "active",
-        granted_at: new Date(Date.now() - 400 * DAY_MS).toISOString(),
-        last_used_at: new Date(Date.now() - 400 * DAY_MS).toISOString(),
-      },
-      source: "test/retirer",
-    });
 
     // Recent: nothing to retire.
     const retirer = new GrantInactivityRetirer(ctx.storage, 365);
@@ -215,8 +200,6 @@ describe("GrantInactivityRetirer.runOnce", () => {
       "active",
     );
     expect(await tokenRows(ctx, freshClientId)).toBe(2);
-    const untouched = await ctx.storage.items.get(connector.id);
-    expect(untouched?.properties.status).toBe("active");
     expect(await tokenRows(ctx, clientId)).toBe(0);
     expect(await consentRows(ctx, clientId)).toBe(0);
     const dead = await request(ctx.app, "GET", "/items?type=core.note", {

@@ -1527,7 +1527,7 @@ describe("the content category projection", () => {
     expect(resolveTypePermission("system.connection", forward)).toBe("read");
     expect(resolveTypePermission("system.connection", reversed)).toBe("read");
     // And the rest of the system family is untouched by that one literal.
-    expect(resolveTypePermission("system.device", forward)).toBe("none");
+    expect(resolveTypePermission("system.folder", forward)).toBe("none");
   });
 
   it("resolves the ordered levels, with write covering read", () => {
@@ -1563,9 +1563,9 @@ describe("adding the content category to a wildcard grant can narrow it", () => 
     const withCategory = scopesToTypePermissions(["*:read", "content:read"]);
     // The fixture has to be honest about why the second answer is `none`:
     // this id is in the family-backed exclusion set the projection reads.
-    expect(SYSTEM_TYPE_IDS.has("system.device")).toBe(true);
-    expect(resolveTypePermission("system.device", wildcardOnly)).toBe("read");
-    expect(resolveTypePermission("system.device", withCategory)).toBe("none");
+    expect(SYSTEM_TYPE_IDS.has("system.folder")).toBe(true);
+    expect(resolveTypePermission("system.folder", wildcardOnly)).toBe("read");
+    expect(resolveTypePermission("system.folder", withCategory)).toBe("none");
   });
 
   it("clamps a `marfa.*` type from write to read when the category joins `*:write`", () => {
@@ -1582,9 +1582,9 @@ describe("adding the content category to a wildcard grant can narrow it", () => 
     // The consequence a person meets: a standing grant re-consented alongside
     // the category is asked for again rather than waved through. Coverage is
     // the same projection read through a different door, so it moves with it.
-    expect(grantCoversScope(["*:read"], "system.device:read")).toBe(true);
+    expect(grantCoversScope(["*:read"], "system.folder:read")).toBe(true);
     expect(
-      grantCoversScope(["*:read", "content:read"], "system.device:read"),
+      grantCoversScope(["*:read", "content:read"], "system.folder:read"),
     ).toBe(false);
   });
 });
@@ -1642,7 +1642,7 @@ describe("the content category is covered by holding it and by nothing else", ()
       true,
     );
     // And not into the system family.
-    expect(grantCoversScope(["content:write"], "system.device:read")).toBe(
+    expect(grantCoversScope(["content:write"], "system.folder:read")).toBe(
       false,
     );
     // Nor a `marfa.*` write, matching the clamp.

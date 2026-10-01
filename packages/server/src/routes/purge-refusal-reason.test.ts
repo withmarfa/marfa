@@ -213,10 +213,10 @@ describe("purging a soft-deleted row", () => {
     const conn = await ctx.storage.items.create({
       type: "system.connection",
       properties: {
-        kind: "connector",
+        kind: "app",
         status: "revoked",
         granted_at: new Date().toISOString(),
-        connector_id: "acme.demo",
+        client_id: "acme.demo",
       },
     });
     await ctx.storage.items.delete(conn.id);
