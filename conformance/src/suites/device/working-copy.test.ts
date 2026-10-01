@@ -1533,7 +1533,7 @@ describe("the working copy says what it is", () => {
     harness = await startHarness("read-before-hydration");
     const { device } = harness;
     // A store made and never hydrated: a path with no store at all is
-    // refused before any slice is asked about (44).
+    // refused before any slice is asked about (45).
     expect((await device.status()).ok).toBe(true);
 
     // Every read door, because a refusal on one and an empty page on

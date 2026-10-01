@@ -92,7 +92,7 @@ Every statement here is a refusal, and each of them is a refusal because the sil
 
 ## Where a store is made
 
-44. **A store is made only by a hydration and by the state report.** Each makes the store at the path it is named if none is there, the report so that a caller can learn a hydration is owed before the first one (5). Every other command refuses a path where no store has been made with `no_store`, and leaves the path as it found it: a read answered from a store made for a mistyped path is an empty copy that reads as a real one, and a write queued there is a queue nothing will drain. A store opened to read never makes one either (41). `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
+45. **A store is made only by a hydration and by the state report.** Each makes the store at the path it is named if none is there, the report so that a caller can learn a hydration is owed before the first one (5). Every other command refuses a path where no store has been made with `no_store`, and leaves the path as it found it: a read answered from a store made for a mistyped path is an empty copy that reads as a real one, and a write queued there is a queue nothing will drain. A store opened to read never makes one either (41). `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
 
 ## What the real server cannot be made to produce
 

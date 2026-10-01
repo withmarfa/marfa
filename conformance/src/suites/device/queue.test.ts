@@ -120,7 +120,7 @@ describe("the queue answers before there is anything in it", () => {
     // not about the copy: a device that made them hydrate first would
     // refuse the question at the moment it matters most, which is when the
     // server cannot be reached. The store is made and never hydrated, since
-    // a path with no store at all is refused (`device.md` 44).
+    // a path with no store at all is refused (`device.md` 45).
     expect((await harness.device.status()).ok).toBe(true);
     const queued = await harness.device.queue();
     expect(

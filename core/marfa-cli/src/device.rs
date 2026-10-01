@@ -996,7 +996,7 @@ struct Store {
     db: Option<PathBuf>,
     reader: bool,
     /// Whether the command may make the store where none is: only a
-    /// hydration and the state report do (`device.md` 44).
+    /// hydration and the state report do (`device.md` 45).
     makes: bool,
 }
 
