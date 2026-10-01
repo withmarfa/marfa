@@ -329,10 +329,11 @@ const BEGIN: Record<TransactionMode, string> = {
  *
  * So a write transaction waits here for the one before it in this process
  * to end, rather than meeting its lock in `BEGIN IMMEDIATE`: every refusal
- * the retry absorbed cost a connection, a hundred of them for one wait at
- * the shortest backoff. The wait is held to the same budget as the retry
- * and ends in the same refusal. A lock another process holds still meets
- * the retry.
+ * the retry absorbed cost a connection, up to a hundred of them for one
+ * wait. The wait is held to the same budget as the retry and ends in the
+ * same refusal. A lock another process holds still meets the retry, and
+ * still costs a connection per refusal, because no client call resets the
+ * refused statement.
  */
 function transactionConnections(url: string): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
