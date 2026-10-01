@@ -144,10 +144,10 @@ describe("admin/restore-archive", () => {
 
   it("refuses an archive recording a source no credential can hold, and writes nothing", async () => {
     // The restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses the reserved prefixes precisely so nothing
-    // can stamp one. Without this the restore was the way around that:
-    // a row could be planted carrying `connector:`, and would read ever
-    // after as written by a connector that never existed.
+    // `POST /keys` refuses the reserved prefix precisely so no key can
+    // stamp one. Without this the restore would be the way around that: a
+    // row could be planted carrying `oauth:`, and would read ever after as
+    // written by a grant that never existed.
     //
     // Refused whole, like the state check beside it, so the answer is
     // never half a restore.
@@ -164,8 +164,8 @@ describe("admin/restore-archive", () => {
         {
           id: planted,
           type: "core.note",
-          source: "connector:readwise",
-          properties: { body: "a row claiming a connector wrote it" },
+          source: "oauth:client:person",
+          properties: { body: "a row claiming an app wrote it" },
         },
       ]),
     );
@@ -192,8 +192,8 @@ describe("admin/restore-archive", () => {
           {
             id: uuidv7(),
             type: "core.note",
-            source: "connector:readwise",
-            properties: { body: "a row claiming a connector wrote it" },
+            source: "oauth:client:person",
+            properties: { body: "a row claiming an app wrote it" },
           },
         ],
         [{ data: bytes, mime_type: "text/plain" }],
@@ -222,7 +222,7 @@ describe("admin/restore-archive", () => {
           id: okOther,
           type: "core.note",
           source: ctx.source,
-          properties: { body: "a row claiming a connector wrote it" },
+          properties: { body: "a row claiming an app wrote it" },
         },
       ]),
     );

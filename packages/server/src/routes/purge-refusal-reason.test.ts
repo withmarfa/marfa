@@ -20,13 +20,6 @@ let workingKey: string;
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  // The build ships no `marfa.*` type, so the row's type is a platform row
-  // an instance can still hold after the build stopped shipping it.
-  await ctx.storage.types.create(
-    { id: "marfa.relic", version: 1, fields: { title: { type: "string" } } },
-    { origin: "platform" },
-  );
-
   // Reaches every type and is still not the instance tier,
   // which is the whole shape this file is about: the reserved namespace
   // is fenced off a working credential however wide its maps are.
@@ -50,8 +43,8 @@ afterAll(async () => {
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await ctx.storage.items.create({
-    type: "marfa.relic",
-    properties: { title: "A relic" },
+    type: "system.folder",
+    properties: { title: "A folder" },
     source: "test/purge-refusal",
     source_id: sourceId,
   });
@@ -60,7 +53,7 @@ async function seedReservedRow(sourceId: string): Promise<string> {
 
 describe("purging a row a working credential may not write", () => {
   it("names the namespace rather than the trashed-state precondition", async () => {
-    const id = await seedReservedRow("relic:refusal-1");
+    const id = await seedReservedRow("folder:refusal-1");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: workingKey,
@@ -74,7 +67,7 @@ describe("purging a row a working credential may not write", () => {
     // The namespace is named. Asserted on the message rather than the code
     // alone, because the code is what a machine reads and the message is
     // what sent somebody to the wrong place.
-    expect(body.error.message).toContain("marfa.*");
+    expect(body.error.message).toContain("system.*");
     expect(body.error.message).toContain("no credential writes");
     // And it does NOT say the thing that misdirected: a caller told to trash
     // first will try, be refused there too, and learn nothing either time.
@@ -114,12 +107,12 @@ describe("purging a row a working credential may not write", () => {
     expect(body.error.message).toContain("trashed");
   });
 
-  it("purges a reserved-namespace row once it is trashed", async () => {
-    // An already-trashed reserved row is purged as any other, by a key whose
-    // map writes the type. Trashed through storage, standing in for the
-    // cascade and archive restore that put such rows there.
-    const id = await seedReservedRow("relic:refusal-2");
-    await ctx.storage.items.transition(id, "trashed");
+  it("purges a reserved-namespace row once it is soft-deleted", async () => {
+    // An already soft-deleted reserved row is purged as any other, by a key
+    // whose map writes the type. Soft-deleted through storage, standing in
+    // for the cascade and archive restore that put such rows there.
+    const id = await seedReservedRow("folder:refusal-2");
+    await ctx.storage.items.delete(id);
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: workingKey,
@@ -196,9 +189,9 @@ describe("purging a soft-deleted row", () => {
     expect(purged.status).toBe(200);
   });
 
-  it("answers a trashed reserved-namespace row to a key whose map does not reach it as no row", async () => {
-    const id = await seedReservedRow("relic:narrow-map");
-    await ctx.storage.items.transition(id, "trashed");
+  it("answers a soft-deleted reserved-namespace row to a key whose map does not reach it as no row", async () => {
+    const id = await seedReservedRow("folder:narrow-map");
+    await ctx.storage.items.delete(id);
 
     await expectHidden(id, coreOnlyKey);
 

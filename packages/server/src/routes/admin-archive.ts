@@ -597,10 +597,10 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // A row whose `source` claims a reserved credential shape is refused,
     // on the same terms and for the same reason as the state check below:
     // the restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses those prefixes precisely so no credential can
-    // stamp one. A row carrying `connector:` would otherwise read, ever
-    // after, as written by a connector that never existed — planted
-    // through the one door that does not ask.
+    // `POST /keys` refuses that prefix precisely so no credential can
+    // stamp one. A row carrying `oauth:` would otherwise read, ever after,
+    // as written by a grant that never existed — planted through the one
+    // door that does not ask.
     for (const { item } of items) {
       const source = item.source;
       if (typeof source === "string" && isReservedCredentialSource(source)) {
