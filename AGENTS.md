@@ -25,7 +25,7 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 - A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced, or the assertion passes against nothing.
 - A comment is probed, not read. A count, a list, or a claim that nothing calls something is checked by running the query, never by agreeing with it.
-- A comment survives only if it explains a why the code cannot. Anything that narrates history, removed code, a former dialect or mode, a ticket or a person, goes, in every file the work touches.
+- A comment survives only if it explains a why the code cannot; when in doubt, it goes. Anything that narrates history, removed code, a former dialect or mode, a ticket or a person, goes, in every file the work touches.
 - Match review to the change's risk and complexity. Use sub-agent or adversarial review when it adds meaningful confidence; straightforward, low-risk changes do not need it. When both read-only and mutation-based reviews are useful, run them sequentially so they do not interfere.
 
 ## Commands
