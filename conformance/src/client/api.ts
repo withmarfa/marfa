@@ -254,8 +254,15 @@ export class MarfaClient {
    * Hard delete. `deleteItem` is a soft delete, so a suite that only calls it
    * leaves its fixtures in the database.
    */
-  async purgeItem(id: string): Promise<ApiResponse<{ ok: boolean }>> {
-    return this.request<{ ok: boolean }>(`/items/${id}/purge`, {
+  async purgeItem(
+    id: string,
+    options?: { version?: number },
+  ): Promise<ApiResponse<{ ok: boolean }>> {
+    const query =
+      options?.version !== undefined
+        ? `?version=${String(options.version)}`
+        : "";
+    return this.request<{ ok: boolean }>(`/items/${id}/purge${query}`, {
       method: "DELETE",
     });
   }

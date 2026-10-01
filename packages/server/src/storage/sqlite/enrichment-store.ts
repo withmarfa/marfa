@@ -13,7 +13,6 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
   constructor(private db: DrizzleDb) {}
 
   async listCandidates(
-    extractorVersion: number,
     maxAttempts: number,
     limit: number,
     configSignature: string,
@@ -47,7 +46,6 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
           or(
             isNull(enrichmentState.item_id),
             ne(enrichmentState.blob_ref, blobRef),
-            lt(enrichmentState.extractor_version, extractorVersion),
             and(
               eq(enrichmentState.status, "failed"),
               lt(enrichmentState.attempts, maxAttempts),
@@ -68,7 +66,7 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
       //
       // `created_at` is immovable, which is the property that matters:
       // candidacy is decided by the enrichment-state anti-join, so a row
-      // re-offered after a blob change or a version bump is reordered
+      // re-offered after a blob change is reordered
       // against every other candidate by age rather than by recency, and
       // nothing a caller does can move any of them.
       .orderBy(asc(items.created_at))
@@ -96,7 +94,6 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
     const row = {
       item_id: state.item_id,
       blob_ref: state.blob_ref,
-      extractor_version: state.extractor_version,
       status: state.status,
       attempts: state.attempts,
       error: state.error ?? null,

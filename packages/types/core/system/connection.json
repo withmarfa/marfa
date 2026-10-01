@@ -2,7 +2,7 @@
   "id": "system.connection",
   "label": "Connection",
   "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (a connector acting on this user's behalf, whatever its upstream). Lifecycle bounded to active | revoked. Has no tier.",
-  "version": 5,
+  "version": 0,
   "fields": {
     "kind": {
       "type": "enum",

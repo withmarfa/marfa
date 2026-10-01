@@ -9,6 +9,14 @@ import type {
 import { bulkActionJobs } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
+/** A job that has not reached a terminal state. Every write that ends a job
+ *  is conditioned on it, so whichever of cancel, complete and fail lands
+ *  first is final. */
+const openJob = inArray(bulkActionJobs.status, [
+  "queued",
+  "in_progress",
+] as BulkActionJobStatus[]);
+
 /**
  * The SQLite implementation of `BulkActionJobStore`, over
  * `bulk_action_jobs`.
@@ -142,7 +150,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         finished_at: finishedAt,
         worker_heartbeat_at: null,
       })
-      .where(eq(bulkActionJobs.id, id))
+      .where(and(eq(bulkActionJobs.id, id), openJob))
       .run();
   }
 
@@ -155,7 +163,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         finished_at: finishedAt,
         worker_heartbeat_at: null,
       })
-      .where(eq(bulkActionJobs.id, id))
+      .where(and(eq(bulkActionJobs.id, id), openJob))
       .run();
   }
 
@@ -167,15 +175,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         finished_at: finishedAt,
         worker_heartbeat_at: null,
       })
-      .where(
-        and(
-          eq(bulkActionJobs.id, id),
-          inArray(bulkActionJobs.status, [
-            "queued",
-            "in_progress",
-          ] as BulkActionJobStatus[]),
-        ),
-      )
+      .where(and(eq(bulkActionJobs.id, id), openJob))
       .run();
     return result.rowsAffected > 0;
   }

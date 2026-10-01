@@ -1,10 +1,8 @@
 /**
- * Conformance for server-side semver-diff at PUT /types.
+ * Conformance for a type's version at PUT /types.
  *
- * The server applies a structural diff classifier to every type update.
- * Submitting an identical schema is a no-op (rejected). Descriptive-only
- * changes accept the existing version. Additive and breaking diffs require
- * an explicit version bump.
+ * A replacement keeps whatever version it is given, 0 where it names none,
+ * and no change to the schema demands that the version move.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -27,7 +25,6 @@ async function registerInitial(typeId: string): Promise<TypeSchema> {
   const initial: TypeSchema = {
     id: typeId,
     label: "Initial",
-    version: 1,
     fields: {
       body: { type: "string", required: true },
       title: { type: "string" },
@@ -35,10 +32,11 @@ async function registerInitial(typeId: string): Promise<TypeSchema> {
   };
   const r = await client.registerType(initial);
   expect(r.ok).toBe(true);
+  expect(r.data?.type.version).toBe(0);
   return initial;
 }
 
-describe("PUT /types semver-diff", () => {
+describe("PUT /types and a type's version", () => {
   it("refuses a malformed identifier and a schema the validator refuses with 400", async () => {
     const typeId = `user.versioning-shape-${ctx.runId}`;
     const initial = await registerInitial(typeId);
@@ -49,72 +47,65 @@ describe("PUT /types semver-diff", () => {
 
     const wrongShape = await client.updateType(typeId, {
       ...initial,
-      version: 2,
       fields: { body: { type: "not-a-field-type" } },
     } as unknown as TypeSchema);
     expect(wrongShape.status).toBe(400);
     expect(wrongShape.error?.error.code).toBe("invalid_schema");
   });
 
-  it("rejects no-op resubmission with version_bump_mismatch", async () => {
-    const typeId = `user.versioning-noop-${ctx.runId}`;
+  it("registers a type that names no version at 0", async () => {
+    await registerInitial(`user.versioning-unnamed-${ctx.runId}`);
+  });
+
+  it("replaces a type at the version it already holds, whatever the change", async () => {
+    const typeId = `user.versioning-unbumped-${ctx.runId}`;
     const initial = await registerInitial(typeId);
 
-    const r = await client.updateType(typeId, initial);
-    expect(r.ok).toBe(false);
-    expect(r.status).toBe(422);
-    expect(r.error?.error.code).toBe("version_bump_mismatch");
+    const steps: { label: string; schema: TypeSchema }[] = [
+      { label: "resubmitted unchanged", schema: initial },
+      {
+        label: "a field added",
+        schema: {
+          ...initial,
+          fields: { ...initial.fields, note: { type: "string" } },
+        },
+      },
+      {
+        label: "a field removed",
+        schema: {
+          ...initial,
+          fields: { body: { type: "string", required: true } },
+        },
+      },
+      {
+        label: "relabeled",
+        schema: {
+          ...initial,
+          label: "Relabeled",
+          fields: { body: { type: "string", required: true } },
+        },
+      },
+    ];
+    for (const { label, schema } of steps) {
+      const r = await client.updateType(typeId, { ...schema, version: 0 });
+      expect(r.status, label).toBe(200);
+      expect(r.data?.type.version, label).toBe(0);
+      expect(Object.keys(r.data?.type.fields ?? {}), label).toEqual(
+        Object.keys(schema.fields),
+      );
+    }
   });
 
-  it("rejects field removal at the same version", async () => {
-    const typeId = `user.versioning-removal-${ctx.runId}`;
-    await registerInitial(typeId);
+  it("keeps the version a replacement names, and 0 where it names none", async () => {
+    const typeId = `user.versioning-given-${ctx.runId}`;
+    const initial = await registerInitial(typeId);
 
-    const next: TypeSchema = {
-      id: typeId,
-      label: "Initial",
-      version: 1,
-      fields: {
-        body: { type: "string", required: true },
-        // title removed — breaking diff requires a major bump.
-      },
-    };
-    const r = await client.updateType(typeId, next);
-    expect(r.ok).toBe(false);
-    expect(r.status).toBe(422);
-    expect(r.error?.error.code).toBe("version_bump_mismatch");
-  });
+    const named = await client.updateType(typeId, { ...initial, version: 3 });
+    expect(named.status).toBe(200);
+    expect(named.data?.type.version).toBe(3);
 
-  it("accepts field removal when the version bumps", async () => {
-    const typeId = `user.versioning-removal-bump-${ctx.runId}`;
-    await registerInitial(typeId);
-
-    const next: TypeSchema = {
-      id: typeId,
-      label: "Initial",
-      version: 2,
-      fields: {
-        body: { type: "string", required: true },
-      },
-    };
-    const r = await client.updateType(typeId, next);
-    expect(r.ok).toBe(true);
-  });
-
-  it("accepts descriptive-only changes at the same version", async () => {
-    const typeId = `user.versioning-descriptive-${ctx.runId}`;
-    await registerInitial(typeId);
-
-    const next: TypeSchema = {
-      id: typeId,
-      label: "Updated label only",
-      version: 1,
-      fields: {
-        body: { type: "string", required: true },
-        title: { type: "string" },
-      },
-    };
-    const r = await client.updateType(typeId, next);
-    expect(r.ok).toBe(true);
+    const unnamed = await client.updateType(typeId, initial);
+    expect(unnamed.status).toBe(200);
+    expect(unnamed.data?.type.version).toBe(0);
   });
 });

@@ -220,6 +220,37 @@ describe("a retired registry table is refused on open", () => {
     );
   });
 
+  it("refuses an enrichment_state table that still carries extractor_version", async () => {
+    // NOT NULL as storage_path was, so the boot would pass and the sweeper's
+    // first write would die on a column nothing here writes.
+    // `config_signature` is the witness.
+    const table = (extra: string) =>
+      `CREATE TABLE enrichment_state (item_id TEXT PRIMARY KEY, blob_ref TEXT NOT NULL,${extra} status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, config_signature TEXT NOT NULL, updated_at TEXT NOT NULL)`;
+    const path = scratch();
+    const seed = createClient({ url: `file:${path}` });
+    await seed.execute(table(" extractor_version INTEGER NOT NULL,"));
+    seed.close();
+    const before = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+
+    await expect(createConnection(path)).rejects.toThrow(
+      /still has a extractor_version/,
+    );
+    await expect(createConnection(path)).rejects.toThrow(path);
+    expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
+      before,
+    );
+
+    // The witness: the same table without the column opens.
+    const current = scratch();
+    const fresh = createClient({ url: `file:${current}` });
+    await fresh.execute(table(""));
+    fresh.close();
+    const opened = await createConnection(current);
+    await opened.close();
+  });
+
   it("refuses an outbound_webhook_deliveries table that predates the event_type rename", async () => {
     // The fourth unindexed column, and it is quiet in a way the others are
     // not: the failure is confined to one feature. Both indexes on this

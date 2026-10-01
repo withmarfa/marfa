@@ -144,6 +144,11 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     atField: "version_policy.max_versions",
   },
   {
+    name: "version below 0",
+    input: { id: "acme.v", version: -1, fields: { title: { type: "string" } } },
+    atField: "version",
+  },
+  {
     name: "required naming a field that does not exist",
     input: {
       id: "acme.p",
@@ -314,5 +319,18 @@ describe("error codes the API maps to dedicated statuses", () => {
     expect(errors.some((e) => e.code === "compatible_with_violation")).toBe(
       true,
     );
+  });
+});
+
+describe("a type's version", () => {
+  it("is 0 when the schema names none, and 0 is a version", () => {
+    for (const input of [
+      { id: "acme.unversioned", fields: { title: { type: "string" } } },
+      { id: "acme.zero", version: 0, fields: { title: { type: "string" } } },
+    ]) {
+      const result = validate(input);
+      expect(result.success, input.id).toBe(true);
+      expect(result.success && result.data.version, input.id).toBe(0);
+    }
   });
 });

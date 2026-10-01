@@ -198,7 +198,6 @@ jobs:
             fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "previous=$previous" >> "$GITHUB_OUTPUT"
           echo "building $version from $GITHUB_SHA"
 
       - uses: dtolnay/rust-toolchain@stable
@@ -276,26 +275,9 @@ jobs:
           cargo package -p marfa-client --allow-dirty
           cp "target/package/marfa-client-$VERSION.crate" "$RUNNER_TEMP/artifacts/"
 
-      # What the release moved on the published surface, against the lock
-      # at the release before it. The first release has none to compare.
-      - name: Write the published surface's delta
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-          PREVIOUS: ${{ steps.version.outputs.previous }}
-        run: |
-          out="$RUNNER_TEMP/artifacts/surface-delta-$VERSION.md"
-          if [ "$PREVIOUS" -lt 0 ]; then
-            pnpm exec tsx scripts/release/surface-delta.ts packages/server/published-surface-lock.json > "$out"
-          else
-            git fetch --depth 1 origin "refs/tags/v0.0.$PREVIOUS:refs/tags/v0.0.$PREVIOUS"
-            git show "v0.0.$PREVIOUS:packages/server/published-surface-lock.json" > "$RUNNER_TEMP/previous-lock.json"
-            pnpm exec tsx scripts/release/surface-delta.ts packages/server/published-surface-lock.json "$RUNNER_TEMP/previous-lock.json" > "$out"
-          fi
-          cat "$out"
-
-      # Exactly the five the publish job reads, by name: an upload that only
+      # Exactly the four the publish job reads, by name: an upload that only
       # refuses an empty folder would carry a run missing one.
-      - name: Hold the artifacts to the five a release carries
+      - name: Hold the artifacts to the four a release carries
         working-directory: ${{ runner.temp }}/artifacts
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -303,12 +285,11 @@ jobs:
           expected=$(printf '%s\n' \
             "marfa-$VERSION-darwin-arm64.tar.gz" \
             "marfa-client-$VERSION.crate" \
-            "surface-delta-$VERSION.md" \
             "withmarfa-client-$VERSION.tgz" \
             "withmarfa-core-$VERSION.tgz" | LC_ALL=C sort)
           found=$(for file in *; do printf '%s\n' "$file"; done | LC_ALL=C sort)
           if [ "$found" != "$expected" ]; then
-            echo "::error::The artifacts are not the five a release carries."
+            echo "::error::The artifacts are not the four a release carries."
             diff <(echo "$expected") <(echo "$found") || true
             exit 1
           fi
@@ -522,7 +503,7 @@ jobs:
             gh release create "v$VERSION" artifacts/* \
               --draft \
               --title "v$VERSION" \
-              --notes-file "artifacts/surface-delta-$VERSION.md" \
+              --generate-notes \
               --verify-tag
           else
             echo "::error::Could not ask whether v$VERSION has a release:"

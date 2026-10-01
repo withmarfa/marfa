@@ -71,6 +71,13 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
   BulkActionBaseSchema.extend({
     action: z.literal("purge"),
     confirm: z.literal("PURGE").optional(),
+    expected_ids: z
+      .array(z.string())
+      .min(1)
+      .optional()
+      .describe(
+        "The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone.",
+      ),
   }),
   BulkActionBaseSchema.extend({
     action: z.literal("update_tags"),

@@ -3,7 +3,7 @@
   "parent": "core.media",
   "label": "Series",
   "description": "Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.",
-  "version": 4,
+  "version": 0,
   "roles": ["container"],
   "fields": {
     "medium": {

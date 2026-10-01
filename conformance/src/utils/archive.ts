@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { gunzipSync, gzipSync } from "node:zlib";
 
 /**
- * A `marfa-archive-v2` built here rather than exported from the server.
+ * A `marfa-archive-v0` built here rather than exported from the server.
  *
  * Every other archive fixture posts back what `GET /export?format=archive`
  * produced, which keeps the round trip honest and needs no tar of our own.
@@ -153,7 +153,7 @@ export function blobHash(data: Uint8Array): string {
 }
 
 /**
- * A minimal version 2 archive: `items`, and the `blobs` and `types` given.
+ * A minimal version 0 archive: `items`, and the `blobs` and `types` given.
  * Emitted empty, not omitted, so a restore can tell damaged from empty.
  */
 export function itemsArchive(
@@ -162,8 +162,8 @@ export function itemsArchive(
   types: Record<string, unknown>[] = [],
 ): Uint8Array {
   const manifest = {
-    version: 2,
-    format: "marfa-archive-v2",
+    version: 0,
+    format: "marfa-archive-v0",
     created_at: new Date().toISOString(),
     item_count: items.length,
     edge_count: 0,

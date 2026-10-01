@@ -654,11 +654,10 @@ export interface ItemStore {
    *
    * Trashed rows are excluded by default, because every read surface treats a
    * soft-deleted item as gone. Three callers pass `includeTrashed`. Two are
-   * in `bulk-actions/runner.ts`: purge, whose whole input is trashed rows,
-   * and the tag chunk, which says at its own call site why it is
-   * load-bearing there rather than defensive. Without it the purge runner's
-   * pre-fetch would come back empty, so it would report every id as "not
-   * found" while the delete underneath it succeeded. The third is the edge
+   * in `bulk-actions/runner.ts`: purge, whose input is the rows a job
+   * matched, trashed or not, and which needs the trashed ones to purge them
+   * and the rest to report them, and the tag chunk, which says at its own
+   * call site why it is load-bearing there rather than defensive. The third is the edge
    * read gate in `routes/_edge-visibility.ts`, which resolves an edge's
    * source to ask about its type: a plain read answers null for a trashed
    * source, and a null source has no type to refuse, so trashing the source
@@ -739,15 +738,15 @@ export interface ItemStore {
    *  and `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;
   /**
-   * Hard-delete every id in `ids`. Bypasses the
-   * "must be trashed" gate that single-item `purge` enforces — bulk is an
-   * admin cleanup primitive with explicit confirm. Cascades metadata and
-   * versions via ON DELETE CASCADE; caller must have already wiped edges
-   * (source + target directions). Cleans the search index for each id.
-   * Returns the number of rows actually deleted (unknown ids are
-   * silently skipped).
+   * Hard-delete every row in `ids` that is in its type's soft-deleted
+   * state, the gate single-item `purge` enforces, and return the ids it
+   * took. A row in any other state and an unknown id are skipped, and the
+   * caller reports them. Cascades metadata and versions via ON DELETE
+   * CASCADE; the caller removes the taken rows' edges (source and target
+   * directions) in the same transaction. Cleans the search index for each
+   * row taken.
    */
-  bulkPurge(ids: string[]): Promise<number>;
+  bulkPurge(ids: string[]): Promise<string[]>;
   restore(id: string): Promise<Item>;
   /**
    * Restores the rows a trash took with it through cascading edges that lie
@@ -1036,6 +1035,9 @@ export interface TypeStore {
   /** Resolves a type by id: the shipped set, then the instance's own. */
   get(id: string): Promise<TypeSchema | undefined>;
   create(schema: TypeSchema, provenance?: TypeProvenance): Promise<TypeSchema>;
+  /** Replaces a type's row and its registry entry. A row that is not there
+   *  is refused `type_not_found`, and nothing is registered: a type deleted
+   *  since the caller looked stays deleted. */
   update(id: string, schema: TypeSchema): Promise<TypeSchema>;
   delete(id: string): Promise<void>;
   /** The instance's own registrations, without the shipped core and system
@@ -2633,14 +2635,17 @@ export interface BulkActionJobStore {
     heartbeatAt: string,
   ): Promise<void>;
   /** Terminal `completed`. Writes the result envelope, sets
-   *  `finished_at`, clears `worker_heartbeat_at`. */
+   *  `finished_at`, clears `worker_heartbeat_at`. Changes the job only while
+   *  it is `queued` or `in_progress`: a job canceled meanwhile stays
+   *  canceled. */
   complete(
     id: string,
     result: string,
     finalCounts: BulkActionJobProgress,
     finishedAt: string,
   ): Promise<void>;
-  /** Terminal `failed`. Writes the error string, sets `finished_at`. */
+  /** Terminal `failed`. Writes the error string, sets `finished_at`. Changes
+   *  the job only while it is `queued` or `in_progress`, as `complete` does. */
   fail(id: string, error: string, finishedAt: string): Promise<void>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
    *  `canceled`; no-op (returns `false`) on already-terminal rows.
@@ -2672,7 +2677,6 @@ export interface EnrichmentCandidate {
 export interface EnrichmentStateInput {
   item_id: string;
   blob_ref: string;
-  extractor_version: number;
   status: "done" | "failed" | "skipped";
   attempts: number;
   error?: string | null;
@@ -2698,10 +2702,10 @@ export interface EnrichmentStateRecord extends EnrichmentStateInput {
 export interface EnrichmentStore {
   /**
    * Files needing extraction: `core.file` and descendants, not trashed,
-   * with a `blob_ref`, unprocessed by version/config, oldest-first, capped.
+   * with a `blob_ref`, unprocessed for that blob or config, oldest-first,
+   * capped.
    */
   listCandidates(
-    extractorVersion: number,
     maxAttempts: number,
     limit: number,
     configSignature: string,

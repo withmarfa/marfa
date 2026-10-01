@@ -246,7 +246,7 @@ async function insertConflictedSibling(
       : Object.fromEntries(
           Object.entries(args.properties).filter(([key]) => key !== linkField),
         );
-  const schemaVersion = getTypeSchema(row.type)?.version ?? 1;
+  const schemaVersion = getTypeSchema(row.type)?.version ?? 0;
   const inserted = await tx
     .insert(items)
     .values({
@@ -439,7 +439,18 @@ export class SqliteItemStore implements ItemStore {
         }
       }
 
-      const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
+      // Asked again here, inside the write lock, because a type deleted
+      // since the check above leaves the registry before its delete commits,
+      // and a row written now would name a type nothing holds.
+      const current = getTypeSchema(input.type);
+      if (!current) {
+        throw new MarfaError(
+          ErrorCode.UNKNOWN_TYPE,
+          `Unknown type: ${input.type}. Register it via POST /types before creating items of this type.`,
+          { type: input.type },
+        );
+      }
+      const schemaVersion = current.version;
 
       try {
         await tx
@@ -999,6 +1010,21 @@ export class SqliteItemStore implements ItemStore {
           "Cannot update trashed item",
         );
       }
+      // Asked inside the write lock, as a create asks it: a type deleted
+      // since any earlier check is out of the registry before its delete
+      // commits, so a move entering it now is refused rather than landing
+      // a row that names nothing.
+      if (
+        input.type !== undefined &&
+        input.type !== row.type &&
+        !getTypeSchema(input.type)
+      ) {
+        throw new MarfaError(
+          ErrorCode.UNKNOWN_TYPE,
+          `Unknown type: ${input.type}. Register it via POST /types before moving items into it.`,
+          { type: input.type },
+        );
+      }
 
       const currentProps = safeJsonParse<Record<string, unknown>>(
         row.properties,
@@ -1493,19 +1519,23 @@ export class SqliteItemStore implements ItemStore {
     await this.searchStore.remove(id);
   }
 
-  async bulkPurge(ids: string[]): Promise<number> {
-    if (ids.length === 0) return 0;
+  async bulkPurge(ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
     const unique = Array.from(new Set(ids));
     const scopedWhere = inArray(items.id, unique);
 
     return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select({ id: items.id })
+        .select({ id: items.id, type: items.type, state: items.state })
         .from(items)
         .where(scopedWhere)
         .all();
-      const scopedIds = rows.map((row) => row.id);
-      if (scopedIds.length === 0) return 0;
+      // The single purge's gate, judged here so no caller can purge a row
+      // that is not soft-deleted, whatever it checked beforehand.
+      const scopedIds = rows
+        .filter((row) => row.state === softDeleteState(row.type))
+        .map((row) => row.id);
+      if (scopedIds.length === 0) return [];
 
       for (const id of scopedIds) {
         await this.searchStore.remove(id);
@@ -1513,7 +1543,7 @@ export class SqliteItemStore implements ItemStore {
       await this.rehomeTrashRecords(scopedIds, tx);
       await recordTombstones(tx, scopedIds, new Date().toISOString());
       await tx.delete(items).where(inArray(items.id, scopedIds)).run();
-      return scopedIds.length;
+      return scopedIds;
     });
   }
 

@@ -1129,3 +1129,85 @@ describe("a type whose stored chain cannot be resolved", () => {
     expect(res.status).toBe(200);
   });
 });
+
+describe("type versions", () => {
+  it("registers a type without a version at 0, and takes 0 when it is named", async () => {
+    const omitted = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id: "user.version_omitted", fields: baseType.fields },
+    });
+    expect(omitted.status).toBe(201);
+    const omittedBody = (await omitted.json()) as { type: { version: number } };
+    expect(omittedBody.type.version).toBe(0);
+
+    const named = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id: "user.version_named", version: 0, fields: baseType.fields },
+    });
+    expect(named.status).toBe(201);
+    const namedBody = (await named.json()) as { type: { version: number } };
+    expect(namedBody.type.version).toBe(0);
+  });
+
+  it("still refuses a version below 0", async () => {
+    const res = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: {
+        id: "user.version_negative",
+        version: -1,
+        fields: baseType.fields,
+      },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("replaces a type at the version it is given, demanding no bump", async () => {
+    const id = "user.version_unbumped";
+    const created = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: { id, fields: baseType.fields },
+    });
+    expect(created.status).toBe(201);
+
+    // A field added, a field removed and an identical resubmission, each at
+    // the version the type already holds: the bump rule refused all three.
+    const steps = [
+      {
+        fields: {
+          ...baseType.fields,
+          note: { type: "string" },
+        },
+      },
+      { fields: { note: { type: "string" } } },
+      { fields: { note: { type: "string" } } },
+    ];
+    for (const step of steps) {
+      const res = await request(ctx.app, "PUT", `/types/${id}`, {
+        key: ctx.workingKey,
+        body: { ...step, version: 0 },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        type: { version: number; fields: Record<string, unknown> };
+      };
+      expect(body.type.version).toBe(0);
+      expect(Object.keys(body.type.fields)).toEqual(Object.keys(step.fields));
+    }
+
+    const omitted = await request(ctx.app, "PUT", `/types/${id}`, {
+      key: ctx.workingKey,
+      body: { fields: { note: { type: "string" } } },
+    });
+    expect(omitted.status).toBe(200);
+    const omittedBody = (await omitted.json()) as { type: { version: number } };
+    expect(omittedBody.type.version).toBe(0);
+
+    const given = await request(ctx.app, "PUT", `/types/${id}`, {
+      key: ctx.workingKey,
+      body: { version: 4, fields: { note: { type: "string" } } },
+    });
+    expect(given.status).toBe(200);
+    const givenBody = (await given.json()) as { type: { version: number } };
+    expect(givenBody.type.version).toBe(4);
+  });
+});

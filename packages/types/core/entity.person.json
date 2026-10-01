@@ -3,7 +3,7 @@
   "parent": "core.entity",
   "label": "Person",
   "description": "Contact information for an individual. Inherits all core.entity fields.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "given_name": {
       "type": "string",

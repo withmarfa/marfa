@@ -239,8 +239,8 @@ describe("GET /export?format=archive", () => {
       blob_count: number;
       blobs: Record<string, { mime_type: string; size_bytes: number }>;
     };
-    expect(manifest.version).toBe(2);
-    expect(manifest.format).toBe("marfa-archive-v2");
+    expect(manifest.version).toBe(0);
+    expect(manifest.format).toBe("marfa-archive-v0");
     expect(manifest.item_count).toBeGreaterThan(0);
     // The instance that wrote it. Nothing on the read side consults this
     // either, for the reason the blob entry below gives, and it is asserted
@@ -266,5 +266,59 @@ describe("GET /export?format=archive", () => {
     expect(entries.has(`blobs/${blobHash}`)).toBe(true);
     const blobData = entries.get(`blobs/${blobHash}`)!;
     expect(blobData.toString()).toBe("archive-export-blob");
+  });
+
+  it("carries a blob named only in the properties of an edge it carries", async () => {
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: new TextEncoder().encode("edge-property-blob"),
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+    const ids: string[] = [];
+    for (const source_id of ["ae-edge-1", "ae-edge-2"]) {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "an end" }, source_id },
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { item: { id: string } }).item.id);
+    }
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: ids[0],
+        target_id: ids[1],
+        edge_type: "about",
+        properties: { caption: `see ![it](${hash})` },
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const res = await request(ctx.app, "GET", "/export?format=archive", {
+      key: ctx.workingKey,
+    });
+    expect(res.status).toBe(200);
+    const archive = Buffer.from(await res.arrayBuffer());
+    const entries = new Map<string, Buffer>();
+    const extract = tar.extract();
+    await new Promise<void>((resolve, reject) => {
+      extract.on("entry", (header, stream, next) => {
+        const chunks: Buffer[] = [];
+        stream.on("data", (c: Buffer) => chunks.push(c));
+        stream.on("end", () => {
+          entries.set(header.name, Buffer.concat(chunks));
+          next();
+        });
+        stream.resume();
+      });
+      extract.on("finish", resolve);
+      extract.on("error", reject);
+      Readable.from(archive).pipe(createGunzip()).pipe(extract);
+    });
+    expect(entries.get(`blobs/${hash}`)?.toString()).toBe("edge-property-blob");
   });
 });
