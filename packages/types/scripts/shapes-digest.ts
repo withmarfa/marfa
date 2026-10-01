@@ -4,8 +4,7 @@
  * `SHIPPED_TYPE_SHAPES` and `SHIPPED_EDGE_TYPE_SHAPES` carry as literal
  * types, with the prose left out.
  *
- * No package that reads them is published, so no surface lock sees them
- * move. The digest is committed in `shipped-shapes.sha256` instead, and
+ * The digest is committed in `shipped-shapes.sha256`, and
  * `src/shipped-shapes-digest.test.ts` refuses a tree whose shapes differ from
  * it: a changed shape passes only with the digest changed beside it, in the
  * same diff a reviewer reads.
