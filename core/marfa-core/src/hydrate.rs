@@ -53,6 +53,7 @@ pub(crate) fn hydrate(
 
     let cursor = read_head(http)?;
     let catalog_rows = http.types()?;
+    refuse_unreadable(http, &types)?;
 
     {
         let mut conn = core.conn()?;
@@ -284,6 +285,41 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
         return Err(CoreError::Invalid("declare at least one type".into()));
     }
     Ok(declared)
+}
+
+/// Refuses a slice naming a type the key cannot read, before the copy is
+/// cleared (`device.md` 6). The listing answers such a type as one with no
+/// rows, so the slice would hold none of it and say nothing.
+///
+/// The key's own map decides, read from `GET /keys/current`. A wildcard
+/// names whatever is under it, which may be nothing, and a credential that
+/// is not a key cannot read its own map, so both are taken as declared.
+fn refuse_unreadable(http: &Http, types: &[String]) -> Result<()> {
+    let named: Vec<&str> = types
+        .iter()
+        .map(String::as_str)
+        .filter(|name| *name != store::EVERY_TYPE && !name.ends_with(".*"))
+        .collect();
+    if named.is_empty() {
+        return Ok(());
+    }
+    let Some(key) = http.current_key()? else {
+        return Ok(());
+    };
+    let unreadable: Vec<&str> = named
+        .into_iter()
+        .filter(|name| !crate::folder::placement::reads(&key, name))
+        .collect();
+    if unreadable.is_empty() {
+        return Ok(());
+    }
+    Err(CoreError::Forbidden {
+        code: "type_not_permitted".into(),
+        message: format!(
+            "this key cannot read {}, so a slice naming it would hold none of it: hydrate with a key that reads it, or leave it out",
+            unreadable.join(", ")
+        ),
+    })
 }
 
 /// Edge types to hold whole, each named once. A comma is refused because the

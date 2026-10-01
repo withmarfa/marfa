@@ -10241,11 +10241,13 @@ describe("where a file sits", () => {
     ];
     for (const [grant, places] of grants) {
       const server = await ScriptedServer.start();
-      scriptHydration(server, { head: "1" });
+      scriptHydration(server, {
+        head: "1",
+        key: [answers.currentKey("k", grant)],
+      });
       const row = scriptFolderRow(server, {
         search: { types: ["core.note"] },
       });
-      server.answer("GET", "/keys/current", answers.currentKey("k", grant));
       const dir = join(
         mkdtempSync(join(tmpdir(), "marfa-folder-no-placement-")),
         "notes",

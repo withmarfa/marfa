@@ -174,6 +174,9 @@ export function scriptHydration(
     edgeTypes?: Responder;
     /** A folder's name lookup answered otherwise, where this answers. */
     lookup?: (text: string) => Answer | undefined;
+    /** What `GET /keys/current` answers, a key reading and writing every
+     *  type unless named. */
+    key?: Responder[];
   },
 ): void {
   const rows = options.rows ?? {};
@@ -189,6 +192,7 @@ export function scriptHydration(
     });
   }
   server.answer("GET", "/edge-types", options.edgeTypes ?? edgeTypeCatalog());
+  scriptKey(server, ...(options.key ?? []));
   server.answer("GET", "/events", headRead(options.head));
   server.answer("GET", "/types", options.catalog ?? typeCatalog());
   server.answer("GET", "/items", (request) => {
@@ -233,6 +237,22 @@ export function scriptHydration(
       visible.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
   });
+}
+
+/**
+ * What `GET /keys/current` answers, which a hydration reads to refuse a type
+ * the key cannot read (`device.md` 6): a key reading and writing every type
+ * unless answers are named. For a fixture that scripts a hydration's doors
+ * itself.
+ */
+export function scriptKey(server: ScriptedServer, ...key: Responder[]): void {
+  server.answer(
+    "GET",
+    "/keys/current",
+    ...(key.length > 0
+      ? key
+      : [answers.currentKey("fixture-key", { "*": "write" })]),
+  );
 }
 
 /** ASCII letters lowercased and nothing else, as the server's `contains`. */
@@ -503,12 +523,8 @@ export async function folderHarness(
       catalog: options.catalog,
       edgeTypes: options.edgeTypes,
       lookup: options.lookup,
+      key: options.key,
     });
-    server.answer(
-      "GET",
-      "/keys/current",
-      ...(options.key ?? [answers.currentKey("fixture-key", { "*": "write" })]),
-    );
   }
   const added = await folder.add(settings.id);
   if (!added.ok) {

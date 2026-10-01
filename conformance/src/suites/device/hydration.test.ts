@@ -1,6 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { startHarness, scriptHydration, type Harness } from "./harness.js";
 import {
+  startHarness,
+  scriptHydration,
+  scriptKey,
+  type Harness,
+} from "./harness.js";
+import {
+  answers,
   edgesPage,
   headRead,
   itemEvent,
@@ -59,11 +65,86 @@ describe("what a hydration declares", () => {
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
   });
 
+  it("refuses a type the key cannot read, naming it, before anything is cleared", async () => {
+    harness = await startHarness("unreadable-type");
+    const { server, device } = harness;
+    const narrow = answers.currentKey(
+      "fixture-key",
+      { "*": "write" },
+      { "*": "write", "core.bookmark": "none" },
+    );
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+      key: [
+        answers.currentKey("fixture-key", { "*": "write" }),
+        narrow,
+        narrow,
+        refusal(
+          403,
+          "forbidden",
+          "This credential is a signed-in app's token, not a key; its reach is its grant.",
+        ),
+      ],
+    });
+    const first = await device.hydrate(["core.note"], "library");
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    const listed = () =>
+      server.requests.filter((request) => request.pathname === "/items").length;
+    expect(
+      listed(),
+      "the first hydration read no page, so the count below says nothing about a refused one",
+    ).toBeGreaterThan(0);
+    const before = listed();
+
+    const refused = await device.hydrate(
+      ["core.note", "core.bookmark"],
+      "library",
+    );
+    expect(
+      refused.ok,
+      "a slice naming a type the key cannot read hydrated, so the copy holds none of that type and reports the slice as complete",
+    ).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("forbidden");
+      expect(
+        refused.refusal.raw,
+        "the refusal did not name the type the key cannot read, so a caller cannot tell which to leave out",
+      ).toContain("core.bookmark");
+    }
+    expect(
+      listed(),
+      "the refused hydration read pages before refusing, so it cleared the copy it had for a slice it was never going to hold",
+    ).toBe(before);
+    const kept = await device.list();
+    expect(
+      kept.ok ? kept.value.map((item) => item.id) : kept,
+      "the refused hydration cleared the copy it had",
+    ).toEqual(["n1"]);
+    const status = await device.status();
+    expect(status.ok ? status.value.slice_types : status).toEqual([
+      "core.note",
+    ]);
+
+    // A type the key reads hydrates under the same key, so the refusal
+    // above is the unreadable type's and not the key's.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    // A credential that is not a key cannot read its own map, and its
+    // slice is taken as declared.
+    const signedIn = await device.hydrate(
+      ["core.note", "core.bookmark"],
+      "library",
+    );
+    expect(signedIn.ok, JSON.stringify(signedIn)).toBe(true);
+  });
+
   it("refuses a type name outside the grammar", async () => {
     harness = await startHarness("grammar");
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    scriptKey(server);
     server.answer("GET", "/items", (request) =>
       request.query.get("type") === "bookmark"
         ? refusal(
@@ -143,6 +224,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    scriptKey(server);
     server.answer("GET", "/items", (request) =>
       request.query.get("type") === "core.note"
         ? itemsPage([{ item: wireItem({ id: "from-the-first-slice" }) }])
@@ -184,6 +266,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    scriptKey(server);
     // The first attempt lands a page and then dies partway through the walk,
     // so there is something a resuming device could resume from. With nothing
     // landed, the second attempt reports the whole slice either way and the
@@ -226,6 +309,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("7"));
     server.answer("GET", "/types", typeCatalog());
+    scriptKey(server);
     server.answer(
       "GET",
       "/items",
@@ -341,6 +425,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("42"));
     server.answer("GET", "/types", typeCatalog());
+    scriptKey(server);
     server.answer(
       "GET",
       "/items",
