@@ -38,6 +38,13 @@ pub enum CliError {
     },
     #[error("no working copy named: pass --db or set MARFA_DB")]
     NoStoreNamed,
+    /// A path where no store has been made, named to a command that does
+    /// not make one.
+    #[error(
+        "no working copy at {}: `device hydrate` or `device status` makes one there",
+        .0.display()
+    )]
+    NoStoreAt(std::path::PathBuf),
     #[error("no server named: pass --url or set MARFA_API_URL")]
     NoServerNamed,
     #[error(
@@ -147,7 +154,7 @@ impl CliError {
                 429 => "rate_limited",
                 _ => "server",
             },
-            CliError::NoStoreNamed => "no_store",
+            CliError::NoStoreNamed | CliError::NoStoreAt(_) => "no_store",
             CliError::NoServerNamed => "no_server",
             CliError::NoCredential { .. } => "no_credential",
             CliError::NoKeychain(_) => "no_keychain",
@@ -195,7 +202,9 @@ impl CliError {
                 500.. => Exit::Environment,
                 _ => Exit::Refused,
             },
-            CliError::NoStoreNamed | CliError::NoServerNamed => Exit::Usage,
+            CliError::NoStoreNamed | CliError::NoStoreAt(_) | CliError::NoServerNamed => {
+                Exit::Usage
+            }
             CliError::NoCredential { .. } | CliError::SignedOut { .. } => Exit::Credential,
             CliError::NoKeychain(_) => Exit::Local,
         }
@@ -507,6 +516,10 @@ mod tests {
     #[test]
     fn each_class_of_refusal_leaves_by_its_own_door() {
         assert_eq!(CliError::NoStoreNamed.exit(), Exit::Usage);
+        assert_eq!(
+            CliError::NoStoreAt("missing.sqlite".into()).exit(),
+            Exit::Usage
+        );
         assert_eq!(CliError::NoServerNamed.exit(), Exit::Usage);
         assert_eq!(
             CliError::NoCredential {

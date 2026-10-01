@@ -53,6 +53,41 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(envelope["error"]["code"], "no_store");
     assert_eq!(envelope["exit"], 2);
 
+    // A path where no store has been made, to a command that makes none,
+    // is refused the same way and leaves the path as it was.
+    let missing = scratch("missing");
+    let (code, stdout, stderr) = run(&[
+        "--json",
+        "device",
+        "--db",
+        missing.to_str().unwrap(),
+        "queue",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert_eq!(stdout, "");
+    let envelope = read_envelope(&stderr);
+    assert_eq!(envelope["error"]["code"], "no_store");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(missing.to_str().unwrap()),
+        "{stderr}"
+    );
+    assert!(!missing.exists());
+    let (code, _, stderr) = run(&[
+        "--json",
+        "device",
+        "--db",
+        missing.to_str().unwrap(),
+        "status",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        missing.exists(),
+        "the state report makes the store it reports on"
+    );
+
     let store = scratch("usage");
     let (code, _, stderr) = run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
     assert_eq!(code, 2, "{stderr}");
@@ -142,6 +177,16 @@ fn an_environment_failure_leaves_by_three() {
 #[test]
 fn a_refusal_under_the_device_rules_leaves_by_four() {
     let store = scratch("local");
+    // A store that exists and has never hydrated, which the state report
+    // makes; a path with no store is the command line's refusal instead.
+    let (code, _, stderr) = run(&[
+        "--json",
+        "device",
+        "--db",
+        store.to_str().unwrap(),
+        "status",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
     let (code, _, stderr) = run(&[
         "--json",
         "device",

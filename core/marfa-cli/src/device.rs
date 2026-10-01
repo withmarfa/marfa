@@ -481,6 +481,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
     let store = Store {
         db: args.db,
         reader: args.reader,
+        makes: matches!(
+            args.command,
+            DeviceCommand::Hydrate { .. } | DeviceCommand::Status
+        ),
     };
     match args.command {
         DeviceCommand::Hydrate {
@@ -991,20 +995,28 @@ fn stop_on_interrupt() {
 struct Store {
     db: Option<PathBuf>,
     reader: bool,
+    /// Whether the command may make the store where none is: only a
+    /// hydration and the state report do (`device.md` 44).
+    makes: bool,
 }
 
 impl Store {
     /// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
     /// there is no default store, because a store nobody named is one nobody
-    /// can find again. The file is made at the named path on first open, so
-    /// the state report is answerable before a hydration (`device.md` 5);
-    /// opened to read, it is never made (`device.md` 41).
+    /// can find again. The file is made at the named path by a hydration or
+    /// the state report, so the report is answerable before a hydration
+    /// (`device.md` 5), and by nothing else, so a mistyped path is refused
+    /// rather than answered from a store made for it; opened to read, it is
+    /// never made (`device.md` 41).
     fn open(&self, server: Option<Server>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);
         };
         if self.reader {
             return Ok(Core::open_reader(path)?);
+        }
+        if !self.makes && !path.exists() {
+            return Err(CliError::NoStoreAt(path.clone()));
         }
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
