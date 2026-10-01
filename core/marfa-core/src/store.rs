@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_iter};
@@ -644,6 +644,29 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
         "WHERE verdict IS NULL OR verdict = ?1",
         [Verdict::Blocked.as_str()],
     )
+}
+
+/// The bytes every upload the server has not taken names: unanswered, held,
+/// or answered in a way a caller may still send again. The queue names them
+/// and the cache holds them, so the cache must keep them (`device.md` 38).
+pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT blob FROM queue
+          WHERE kind = ?1 AND blob IS NOT NULL
+            AND (verdict IS NULL OR verdict NOT IN (?2, ?3, ?4))",
+    )?;
+    let hashes = statement
+        .query_map(
+            [
+                WriteKind::UploadBlob.as_str(),
+                Verdict::Accepted.as_str(),
+                Verdict::Merged.as_str(),
+                Verdict::Conflicted.as_str(),
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(hashes)
 }
 
 /// Whether any write to an item is still waiting.

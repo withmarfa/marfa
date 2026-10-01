@@ -5,10 +5,12 @@
 //! name, and a slice of a thousand photos is a thousand names until someone
 //! opens one.
 
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, SystemTime};
 
 use sha2::{Digest, Sha256};
 use ureq::Agent;
@@ -19,10 +21,20 @@ use crate::http::{Call, CallBody, Http, Method, refusal};
 
 const PREFIX: &str = "sha256:";
 
+/// The most bytes the cache keeps of blobs nothing waits to send
+/// (`device.md` 37). Room for a working set of photos and documents a
+/// person opens, and still a small part of a phone's storage; the cache is
+/// named by content, so bytes evicted are fetched again when asked for.
+pub(crate) const CACHE_MOST: u64 = 512 * 1024 * 1024;
+
 /// Where a working copy's bytes live: a folder beside its file, one file per
 /// blob, named by the hex of its hash.
 pub(crate) struct Cache {
     dir: PathBuf,
+    /// Held while bytes are taken in for an upload and queued, and while the
+    /// cache is trimmed, so a trim never takes bytes an upload is about to
+    /// name.
+    settling: Mutex<()>,
 }
 
 /// Why bytes did not arrive whole: the source failed, or the cache did.
@@ -37,6 +49,70 @@ impl Cache {
         name.push(".blobs");
         Cache {
             dir: PathBuf::from(name),
+            settling: Mutex::new(()),
+        }
+    }
+
+    /// Holds off every trim until the guard is dropped.
+    pub(crate) fn hold(&self) -> MutexGuard<'_, ()> {
+        self.settling
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Marks held bytes as just read, so a trim takes the bytes read longest
+    /// ago first.
+    pub(crate) fn touch(&self, path: &Path) {
+        let _ = File::options()
+            .append(true)
+            .open(path)
+            .and_then(|file| file.set_modified(SystemTime::now()));
+    }
+
+    /// Takes away the held copy of `hash`, unless `kept` names it. Its bytes
+    /// are named by their content, so a later ask fetches them again. Called
+    /// under `hold`, with `kept` read under it.
+    pub(crate) fn let_go(&self, hash: &str, kept: &HashSet<String>) {
+        let Ok(hex) = hex_of(hash) else {
+            return;
+        };
+        if !kept.contains(hex) {
+            let _ = fs::remove_file(self.dir.join(hex));
+        }
+    }
+
+    /// Takes away the bytes read longest ago until what is left is at most
+    /// `most` bytes, never bytes whose hex `kept` names. Half-written copies
+    /// are `sweep_incoming`'s. Called under `hold`, with `kept` read under it.
+    pub(crate) fn trim(&self, most: u64, kept: &HashSet<String>) {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        let mut held: Vec<(SystemTime, u64, PathBuf)> = Vec::new();
+        let mut total = 0u64;
+        for entry in entries.flatten() {
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !metadata.is_file() || name.starts_with(".incoming-") {
+                continue;
+            }
+            total += metadata.len();
+            if !kept.contains(name.as_ref()) {
+                let read = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                held.push((read, metadata.len(), entry.path()));
+            }
+        }
+        held.sort();
+        for (_, size, path) in held {
+            if total <= most {
+                break;
+            }
+            if fs::remove_file(&path).is_ok() {
+                total -= size;
+            }
         }
     }
 
@@ -182,7 +258,7 @@ pub(crate) fn name_of(bytes: &[u8]) -> String {
 /// The hex a hash names, refusing anything that is not 64 lowercase hex
 /// digits, with or without `sha256:` before them. The hex becomes a file
 /// name, so nothing else may reach one.
-fn hex_of(hash: &str) -> Result<&str> {
+pub(crate) fn hex_of(hash: &str) -> Result<&str> {
     Some(hash.strip_prefix(PREFIX).unwrap_or(hash))
         .filter(|hex| {
             hex.len() == 64
@@ -429,5 +505,64 @@ mod tests {
             held.exists(),
             "the sweep took held bytes, which only a half-written copy may lose"
         );
+    }
+
+    /// Bytes kept under their name, read `ago` seconds ago.
+    fn kept(cache: &Cache, bytes: &[u8], ago: u64) -> (String, PathBuf) {
+        let hash = name_of(bytes);
+        let path = cache.keep(&hash, bytes).unwrap();
+        File::options()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(ago))
+            .unwrap();
+        (hex_of(&hash).unwrap().to_string(), path)
+    }
+
+    #[test]
+    fn a_trim_takes_the_bytes_read_longest_ago_until_the_rest_fit() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (_, oldest) = kept(&cache, b"aaaaaaaaaa", 300);
+        let (waiting, named) = kept(&cache, b"bbbbbbbbbb", 200);
+        let (_, older) = kept(&cache, b"cccccccccc", 100);
+        let (_, newest) = kept(&cache, b"dddddddddd", 0);
+        let incoming = cache.dir.join(".incoming-still-arriving");
+        fs::write(&incoming, b"half").unwrap();
+
+        // Forty bytes held and twenty-five allowed: the oldest two go but
+        // for the one an upload names, so the next oldest goes in its place.
+        cache.trim(25, &HashSet::from([waiting]));
+        assert!(!oldest.exists(), "the bytes read longest ago were kept");
+        assert!(named.exists(), "bytes an upload still names were taken");
+        assert!(!older.exists(), "the trim stopped before the rest fit");
+        assert!(newest.exists(), "the trim went past what it had to take");
+        assert!(
+            incoming.exists(),
+            "a copy still arriving was taken by a trim"
+        );
+
+        // A read moves bytes to the back of the line.
+        let (_, first) = kept(&cache, b"eeeeeeeeee", 500);
+        cache.touch(&first);
+        cache.trim(20, &HashSet::new());
+        assert!(first.exists(), "bytes just read were taken first");
+        assert!(
+            !named.exists(),
+            "the trim took something other than the bytes read longest ago"
+        );
+    }
+
+    #[test]
+    fn bytes_let_go_are_gone_unless_an_upload_names_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("store.sqlite"));
+        let (hex, path) = kept(&cache, b"held", 0);
+        let hash = format!("{PREFIX}{hex}");
+        cache.let_go(&hash, &HashSet::from([hex.clone()]));
+        assert!(path.exists(), "bytes an upload still names were let go");
+        cache.let_go(&hash, &HashSet::new());
+        assert_eq!(cache.held(&hash).unwrap(), None);
     }
 }

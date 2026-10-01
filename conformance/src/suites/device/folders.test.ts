@@ -13597,15 +13597,7 @@ describe("a file that is not a document", () => {
     expect(scanned.value.created + scanned.value.updated).toBe(0);
 
     // A file the folder already holds the bytes of needs no server at all,
-    // nor the copy of them beside the working copy.
-    rmSync(
-      join(
-        harness.dir,
-        ".marfa",
-        "core.sqlite.blobs",
-        hash.slice("sha256:".length),
-      ),
-    );
+    // nor a copy of them beside the working copy, which the pull let go.
     await harness.server.offline();
     const again = await harness.folder.pull();
     expect(again.ok).toBe(true);
@@ -13615,6 +13607,54 @@ describe("a file that is not a document", () => {
       "a file already on the disk was fetched again, and reported absent with the server away",
     ).toBe(1);
     await harness.server.online();
+  });
+
+  it("keeps no copy beside the store of bytes its file holds, and fetches them again when asked", async () => {
+    const hash = hashOf(photo);
+    harness = await folderHarness("folder-file-let-go", {
+      settings,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000f6",
+              type: "core.file.image",
+              properties: {
+                title: "photo.png",
+                blob_ref: hash,
+                mime_type: "image/png",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, photo);
+    const fetched = (): number =>
+      harness!.server.requests.filter((request) =>
+        request.pathname.startsWith("/links/"),
+      ).length;
+
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(photo);
+    // The witness: the bytes came through the copy beside the store, so its
+    // absence below is the pull letting them go.
+    expect(fetched(), "the pull wrote the file without fetching it").toBe(1);
+    const device = harness.folder.device();
+    const copy = `${device.store}.blobs/${hash.slice("sha256:".length)}`;
+    expect(
+      existsSync(copy),
+      "the folder kept a second copy of bytes its file already holds, so every file it pulls takes twice its size on the disk",
+    ).toBe(false);
+
+    // Named by their content, the bytes let go are fetched again when asked.
+    const asked = await device.blob(hash);
+    expect(asked.ok, JSON.stringify(asked)).toBe(true);
+    if (!asked.ok) return;
+    expect(readFileSync(asked.value.path)).toEqual(photo);
+    expect(fetched(), "bytes let go were answered without a fetch").toBe(2);
   });
 
   it("ends a pull whose credential is refused, rather than counting each file absent", async () => {

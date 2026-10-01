@@ -2827,7 +2827,10 @@ impl Folder {
                             .is_ok_and(|named| crate::blob::name_of(found) == named)
                     });
                 match on_disk {
-                    Some(found) => (found, Vec::new(), Vec::new()),
+                    Some(found) => {
+                        self.core.let_go_blob(blob);
+                        (found, Vec::new(), Vec::new())
+                    }
                     None => match self.core.blob(blob).map(std::fs::read) {
                         Ok(Ok(found)) => (found, Vec::new(), Vec::new()),
                         // A refused credential refuses every file alike.
@@ -3005,6 +3008,9 @@ impl Folder {
             }
             report.unwritten += 1;
             return Ok(false);
+        }
+        if let Some(blob) = bytes_of(item, catalog) {
+            self.core.let_go_blob(blob);
         }
         {
             let conn = self.core.conn()?;
