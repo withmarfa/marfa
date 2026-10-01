@@ -23,23 +23,17 @@ pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "10";
+pub const SCHEMA_VERSION: &str = "0";
 
-/// Each schema version from 6 and the statements it names, hashed as the
-/// folder mapping hashes bytes. While no store is live the version does not
-/// move: a change to `schema.sql` rewrites the hash in the current version's
-/// row, and the test holds the statements to that row.
+/// The statements `schema.sql` names, hashed as the folder mapping hashes
+/// bytes. The version stays at 0 until the first public release, so a change
+/// to `schema.sql` rewrites this hash rather than moving the version, and the
+/// test holds the statements to it.
 ///
 /// Over the statements SQLite executes, not the file, so a comment moves no
 /// hash.
 #[cfg(test)]
-const SCHEMA_HASHES: &[(&str, &str)] = &[
-    ("6", "f73a05f772245511"),
-    ("7", "b0e4c59d5dbd0471"),
-    ("8", "662310c80f2c6871"),
-    ("9", "23d541400ea60681"),
-    ("10", "26e3a91464d06cd1"),
-];
+const SCHEMA_HASH: &str = "26e3a91464d06cd1";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -1621,32 +1615,13 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The current version's row names this schema's statements and no
-    /// other version's.
+    /// The hash names this schema's statements as they are.
     #[test]
-    fn the_schema_version_names_the_schema_as_it_is() {
-        let versions: Vec<&str> = SCHEMA_HASHES.iter().map(|(version, _)| *version).collect();
-        let hashes: Vec<&str> = SCHEMA_HASHES.iter().map(|(_, hash)| *hash).collect();
-        assert_eq!(
-            versions.last(),
-            Some(&SCHEMA_VERSION),
-            "SCHEMA_VERSION is not the newest row of SCHEMA_HASHES: a version moved back, or a row was added without moving it"
-        );
-        let unique = |list: &[&str]| {
-            list.iter().collect::<std::collections::HashSet<_>>().len() == list.len()
-        };
-        assert!(
-            unique(&versions),
-            "two rows of SCHEMA_HASHES name one version"
-        );
-        assert!(
-            unique(&hashes),
-            "two versions in SCHEMA_HASHES name the same statements"
-        );
+    fn the_schema_hash_names_the_schema_as_it_is() {
         assert_eq!(
             crate::folder::state::hash(schema_statements().as_bytes()),
-            hashes[hashes.len() - 1],
-            "schema.sql's statements changed: write their hash into SCHEMA_HASHES's row for SCHEMA_VERSION"
+            SCHEMA_HASH,
+            "schema.sql's statements changed: write their hash into SCHEMA_HASH"
         );
     }
 
