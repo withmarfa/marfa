@@ -181,7 +181,7 @@ pub fn delete_edge_type(
     }
 }
 
-/// Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.
+/// Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.
 pub fn list_edge_types(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<ListEdgeTypesSuccess>, Error<ListEdgeTypesError>> {

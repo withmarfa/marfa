@@ -143,8 +143,17 @@ const EdgeTypeResponseSchema = z
     property_schema: z.record(z.string(), EdgePropertyDefinitionSchema),
     reverse_name: z.string().optional(),
     written_at: z.enum(["source", "target"]),
+    shipped: z
+      .boolean()
+      .describe(
+        "Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`.",
+      ),
   })
   .openapi("EdgeType");
+
+function edgeTypeResponse(schema: EdgeTypeSchema) {
+  return { ...schema, shipped: isCoreEdgeType(schema.id) };
+}
 
 /**
  * Refuses an id or a reverse name another edge type holds as either. A folder
@@ -287,7 +296,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.",
+    "Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -441,13 +450,16 @@ export function edgeTypeRoutes(storage: Storage) {
       resource_type: "edge_type",
       resource_id: schema.id,
     });
-    return c.json({ edge_type: schema }, 201);
+    return c.json({ edge_type: edgeTypeResponse(schema) }, 201);
   });
 
   router.openapi(listEdgeTypesRoute, async (c) => {
     requireAuth(c);
     const { listEdgeTypes } = await import("@withmarfa/shared");
-    return c.json({ data: listEdgeTypes(), next_cursor: null }, 200);
+    return c.json(
+      { data: listEdgeTypes().map(edgeTypeResponse), next_cursor: null },
+      200,
+    );
   });
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
