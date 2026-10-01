@@ -383,6 +383,15 @@ impl Core {
         store::edges_to(&conn, id)
     }
 
+    /// Every edge of `edge_type` the copy holds, answered or still queued,
+    /// oldest first: the threads or the attachments of every held item in
+    /// one read rather than one for each item.
+    pub fn edges_of_type(&self, edge_type: &str) -> Result<Vec<Edge>> {
+        let conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        store::edges_of_type(&conn, edge_type)
+    }
+
     /// Full-text search over titles, bodies and tags, best match first,
     /// narrowed as `SearchFilters` says.
     pub fn search(
@@ -1626,6 +1635,62 @@ mod tests {
             store::meta_delete(&conn, store::META_SLICE_TYPES).unwrap();
         }
         assert_eq!(core.status().unwrap().hydration, Hydration::Never);
+    }
+
+    #[test]
+    fn every_edge_of_one_type_is_read_at_once() {
+        let core = Core::open_in_memory(None).unwrap();
+        assert_eq!(
+            core.edges_of_type("in-thread"),
+            Err(CoreError::HydrationIncomplete)
+        );
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            for id in ["root", "first", "second"] {
+                let row = store::testing::note(id, id, id, "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+            }
+            for (id, source, target, edge_type) in [
+                ("reply-first", "first", "root", "in-thread"),
+                ("cites", "first", "second", "references"),
+                ("reply-second", "second", "root", "in-thread"),
+            ] {
+                store::upsert_edge(
+                    &conn,
+                    &store::testing::wire_edge(id, source, target, edge_type),
+                )
+                .unwrap();
+            }
+        }
+        let queued = core
+            .create_edge(&EdgeDraft {
+                source_id: "second".into(),
+                target_id: "first".into(),
+                edge_type: "in-thread".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let ids = |edge_type: &str| -> Vec<String> {
+            core.edges_of_type(edge_type)
+                .unwrap()
+                .into_iter()
+                .map(|edge| edge.id)
+                .collect()
+        };
+        assert_eq!(
+            ids("in-thread"),
+            vec![
+                "reply-first".to_string(),
+                "reply-second".to_string(),
+                queued.edge_id.unwrap(),
+            ],
+            "the read is not every edge of the type the copy holds, the unanswered one with them"
+        );
+        assert_eq!(ids("references"), vec!["cites".to_string()]);
+        assert!(ids("attached-to").is_empty());
     }
 
     #[test]

@@ -1426,12 +1426,17 @@ pub fn edges_to(conn: &Connection, target_id: &str) -> Result<Vec<Edge>, CoreErr
     edges_at(conn, "target_id", target_id)
 }
 
-/// The edges whose `end` column names `id`. A column name is spliced into
+pub fn edges_of_type(conn: &Connection, edge_type: &str) -> Result<Vec<Edge>, CoreError> {
+    edges_at(conn, "edge_type", edge_type)
+}
+
+/// The edges whose `column` holds `value`. A column name is spliced into
 /// the query, so it is a literal of this file, never a caller's text.
-fn edges_at(conn: &Connection, end: &'static str, id: &str) -> Result<Vec<Edge>, CoreError> {
-    let sql = format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {end} = ?1 ORDER BY created_at, id");
+fn edges_at(conn: &Connection, column: &'static str, value: &str) -> Result<Vec<Edge>, CoreError> {
+    let sql =
+        format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {column} = ?1 ORDER BY created_at, id");
     let mut statement = conn.prepare(&sql)?;
-    let rows = statement.query_map([id], row_to_edge)?;
+    let rows = statement.query_map([value], row_to_edge)?;
     Ok(rows.collect::<Result<Vec<Edge>, _>>()?)
 }
 

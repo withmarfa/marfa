@@ -1035,6 +1035,15 @@ impl MarfaCore {
             .collect())
     }
 
+    pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>, MarfaError> {
+        Ok(self
+            .inner
+            .edges_of_type(&edge_type)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     pub fn search(
         &self,
         query: String,
