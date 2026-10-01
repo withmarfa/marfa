@@ -24,9 +24,8 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("isReservedCredentialSource", () => {
-  it("claims the two reserved prefixes", () => {
+  it("claims the reserved prefix", () => {
     expect(isReservedCredentialSource("oauth:conn-1")).toBe(true);
-    expect(isReservedCredentialSource("connector:conn-1")).toBe(true);
   });
 
   it("is case- and whitespace-insensitive, so the prefix cannot be smuggled", () => {
@@ -36,6 +35,7 @@ describe("isReservedCredentialSource", () => {
   it("leaves ordinary sources alone", () => {
     expect(isReservedCredentialSource("my-laptop")).toBe(false);
     expect(isReservedCredentialSource("cli")).toBe(false);
+    expect(isReservedCredentialSource("connector:conn-1")).toBe(false);
   });
 });
 
@@ -81,16 +81,16 @@ async function mintKey(opts: {
   return raw;
 }
 
-/** A `system.connection` of kind connector, seeded through storage so
- *  the test doesn't depend on the install pipeline. */
+/** A `system.connection`, seeded through storage so the test doesn't
+ *  depend on the consent pipeline. */
 async function seedConnection(): Promise<string> {
   const conn = await ctx.storage.items.create({
     type: "system.connection",
     properties: {
-      kind: "connector",
+      kind: "app",
       status: "active",
       granted_at: new Date().toISOString(),
-      connector_id: "acme.demo",
+      client_id: "acme.demo",
     },
   });
   return conn.id;
@@ -117,26 +117,6 @@ describe("POST /keys — connector source prefixes are not mintable", () => {
     });
 
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("validation_error");
-  });
-
-  it("refuses the connector prefix itself", async () => {
-    // A minted credential must not be able to claim connector provenance:
-    // `itemProvenanceSource` stamps a credential's own source onto every row
-    // it writes that names no other, so a key minted with this source would
-    // put the mark of the connector registry on rows a caller wrote by hand.
-    //
-    // Asked of this prefix as well as `oauth:` above, because each is its own
-    // entry in the reserved list and a test of one does not hold the other.
-    const caller = await mintKey({ permissions: ["keys.mint"] });
-    const source = "connector:acme/thing";
-
-    const res = await request(ctx.app, "POST", "/keys", {
-      key: caller,
-      body: { label: `forged-${source}`, source },
-    });
-    expect(res.status, `${source} was accepted`).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("validation_error");
   });

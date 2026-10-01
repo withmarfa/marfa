@@ -22,10 +22,10 @@ pub struct KeyResponse {
     #[serde(rename = "source")]
     pub source: String,
     /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
-    #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
-    pub sources: Option<Vec<String>>,
-    #[serde(rename = "permissions", skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<Vec<models::Permission>>,
+    #[serde(rename = "sources")]
+    pub sources: Vec<String>,
+    #[serde(rename = "permissions")]
+    pub permissions: Vec<models::Permission>,
     #[serde(rename = "oauth_client_id", skip_serializing_if = "Option::is_none")]
     pub oauth_client_id: Option<String>,
     #[serde(rename = "default_tier")]
@@ -34,23 +34,14 @@ pub struct KeyResponse {
     pub is_operator: bool,
     #[serde(rename = "type_permissions")]
     pub type_permissions: std::collections::HashMap<String, models::TypePermissionLevel>,
-    #[serde(
-        rename = "extension_permissions",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub extension_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
-    #[serde(rename = "edge_permissions", skip_serializing_if = "Option::is_none")]
-    pub edge_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
-    #[serde(
-        rename = "metadata_permissions",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub metadata_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
-    #[serde(
-        rename = "profile_permissions",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub profile_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
+    #[serde(rename = "extension_permissions")]
+    pub extension_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+    #[serde(rename = "edge_permissions")]
+    pub edge_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+    #[serde(rename = "metadata_permissions")]
+    pub metadata_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+    #[serde(rename = "profile_permissions")]
+    pub profile_permissions: std::collections::HashMap<String, models::PermissionLevel>,
     #[serde(
         rename = "enforcement_override",
         skip_serializing_if = "Option::is_none"
@@ -68,9 +59,15 @@ impl KeyResponse {
         key: String,
         label: String,
         source: String,
+        sources: Vec<String>,
+        permissions: Vec<models::Permission>,
         default_tier: models::Tier,
         is_operator: bool,
         type_permissions: std::collections::HashMap<String, models::TypePermissionLevel>,
+        extension_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+        edge_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+        metadata_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+        profile_permissions: std::collections::HashMap<String, models::PermissionLevel>,
         created_at: String,
         last_used_at: Option<String>,
     ) -> KeyResponse {
@@ -79,16 +76,16 @@ impl KeyResponse {
             key,
             label,
             source,
-            sources: None,
-            permissions: None,
+            sources,
+            permissions,
             oauth_client_id: None,
             default_tier,
             is_operator,
             type_permissions,
-            extension_permissions: None,
-            edge_permissions: None,
-            metadata_permissions: None,
-            profile_permissions: None,
+            extension_permissions,
+            edge_permissions,
+            metadata_permissions,
+            profile_permissions,
             enforcement_override: None,
             created_at,
             last_used_at,

@@ -8,18 +8,15 @@ import {
   isValidLanguageCode,
   isValidTypeIdentifier,
   isValidTypePattern,
-  isValidHandle,
-  isReservedHandle,
   isValidEdgeTypeIdentifier,
   RESERVED_ROOTS,
-  deriveHandleFromEmail,
   matchesTypePattern,
   resolveTypePermission,
 } from "./validation.js";
 import {
   NAMESPACE_TIER_ROOTS,
   SCOPE_FAMILY_ROOTS,
-  RETIRED_ROOT,
+  BANNED_ROOT,
 } from "./scope-roots.js";
 
 describe("isValidTimestamp", () => {
@@ -352,165 +349,6 @@ describe("resolveTypePermission", () => {
   });
 });
 
-describe("isValidHandle", () => {
-  it("accepts plain alphanumeric handles within length bounds", () => {
-    expect(isValidHandle("alice")).toBe(true);
-    expect(isValidHandle("a1b2c3")).toBe(true);
-    expect(isValidHandle("abc")).toBe(true);
-    expect(isValidHandle("a".repeat(32))).toBe(true);
-  });
-
-  it("accepts hyphenated handles where the hyphens are interior", () => {
-    expect(isValidHandle("alice-smith")).toBe(true);
-    expect(isValidHandle("a-b-c")).toBe(true);
-  });
-
-  it("rejects handles outside the 3–32 length window", () => {
-    expect(isValidHandle("ab")).toBe(false);
-    expect(isValidHandle("a")).toBe(false);
-    expect(isValidHandle("")).toBe(false);
-    expect(isValidHandle("a".repeat(33))).toBe(false);
-  });
-
-  it("rejects leading or trailing hyphens", () => {
-    expect(isValidHandle("-abc")).toBe(false);
-    expect(isValidHandle("abc-")).toBe(false);
-  });
-
-  it("rejects consecutive hyphens", () => {
-    expect(isValidHandle("a--b")).toBe(false);
-    expect(isValidHandle("foo--bar")).toBe(false);
-  });
-
-  it("rejects uppercase characters (canonical form is lowercase)", () => {
-    expect(isValidHandle("Abc")).toBe(false);
-    expect(isValidHandle("ABC")).toBe(false);
-  });
-
-  it("rejects non-alphanumeric characters other than hyphen", () => {
-    expect(isValidHandle("foo.bar")).toBe(false);
-    expect(isValidHandle("foo_bar")).toBe(false);
-    expect(isValidHandle("foo bar")).toBe(false);
-  });
-
-  it("rejects every reserved namespace root", () => {
-    expect(isValidHandle("core")).toBe(false);
-    expect(isValidHandle("system")).toBe(false);
-    expect(isValidHandle("app")).toBe(false);
-    expect(isValidHandle("user")).toBe(false);
-    expect(isValidHandle("marfa")).toBe(false);
-    expect(isValidHandle("space")).toBe(false);
-  });
-
-  it("accepts a handle that merely names a company or a page", () => {
-    // A handle is a namespace claim, not a URL path — nothing in the
-    // server routes on one — so `google.invoice` or `settings.note` is
-    // odd rather than dangerous, and the grammar is what decides.
-    expect(isValidHandle("google")).toBe(true);
-    expect(isValidHandle("settings")).toBe(true);
-    expect(isValidHandle("admin")).toBe(true);
-  });
-
-  it("returns false for non-string input", () => {
-    expect(isValidHandle(undefined as unknown as string)).toBe(false);
-    expect(isValidHandle(null as unknown as string)).toBe(false);
-    expect(isValidHandle(42 as unknown as string)).toBe(false);
-  });
-});
-
-describe("deriveHandleFromEmail", () => {
-  it("derives a valid handle from a clean local part", () => {
-    expect(deriveHandleFromEmail("alice@example.com")).toBe("alice");
-    expect(deriveHandleFromEmail("alice-smith@example.com")).toBe(
-      "alice-smith",
-    );
-  });
-
-  it("always returns a value that passes isValidHandle", () => {
-    for (const email of [
-      "alice@example.com",
-      "a.b.c@example.com",
-      "x@example.com",
-      "@example.com",
-      "UPPER.Case@Example.com",
-      "weird!!!chars###@x.io",
-      "system@example.com",
-      "a-very-long-local-part-that-exceeds-the-thirty-two-char-limit@x.io",
-      "...@x.io",
-    ]) {
-      const handle = deriveHandleFromEmail(email);
-      expect(isValidHandle(handle), `handle for ${email}: ${handle}`).toBe(
-        true,
-      );
-    }
-  });
-
-  it("lowercases and replaces dots and invalid runs with single hyphens", () => {
-    expect(deriveHandleFromEmail("First.Last@example.com")).toBe("first-last");
-    expect(deriveHandleFromEmail("a..b@example.com")).toBe("a-b");
-    expect(deriveHandleFromEmail("a_b+c@example.com")).toBe("a-b-c");
-  });
-
-  it("pads a too-short local part to clear the 3-char floor", () => {
-    expect(deriveHandleFromEmail("x@example.com")).toBe("user-x");
-    // The bare "user" fallback is itself reserved, so it gets suffixed.
-    expect(deriveHandleFromEmail("@example.com")).toBe("user-1");
-  });
-
-  it("caps the result at 32 characters with no trailing hyphen", () => {
-    const handle = deriveHandleFromEmail(
-      "a-very-long-local-part-that-keeps-going-well-past-the-limit@x.io",
-    );
-    expect(handle.length).toBeLessThanOrEqual(32);
-    expect(handle.endsWith("-")).toBe(false);
-  });
-
-  it("suffixes a local part that lands on a reserved root", () => {
-    const handle = deriveHandleFromEmail("system@example.com");
-    expect(handle).toBe("system-1");
-    expect(isReservedHandle(handle)).toBe(false);
-    expect(isValidHandle(handle)).toBe(true);
-  });
-
-  it("does not suffix a local part that is merely a common word", () => {
-    expect(deriveHandleFromEmail("admin@example.com")).toBe("admin");
-  });
-});
-
-describe("isReservedHandle", () => {
-  it("returns true for every reserved namespace root", () => {
-    expect(isReservedHandle("core")).toBe(true);
-    expect(isReservedHandle("system")).toBe(true);
-    expect(isReservedHandle("app")).toBe(true);
-    expect(isReservedHandle("user")).toBe(true);
-    expect(isReservedHandle("marfa")).toBe(true);
-    expect(isReservedHandle("space")).toBe(true);
-  });
-
-  it("returns false for everything that is not a root", () => {
-    // The roots are the whole list: a handle collides with the type
-    // grammar or it does not, and no other word is refused.
-    expect(isReservedHandle("alice")).toBe(false);
-    expect(isReservedHandle("alice-smith")).toBe(false);
-    expect(isReservedHandle("a1b2c3")).toBe(false);
-    expect(isReservedHandle("admin")).toBe(false);
-    expect(isReservedHandle("google")).toBe(false);
-  });
-
-  it("does not enforce length or grammar — that's isValidHandle's job", () => {
-    // A too-short string is not "reserved" — it just isn't valid. The
-    // route layer calls isReservedHandle first to surface a typed error,
-    // then falls through to isValidHandle for everything else.
-    expect(isReservedHandle("ab")).toBe(false);
-    expect(isReservedHandle("--bad")).toBe(false);
-  });
-
-  it("returns false for non-string input", () => {
-    expect(isReservedHandle(undefined as unknown as string)).toBe(false);
-    expect(isReservedHandle(null as unknown as string)).toBe(false);
-  });
-});
-
 describe("a type identifier never admits a slash", () => {
   it("in the identifier or the pattern", () => {
     // A slash reaching the type grammar would reach every scope literal and
@@ -525,24 +363,21 @@ describe("a type identifier never admits a slash", () => {
 
 describe("the reserved roots are derived rather than typed out", () => {
   // The set is what stops a registered type ever sharing a first segment with
-  // an OAuth scope family. It was a hand list, and every family that arrived
-  // needed a second edit to be protected: `capability` got one, `content` got
-  // one, and `metadata` and `edge` never did. This pins the derivation so the
-  // next family is protected by having been declared.
-  it("is exactly the namespace tiers, every scope-family root, and the retired one", () => {
+  // an OAuth scope family. This pins the derivation so the next family is
+  // protected by having been declared.
+  it("is exactly the namespace tiers, every scope-family root, and the banned one", () => {
     expect([...RESERVED_ROOTS].sort()).toEqual(
-      [...NAMESPACE_TIER_ROOTS, ...SCOPE_FAMILY_ROOTS, RETIRED_ROOT].sort(),
+      [...NAMESPACE_TIER_ROOTS, ...SCOPE_FAMILY_ROOTS, BANNED_ROOT].sort(),
     );
   });
 
-  it("keeps the retired root reserved although nothing is named for it", () => {
+  it("keeps the banned root reserved although nothing is named for it", () => {
     // It heads no permission, no scope family and no tier, so every other
     // assertion in this file passes with it removed. What removing it would
     // do is let a publisher claim the one word `GLOSSARY.md` bans outright
     // and register types beneath it.
-    expect(RESERVED_ROOTS.has(RETIRED_ROOT)).toBe(true);
-    expect(isValidHandle(RETIRED_ROOT)).toBe(false);
-    expect(isValidTypeIdentifier(`${RETIRED_ROOT}.anything`)).toBe(false);
+    expect(RESERVED_ROOTS.has(BANNED_ROOT)).toBe(true);
+    expect(isValidTypeIdentifier(`${BANNED_ROOT}.anything`)).toBe(false);
   });
 
   it("holds every scope-family root, which is the property that was missing", () => {
@@ -552,27 +387,24 @@ describe("the reserved roots are derived rather than typed out", () => {
     }
   });
 
-  it("refuses `metadata` and `edge` as handles", () => {
+  it("refuses `metadata` and `edge` as type roots", () => {
     // `parseScope` tries the metadata and edge matchers BEFORE the type
     // matcher, so a type registered under a claimed `metadata` handle could
     // never have its own scope literal read as a type grant:
     // `metadata.types:write` is taken by the metadata family first, and that
     // is the scope gating `POST /types`.
     for (const root of ["metadata", "edge"]) {
-      expect(isReservedHandle(root), root).toBe(true);
-      expect(isValidHandle(root), root).toBe(false);
+      expect(RESERVED_ROOTS.has(root), root).toBe(true);
       expect(isValidTypeIdentifier(`${root}.anything`), root).toBe(false);
     }
   });
 
-  it("still admits a publisher handle the registry occupies", () => {
-    // Deliberate, and the reason is on `isReservedHandle`. A handle naming a
-    // publisher root the registry holds is a namespace collision rather than
-    // a grammar confusion, and reserving `acme` while admitting `acme-corp`
-    // is a half-protection rather than a defense. `acme.calendar.event` also
-    // has to stay a valid identifier, which putting the root in this set
-    // would prevent.
-    expect(isValidHandle("acme")).toBe(true);
+  it("still admits a publisher root the registry occupies", () => {
+    // A publisher root the registry holds is a namespace collision rather
+    // than a grammar confusion, answered by the seed refusing to overwrite a
+    // registration it did not write. `acme.calendar.event` has to stay a
+    // valid identifier, which putting the root in this set would prevent.
+    expect(RESERVED_ROOTS.has("acme")).toBe(false);
     expect(isValidTypeIdentifier("acme.calendar.event")).toBe(true);
   });
 });

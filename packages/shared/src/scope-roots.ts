@@ -1,13 +1,12 @@
 /**
  * The first segments the platform has already given a meaning to, in one
- * place, because three copies of this list existed and a root present in one
- * and absent from another is a namespace that refuses registration in one
- * direction and admits it in the other.
+ * place, because a root present in one copy and absent from another is a
+ * namespace that refuses registration in one direction and admits it in the
+ * other.
  *
  * **This module imports nothing on purpose.** `scopes.ts` imports
  * `validation.ts`, so a root defined in the former and consumed by the latter
- * is a cycle. Both import this instead, and the arithmetic that used to be
- * prose in `RESERVED_ROOTS`'s docblock is now the code that produces it.
+ * is a cycle. Both import this instead.
  */
 
 /**
@@ -45,14 +44,11 @@ export const PERMISSION_FAMILY_ROOTS = [
 ] as const;
 
 /**
- * Reserved although no permission, scope family or tier is named for it.
- *
- * It heads nothing, and that is exactly why it cannot be dropped: taking it
- * out of the reserved set would let a publisher claim the handle and register
- * types beneath it, and `GLOSSARY.md` bans the word outright. Naming it here
- * in order to keep it unusable is not a use of it.
+ * The word `GLOSSARY.md` bans, reserved although no permission, scope
+ * family or tier is named for it, so that no publisher may register types
+ * beneath it. Naming it here in order to keep it unusable is not a use of it.
  */
-export const RETIRED_ROOT = "space";
+export const BANNED_ROOT = "space";
 
 /** The content category, `content:read` and `content:write`. */
 export const CONTENT_ROOT = "content";
@@ -67,7 +63,7 @@ export const PROFILE_ROOT = "profile";
  * Every root an OAuth scope family lives under.
  *
  * **`metadata` and `edge` belong here for exactly the reason the permission
- * roots and `content` do**, and their absence was the defect: `parseScope`
+ * roots and `content` do**: `parseScope`
  * tries the metadata and edge matchers before the type matcher, so a type
  * registered under a claimed `metadata` handle could never have its own scope
  * literal read as a type grant at all — `metadata.types:write` is taken by the
@@ -86,7 +82,7 @@ export const SCOPE_FAMILY_ROOTS = [
  * out, so a scope family added to `SCOPE_FAMILY_ROOTS` is protected without a
  * second edit somewhere else remembering to protect it.
  *
- * `RETIRED_ROOT` is appended rather than folded into `SCOPE_FAMILY_ROOTS`,
+ * `BANNED_ROOT` is appended rather than folded into `SCOPE_FAMILY_ROOTS`,
  * because it heads no family: nothing parses under it and nothing is named
  * for it. It is reserved so that nobody may claim it, and `parseScope`
  * claims its namespace whole for the separate reason recorded there.
@@ -94,5 +90,5 @@ export const SCOPE_FAMILY_ROOTS = [
 export const RESERVED_ROOT_NAMES: readonly string[] = [
   ...NAMESPACE_TIER_ROOTS,
   ...SCOPE_FAMILY_ROOTS,
-  RETIRED_ROOT,
+  BANNED_ROOT,
 ];

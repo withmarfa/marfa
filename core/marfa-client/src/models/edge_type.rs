@@ -28,7 +28,7 @@ pub struct EdgeType {
     #[serde(rename = "cascade_on_delete")]
     pub cascade_on_delete: CascadeOnDelete,
     #[serde(rename = "property_schema")]
-    pub property_schema: std::collections::HashMap<String, serde_json::Value>,
+    pub property_schema: std::collections::HashMap<String, models::EdgePropertyDefinition>,
     #[serde(rename = "reverse_name", skip_serializing_if = "Option::is_none")]
     pub reverse_name: Option<String>,
     #[serde(rename = "written_at")]
@@ -42,7 +42,7 @@ impl EdgeType {
         source_type_constraints: Vec<String>,
         target_type_constraints: Vec<String>,
         cascade_on_delete: CascadeOnDelete,
-        property_schema: std::collections::HashMap<String, serde_json::Value>,
+        property_schema: std::collections::HashMap<String, models::EdgePropertyDefinition>,
         written_at: WrittenAt,
     ) -> EdgeType {
         EdgeType {

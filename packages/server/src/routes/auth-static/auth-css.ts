@@ -29,9 +29,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --fg-faint: #a3a3a3;
   --border: #e5e5e5;
   --border-strong: #d4d4d4;
-  --hairline: #ededed;
-  --field: #f5f5f5;
-  --field-hover: #ececec;
   --surface-2: #f5f5f5;
   /* Soft tile fill — the only boxed surface, reserved for permission
      groups. A hair off the canvas so a tile reads as grouped without a
@@ -46,25 +43,13 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   /* Focus ring. */
   --ring: rgba(10, 10, 10, 0.13);
 
-  /* Destructive (danger actions). */
-  --destructive: #dc2626;
-  --destructive-hover: #b91c1c;
-  --destructive-fg: #ffffff;
-  --destructive-soft-border: #f3c5bf;
-
-  /* Status — tasteful tints. */
-  --success-bg: #f0fdf4;
-  --success-border: #bbf7d0;
-  --success-fg: #166534;
+  /* Error tint. */
   --error-bg: #fef2f2;
   --error-border: #fecaca;
   --error-fg: #991b1b;
-  --warn-bg: #fffbeb;
-  --warn-border: #fde68a;
-  --warn-fg: #92400e;
 
-  /* Callout — the single boxed caution (unverified app). A warmer amber
-     than the status --warn tints so it reads as advisory, not error. */
+  /* Callout — the single boxed caution (unverified app). Amber so it reads
+     as advisory, not error. */
   --callout-bg: #fdf6e3;
   --callout-border: #f3e0a3;
   --callout-fg: #854d0e;
@@ -73,7 +58,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   /* Radii — everything rounded (Luma). */
   --r-pill: 999px;
   --r-card: 26px;
-  --r-lg: 18px;
   --r-tile: 16px;
   --r-md: 14px;
   --r-input: 12px;
@@ -83,8 +67,7 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
      as one system rather than per-page guesses:
        --gap-pair  binds a title to the sub beneath it (a tight pair).
        --gap-base  the base gap: sub→content, and between form fields.
-       --gap-step  the larger step before a primary-action block, the
-                   "Or continue with" separator, and the footer link.
+       --gap-step  the larger step before a primary-action block.
      The field→button gap is --gap-step on EVERY screen; see the .actions
      trim rule below for how the step stays constant regardless of wrapper. */
   --gap-pair: 6px;
@@ -95,16 +78,9 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
   --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* Dark tokens. Applied two ways: by the OS preference when no theme is
-   forced (default — matches the prior behavior exactly), and by an explicit
-   :root[data-theme="dark"] regardless of OS (so the gallery can force a
-   theme). The token list lives once in a custom-property mixin would be
-   ideal, but plain CSS can't share a declaration block across a media
-   boundary, so the values are stated once here and re-applied below via a
-   shared rule reference. */
-
+/* Dark tokens, following the device. */
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root {
     --bg: #0a0a0a;
     --card: #161616;
     --fg: #fafafa;
@@ -112,9 +88,6 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
     --fg-faint: #6e6e6e;
     --border: #2a2a2a;
     --border-strong: #3a3a3a;
-    --hairline: #242424;
-    --field: #232323;
-    --field-hover: #2b2b2b;
     --surface-2: #1f1f1f;
     --tile: #1c1c1c;
 
@@ -124,20 +97,9 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
 
     --ring: rgba(250, 250, 250, 0.2);
 
-    --destructive: #f87171;
-    --destructive-hover: #ef4444;
-    --destructive-fg: #1a0a0a;
-    --destructive-soft-border: #4d2424;
-
-    --success-bg: #0e1f14;
-    --success-border: #1f3d28;
-    --success-fg: #86efac;
     --error-bg: #1f1212;
     --error-border: #3d1f1f;
     --error-fg: #fca5a5;
-    --warn-bg: #1f1a0e;
-    --warn-border: #3d3320;
-    --warn-fg: #fcd34d;
     --callout-bg: #241f10;
     --callout-border: #4a3f1c;
     --callout-fg: #e9c46a;
@@ -145,100 +107,9 @@ export const AUTH_CSS = `/* Marfa auth surface — Luma stylesheet. */
 
     --shadow: none;
   }
-  :root:not([data-theme="light"]) .card {
+  :root .card {
     box-shadow: none;
   }
-}
-
-/* Forced dark — applies in any OS mode. */
-:root[data-theme="dark"] {
-  --bg: #0a0a0a;
-  --card: #161616;
-  --fg: #fafafa;
-  --fg-muted: #a3a3a3;
-  --fg-faint: #6e6e6e;
-  --border: #2a2a2a;
-  --border-strong: #3a3a3a;
-  --hairline: #242424;
-  --field: #232323;
-  --field-hover: #2b2b2b;
-  --surface-2: #1f1f1f;
-  --tile: #1c1c1c;
-
-  --primary: #fafafa;
-  --primary-hover: #e5e5e5;
-  --primary-fg: #171717;
-
-  --ring: rgba(250, 250, 250, 0.2);
-
-  --destructive: #f87171;
-  --destructive-hover: #ef4444;
-  --destructive-fg: #1a0a0a;
-  --destructive-soft-border: #4d2424;
-
-  --success-bg: #0e1f14;
-  --success-border: #1f3d28;
-  --success-fg: #86efac;
-  --error-bg: #1f1212;
-  --error-border: #3d1f1f;
-  --error-fg: #fca5a5;
-  --warn-bg: #1f1a0e;
-  --warn-border: #3d3320;
-  --warn-fg: #fcd34d;
-  --callout-bg: #241f10;
-  --callout-border: #4a3f1c;
-  --callout-fg: #e9c46a;
-  --callout-icon: #d4a73a;
-
-  --shadow: none;
-}
-:root[data-theme="dark"] .card {
-  box-shadow: none;
-}
-
-/* Forced light — re-asserts the default light tokens so a page can pin light
-   even when the OS prefers dark. The :root block above is the canonical light
-   ramp; only the tokens the dark theme overrides need re-stating here. */
-:root[data-theme="light"] {
-  --bg: #f5f5f5;
-  --card: #ffffff;
-  --fg: #0a0a0a;
-  --fg-muted: #737373;
-  --fg-faint: #a3a3a3;
-  --border: #e5e5e5;
-  --border-strong: #d4d4d4;
-  --hairline: #ededed;
-  --field: #f5f5f5;
-  --field-hover: #ececec;
-  --surface-2: #f5f5f5;
-  --tile: #f6f6f7;
-
-  --primary: #171717;
-  --primary-hover: #2a2a2a;
-  --primary-fg: #fafafa;
-
-  --ring: rgba(10, 10, 10, 0.13);
-
-  --destructive: #dc2626;
-  --destructive-hover: #b91c1c;
-  --destructive-fg: #ffffff;
-  --destructive-soft-border: #f3c5bf;
-
-  --success-bg: #f0fdf4;
-  --success-border: #bbf7d0;
-  --success-fg: #166534;
-  --error-bg: #fef2f2;
-  --error-border: #fecaca;
-  --error-fg: #991b1b;
-  --warn-bg: #fffbeb;
-  --warn-border: #fde68a;
-  --warn-fg: #92400e;
-  --callout-bg: #fdf6e3;
-  --callout-border: #f3e0a3;
-  --callout-fg: #854d0e;
-  --callout-icon: #a16207;
-
-  --shadow: 0 1px 2px rgba(10, 10, 10, 0.04), 0 8px 28px rgba(10, 10, 10, 0.06);
 }
 
 * {
@@ -274,10 +145,9 @@ body {
   padding: 24px;
   box-shadow: var(--shadow);
 }
-/* Two card widths only: Standard (400, forms/dialogs) and Wide (520,
-   management pages — security, keys). --wide and --lg are aliases. */
-.card--wide,
-.card--lg {
+/* Two card widths only: Standard (400, forms/dialogs) and Wide (520, for
+   longer scope lists). */
+.card--wide {
   max-width: 520px;
 }
 @media (max-width: 460px) {
@@ -358,17 +228,6 @@ a {
   font-weight: 500;
   color: var(--fg);
 }
-.field__hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--fg-faint);
-}
-/* When a field is in error, drop its helper hint — the error message already
-   occupies that line, and "At least 8 characters" stacked above "Password
-   must be at least 8 characters" reads as a stutter. */
-.field--error .field__hint {
-  display: none;
-}
 /* Field-level error message, rendered under the offending input. Replaces a
    top error banner so the error sits where the eye is. */
 .field__error {
@@ -387,12 +246,8 @@ a {
   color: var(--error-fg);
 }
 
-/* Form controls.
-   Selects and number inputs had no rule at all until a preview put them on
-   screen beside a fully styled button: raw browser widgets in the middle of
-   a designed card, which reads as a different product having leaked in.
-   They share the input treatment below rather than getting their own, so
-   there is one control shape and not three.
+/* Form controls share one input treatment, so there is one control shape
+   and not three.
    NB: no backticks anywhere in this file. It is a template literal, and a
    backtick in a comment ends the string. */
 input[type="email"],
@@ -431,8 +286,7 @@ select {
   background-position: right 13px center;
 }
 
-/* A checkbox outside a styled .chk row still deserves the accent rather
-   than the browser's default blue. */
+/* A checkbox takes the accent rather than the browser's default blue. */
 input[type="checkbox"] {
   accent-color: var(--primary);
 }
@@ -595,15 +449,8 @@ select:focus {
 /* Action hierarchy — one vocabulary across every screen:
      - .btn--primary  the single committing action (Sign in, Allow access,
                       Resend email). Filled, near-black. One per screen.
-     - .btn--outline  a secondary BUTTON for a real choice that isn't the
-                      primary (Use a different email). Bordered, neutral.
      - .btn--ghost    the quiet half of a decision PAIR (Deny next to Allow).
-                      Borderless but full-width, so it still reads as a button.
-     - .btn--oidc     reserved for federated-provider buttons only.
-     - .aux a         NOT a button — a navigational / escape link (Back to
-                      security, Use a password instead). Clearly lighter than
-                      any button so a "go back" never competes with a decision.
-   Rule of thumb: a decision is a button; leaving the screen is a link. */
+                      Borderless but full-width, so it still reads as a button. */
 
 .btn {
   display: inline-flex;
@@ -687,140 +534,11 @@ select:focus {
   color: var(--fg);
 }
 
-/* Outline / federated-provider / revoke buttons share the quiet
-   bordered look. */
-.btn--oidc,
-.btn--danger {
-  background: var(--card);
-  color: var(--fg);
-  border-color: var(--border);
-}
-.btn--oidc {
-  width: 100%;
-}
-.btn--oidc:hover,
-.btn--danger:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-.btn--lg {
-  min-height: 46px;
-  font-size: 15px;
-}
-.btn--sm {
-  min-height: 32px;
-  padding: 6px 14px;
-  font-size: 13px;
-}
-
-/* Quiet bordered secondary (Cancel / Back / Deny on stacked actions). */
-.btn--outline {
-  background: var(--card);
-  color: var(--fg);
-  border-color: var(--border);
-}
-.btn--outline:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-/* Destructive — used sparingly. Filled is loud; prefer --danger-quiet. */
-.btn--destructive {
-  background: var(--destructive);
-  color: var(--destructive-fg);
-  border-color: var(--destructive);
-}
-.btn--destructive:hover {
-  background: var(--destructive-hover);
-  border-color: var(--destructive-hover);
-}
-/* The default danger affordance: outline button, red text, no red fill. */
-.btn--danger-quiet {
-  background: var(--card);
-  color: var(--destructive);
-  border-color: var(--border-strong);
-}
-.btn--danger-quiet:hover {
-  background: var(--error-bg);
-  border-color: var(--destructive-soft-border);
-  color: var(--destructive-hover);
-}
-
 /* ---------------------------------------------------------------- */
-/* Federated provider stack, aux link                               */
+/* Banners                                                          */
 /* ---------------------------------------------------------------- */
 
-.oidc {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.oidc form {
-  margin: 0;
-}
-
-/* "Or continue with" separator — a hairline rule with a centered label.
-   20px of breathing room above and below. */
-.separator {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: var(--gap-step) 0;
-  font-size: 12px;
-  color: var(--fg-faint);
-}
-.separator::before,
-.separator::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-
-/* Alternatives row — equal-width buttons sitting side by side (one-time link,
-   passkey). Each child is a .btn that flexes to fill, so when one is hidden
-   the other expands to the full row width and the layout stays balanced. */
-.alts {
-  display: flex;
-  gap: var(--gap-base);
-}
-.alts > * {
-  flex: 1;
-}
-.alts .btn {
-  width: 100%;
-  border-color: var(--border);
-}
-.alts .btn:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-
-.aux {
-  margin: var(--gap-step) 0 0;
-  text-align: center;
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-/* Aux links lean on weight + color, not an underline, to match the design
-   ("Create one", "Use a password instead"). Underline returns on hover as a
-   quiet affordance. */
-.aux a {
-  color: var(--fg);
-  font-weight: 500;
-  text-decoration: none;
-}
-.aux a:hover {
-  text-decoration: underline;
-}
-
-/* ---------------------------------------------------------------- */
-/* Banners / alerts                                                 */
-/* ---------------------------------------------------------------- */
-
-.banner,
-.alert {
+.banner {
   margin: 0 0 16px;
   padding: 11px 14px;
   border: 1px solid;
@@ -831,22 +549,10 @@ select:focus {
 .banner p {
   margin: 0 0 8px;
 }
-.banner--error,
-.alert--error {
+.banner--error {
   background: var(--error-bg);
   border-color: var(--error-border);
   color: var(--error-fg);
-}
-.banner--success {
-  background: var(--success-bg);
-  border-color: var(--success-border);
-  color: var(--success-fg);
-}
-.banner--warn,
-.alert--warn {
-  background: var(--warn-bg);
-  border-color: var(--warn-border);
-  color: var(--warn-fg);
 }
 
 /* ---------------------------------------------------------------- */
@@ -888,43 +594,6 @@ select:focus {
   margin-top: calc(var(--gap-step) - var(--gap-base));
 }
 
-/* ---------------------------------------------------------------- */
-/* List rows (keys + security)                                      */
-/* ---------------------------------------------------------------- */
-
-/* Management list rows (keys, security) — airy, no dividers; whitespace
-   and the bold title carry the separation. */
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 13px 0;
-}
-.row__main {
-  flex: 1;
-  min-width: 0;
-}
-.row__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg);
-  word-break: break-word;
-}
-.row__meta {
-  margin: 3px 0 0;
-  font-size: 12.5px;
-  color: var(--fg-muted);
-  word-break: break-word;
-}
-.row__meta--faint {
-  color: var(--fg-faint);
-}
-.row__action {
-  margin: 0;
-  flex-shrink: 0;
-}
-
 /* Muted small line under a section label — used by the consent re-consent
    diff's "No longer needed" group to list dropped capabilities as a quiet
    line rather than toggle rows. */
@@ -933,141 +602,6 @@ select:focus {
   font-size: 13px;
   line-height: 1.45;
   color: var(--fg-muted);
-}
-
-/* ---------------------------------------------------------------- */
-/* Squared check (rounded square, dark fill + white tick when on)    */
-/* ---------------------------------------------------------------- */
-
-.chk {
-  appearance: none;
-  -webkit-appearance: none;
-  margin: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  border: 1.5px solid var(--border-strong);
-  background: var(--card);
-  cursor: pointer;
-  display: inline-grid;
-  place-items: center;
-  flex-shrink: 0;
-  transition:
-    background 0.12s var(--ease),
-    border-color 0.12s var(--ease);
-}
-.chk::after {
-  content: "";
-  width: 6px;
-  height: 10px;
-  border: solid var(--card);
-  border-width: 0 2px 2px 0;
-  border-radius: 1px;
-  transform: rotate(45deg) translateY(-1px);
-  opacity: 0;
-}
-.chk:checked {
-  background: var(--primary);
-  border-color: var(--primary);
-}
-.chk:checked::after {
-  opacity: 1;
-}
-.chk:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
-}
-.chk:disabled {
-  cursor: default;
-}
-
-/* ---------------------------------------------------------------- */
-/* Read-only monospace field (a full type identifier, scopes)        */
-/* ---------------------------------------------------------------- */
-
-.codefield {
-  width: 100%;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  line-height: 1.5;
-  padding: 11px 14px;
-  color: var(--fg-muted);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  word-break: break-all;
-}
-
-/* ---------------------------------------------------------------- */
-/* Stepper (two-step sign-up)                                        */
-/* ---------------------------------------------------------------- */
-
-.steps {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0 0 20px;
-}
-/* A quiet 3px rail — the earlier 4px near-black bars read as too heavy hard
-   against the card's top edge. The filled segment is the only dark mark. */
-.steps__seg {
-  height: 3px;
-  flex: 1;
-  border-radius: 999px;
-  background: var(--hairline);
-}
-.steps__seg--on {
-  background: var(--fg);
-}
-
-/* ---------------------------------------------------------------- */
-/* Disclosure (install "Technical details", and the like)            */
-/* ---------------------------------------------------------------- */
-
-details.disclosure > summary {
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 0;
-  cursor: pointer;
-  color: var(--fg-muted);
-  font-size: 13px;
-  font-weight: 500;
-}
-details.disclosure > summary::-webkit-details-marker {
-  display: none;
-}
-details.disclosure .disclosure__chevron {
-  width: 8px;
-  height: 8px;
-  border-right: 1.6px solid currentColor;
-  border-bottom: 1.6px solid currentColor;
-  transform: rotate(-45deg);
-  transition: transform 0.18s var(--ease);
-}
-details.disclosure[open] > summary {
-  color: var(--fg);
-}
-details.disclosure[open] > summary .disclosure__chevron {
-  transform: rotate(45deg);
-}
-.disclosure__micro {
-  margin: 10px 0 6px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-faint);
-}
-
-/* ---------------------------------------------------------------- */
-/* Active-session marker (security)                                  */
-/* ---------------------------------------------------------------- */
-
-.row__title .this-device {
-  color: var(--fg-muted);
-  font-weight: 500;
 }
 
 /* ================================================================ */
@@ -1184,11 +718,9 @@ details.disclosure[open] > summary .disclosure__chevron {
   transform: rotate(90deg);
 }
 
-/* The standing grant on the re-consent screen, collapsed to its heading.
-   It was a second full stack of tiles below "New", and most of the height
-   between the reader and the buttons — on a screen whose whole job is being
-   read to the end. Deliberately not a .grp: the tiles inside it are, and a
-   tile holding tiles reads as a nesting that means nothing.
+/* The standing grant on the re-consent screen, collapsed to its heading so
+   the reader reaches the buttons. Deliberately not a .grp: the tiles inside
+   it are, and a tile holding tiles reads as a nesting that means nothing.
 
    Its controls stay in the DOM while it is shut, which is load-bearing
    rather than incidental. They are the standing grant, they are ticked, and
@@ -1232,19 +764,6 @@ details.disclosure[open] > summary .disclosure__chevron {
 .subrow > span {
   font-size: 13.5px;
   color: var(--fg);
-}
-
-/* "New" chip for a re-consent group (used sparingly — the section
-   headers carry most of the diff). */
-.newchip {
-  display: inline-block;
-  margin-left: 6px;
-  padding: 1px 8px;
-  font-size: 11px;
-  font-weight: 600;
-  border-radius: 999px;
-  background: var(--success-bg);
-  color: var(--success-fg);
 }
 
 /* Switch used inside permission groups. Supports indeterminate for a
@@ -1296,75 +815,6 @@ details.disclosure[open] > summary .disclosure__chevron {
   box-shadow: 0 0 0 3px var(--ring);
 }
 
-/* "+" icon button (new key) and other compact icon actions. */
-.iconbtn {
-  width: 36px;
-  height: 36px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  color: var(--fg);
-  flex: none;
-}
-.iconbtn:hover {
-  background: var(--surface-2);
-  border-color: var(--border-strong);
-}
-.iconbtn:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--ring);
-}
-
-/* Panel header: title left, an icon action right. */
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 6px;
-}
-
-/* App identity header (connector install). */
-.apphead {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
-}
-.logo {
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  background: var(--tile);
-  display: grid;
-  place-items: center;
-  font-weight: 600;
-  font-size: 16px;
-  color: var(--fg);
-  flex: none;
-}
-
-/* Capability tile — a soft tile describing what an install adds. */
-.captile {
-  background: var(--tile);
-  border-radius: var(--r-tile);
-  padding: 14px 16px;
-}
-.captile__t {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--fg);
-}
-.captile__d {
-  margin-top: 3px;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--fg-muted);
-}
-
 /* Code display tile (device approve) — soft tile, centered mono. */
 .codetile {
   background: var(--tile);
@@ -1376,220 +826,6 @@ details.disclosure[open] > summary .disclosure__chevron {
   font-weight: 600;
   letter-spacing: 0.12em;
   color: var(--fg);
-}
-
-/* One-line secret reveal (a created API key). Full value on one line,
-   smaller mono, truncated, with a trailing copy button. The caution
-   sits BELOW the field. */
-.copyfield {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 8px;
-  padding: 0 6px 0 12px;
-  height: 42px;
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-}
-.copyfield__val {
-  flex: 1;
-  min-width: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.copyfield__copy {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--card);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  color: var(--fg-muted);
-}
-.copyfield__copy:hover {
-  background: var(--surface-2);
-  color: var(--fg);
-}
-.caution {
-  margin: 14px 0 0;
-  text-align: center;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--fg-muted);
-}
-
-/* ================================================================ */
-/* Connection surfaces                                              */
-/* The OAuth callback terminals, the connector install terminals,   */
-/* and the per-connector configuration forms.                       */
-/*                                                                  */
-/* These pages used to carry their own copies of the whole design   */
-/* system — two hand-written stylesheets that redeclared the tokens  */
-/* above and said in their own comments that they were kept in sync  */
-/* by hand. The stated reason was that they render outside /auth/*   */
-/* and so have no session; that was never true, since this           */
-/* stylesheet is a public asset needing no session at all. Only the  */
-/* genuinely page-specific rules survived the move.                  */
-/* ================================================================ */
-
-/* Verbatim upstream text — a provider's error string. Pre-wrapped
-   because these arrive as one long line and must not force the card
-   wider than the viewport. */
-pre {
-  margin: var(--gap-pair) 0 0;
-  padding: 12px 14px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12.5px;
-  color: var(--fg);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* Vertical rhythm for a configuration form's fields. */
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-base);
-}
-
-.label {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg);
-  margin: 0 0 6px;
-}
-
-/* The schema-driven configuration form's rows.
-   These two had no rule anywhere — not in the shared stylesheet and not in
-   the copy the configure page used to carry — so that form has always
-   rendered its field names and descriptions unstyled. Nobody noticed,
-   because reaching it means installing a connector that declares a
-   configuration contract and then opening its settings. Found by putting
-   the page in the preview, which is the argument for the preview. */
-.field-name {
-  display: block;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-.field-desc {
-  display: block;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--fg-muted);
-  margin: 2px 0 8px;
-}
-
-.label__hint {
-  display: block;
-  font-weight: 400;
-  font-size: 12.5px;
-  color: var(--fg-muted);
-  margin-top: 2px;
-}
-
-/* "Nothing to choose from" inside a picker. Not an error: an empty
-   upstream account is an ordinary state, so it reads as calm. */
-.empty {
-  padding: 18px;
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--r-md);
-  text-align: center;
-  font-size: 13.5px;
-  color: var(--fg-muted);
-}
-
-.defrow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: var(--gap-base);
-  font-size: 13px;
-  color: var(--fg-muted);
-}
-
-/* Selectable upstream resources — a calendar, a project, a folder.
-   The whole card is the hit target; the checkbox inside carries the
-   value. The :has() selector is what lets the card show selection
-   without any script, so a no-JS client still sees what it picked. */
-.grid {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.ccard {
-  display: flex;
-  align-items: center;
-  gap: 13px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  cursor: pointer;
-  transition:
-    border-color 0.12s var(--ease),
-    background 0.12s var(--ease);
-}
-
-.ccard:has(.chk:checked) {
-  border-color: var(--fg);
-  background: var(--surface-2);
-}
-
-.ccard__dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.ccard__tt {
-  flex: 1;
-  min-width: 0;
-}
-
-/* Name and badge on one row. The badge used to sit inside the bold element,
-   which is display:block, so it rode on top of the last character of the
-   name. A flex row with a gap is what actually holds them apart, and the
-   name truncates rather than shoving the badge off the card. */
-.ccard__name {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.ccard__tt b {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--fg);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ccard__badge {
-  font-size: 11.5px;
-  color: var(--fg-muted);
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 2px 8px;
-  flex-shrink: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {

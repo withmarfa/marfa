@@ -454,12 +454,9 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     const itemId = id("c16c");
     await ctx.storage.items.create({
       id: itemId,
-      type: "system.webhook",
+      type: "system.folder",
       state: "trashed",
-      properties: {
-        url: "https://example.test/restored-into-the-bin",
-        events: ["item.created"],
-      },
+      properties: { title: "restored into the bin" },
       source: "test/purge",
     });
     expect(await readTrashedAt(itemId)).toBeNull();

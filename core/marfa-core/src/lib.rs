@@ -25,6 +25,7 @@ mod sse;
 mod store;
 mod wire;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -384,6 +385,15 @@ impl Core {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         store::edges_to(&conn, id)
+    }
+
+    /// Every edge of `edge_type` the copy holds, answered or still queued,
+    /// oldest first: the threads or the attachments of every held item in
+    /// one read rather than one for each item.
+    pub fn edges_of_type(&self, edge_type: &str) -> Result<Vec<Edge>> {
+        let conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        store::edges_of_type(&conn, edge_type)
     }
 
     /// Full-text search over titles, bodies and tags, best match first,
@@ -990,13 +1000,21 @@ impl Core {
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_hydrated(&*self.conn()?)?;
-        let hash = self.cache()?.take(path)?;
-        let mut conn = self.conn()?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        let tx = conn.transaction()?;
-        let upload = queue_upload(&tx, &hash, mime_type)?;
-        let queued = then(&tx, &catalog, &upload, &hash)?;
-        tx.commit()?;
+        let cache = self.cache()?;
+        let queued = {
+            // Until the upload is queued, nothing but this hold keeps its
+            // bytes from a trim.
+            let _held = cache.hold();
+            let hash = cache.take(path)?;
+            let mut conn = self.conn()?;
+            let catalog = catalog::Catalog::load(&conn)?;
+            let tx = conn.transaction()?;
+            let upload = queue_upload(&tx, &hash, mime_type)?;
+            let queued = then(&tx, &catalog, &upload, &hash)?;
+            tx.commit()?;
+            queued
+        };
+        self.trim_blobs(None, blob::CACHE_MOST);
         Ok(queued)
     }
 
@@ -1068,6 +1086,9 @@ impl Core {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
         if let Some(path) = cache.held(&hash)? {
+            if self.handle() == Handle::Writer {
+                cache.touch(&path);
+            }
             return Ok(path);
         }
         let Some(http) = self.http.as_deref() else {
@@ -1080,7 +1101,57 @@ impl Core {
                 reason: reason.into(),
             });
         };
-        blob::fetch(cache, http, &hash)
+        let path = blob::fetch(cache, http, &hash)?;
+        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
+        Ok(path)
+    }
+
+    /// Keeps what is held beside the working copy to `most` bytes, taking
+    /// the bytes read longest ago first (`device.md` 37). Bytes an upload
+    /// still names are never taken, nor `fetched`, which a caller is about
+    /// to read. A trim that cannot read the queue takes nothing.
+    fn trim_blobs(&self, fetched: Option<&str>, most: u64) {
+        if self.handle() != Handle::Writer {
+            return;
+        }
+        let Ok(cache) = self.cache() else {
+            return;
+        };
+        let _held = cache.hold();
+        if let Some(mut kept) = self.unsent_blobs() {
+            kept.extend(fetched.and_then(|hash| blob::hex_of(hash).ok().map(str::to_string)));
+            cache.trim(most, &kept);
+        }
+    }
+
+    /// Takes away the copy of bytes a folder holds as a file, since the file
+    /// is them (`folders.md` 37), unless an upload still names them.
+    pub(crate) fn let_go_blob(&self, hash: &str) {
+        if self.handle() != Handle::Writer {
+            return;
+        }
+        let Ok(cache) = self.cache() else {
+            return;
+        };
+        if !cache.held(hash).is_ok_and(|held| held.is_some()) {
+            return;
+        }
+        let _held = cache.hold();
+        if let Some(kept) = self.unsent_blobs() {
+            cache.let_go(hash, &kept);
+        }
+    }
+
+    /// The hex of every blob an upload the server has not taken names.
+    fn unsent_blobs(&self) -> Option<HashSet<String>> {
+        let conn = self.conn().ok()?;
+        let hashes = store::unsent_uploads(&conn).ok()?;
+        Some(
+            hashes
+                .iter()
+                .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
+                .collect(),
+        )
     }
 
     /// Whether a blob's bytes are held beside the working copy, with no
@@ -1635,6 +1706,62 @@ mod tests {
             store::meta_delete(&conn, store::META_SLICE_TYPES).unwrap();
         }
         assert_eq!(core.status().unwrap().hydration, Hydration::Never);
+    }
+
+    #[test]
+    fn every_edge_of_one_type_is_read_at_once() {
+        let core = Core::open_in_memory(None).unwrap();
+        assert_eq!(
+            core.edges_of_type("in-thread"),
+            Err(CoreError::HydrationIncomplete)
+        );
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            for id in ["root", "first", "second"] {
+                let row = store::testing::note(id, id, id, "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+            }
+            for (id, source, target, edge_type) in [
+                ("reply-first", "first", "root", "in-thread"),
+                ("cites", "first", "second", "references"),
+                ("reply-second", "second", "root", "in-thread"),
+            ] {
+                store::upsert_edge(
+                    &conn,
+                    &store::testing::wire_edge(id, source, target, edge_type),
+                )
+                .unwrap();
+            }
+        }
+        let queued = core
+            .create_edge(&EdgeDraft {
+                source_id: "second".into(),
+                target_id: "first".into(),
+                edge_type: "in-thread".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let ids = |edge_type: &str| -> Vec<String> {
+            core.edges_of_type(edge_type)
+                .unwrap()
+                .into_iter()
+                .map(|edge| edge.id)
+                .collect()
+        };
+        assert_eq!(
+            ids("in-thread"),
+            vec![
+                "reply-first".to_string(),
+                "reply-second".to_string(),
+                queued.edge_id.unwrap(),
+            ],
+            "the read is not every edge of the type the copy holds, the unanswered one with them"
+        );
+        assert_eq!(ids("references"), vec!["cites".to_string()]);
+        assert!(ids("attached-to").is_empty());
     }
 
     #[test]
@@ -2365,6 +2492,46 @@ mod tests {
             core.blob(&other),
             Err(CoreError::BytesAbsent { hash, .. }) if hash == other
         ));
+    }
+
+    /// The cap never takes bytes an upload the server has not taken still
+    /// names, since the queue names them and only the cache holds them.
+    #[test]
+    fn a_trim_keeps_the_bytes_an_upload_still_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            core.cache().unwrap().take(&path).unwrap()
+        };
+        let waiting = file("waiting.txt", b"to be sent");
+        let read = file("read.txt", b"fetched once");
+        let upload = queue_upload(&core.conn().unwrap(), &waiting, "text/plain").unwrap();
+
+        core.trim_blobs(None, 0);
+        assert!(
+            core.blob_held(&waiting).unwrap(),
+            "the cap took bytes an upload still names, so it can never be sent"
+        );
+        assert!(!core.blob_held(&read).unwrap(), "nothing was trimmed");
+
+        store::record_verdict(
+            &core.conn().unwrap(),
+            &upload.id,
+            &store::Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        core.trim_blobs(None, 0);
+        assert!(
+            !core.blob_held(&waiting).unwrap(),
+            "bytes the server has taken were kept past the cap"
+        );
     }
 
     /// The type catalog a follow asks for on every stream is written only

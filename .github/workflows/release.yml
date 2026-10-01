@@ -472,7 +472,7 @@ jobs:
         uses: rust-lang/crates-io-auth-action@v1
 
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-${{ needs.build.outputs.version }}
           path: artifacts

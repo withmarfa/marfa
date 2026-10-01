@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct EdgeTypeRequestPropertySchemaValue {
+pub struct EdgePropertyDefinition {
     /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
     #[serde(rename = "type")]
     pub r#type: String,
@@ -30,9 +30,9 @@ pub struct EdgeTypeRequestPropertySchemaValue {
     pub format: Option<String>,
 }
 
-impl EdgeTypeRequestPropertySchemaValue {
-    pub fn new(r#type: String) -> EdgeTypeRequestPropertySchemaValue {
-        EdgeTypeRequestPropertySchemaValue {
+impl EdgePropertyDefinition {
+    pub fn new(r#type: String) -> EdgePropertyDefinition {
+        EdgePropertyDefinition {
             r#type,
             description: None,
             required: None,

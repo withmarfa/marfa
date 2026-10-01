@@ -247,14 +247,12 @@ describe("contention on the write lock", () => {
     }
   }, 120_000);
 
-  it("answers 500 at client registration, which the sign-in library writes", async () => {
-    // What the server does, recorded in `findings.md` 1: the registration
-    // door is the sign-in library's, whose write does not pass through the
-    // storage layer's busy budget, so contention reaches the caller as a
-    // `500` the document does not declare.
-    const lock = await HeldLock.take(impatient!.sqlitePath);
-    try {
-      const refused = await fetch(`${impatient!.apiUrl}/auth/oauth2/register`, {
+  it("refuses a client registration, which the sign-in library writes", async () => {
+    // The registration door is the sign-in library's own, answered by its
+    // own handler rather than a route of this server's, so the refusal has
+    // to cross that library to reach the caller as the declared `503`.
+    const register = () =>
+      fetch(`${impatient!.apiUrl}/auth/oauth2/register`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -263,10 +261,22 @@ describe("contention on the write lock", () => {
           token_endpoint_auth_method: "none",
         }),
       });
-      expect(refused.status).toBe(500);
+    const lock = await HeldLock.take(impatient!.sqlitePath);
+    try {
+      const refused = await register();
+      expect(
+        refused.status,
+        `a contended registration answered ${String(refused.status)}`,
+      ).toBe(503);
+      const body = (await refused.json()) as { error?: { code?: string } };
+      expect(body.error?.code).toBe("write_contention");
     } finally {
       await lock.release();
     }
+
+    // The witness: released, the same registration is served.
+    const served = await register();
+    expect(served.status).toBe(201);
   }, 120_000);
 
   it("waits out a briefly held lock on the default budget", async () => {

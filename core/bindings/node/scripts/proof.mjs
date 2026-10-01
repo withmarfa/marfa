@@ -99,8 +99,8 @@ if (phase === "hydrate") {
     "the attached file item does not wait on its upload",
   );
   core.createItem({
-    type: "system.device",
-    properties: { name: "not the device's to write" },
+    type: "system.folder",
+    properties: { title: "not the device's to write" },
   });
   console.log("queued, nothing answered:");
   printQueue(core);
@@ -137,13 +137,13 @@ if (phase === "hydrate") {
   expect(
     outcomes.filter((outcome) => outcome === "refused: type_not_permitted")
       .length === 1,
-    "the system.device create was not refused type_not_permitted",
+    "the system.folder create was not refused type_not_permitted",
   );
   expect(
     outcomes
       .filter((outcome) => outcome !== "refused: type_not_permitted")
       .every((outcome) => outcome === "accepted"),
-    "a write other than the system.device create was not accepted",
+    "a write other than the system.folder create was not accepted",
   );
   const notes = core.list({ type: "core.note", tier: Tier.Feed });
   console.log(

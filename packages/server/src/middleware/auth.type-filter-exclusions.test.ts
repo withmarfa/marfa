@@ -54,11 +54,11 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     };
     const withExclusion: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.device": "none",
+      "system.folder": "none",
     };
     // Precondition: the resolver honors the entry, so the assertions below
     // cannot hold for the wrong reason.
-    expect(resolveTypePermission("system.device", withExclusion)).toBe("none");
+    expect(resolveTypePermission("system.folder", withExclusion)).toBe("none");
     expect(resolveTypePermission("core.note", withExclusion)).toBe("read");
 
     const before = computeTypeFilter(workingKey(granted));
@@ -76,15 +76,15 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     // does not name.
     expect(after).toEqual({
       allowed: [GLOBAL_TYPE_WILDCARD],
-      excluded: ["system.device"],
+      excluded: ["system.folder"],
     });
 
     // The divergence this exists to close: the point check refuses the type
     // the filter must also withhold, and admits the one it must keep.
     expect(() => {
-      checkTypeAccess(workingKey(withExclusion), "system.device", "read");
+      checkTypeAccess(workingKey(withExclusion), "system.folder", "read");
     }).toThrow();
-    expect(matchesTypeFilter("system.device", after)).toBe(false);
+    expect(matchesTypeFilter("system.folder", after)).toBe(false);
     expect(matchesTypeFilter("core.note", after)).toBe(true);
   });
 
@@ -96,8 +96,8 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     const filter = computeTypeFilter(workingKey(perms));
     expect(filter.excluded).toEqual(["system.*"]);
     expect(matchesTypeFilter("core.note", filter)).toBe(true);
-    expect(matchesTypeFilter("system.device", filter)).toBe(false);
-    expect(matchesTypeFilter("system.webhook", filter)).toBe(false);
+    expect(matchesTypeFilter("system.folder", filter)).toBe(false);
+    expect(matchesTypeFilter("system.connection", filter)).toBe(false);
   });
 
   it("subtracts an exclusion nested inside a subtree grant", () => {

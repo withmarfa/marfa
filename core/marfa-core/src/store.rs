@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_iter};
@@ -644,6 +644,29 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
         "WHERE verdict IS NULL OR verdict = ?1",
         [Verdict::Blocked.as_str()],
     )
+}
+
+/// The bytes every upload the server has not taken names: unanswered, held,
+/// or answered in a way a caller may still send again. The queue names them
+/// and the cache holds them, so the cache must keep them (`device.md` 38).
+pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT blob FROM queue
+          WHERE kind = ?1 AND blob IS NOT NULL
+            AND (verdict IS NULL OR verdict NOT IN (?2, ?3, ?4))",
+    )?;
+    let hashes = statement
+        .query_map(
+            [
+                WriteKind::UploadBlob.as_str(),
+                Verdict::Accepted.as_str(),
+                Verdict::Merged.as_str(),
+                Verdict::Conflicted.as_str(),
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(hashes)
 }
 
 /// Whether any write to an item is still waiting.
@@ -1403,12 +1426,17 @@ pub fn edges_to(conn: &Connection, target_id: &str) -> Result<Vec<Edge>, CoreErr
     edges_at(conn, "target_id", target_id)
 }
 
-/// The edges whose `end` column names `id`. A column name is spliced into
+pub fn edges_of_type(conn: &Connection, edge_type: &str) -> Result<Vec<Edge>, CoreError> {
+    edges_at(conn, "edge_type", edge_type)
+}
+
+/// The edges whose `column` holds `value`. A column name is spliced into
 /// the query, so it is a literal of this file, never a caller's text.
-fn edges_at(conn: &Connection, end: &'static str, id: &str) -> Result<Vec<Edge>, CoreError> {
-    let sql = format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {end} = ?1 ORDER BY created_at, id");
+fn edges_at(conn: &Connection, column: &'static str, value: &str) -> Result<Vec<Edge>, CoreError> {
+    let sql =
+        format!("SELECT {EDGE_COLUMNS} FROM edges WHERE {column} = ?1 ORDER BY created_at, id");
     let mut statement = conn.prepare(&sql)?;
-    let rows = statement.query_map([id], row_to_edge)?;
+    let rows = statement.query_map([value], row_to_edge)?;
     Ok(rows.collect::<Result<Vec<Edge>, _>>()?)
 }
 

@@ -1066,6 +1066,17 @@ impl MarfaCore {
     }
 
     #[napi]
+    pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>> {
+        Ok(self
+            .inner
+            .edges_of_type(&edge_type)
+            .map_err(failure)?
+            .into_iter()
+            .map(edge)
+            .collect())
+    }
+
+    #[napi]
     pub fn search(
         &self,
         query: String,
