@@ -218,6 +218,55 @@ describe("what a connector keeps", () => {
     expect(await agreements()).toEqual([]);
   });
 
+  it("keeps a top-level __proto__ key in the state and in a record as sent", async () => {
+    const { key, connector: mine } = await connector();
+    await hold(key, mine.id);
+    const row = await note();
+    const sent = '{"__proto__":{"vendor":"v"},"cursor":"c"}';
+    const document = JSON.parse(sent) as Record<string, unknown>;
+    expect(Object.keys(document)).toEqual(["__proto__", "cursor"]);
+    expect(JSON.stringify({ state: document })).toBe(`{"state":${sent}}`);
+
+    const put = await request(ctx.app, "PUT", `/connectors/${mine.id}/state`, {
+      key,
+      body: { process: "p", state: document },
+    });
+    expect(put.status).toBe(200);
+    expect(JSON.stringify((await json<{ state: unknown }>(put)).state)).toBe(
+      sent,
+    );
+    const read = await request(ctx.app, "GET", `/connectors/${mine.id}/state`, {
+      key,
+    });
+    expect(JSON.stringify((await json<{ state: unknown }>(read)).state)).toBe(
+      sent,
+    );
+
+    await hold(key, mine.id);
+    expect(
+      (
+        await request(ctx.app, "POST", `/connectors/${mine.id}/agreements`, {
+          key,
+          body: {
+            process: "p",
+            set: [{ item_id: row.id, waiting: false, record: document }],
+          },
+        })
+      ).status,
+    ).toBe(200);
+    const found = await request(
+      ctx.app,
+      "POST",
+      `/connectors/${mine.id}/agreements/find`,
+      { key, body: { item_ids: [row.id] } },
+    );
+    expect(
+      JSON.stringify(
+        (await json<{ data: { record: unknown }[] }>(found)).data[0]?.record,
+      ),
+    ).toBe(sent);
+  });
+
   it("writes an agreement without an event of any kind, a version or a touch to the row", async () => {
     const { key, connector: mine } = await connector();
     await hold(key, mine.id);
