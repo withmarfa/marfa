@@ -282,7 +282,7 @@ const TypeSchemaResponse = z
     // pointed at a container reads this. Omitting it from the spec would strip
     // it from every generated client while the runtime kept returning it.
     roles: z.array(z.enum(TYPE_ROLES).openapi("TypeRole")).optional(),
-    fields: z.record(z.string(), z.unknown()),
+    fields: z.record(z.string(), FieldDefinitionSchema),
     version: z.number(),
     display_hints: DisplayHintsSchema.optional(),
     link_field: LinkFieldSchema.optional(),

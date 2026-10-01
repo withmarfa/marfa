@@ -4,6 +4,8 @@ The words this repository uses, and the words it does not. One name per thing. A
 
 American English throughout, as `AGENTS.md` requires.
 
+Where Marfa has no rule of its own, the API's names and shapes follow Stripe's API conventions. An object in the API document declares its shape unless it is open on purpose, and `packages/server/src/openapi-open-objects.test.ts` lists each one that is, with the reason.
+
 ## The words
 
 | Word                 | What it means                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
