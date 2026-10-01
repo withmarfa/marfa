@@ -447,6 +447,7 @@ describe("the rules that keep a blob's bytes", () => {
   it("keeps a blob named only in an edge's properties", async () => {
     const whole = await uploadText("an edge property is this hash");
     const linked = await uploadText("an edge property links this");
+    const unreferenced = await uploadText("no edge or item names this");
     const ids: string[] = [];
     for (const body of ["one end", "the other end"]) {
       const note = await client.createItem({
@@ -469,6 +470,7 @@ describe("the rules that keep a blob's bytes", () => {
     await run("blob-orphans");
     await run("blob-orphans");
 
+    expect((await client.downloadBlob(unreferenced)).status).toBe(404);
     expect((await client.downloadBlob(whole)).status).toBe(200);
     expect((await client.downloadBlob(linked)).status).toBe(200);
   });

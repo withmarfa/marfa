@@ -26,14 +26,27 @@ describe("collectBlobHashes", () => {
     ).toEqual([A, B].sort());
   });
 
-  it("takes no run of hex longer or shorter than a hash, and no other word ending in sha256", () => {
+  it("takes a hash whatever letter, digit or escape sits beside it", () => {
+    const hexA = A.slice("sha256:".length);
+    const hexB = B.slice("sha256:".length);
+    expect(collect({ escaped: `line one\\n${A}` })).toEqual([A]);
+    expect(collect({ digit: `1${A}` })).toEqual([A]);
+    expect(collect({ upper: `${A}Fig` })).toEqual([A]);
+    expect(collect({ word: `x${A}` })).toEqual([A]);
+    expect(collect({ encoded: `/blobs/sha256%3A${hexB}` })).toEqual([B]);
+    expect(collect({ bare: `![chart](/blobs/${hexA})` })).toEqual([A]);
+    expect(collect({ whole: hexB })).toEqual([B]);
+  });
+
+  it("takes no run of lowercase hex longer or shorter than a hash", () => {
+    const hex = "a".repeat(64);
     expect(
       collect({
-        longer: `${A}0`,
-        longerUpper: `${A}F`,
-        shorter: A.slice(0, -1),
-        upper: A.toUpperCase(),
-        prefixed: `xsha256:${"a".repeat(64)}`,
+        longer: `${hex}0`,
+        longerBefore: `0${hex}`,
+        prefixedLonger: `sha256:${hex}b`,
+        shorter: hex.slice(1),
+        upper: hex.toUpperCase(),
       }),
     ).toEqual([]);
   });
