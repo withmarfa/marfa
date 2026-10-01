@@ -17,7 +17,7 @@ pub struct CreateKeyRequest {
     pub label: String,
     #[serde(rename = "source")]
     pub source: String,
-    /// The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.
+    /// The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.
     #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
     pub sources: Option<Vec<String>>,
     #[serde(rename = "permissions", skip_serializing_if = "Option::is_none")]
