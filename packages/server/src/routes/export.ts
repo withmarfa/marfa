@@ -137,6 +137,15 @@ const exportRoute = createRoute({
   },
 });
 
+/** How many export lines are read between turns of the event loop. */
+const LINES_PER_TURN = 16;
+
+/** Hand the event loop one turn: `setImmediate` runs after pending I/O,
+ *  where a resolved promise, being a microtask, would run ahead of it. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -218,86 +227,101 @@ export function exportRoutes(
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
     const encoder = new TextEncoder();
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          const work = async () => {
-            // Ids of every item this export emits. Edges are filtered
-            // against it below: an export carries the relationships among
-            // the items it contains, so a filtered export never references
-            // an item the output does not hold.
-            const exportedIds = new Set<string>();
-            let cursor: string | undefined;
-            do {
-              const result = await storage.items.list({
-                type,
-                state,
-                all_states: allStates,
-                exclude_states: EXPORT_EXCLUDED_STATES,
-                source,
-                occurred_after: occurredAfter,
-                occurred_before: occurredBefore,
-                allowed_types: allowedTypes,
-                excluded_types: excludedTypes,
-                source_filter: sourceFilter,
-                limit: 200,
-                cursor,
-              });
+    async function* records(): AsyncGenerator<string> {
+      // Ids of every item this export emits. Edges are filtered against it
+      // below: an export carries the relationships among the items it
+      // contains, so a filtered export never references an item the output
+      // does not hold.
+      const exportedIds = new Set<string>();
+      let cursor: string | undefined;
+      do {
+        const result = await storage.items.list({
+          type,
+          state,
+          all_states: allStates,
+          exclude_states: EXPORT_EXCLUDED_STATES,
+          source,
+          occurred_after: occurredAfter,
+          occurred_before: occurredBefore,
+          allowed_types: allowedTypes,
+          excluded_types: excludedTypes,
+          source_filter: sourceFilter,
+          limit: 200,
+          cursor,
+        });
 
-              for (const item of await withCascadeMarks(
-                storage,
-                callerKey,
-                result.data,
-              )) {
-                const metadata = await storage.metadata.get(item.id);
-                exportedIds.add(item.id);
-                controller.enqueue(
-                  encoder.encode(
-                    JSON.stringify({
-                      item,
-                      metadata,
-                    }) + "\n",
-                  ),
-                );
-              }
-
-              cursor = result.next_cursor ?? undefined;
-            } while (cursor);
-
-            let edgeCursor: string | undefined;
-            do {
-              const page = await storage.edges.list({
-                limit: 200,
-                cursor: edgeCursor,
-              });
-              for (const edge of page.data) {
-                // Both halves of the edge read gate, answered differently
-                // because this door has already answered one of them.
-                // `exportedIds` is the set of items this credential may
-                // read, so requiring both endpoints in it settles the
-                // source half more strictly than the gate asks. The edge
-                // type is this door's own gap: an export carried every
-                // kind of relationship among those items whatever the
-                // credential's edge map said, which is the same disclosure
-                // `GET /edges` closed, reached through a copy instead of a
-                // page.
-                if (
-                  exportedIds.has(edge.source_id) &&
-                  exportedIds.has(edge.target_id) &&
-                  edgeKindReadable(callerKey, edge)
-                ) {
-                  controller.enqueue(
-                    encoder.encode(JSON.stringify({ edge }) + "\n"),
-                  );
-                }
-              }
-              edgeCursor = page.next_cursor ?? undefined;
-            } while (edgeCursor);
-          };
-          await work();
-        } finally {
-          controller.close();
+        for (const item of await withCascadeMarks(
+          storage,
+          callerKey,
+          result.data,
+        )) {
+          const metadata = await storage.metadata.get(item.id);
+          exportedIds.add(item.id);
+          yield JSON.stringify({ item, metadata }) + "\n";
         }
+
+        cursor = result.next_cursor ?? undefined;
+      } while (cursor);
+
+      let edgeCursor: string | undefined;
+      do {
+        // Edges are read across the whole instance and most pages may
+        // carry nothing for this export, so a page that yields no line
+        // must still give the event loop its turn.
+        await yieldToEventLoop();
+        const page = await storage.edges.list({
+          limit: 200,
+          cursor: edgeCursor,
+        });
+        for (const edge of page.data) {
+          // Both halves of the edge read gate, answered differently
+          // because this door has already answered one of them.
+          // `exportedIds` is the set of items this credential may read,
+          // so requiring both endpoints in it settles the source half
+          // more strictly than the gate asks. The edge type is the other
+          // half: the credential's edge map decides which kinds of
+          // relationship among those items it may read, as it does on
+          // `GET /edges`.
+          if (
+            exportedIds.has(edge.source_id) &&
+            exportedIds.has(edge.target_id) &&
+            edgeKindReadable(callerKey, edge)
+          ) {
+            yield JSON.stringify({ edge }) + "\n";
+          }
+        }
+        edgeCursor = page.next_cursor ?? undefined;
+      } while (edgeCursor);
+    }
+
+    const lines = records();
+    // Each pull waits a turn of the event loop. The store answers without
+    // waiting on I/O, so an export read in one go runs entirely in
+    // microtasks, and the response's headers and first bytes, which reach
+    // the socket in a later phase, would wait for the last line. Later
+    // pulls take a few lines rather than one, since a turn per line costs a
+    // large export a good share of its throughput; the first takes one, so
+    // the client sees the export begin as soon as it can. Pulling also
+    // holds the read to what the client has taken, so a large export is
+    // never held in memory whole.
+    let linesThisTurn = 1;
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await yieldToEventLoop();
+        const limit = linesThisTurn;
+        linesThisTurn = LINES_PER_TURN;
+        for (let taken = 0; taken < limit; taken++) {
+          const next = await lines.next();
+          if (next.done) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(encoder.encode(next.value));
+          if ((controller.desiredSize ?? 0) <= 0) return;
+        }
+      },
+      async cancel() {
+        await lines.return(undefined);
       },
     });
 
