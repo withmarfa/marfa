@@ -11,7 +11,19 @@ function documentationOnly(path: string) {
   );
 }
 
+// What the core's checks read: the Rust workspace, the root API document its
+// tests hold the client to, and the workflows that run them.
+function coreInput(path: string) {
+  return (
+    path.startsWith("core/") ||
+    path === "openapi.json" ||
+    path.startsWith(".github/workflows/") ||
+    path === "scripts/ci-required.ts"
+  );
+}
+
 let required = true;
+let core = true;
 if (process.env.GITHUB_EVENT_NAME === "pull_request") {
   try {
     const event = JSON.parse(
@@ -32,13 +44,16 @@ if (process.env.GITHUB_EVENT_NAME === "pull_request") {
       .split("\0")
       .filter(Boolean);
     required = paths.length === 0 || !paths.every(documentationOnly);
+    core = paths.length === 0 || paths.some(coreInput);
   } catch {
     // An unavailable diff must never turn a code change into a skipped check.
     console.log("Could not classify the change; running full CI.");
   }
 }
+core &&= required;
 appendFileSync(
   process.env.GITHUB_OUTPUT ?? "",
-  `required=${String(required)}\n`,
+  `required=${String(required)}\ncore=${String(core)}\n`,
 );
 console.log(required ? "Full CI required." : "Documentation/metadata only.");
+console.log(core ? "Core checks required." : "The core is untouched.");
