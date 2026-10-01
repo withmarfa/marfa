@@ -35,6 +35,7 @@ pub enum RegisterOAuthClientError {
     Status401(models::RegisterOAuthClient401Response),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
+    Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
 }
 
