@@ -98,6 +98,43 @@ describe("DELETE /items/{id}/purge?version=", () => {
     expect(await ctx.storage.items.getIncludingTrashed(id)).toBeNull();
   });
 
+  it("compares the version inside the transaction that purges", async () => {
+    const id = await createNote();
+    await trash(id);
+    // A competing write lands after every read the door makes before its
+    // transaction opens, and before the transaction itself: a compare made
+    // outside it would see version 1 and purge a row now at version 2.
+    const raw = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    const original = ctx.storage.runInTransaction.bind(ctx.storage);
+    ctx.storage.runInTransaction = async <T>(
+      fn: () => T | Promise<T>,
+    ): Promise<T> => {
+      ctx.storage.runInTransaction = original;
+      await raw.__sqliteRun(
+        "UPDATE items SET version = version + 1 WHERE id = ?",
+        [id],
+      );
+      return original(fn);
+    };
+    try {
+      const res = await request(
+        ctx.app,
+        "DELETE",
+        `/items/${id}/purge?version=1`,
+        { key: ctx.workingKey },
+      );
+      const body = (await res.json()) as { current?: { version: number } };
+      expect(res.status, JSON.stringify(body)).toBe(409);
+      expect(body.current?.version).toBe(2);
+    } finally {
+      ctx.storage.runInTransaction = original;
+    }
+    const survivor = await ctx.storage.items.getIncludingTrashed(id);
+    expect(survivor?.version).toBe(2);
+  });
+
   it("refuses a version that is not a whole number", async () => {
     const id = await createNote();
     await trash(id);
@@ -188,6 +225,106 @@ describe("POST /items/bulk-actions purge with expected_ids", () => {
     expect(result?.matched).toBe(1);
     expect(await ctx.storage.items.getIncludingTrashed(inside)).toBeNull();
     expect(await ctx.storage.items.getIncludingTrashed(outside)).not.toBeNull();
+  });
+
+  it("reports the intersection on a dry run", async () => {
+    const tag = `expected-dry-${Math.random().toString(36).slice(2, 8)}`;
+    const listed = await createNote([tag]);
+    const unlisted = await createNote([tag]);
+    await trash(listed);
+    await trash(unlisted);
+    const outside = await createNote();
+    await trash(outside);
+
+    const { initialStatus, result } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter: { tags: [tag], state: "trashed" },
+        expected_ids: [listed, outside],
+        dry_run: true,
+      },
+      ctx.workingKey,
+    );
+    expect(initialStatus).toBe(200);
+    expect(result?.matched).toBe(1);
+    expect(result?.ids).toEqual([listed]);
+    expect(await ctx.storage.items.getIncludingTrashed(listed)).not.toBeNull();
+  });
+
+  it("refuses an empty expected_ids, which names nothing to purge", async () => {
+    const tag = `expected-empty-${Math.random().toString(36).slice(2, 8)}`;
+    const id = await createNote([tag]);
+    await trash(id);
+    const { initialStatus, errorResponse } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter: { tags: [tag], state: "trashed" },
+        expected_ids: [],
+      },
+      ctx.workingKey,
+    );
+    expect(initialStatus).toBe(400);
+    expect(errorResponse?.error.code).toBe("validation_error");
+    expect(await ctx.storage.items.getIncludingTrashed(id)).not.toBeNull();
+  });
+
+  it("caps what the purge takes, not what the filter reaches", async () => {
+    const tag = `expected-cap-${Math.random().toString(36).slice(2, 8)}`;
+    const listed = await createNote([tag]);
+    await trash(listed);
+    const others = [await createNote([tag]), await createNote([tag])];
+    for (const id of others) await trash(id);
+    const filter = { tags: [tag], state: "trashed" };
+
+    // The witness: the filter alone is over the cap.
+    const unnarrowed = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter,
+        max_items: 1,
+        dry_run: true,
+      },
+      ctx.workingKey,
+    );
+    expect(unnarrowed.errorResponse?.error.code).toBe("bulk_cap_exceeded");
+
+    const { initialStatus, result } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter,
+        max_items: 1,
+        expected_ids: [listed],
+      },
+      ctx.workingKey,
+    );
+    expect(initialStatus).toBe(202);
+    expect(result?.succeeded).toBe(1);
+    expect(await ctx.storage.items.getIncludingTrashed(listed)).toBeNull();
+    for (const id of others) {
+      expect(await ctx.storage.items.getIncludingTrashed(id)).not.toBeNull();
+    }
+
+    const over = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter,
+        max_items: 1,
+        expected_ids: others,
+        dry_run: true,
+      },
+      ctx.workingKey,
+    );
+    expect(over.errorResponse?.error.code).toBe("bulk_cap_exceeded");
   });
 
   it("refuses expected_ids on any action but purge", async () => {

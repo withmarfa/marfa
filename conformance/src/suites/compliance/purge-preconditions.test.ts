@@ -133,6 +133,74 @@ describe("POST /items/bulk-actions purge with expected_ids", () => {
     expect(await trashedIds(tag)).toEqual([late]);
   });
 
+  it("does not purge a listed id the filter no longer matches", async () => {
+    const tag = `purge-expected-unmatched-${ctx.runId}`;
+    const inside = await trashedNote(tag);
+    const otherTag = `purge-expected-elsewhere-${ctx.runId}`;
+    const outside = await trashedNote(otherTag);
+
+    const dry = await client.bulkAction({
+      action: "purge",
+      confirm: "PURGE",
+      filter: { tags: [tag], state: "trashed" },
+      expected_ids: [inside, outside],
+      dry_run: true,
+    });
+    expect(dry.status).toBe(200);
+    expect((dry.data as BulkActionResponse).ids).toEqual([inside]);
+
+    const result = await runToCompletion({
+      action: "purge",
+      confirm: "PURGE",
+      filter: { tags: [tag], state: "trashed" },
+      expected_ids: [inside, outside],
+    });
+    expect(result.matched).toBe(1);
+    expect(await trashedIds(tag)).toEqual([]);
+    expect(await trashedIds(otherTag)).toEqual([outside]);
+  });
+
+  it("refuses an empty expected_ids, and purges nothing", async () => {
+    const tag = `purge-expected-empty-${ctx.runId}`;
+    const id = await trashedNote(tag);
+    const res = await client.bulkAction({
+      action: "purge",
+      confirm: "PURGE",
+      filter: { tags: [tag], state: "trashed" },
+      expected_ids: [],
+    });
+    expect(res.status).toBe(400);
+    expect(res.error?.error.code).toBe("validation_error");
+    expect(await trashedIds(tag)).toEqual([id]);
+  });
+
+  it("caps the rows the purge takes, not the filter's whole match", async () => {
+    const tag = `purge-expected-cap-${ctx.runId}`;
+    const listed = await trashedNote(tag);
+    const others = [await trashedNote(tag), await trashedNote(tag)];
+    const filter = { tags: [tag], state: "trashed" as const };
+
+    // The witness: the filter alone is over the cap.
+    const unnarrowed = await client.bulkAction({
+      action: "purge",
+      confirm: "PURGE",
+      filter,
+      max_items: 1,
+      dry_run: true,
+    });
+    expect(unnarrowed.error?.error.code).toBe("bulk_cap_exceeded");
+
+    const result = await runToCompletion({
+      action: "purge",
+      confirm: "PURGE",
+      filter,
+      max_items: 1,
+      expected_ids: [listed],
+    });
+    expect(result.succeeded).toBe(1);
+    expect((await trashedIds(tag)).sort()).toEqual(others.slice().sort());
+  });
+
   it("refuses expected_ids on an action other than purge", async () => {
     const tag = `purge-expected-transition-${ctx.runId}`;
     const id = await trashedNote(tag);

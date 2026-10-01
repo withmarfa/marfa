@@ -25,7 +25,7 @@ pub struct ApplyBulkActionRequestOneOf1 {
     pub action: Action,
     #[serde(rename = "confirm", skip_serializing_if = "Option::is_none")]
     pub confirm: Option<Confirm>,
-    /// The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take. Taken by `purge` alone.
+    /// The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone.
     #[serde(rename = "expected_ids", skip_serializing_if = "Option::is_none")]
     pub expected_ids: Option<Vec<String>>,
 }
