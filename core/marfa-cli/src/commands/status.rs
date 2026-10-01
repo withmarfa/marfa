@@ -32,12 +32,12 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     // only to one whose type permissions reach no type, as the operator
     // key's reach none. The description above still stands then; any other
     // refusal is the credential's and propagates.
-    let mut unreached = None;
+    let mut stats_refused = None;
     let stats = match (remote.credential(), held) {
         (Some(_), true) => match remote.json(&stats_request()) {
             Ok(stats) => Some(stats),
             Err(CliError::Refused { code, .. }) if code == "type_not_permitted" => {
-                unreached = Some(code);
+                stats_refused = Some(code);
                 None
             }
             Err(error) => return Err(error),
@@ -51,7 +51,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         "contract": contract,
         "health": health,
         "stats": stats,
-        "stats_refused": unreached,
+        "stats_refused": stats_refused,
         "credential": remote.credential().map(|source| source.as_str()),
     });
     out.report(&report, || {
@@ -85,7 +85,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                     serde_json::to_string(stats).unwrap_or_default()
                 ));
             }
-            (None, Some(source)) if unreached.is_some() => {
+            (None, Some(source)) if stats_refused.is_some() => {
                 lines.push(format!("credential from {}", source.as_str()));
                 lines.push(
                     "items need a working key: this credential's type permissions reach no type; the operator key mints one with `marfa keys create`".into(),

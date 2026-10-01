@@ -330,26 +330,30 @@ describe("the contract the binary was built for", () => {
     );
   });
 
-  it("describes the server to a key that reaches no type, and says the counts need a working key", async () => {
-    server = await ScriptedServer.start();
-    server.answer("GET", "/health", {
+  const statusWithCounts = async (stats: Answer) => {
+    const started = await ScriptedServer.start();
+    server = started;
+    started.answer("GET", "/health", {
       kind: "json",
       status: 200,
       body: { status: "ok" },
     });
-    server.answer(
-      "GET",
-      "/items/stats",
-      answers.forbidden("type_not_permitted"),
-    );
+    started.answer("GET", "/items/stats", stats);
     const outcome = await marfa([
       "--json",
       "--url",
-      server.url,
+      started.url,
       "--key",
       KEY,
       "status",
     ]);
+    return { started, outcome };
+  };
+
+  it("describes the server to a key that reaches no type, and says the counts need a working key", async () => {
+    const { started, outcome } = await statusWithCounts(
+      answers.forbidden("type_not_permitted"),
+    );
     expect(outcome.code, outcome.stderr).toBe(0);
     const report = JSON.parse(outcome.stdout) as {
       health: unknown;
@@ -360,29 +364,15 @@ describe("the contract the binary was built for", () => {
     expect(report.stats).toBeNull();
     expect(report.stats_refused).toBe("type_not_permitted");
     // The counts were asked for, so the null is the refusal's.
-    expect(sent(server)).toEqual(["GET /", "GET /health", "GET /items/stats"]);
-    const words = await marfa(["--url", server.url, "--key", KEY, "status"]);
+    expect(sent(started)).toEqual(["GET /", "GET /health", "GET /items/stats"]);
+    const words = await marfa(["--url", started.url, "--key", KEY, "status"]);
     expect(words.code, words.stderr).toBe(0);
     expect(words.stdout).toContain("health ok");
     expect(words.stdout).toContain("items need a working key");
   });
 
   it("hands on any other refusal of the counts", async () => {
-    server = await ScriptedServer.start();
-    server.answer("GET", "/health", {
-      kind: "json",
-      status: 200,
-      body: { status: "ok" },
-    });
-    server.answer("GET", "/items/stats", answers.unauthorized());
-    const outcome = await marfa([
-      "--json",
-      "--url",
-      server.url,
-      "--key",
-      KEY,
-      "status",
-    ]);
+    const { outcome } = await statusWithCounts(answers.unauthorized());
     expect(outcome.code, outcome.stderr).toBe(5);
     expect(refusal(outcome.stderr).error.server?.status).toBe(401);
   });
