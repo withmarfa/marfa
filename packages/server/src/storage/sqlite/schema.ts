@@ -954,7 +954,6 @@ export const enrichmentState = sqliteTable("enrichment_state", {
     .primaryKey()
     .references(() => items.id, { onDelete: "cascade" }),
   blob_ref: text("blob_ref").notNull(),
-  extractor_version: integer("extractor_version").notNull(),
   status: text("status").notNull(),
   attempts: integer("attempts").notNull().default(0),
   error: text("error"),

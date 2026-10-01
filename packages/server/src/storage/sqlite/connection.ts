@@ -112,6 +112,7 @@ const REQUIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
  */
 const RETIRED_COLUMNS: readonly (readonly [string, string, string])[] = [
   ["blobs", "storage_path", "mime_type"],
+  ["enrichment_state", "extractor_version", "config_signature"],
 ];
 
 /**

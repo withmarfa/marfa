@@ -409,7 +409,6 @@ CREATE INDEX IF NOT EXISTS `idx_edges_updated_at_id` ON `edges` (`updated_at`,`i
 CREATE TABLE IF NOT EXISTS `enrichment_state` (
 	`item_id` text PRIMARY KEY NOT NULL,
 	`blob_ref` text NOT NULL,
-	`extractor_version` integer NOT NULL,
 	`status` text NOT NULL,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	`error` text,

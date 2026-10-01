@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { TextEnrichmentSweeper } from "./sweeper.js";
-import { EXTRACTOR_VERSION } from "./extract.js";
 import type { OcrEngine } from "./ocr.js";
 
 /**
@@ -265,25 +264,6 @@ describe("extraction", () => {
     );
   });
 
-  it("re-admits an item whose row predates the current extractor", async () => {
-    const id = await createFileItem(
-      await seedBlob(Buffer.from("stale row quokkastale"), "text/plain"),
-      "text/plain",
-    );
-    const s = sweeper();
-    expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
-    expect(await s.runOnce()).toEqual({ extracted: 0, skipped: 0, failed: 0 });
-
-    const row = await ctx.storage.enrichment.get(id);
-    expect(row).not.toBeNull();
-    await ctx.storage.enrichment.upsert({
-      ...row!,
-      extractor_version: EXTRACTOR_VERSION - 1,
-    });
-
-    expect(await s.runOnce()).toEqual({ extracted: 1, skipped: 0, failed: 0 });
-  });
-
   it("does not write text for a blob the item no longer references", async () => {
     // The blob is replaced mid-extraction. The sweeper re-reads before it
     // writes, so the stale text is discarded, nothing is recorded, and the
@@ -411,7 +391,6 @@ describe("skips", () => {
 
     // Same configuration, so the row stays parked.
     const candidates = await ctx.storage.enrichment.listCandidates(
-      EXTRACTOR_VERSION,
       3,
       100,
       DEFAULT_SIGNATURE,
@@ -426,12 +405,7 @@ describe("skips", () => {
     );
     const candidateIds = async () =>
       (
-        await ctx.storage.enrichment.listCandidates(
-          EXTRACTOR_VERSION,
-          3,
-          100,
-          DEFAULT_SIGNATURE,
-        )
+        await ctx.storage.enrichment.listCandidates(3, 100, DEFAULT_SIGNATURE)
       ).map((c) => c.item_id);
     // A candidate while it is live, and not once it is trashed.
     expect(await candidateIds()).toContain(id);

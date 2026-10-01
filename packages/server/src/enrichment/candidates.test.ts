@@ -19,12 +19,7 @@ const fields = {
 };
 
 async function candidates(): Promise<string[]> {
-  const rows = await ctx.storage.enrichment.listCandidates(
-    1,
-    3,
-    200,
-    SIGNATURE,
-  );
+  const rows = await ctx.storage.enrichment.listCandidates(3, 200, SIGNATURE);
   return rows.map((row) => row.item_id);
 }
 
