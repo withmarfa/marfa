@@ -56,7 +56,7 @@ pub enum ListEdgeTypesSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CreateEdgeTypeError {
-    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status400(models::InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenRefusal),
     Status409(models::ConflictRefusal),

@@ -13,6 +13,7 @@ import {
   roleFromConstraint,
   TYPE_ROLES,
   ROLE_CONSTRAINT_PREFIX,
+  FIELD_TYPES,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -63,7 +64,7 @@ const EdgePropertyTypeSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.",
+    "A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be.",
   );
 
 /** Declared so the format that stands for a thumbnail on a type's field is
@@ -181,6 +182,22 @@ export function edgeTypeFromRequest(
   body: z.infer<typeof EdgeTypeRequestSchema>,
   taken: ReadonlyMap<string, string> = new Map(),
 ): EdgeTypeSchema {
+  const unknownTypes = Object.entries(body.property_schema ?? {})
+    .filter(
+      ([, property]) =>
+        !(FIELD_TYPES as readonly string[]).includes(property.type),
+    )
+    .map(([name, property]) => ({
+      field: `property_schema.${name}.type`,
+      expected: `one of: ${FIELD_TYPES.join(", ")}`,
+      actual: property.type,
+      message: `"${property.type}" is not a field type`,
+    }));
+  if (unknownTypes.length > 0) {
+    throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid edge type schema", {
+      errors: unknownTypes,
+    });
+  }
   const reverse = body.reverse_name;
   if (reverse !== undefined && !isValidEdgeTypeIdentifier(reverse)) {
     throw new MarfaError(
@@ -256,6 +273,7 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "invalid_schema",
           ]),
         },
       },
