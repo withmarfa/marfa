@@ -302,6 +302,14 @@ export interface DeviceUnderTest {
   release(
     target: { id: string } | { reason: string },
   ): Promise<Outcome<number>>;
+  /**
+   * Take a row that can never be sent out of the queue, and put the copy
+   * back to what the server holds. Answers whether the row was one a
+   * withdraw takes.
+   */
+  withdraw(id: string): Promise<Outcome<boolean>>;
+  /** Clear the rows the server has answered, and say how many went. */
+  forget(): Promise<Outcome<number>>;
 
   /** Move an item to the bin locally and queue the delete. */
   deleteItem(id: string): Promise<Outcome<QueuedWrite>>;

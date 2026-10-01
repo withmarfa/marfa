@@ -912,6 +912,15 @@ impl QueuedWrite {
         }
     }
 
+    /// Whether a withdraw takes this row: blocked for a reason no sending of
+    /// the same write clears (`queue-and-verdicts.md` 46).
+    pub fn withdrawable(&self) -> bool {
+        matches!(
+            self.blocked_reason(),
+            Some(BlockedReason::AncestorUnavailable | BlockedReason::ConflictUnresolved)
+        )
+    }
+
     /// The fields a `merged` or `conflicted` answer says the server
     /// resolved, read from the answer kept on the row. Empty on every other
     /// verdict, because nothing was resolved.

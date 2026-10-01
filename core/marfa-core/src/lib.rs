@@ -92,6 +92,10 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 /// takes it away on open: well past any fetch or copy still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
+/// How many times a withdraw reads the server's rows again because the copy
+/// caught up while they were out, before it gives up and says so.
+const WITHDRAW_READS: usize = 3;
+
 impl Core {
     /// Opens the file at `path`, creating it and its schema when absent. A
     /// file bound to a different server than `server` is refused.
@@ -489,6 +493,73 @@ impl Core {
         // one, and the count that came back described neither.
         tx.commit()?;
         Ok(released)
+    }
+
+    /// Takes a write that can never be sent out of the queue, and puts the
+    /// copy back to what the server holds (`queue-and-verdicts.md` 46).
+    ///
+    /// Only a write blocked `ancestor_unavailable` or `conflict_unresolved`:
+    /// sent again, under any key, it is refused the same way. Answers `false`
+    /// for any other row, which may yet land or be released. Each write held
+    /// for it is refused unsent, since what it waits for will never be sent.
+    ///
+    /// Everything it puts back is read from the server before anything
+    /// changes, so a withdraw that cannot read leaves the queue and the copy
+    /// as they were.
+    pub fn withdraw(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        for _ in 0..WITHDRAW_READS {
+            let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+                return Err(CoreError::NotFound {
+                    code: "queued_write_not_found".into(),
+                    message: format!("{id} is not a write this queue holds"),
+                });
+            };
+            if !row.withdrawable() {
+                return Ok(false);
+            }
+            let held = store::held_for(&*self.conn()?, id)?;
+            // A catch-up that lands while the reads are out would be rolled back
+            // by the older read, with its event already behind the cursor, so the
+            // versions the copy held when they went out are checked again before
+            // anything is put back.
+            let versions = |conn: &Connection| -> Result<Vec<Option<i64>>> {
+                std::iter::once(&row)
+                    .chain(&held)
+                    .map(|write| match write.item_id.as_deref() {
+                        Some(item) => Ok(store::item_by_id(conn, item)?.map(|held| held.version)),
+                        None => Ok(None),
+                    })
+                    .collect()
+            };
+            let before = versions(&*self.conn()?)?;
+            let mut reads = vec![drain::read_back(self, &row)?];
+            for dependant in &held {
+                reads.push(drain::read_back(self, dependant)?);
+            }
+            let mut conn = self.conn()?;
+            let tx = conn.transaction()?;
+            // Another thread may have released or answered a row while the
+            // reads were out.
+            if store::queued_write(&tx, id)?.as_ref() != Some(&row)
+                || store::held_for(&tx, id)? != held
+            {
+                return Ok(false);
+            }
+            if versions(&tx)? != before {
+                continue;
+            }
+            store::withdraw(&tx, &row, &held)?;
+            for read in &reads {
+                drain::apply_read_back(&tx, read)?;
+            }
+            tx.commit()?;
+            return Ok(true);
+        }
+        Err(CoreError::Invalid(format!(
+            "{id} was not withdrawn: the copy kept catching up while the server's rows were \
+             read back, and withdrawing then would put back an older row; ask again"
+        )))
     }
 
     /// Moves an edit blocked `ancestor_unavailable` onto the version the copy
@@ -2157,6 +2228,7 @@ mod tests {
                 "rebase_on_held",
                 reader.rebase_on_held("blocked").unwrap_err(),
             ),
+            ("withdraw", reader.withdraw("blocked").unwrap_err()),
             // A drain writes verdicts and adopts rows, so it is a write door
             // like the rest. It refuses at the handle before it reaches the
             // missing server, which is why this is a `ReadingHandle` and not
@@ -2237,7 +2309,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            30,
+            31,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

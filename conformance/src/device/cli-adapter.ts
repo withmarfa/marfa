@@ -301,6 +301,14 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<number>(args);
   }
 
+  async withdraw(id: string): Promise<Outcome<boolean>> {
+    return this.json<boolean>(["withdraw", id, ...this.server()]);
+  }
+
+  async forget(): Promise<Outcome<number>> {
+    return this.json<number>(["forget"]);
+  }
+
   async status(): Promise<Outcome<Status>> {
     return this.json<Status>(["status"]);
   }
