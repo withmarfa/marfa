@@ -1605,6 +1605,7 @@ mod tests {
                     );
                     let _ = match (path.as_str(), resumed) {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
+                        ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),
                         // A create is refused for a source the key does not
                         // claim; a listing answers an empty slice.
                         ("/items", _) if head.starts_with("POST") => {
