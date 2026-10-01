@@ -3,7 +3,8 @@
  * one run reports, and a later run purges what is still unreferenced once
  * the grace has passed since the report. What counts as a reference is
  * asserted here too: an item in any lifecycle state, a metadata extension,
- * a version snapshot, wherever a string in it holds the hash.
+ * a version snapshot and an edge's properties, wherever a string in them
+ * holds the hash.
  */
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
@@ -298,6 +299,38 @@ describe("what the report counts as a reference", () => {
     expect(await ctx.blobs.disk.has(orphan)).toBeNull();
     expect(await ctx.storage.blobs.get(image)).not.toBeNull();
     expect(await ctx.blobs.disk.has(image)).not.toBeNull();
+  });
+
+  it("keeps a blob named only in an edge's properties, whole or inside text", async () => {
+    ctx = await createTestContext();
+    const orphan = await upload(ctx, "no edge names this");
+    const whole = await upload(ctx, "an edge property is this hash");
+    const linked = await upload(ctx, "an edge property links this");
+    const ids: string[] = [];
+    for (const body of ["one end", "the other end"]) {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body } },
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { item: { id: string } }).item.id);
+    }
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: ids[0],
+        target_id: ids[1],
+        edge_type: "about",
+        properties: { cover: whole, caption: `see ![it](${linked})` },
+      },
+    });
+    expect(edge.status, await edge.clone().text()).toBe(201);
+
+    await reportThenPurge(ctx);
+
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
+    expect(await ctx.blobs.disk.has(whole)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(linked)).not.toBeNull();
   });
 
   it("keeps a blob referenced only by a trashed item", async () => {

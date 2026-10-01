@@ -446,6 +446,7 @@ async function handleArchiveExport(
           edgeKindReadable(callerKey, edge)
         ) {
           edgeLines.push(JSON.stringify({ edge }));
+          collectBlobHashes(edge.properties, blobHashes);
         }
       }
       edgeCursor = page.next_cursor ?? undefined;

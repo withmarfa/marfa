@@ -443,4 +443,33 @@ describe("the rules that keep a blob's bytes", () => {
       text("an image a note links in its body"),
     );
   });
+
+  it("keeps a blob named only in an edge's properties", async () => {
+    const whole = await uploadText("an edge property is this hash");
+    const linked = await uploadText("an edge property links this");
+    const ids: string[] = [];
+    for (const body of ["one end", "the other end"]) {
+      const note = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body },
+      });
+      expect(note.ok, JSON.stringify(note.error)).toBe(true);
+      trackItem(ctx, note.data.item.id);
+      ids.push(note.data.item.id);
+    }
+    const edge = await client.createEdge({
+      source_id: ids[0]!,
+      target_id: ids[1]!,
+      edge_type: "about",
+      properties: { cover: whole, caption: `see ![it](${linked})` },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    expect((await client.downloadBlob(whole)).status).toBe(200);
+    expect((await client.downloadBlob(linked)).status).toBe(200);
+  });
 });
