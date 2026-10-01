@@ -150,7 +150,9 @@ specification against itself — and the `*.decision.test.ts` verdicts the
 suites gate on. `vitest.config.ts` decides which file lands in which project,
 and the `test:conformance` script decides which projects the gate runs.
 `test:cli` is the scenario suite's own gate, run by its own job.
-`test:performance` and `test:load` sit off the gate.
+`test:performance` and `test:load` sit off the gate, and run every night and
+on request in `.github/workflows/benchmarks.yml`, the load suites at the
+`smoke` profile.
 
 ## Architecture
 
