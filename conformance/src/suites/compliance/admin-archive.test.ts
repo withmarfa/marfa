@@ -6,17 +6,22 @@
  * POST /admin/restore-archive, which is what proves the manifest contract
  * and blob-hash verification agree.
  *
- * Two cases build their archive with `utils/archive.ts` instead: a row in
- * a state its lifecycle cannot reach, which no export carries because no
- * door writes one, and a blob the instance does not hold yet, which is what
- * makes its restore the thing that puts the bytes there.
+ * The rest build their archive with `utils/archive.ts` instead: a row no
+ * door writes, so no export carries it; a blob the instance does not hold
+ * yet, which is what makes its restore the thing that puts the bytes there;
+ * and a format version no build of this contract writes.
  */
 
 import { randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { blobHash, itemsArchive } from "../../utils/archive.js";
+import {
+  blobHash,
+  itemsArchive,
+  readTarGzEntry,
+  tarGz,
+} from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
@@ -315,6 +320,56 @@ describe("admin/restore-archive", () => {
     expect(restored.data.imported).toBe(2);
     expect((await client.getItem(fine)).data.item.state).toBe("archived");
     expect((await client.getItem(impossible)).data.item.state).toBe("active");
+  });
+
+  it("refuses an archive at another format version, saying it is read only by the build that wrote it", async () => {
+    // Every version inside Marfa is 0 until the first public release, so
+    // an archive naming any other is one no build of this contract wrote.
+    const witness = uuidv7();
+    const other = uuidv7();
+    const archiveAt = (version: number, id: string): Uint8Array => {
+      const zero = itemsArchive([
+        {
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `an archived row at format ${version}` },
+        },
+      ]);
+      const manifest = readTarGzEntry(zero, "manifest.json");
+      const items = readTarGzEntry(zero, "items.ndjson");
+      if (manifest === null || items === null) {
+        throw new Error("the archive helper wrote no manifest or no items");
+      }
+      return tarGz([
+        {
+          name: "manifest.json",
+          body: JSON.stringify({
+            ...(JSON.parse(manifest) as Record<string, unknown>),
+            version,
+            format: `marfa-archive-v${version}`,
+          }),
+        },
+        { name: "items.ndjson", body: items },
+        { name: "edges.ndjson", body: "" },
+        { name: "types.ndjson", body: "" },
+      ]);
+    };
+
+    // The witness: the same archive at version 0 restores, so what is
+    // refused below is the version and nothing else.
+    const restored = await operator.restoreArchive(archiveAt(0, witness));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, witness);
+    expect(restored.data.imported).toBe(1);
+
+    const refused = await operator.restoreArchive(archiveAt(1, other));
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(
+      "read only by the build that wrote it",
+    );
+    expect((await client.getItem(other)).status).toBe(404);
   });
 
   it("requires the operator key", async () => {
