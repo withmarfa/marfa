@@ -11,7 +11,12 @@ import {
   sql,
   count,
 } from "drizzle-orm";
-import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  generateId,
+  isCoreEdgeType,
+} from "@withmarfa/shared";
 import type { Edge, PaginatedResult } from "@withmarfa/shared";
 import type {
   EdgeStore,
@@ -29,7 +34,7 @@ import {
 import type { CursorSortKey } from "../interface.js";
 import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
-import { edges } from "./schema.js";
+import { edges, edgeTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 
@@ -77,24 +82,42 @@ export class SqliteEdgeStore implements EdgeStore {
     // than a server fault. Without the trap it surfaced as a 500, which
     // tells a synced client nothing it can act on — and the id it sent is
     // exactly the thing it needs named back.
-    try {
-      await this.db.insert(edges).values(row).run();
-    } catch (err) {
-      if (isPrimaryKeyViolation(err, "edges")) {
-        // The race the doors' own comparison cannot close: both read the
-        // id as free and one of them inserts first. Same code as that
-        // comparison gives, because it is the same mistake from the
-        // caller's side; no `differs`, because the row that won is not
-        // read here and naming a field without having compared it would
-        // be a guess.
+    await this.db.transaction(async (tx) => {
+      // Asked of the table inside the write lock, because a door's own
+      // check can run before an edge type's delete commits, and an edge
+      // written after that commit would name nothing.
+      const registered =
+        isCoreEdgeType(input.edge_type) ||
+        (await tx
+          .select({ id: edgeTypes.id })
+          .from(edgeTypes)
+          .where(eq(edgeTypes.id, input.edge_type))
+          .get()) !== undefined;
+      if (!registered) {
         throw new MarfaError(
-          ErrorCode.ID_REUSED,
-          `Edge id ${id} already names a different edge`,
-          { existing_id: id },
+          ErrorCode.EDGE_TYPE_NOT_FOUND,
+          `Unknown edge type: ${input.edge_type}`,
         );
       }
-      throw err;
-    }
+      try {
+        await tx.insert(edges).values(row).run();
+      } catch (err) {
+        if (isPrimaryKeyViolation(err, "edges")) {
+          // The race the doors' own comparison cannot close: both read the
+          // id as free and one of them inserts first. Same code as that
+          // comparison gives, because it is the same mistake from the
+          // caller's side; no `differs`, because the row that won is not
+          // read here and naming a field without having compared it would
+          // be a guess.
+          throw new MarfaError(
+            ErrorCode.ID_REUSED,
+            `Edge id ${id} already names a different edge`,
+            { existing_id: id },
+          );
+        }
+        throw err;
+      }
+    });
     return rowToEdge(row);
   }
 

@@ -404,21 +404,31 @@ export function edgeTypeRoutes(storage: Storage) {
       );
     }
 
-    // The name checks and the registry claim run with nothing awaited
-    // between them, so two registrations in flight cannot both take a name;
-    // the claim is given back if the row is not written.
-    if (getEdgeTypeSchema(body.id)) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `Edge type ${body.id} already exists`,
-      );
-    }
-    const schema = edgeTypeFromRequest(body);
-    registerEdgeTypeSchema(schema);
+    // Claimed under the write lock, so two registrations in flight cannot
+    // both take a name, and the row is written before the registry holds
+    // the name: an edge write asks the table, and a name the registry held
+    // first would pass the door's own check and be refused at the row.
+    // The claim is given back if the transaction does not commit.
+    const claim: { schema?: EdgeTypeSchema } = {};
+    let schema: EdgeTypeSchema;
     try {
-      await storage.edgeTypes.create(schema);
+      schema = await storage.runInTransaction(async () => {
+        if (getEdgeTypeSchema(body.id)) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `Edge type ${body.id} already exists`,
+          );
+        }
+        // Builds the schema and checks its names against every other
+        // type's, so it runs under the lock with the claim.
+        const built = edgeTypeFromRequest(body);
+        await storage.edgeTypes.create(built);
+        registerEdgeTypeSchema(built);
+        claim.schema = built;
+        return built;
+      });
     } catch (err) {
-      unregisterEdgeTypeSchema(schema.id);
+      if (claim.schema) unregisterEdgeTypeSchema(claim.schema.id);
       throw err;
     }
     void storage.audit.log({
@@ -447,29 +457,33 @@ export function edgeTypeRoutes(storage: Storage) {
         `${id} is a core edge type and cannot be deleted`,
       );
     }
-    const existing = await storage.edgeTypes.get(id);
-    if (!existing) {
-      throw new MarfaError(
-        ErrorCode.EDGE_TYPE_NOT_FOUND,
-        `Edge type ${id} not found`,
-      );
-    }
-
-    // The sibling's shape, asked the same way: one row of the type is
-    // enough to know, so the query is bounded rather than a count.
     const { force } = c.req.valid("query");
-    if (force !== "true") {
-      const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
-      if (inUse.data.length > 0) {
+    // The existence check, the question and the delete are one transaction.
+    // An edge write asks the table inside its own, so it is either counted
+    // here or refused once the row is gone, and of two deletes in flight the
+    // second finds no row.
+    await storage.runInTransaction(async () => {
+      const existing = await storage.edgeTypes.get(id);
+      if (!existing) {
         throw new MarfaError(
-          ErrorCode.EDGE_TYPE_IN_USE,
-          `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
-          { edge_type: id },
+          ErrorCode.EDGE_TYPE_NOT_FOUND,
+          `Edge type ${id} not found`,
         );
       }
-    }
-
-    await storage.edgeTypes.delete(id);
+      // The sibling's shape, asked the same way: one row of the type is
+      // enough to know, so the query is bounded rather than a count.
+      if (force !== "true") {
+        const inUse = await storage.edges.list({ edge_type: id, limit: 1 });
+        if (inUse.data.length > 0) {
+          throw new MarfaError(
+            ErrorCode.EDGE_TYPE_IN_USE,
+            `Edge type "${id}" has existing edges. Use ?force=true to delete anyway, which leaves them naming it.`,
+            { edge_type: id },
+          );
+        }
+      }
+      await storage.edgeTypes.delete(id);
+    });
     unregisterEdgeTypeSchema(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

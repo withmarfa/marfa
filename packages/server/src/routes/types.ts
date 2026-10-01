@@ -832,54 +832,63 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
-    }
-
-    // Checked before the items refusal, and outside `force`, because this
-    // one cannot be forced past. Reporting the forcible obstruction first
-    // would send a caller round again to meet the one that stops them.
-    //
-    // Refusing rather than repairing the children is the deliberate choice.
-    // A child that inherits IS its parent: `isSubtypeOf` answers yes and a
-    // subtree query finds its items. Flattening the inherited fields down
-    // would keep the field names and lose that, changing the child's meaning
-    // as a side effect of a command naming a different type.
-    const subtypes = directChildrenOf(id);
-    if (subtypes.length > 0) {
-      throw new MarfaError(
-        ErrorCode.TYPE_HAS_SUBTYPES,
-        `Type "${id}" cannot be deleted while ${subtypes
-          .map((subtype) => `"${subtype}"`)
-          .join(
-            ", ",
-          )} ${subtypes.length === 1 ? "inherits" : "inherit"} from it. Delete ${subtypes.length === 1 ? "it" : "them"} first, or give ${subtypes.length === 1 ? "it" : "each"} a different parent with PUT /types/{id}. This is not what ?force=true covers, which is existing items.`,
-        { subtype_ids: subtypes },
-      );
-    }
-
     const { force } = c.req.valid("query");
-    if (force !== "true") {
-      const items = await storage.items.list({
-        type: id,
-        // Every state, because the question is whether anything is written
-        // against this type, not whether anything is being worked on. A row
-        // in the bin or the archive still names the type it was validated
-        // against, and deleting it out from under one leaves a row whose
-        // shape nothing can check.
-        all_states: true,
-        limit: 1,
-      });
-      if (items.data.length > 0) {
+    // The existence check, the questions and the delete are one transaction.
+    // The store takes the type out of the registry before it commits, and a
+    // create asks the registry inside its own transaction, so an item written
+    // meanwhile either lands first and is counted or comes after and is
+    // refused; of two deletes in flight, the second finds no type.
+    await storage.runInTransaction(async () => {
+      const existing = getTypeSchema(id);
+      if (!existing) {
         throw new MarfaError(
-          ErrorCode.TYPE_IN_USE,
-          `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
         );
       }
-    }
 
-    await storage.types.delete(id);
+      // Checked before the items refusal, and outside `force`, because this
+      // one cannot be forced past. Reporting the forcible obstruction first
+      // would send a caller round again to meet the one that stops them.
+      //
+      // Refusing rather than repairing the children is the deliberate choice.
+      // A child that inherits IS its parent: `isSubtypeOf` answers yes and a
+      // subtree query finds its items. Flattening the inherited fields down
+      // would keep the field names and lose that, changing the child's
+      // meaning as a side effect of a command naming a different type.
+      const subtypes = directChildrenOf(id);
+      if (subtypes.length > 0) {
+        throw new MarfaError(
+          ErrorCode.TYPE_HAS_SUBTYPES,
+          `Type "${id}" cannot be deleted while ${subtypes
+            .map((subtype) => `"${subtype}"`)
+            .join(
+              ", ",
+            )} ${subtypes.length === 1 ? "inherits" : "inherit"} from it. Delete ${subtypes.length === 1 ? "it" : "them"} first, or give ${subtypes.length === 1 ? "it" : "each"} a different parent with PUT /types/{id}. This is not what ?force=true covers, which is existing items.`,
+          { subtype_ids: subtypes },
+        );
+      }
+
+      if (force !== "true") {
+        const items = await storage.items.list({
+          type: id,
+          // Every state, because the question is whether anything is written
+          // against this type, not whether anything is being worked on. A row
+          // in the bin or the archive still names the type it was validated
+          // against, and deleting it out from under one leaves a row whose
+          // shape nothing can check.
+          all_states: true,
+          limit: 1,
+        });
+        if (items.data.length > 0) {
+          throw new MarfaError(
+            ErrorCode.TYPE_IN_USE,
+            `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+          );
+        }
+      }
+      await storage.types.delete(id);
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
