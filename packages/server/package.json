@@ -44,7 +44,7 @@
     "image-dimensions": "^2.5.1",
     "ipaddr.js": "^2.5.0",
     "music-metadata": "^11.16.1",
-    "officeparser": "^7.8.0",
+    "officeparser": "^8.0.0",
     "posthog-node": "^5.55.0",
     "tar-stream": "^3.2.0",
     "tesseract.js": "^7.0.0",
