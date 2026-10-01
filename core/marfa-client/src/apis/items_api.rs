@@ -84,6 +84,28 @@ pub struct GetItemParams {
 pub struct GetItemStatsParams {
     /// Grouping axis. Defaults to `state`.
     pub by: Option<String>,
+    /// Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.
+    pub r#type: Option<String>,
+    /// Count only this lifecycle state. Omitting the parameter counts every state, as does `any`.
+    pub state: Option<String>,
+    /// Narrow to rows stamped with this `source`.
+    pub source: Option<String>,
+    /// Tier slice; omit or `all` returns both
+    pub tier: Option<String>,
+    /// Comma-separated tags; items must carry all of them
+    pub tags: Option<String>,
+    /// Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.
+    pub filter: Option<String>,
+    /// Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.
+    pub occurred_after: Option<String>,
+    /// Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).
+    pub occurred_before: Option<String>,
+    /// Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.
+    pub updated_after: Option<String>,
+    /// Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.
+    pub updated_before: Option<String>,
+    /// `system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own.
+    pub include: Option<String>,
 }
 
 /// struct for passing parameters to the method [`list_item_versions`]
@@ -491,8 +513,9 @@ pub enum GetItemError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetItemStatsError {
+    Status400(models::UnknownTypeOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::TypeNotPermittedRefusal),
+    Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
@@ -1038,7 +1061,7 @@ pub fn get_item(
     }
 }
 
-/// Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.
+/// Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
 pub fn get_item_stats(
     configuration: &configuration::Configuration,
     params: GetItemStatsParams,
@@ -1048,6 +1071,39 @@ pub fn get_item_stats(
 
     if let Some(ref param_value) = params.by {
         req_builder = req_builder.query(&[("by", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.r#type {
+        req_builder = req_builder.query(&[("type", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.state {
+        req_builder = req_builder.query(&[("state", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.source {
+        req_builder = req_builder.query(&[("source", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.tier {
+        req_builder = req_builder.query(&[("tier", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.tags {
+        req_builder = req_builder.query(&[("tags", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.filter {
+        req_builder = req_builder.query(&[("filter", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.occurred_after {
+        req_builder = req_builder.query(&[("occurred_after", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.occurred_before {
+        req_builder = req_builder.query(&[("occurred_before", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.updated_after {
+        req_builder = req_builder.query(&[("updated_after", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.updated_before {
+        req_builder = req_builder.query(&[("updated_before", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.include {
+        req_builder = req_builder.query(&[("include", &param_value.to_string())]);
     }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());

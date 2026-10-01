@@ -21,6 +21,13 @@
  * endpoint being set — a deployment exporting to PostHog sets only the
  * logs endpoint, because there is no general-trace store to point at, so
  * traces are built but unexported.
+ *
+ * Exceptions are a third, separate pipeline, gated on `MARFA_POSTHOG_HOST`
+ * and `MARFA_POSTHOG_PROJECT_TOKEN`. PostHog's error tracking groups
+ * `$exception` events, and an OTLP log record lands in its logs product
+ * whatever exception attributes it carries, so the logs pipeline alone
+ * leaves error tracking empty. `posthog-node` builds those events from a
+ * thrown value, stack frames included.
  */
 import { parseOtelHeaders, parseOtelSampleRatio } from "./config.js";
 
@@ -34,6 +41,14 @@ declare global {
    * off; the caller no-ops.
    */
   var __marfaOtelShutdown: (() => Promise<void>) | undefined;
+  /**
+   * Report an error no handler answered to PostHog's error tracking. Set
+   * here only when exception reporting is configured; undefined otherwise,
+   * and the error handler skips it.
+   */
+  var __marfaReportException:
+    | ((err: unknown, properties: Record<string, string | undefined>) => void)
+    | undefined;
 }
 
 function bootLog(
@@ -63,11 +78,19 @@ async function start(): Promise<void> {
   );
   const sampleRatio = parseOtelSampleRatio(process.env.MARFA_OTEL_SAMPLE_RATIO);
   const serviceName = process.env.OTEL_SERVICE_NAME ?? "marfa-server";
+  const posthogHost = process.env.MARFA_POSTHOG_HOST ?? "";
+  const posthogToken = process.env.MARFA_POSTHOG_PROJECT_TOKEN ?? "";
+  if (Boolean(posthogHost) !== Boolean(posthogToken)) {
+    throw new Error(
+      "MARFA_POSTHOG_HOST and MARFA_POSTHOG_PROJECT_TOKEN are set together or not at all; with one alone no exception could be reported.",
+    );
+  }
+  const reportExceptions = Boolean(posthogHost);
 
-  if (!tracesEndpoint && !logsEndpoint) {
+  if (!tracesEndpoint && !logsEndpoint && !reportExceptions) {
     bootLog(
       "warn",
-      "MARFA_OTEL_ENABLED=true but no OTLP endpoint set; OpenTelemetry is inert.",
+      "MARFA_OTEL_ENABLED=true but no OTLP endpoint or PostHog host set; OpenTelemetry is inert.",
     );
     return;
   }
@@ -100,17 +123,19 @@ async function start(): Promise<void> {
   const { resourceFromAttributes } = await import("@opentelemetry/resources");
   const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } =
     await import("@opentelemetry/semantic-conventions");
-  const resource = resourceFromAttributes({
+  const resourceAttributes = {
     [ATTR_SERVICE_NAME]: serviceName,
     [ATTR_SERVICE_VERSION]: process.env.MARFA_VERSION_SHA ?? "dev",
     "deployment.environment": deploymentEnvironment,
-  });
+  };
+  const resource = resourceFromAttributes(resourceAttributes);
 
   interface Shutdownable {
     shutdown: () => Promise<void>;
   }
   let tracerProvider: Shutdownable | undefined;
   let loggerProvider: Shutdownable | undefined;
+  let exceptionClient: Shutdownable | undefined;
 
   // ---- Traces ----
   if (tracesEndpoint) {
@@ -189,10 +214,31 @@ async function start(): Promise<void> {
     loggerProvider = provider;
   }
 
+  // ---- Exceptions ----
+  if (reportExceptions) {
+    const { PostHog } = await import("posthog-node");
+    const client = new PostHog(posthogToken, {
+      host: posthogHost,
+      // The address an event arrives from is the server's own, so a
+      // location looked up from it describes the host, not a person.
+      disableGeoip: true,
+    });
+    exceptionClient = client;
+    globalThis.__marfaReportException = (err, properties) => {
+      // No distinct id: the event is the instance's, and the client then
+      // sends it without creating a person.
+      client.captureException(err, undefined, {
+        ...resourceAttributes,
+        ...properties,
+      });
+    };
+  }
+
   globalThis.__marfaOtelShutdown = async () => {
     await Promise.allSettled([
       tracerProvider?.shutdown(),
       loggerProvider?.shutdown(),
+      exceptionClient?.shutdown(),
     ]);
   };
 
@@ -200,6 +246,7 @@ async function start(): Promise<void> {
     service_name: serviceName,
     traces: Boolean(tracesEndpoint),
     logs: Boolean(logsEndpoint),
+    exceptions: reportExceptions,
     sample_ratio: sampleRatio,
   });
 }

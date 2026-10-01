@@ -1,6 +1,6 @@
 # Versions
 
-Every item carries a `version` that starts at 1 and moves with each write, and the server keeps snapshots of earlier properties for three-way merges.
+Every item carries a `version` that starts at 1 and moves with each write to its fields, and the server keeps snapshots of earlier properties for three-way merges.
 
 ## Versioning
 
@@ -36,3 +36,7 @@ Statements 6 to 9 and 11 are about the update door, which requires the version. 
 ## Version zero
 
 18. **The server never mints version 0.** A created row is at 1 (1), and every write moves the number up, so no version the server has ever issued is zero and no snapshot is ever recorded under it. That is what makes zero usable as a claim rather than as a reading: a create carrying `version: 0` says the caller read no row under the natural key it names, and is a precondition that there is none. On an empty natural key it creates, and the row it makes is at 1. On one that already names a row it is a version no snapshot covers, so it answers `409 ancestor_unavailable` like any other (9). `sync/idempotency.test.ts › takes a create's version of zero as the claim that there is no row`.
+
+## State
+
+19. **A change of state moves neither the version nor its history.** The version counts writes to the item's own fields, its properties, `type`, `tier`, `occurred_at` and `source_id`, and `state` is not among them: `POST /items/{id}/transition`, `DELETE /items/{id}`, `POST /items/{id}/restore` and a `transition` run by `POST /items/bulk-actions` each answer and leave the row at the version it had, and none of them adds to `GET /items/{id}/versions`. A version is the content a write is based on and a snapshot is the content an update left behind, so a version that moved on a state change would make an edit queued against the content it read stale for no change to that content, and a snapshot recorded at a version that does not move would be a second row under a number the next update records again. A client watching for change watches `state` and `updated_at` as well as the version, or the event stream, which announces every state change (`events.md` 7). The purge precondition reads the version on the same terms (`items.md` 28), and so does a device catching up (`device.md` 13). `correctness/item-versioning.test.ts › moves neither the version nor its history on a transition, a delete or a restore`.

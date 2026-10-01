@@ -606,6 +606,56 @@ describe("dimensions", () => {
     expect(row?.error).toContain("no image reader");
   });
 
+  it("records a GIF, JPEG or WebP with a malformed header against its file", async () => {
+    // Each signature over garbage, which the reader alone would size; the
+    // reader's own tests hold the real headers that it does size.
+    const malformed: [string, Buffer][] = [
+      [
+        "image/gif",
+        Buffer.concat([Buffer.from("GIF89a"), Buffer.alloc(64, 0x5a)]),
+      ],
+      [
+        "image/jpeg",
+        Buffer.concat([
+          Buffer.from([0xff, 0xd8, 0xff, 0xc0]),
+          Buffer.alloc(64, 0x5a),
+        ]),
+      ],
+      [
+        "image/webp",
+        Buffer.concat([
+          (await fixture("sample.webp")).subarray(0, 16),
+          Buffer.alloc(64, 0x5a),
+        ]),
+      ],
+    ];
+    const ids: string[] = [];
+    for (const [mime, bytes] of malformed) {
+      ids.push(
+        await createFileItem(
+          await seedBlob(bytes, mime),
+          mime,
+          "core.file.image",
+        ),
+      );
+    }
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 0,
+      skipped: 3,
+      failed: 0,
+    });
+
+    for (const id of ids) {
+      const props = await readItem(id);
+      expect(props.width).toBeUndefined();
+      expect(props.height).toBeUndefined();
+      const row = await ctx.storage.enrichment.get(id);
+      expect(row?.status).toBe("skipped");
+      expect(row?.error).toBe("no image header");
+    }
+  });
+
   it("does not derive onto a type that declares no such field", async () => {
     // A plain `core.file` has no `width`, so writing one would leave a
     // stray property on a schema with no opinion about it. The MIME gate

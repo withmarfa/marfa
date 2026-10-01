@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, named_params, params, params_from_iter};
@@ -646,6 +646,29 @@ pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> 
     )
 }
 
+/// The bytes every upload the server has not taken names: unanswered, held,
+/// or answered in a way a caller may still send again. The queue names them
+/// and the cache holds them, so the cache must keep them (`device.md` 38).
+pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT DISTINCT blob FROM queue
+          WHERE kind = ?1 AND blob IS NOT NULL
+            AND (verdict IS NULL OR verdict NOT IN (?2, ?3, ?4))",
+    )?;
+    let hashes = statement
+        .query_map(
+            [
+                WriteKind::UploadBlob.as_str(),
+                Verdict::Accepted.as_str(),
+                Verdict::Merged.as_str(),
+                Verdict::Conflicted.as_str(),
+            ],
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<Result<HashSet<_>, _>>()?;
+    Ok(hashes)
+}
+
 /// Whether any write to an item is still waiting.
 pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(!waiting_writes_for_item(conn, id)?.is_empty())
@@ -1251,6 +1274,35 @@ pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
         Some(json) => Ok(serde_json::from_str(&json)?),
         None => Ok(Vec::new()),
     }
+}
+
+/// Whether the copy takes an edge of `edge_type` drawn from `source_id`: one
+/// from a row it holds, or of a type in `whole` (`device.md` 1, 43).
+pub fn takes_edge(
+    conn: &Connection,
+    source_id: &str,
+    edge_type: &str,
+    whole: &[String],
+) -> Result<bool, CoreError> {
+    Ok(whole.iter().any(|held| held == edge_type) || item_held(conn, source_id)?)
+}
+
+/// Drops edge `id` from the copy where the copy no longer takes it and no
+/// write of this device's to it waits, which is laid over it until answered.
+pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    let Some(edge) = edge_by_id(conn, id)? else {
+        return Ok(false);
+    };
+    if takes_edge(
+        conn,
+        &edge.source_id,
+        &edge.edge_type,
+        &whole_edge_types(conn)?,
+    )? || edge_write_waits(conn, id)?
+    {
+        return Ok(false);
+    }
+    delete_edge(conn, id)
 }
 
 /// Holds `id` by id from now on. Answers whether it was not pinned already.

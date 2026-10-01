@@ -616,9 +616,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   // grant to the case that happens to have a login; the description beside
   // it says the same.
   "system.connection": "Connections",
-  "system.device": "Devices",
   "system.folder": "Folders",
-  "system.webhook": "Webhooks",
   profile: "Profile",
   "profile.name": "Name",
   "profile.email": "Email address",

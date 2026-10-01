@@ -3,9 +3,9 @@
  * allowed to occupy.
  *
  * Some of the reserved roots name no namespace tier: every root a scope
- * family lives under, and the retired one kept reserved so nobody may claim
- * it. How many there are is not written down here — the scan below derives
- * them, and a count in prose is the thing that goes stale when the set grows.
+ * family lives under, and the word the glossary bans, kept reserved so
+ * nobody may claim it. How many there are is not written down here — the
+ * scan below derives them, and a count in prose is the thing that goes stale when the set grows.
  * Reserving them is what stops a registered type ever sharing a first segment
  * with a grant, so a row under one is a type whose identifier collides with a
  * permission literal — the one collision the reservation exists to make

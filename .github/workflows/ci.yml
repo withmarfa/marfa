@@ -73,7 +73,7 @@ jobs:
         with:
           components: rustfmt, clippy
       # Cache the language model fetched by the real OCR test.
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/marfa-tessdata
           key: tessdata-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}

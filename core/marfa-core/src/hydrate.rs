@@ -177,7 +177,7 @@ pub(crate) fn hydrate(
     let (items, edges) = {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        lay_queue_over(&tx, &catalog)?;
+        lay_queue_over(&tx, &catalog, &edge_types)?;
         store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
         store::meta_set(
             &tx,
@@ -214,7 +214,10 @@ pub(crate) fn hydrate(
 /// The queue survives a hydration and the copy does not, so without this a
 /// create still waiting is a row a local read no longer finds, and an edit
 /// still waiting reads as undone, while the queue goes on sending both.
-fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> {
+///
+/// An edge's create is held again only where the refilled copy takes it, by
+/// `whole` and the rows now held (`device.md` 44). It stays queued either way.
+fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog, whole: &[String]) -> Result<()> {
     let waiting = store::waiting_writes(conn)?;
     let mut items: Vec<&str> = Vec::new();
     let mut edges: Vec<&str> = Vec::new();
@@ -240,7 +243,9 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog) -> Result<()> 
             }
             WriteKind::CreateEdge => {
                 let (id, draft) = EdgeDraft::from_payload(&store::payload_of(conn, &row.id)?)?;
-                if store::edge_by_id(conn, &id)?.is_none() {
+                if store::edge_by_id(conn, &id)?.is_none()
+                    && store::takes_edge(conn, &draft.source_id, &draft.edge_type, whole)?
+                {
                     let mut wire = draft.wire(&id);
                     wire.created_at.clone_from(&row.queued_at);
                     wire.updated_at.clone_from(&row.queued_at);

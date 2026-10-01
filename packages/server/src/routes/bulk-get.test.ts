@@ -209,7 +209,7 @@ describe("POST /items/bulk-get", () => {
 describe("POST /items/bulk-get and the system token", () => {
   async function seedPair(
     marker: string,
-  ): Promise<{ noteId: string; deviceId: string }> {
+  ): Promise<{ noteId: string; folderId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: { type: "core.note", properties: { body: `bulk-sys-${marker}` } },
@@ -220,12 +220,12 @@ describe("POST /items/bulk-get and the system token", () => {
     // to the operator key, whose own type permissions are empty, so no
     // credential writes one. What this door does with the row afterwards is
     // the same either way.
-    const device = await ctx.storage.items.create({
-      type: "system.device",
-      properties: { name: `bulk-sys-${marker}`, kind: "laptop" },
+    const folder = await ctx.storage.items.create({
+      type: "system.folder",
+      properties: { title: `bulk-sys-${marker}` },
       source: `bulk-get-system-${marker}`,
     });
-    return { noteId: n.id, deviceId: device.id };
+    return { noteId: n.id, folderId: folder.id };
   }
 
   async function fetched(ids: string[], include?: string[]): Promise<string[]> {
@@ -239,18 +239,18 @@ describe("POST /items/bulk-get and the system token", () => {
   }
 
   it("drops a system id the caller named, when the token is absent", async () => {
-    const { noteId, deviceId } = await seedPair("absent");
-    const got = await fetched([noteId, deviceId]);
+    const { noteId, folderId } = await seedPair("absent");
+    const got = await fetched([noteId, folderId]);
     // The ordinary id as well, so this cannot pass against an empty response.
     expect(got).toContain(noteId);
-    expect(got).not.toContain(deviceId);
+    expect(got).not.toContain(folderId);
   });
 
   it("returns it when the token is present", async () => {
-    const { noteId, deviceId } = await seedPair("present");
-    const got = await fetched([noteId, deviceId], ["system"]);
+    const { noteId, folderId } = await seedPair("present");
+    const got = await fetched([noteId, folderId], ["system"]);
     expect(got).toContain(noteId);
-    expect(got).toContain(deviceId);
+    expect(got).toContain(folderId);
   });
 
   it("refuses a token it does not declare", async () => {

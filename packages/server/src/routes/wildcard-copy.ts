@@ -73,19 +73,11 @@ export function deriveWildcardDescription(
  * A root as a person should read it: `acme` becomes "Acme",
  * `acme-corp` becomes "Acme Corp".
  *
- * **The friendly rendering is deliberate and was ruled on.** The proposal
- * once went the other way — render the handle verbatim, so a publisher handle
- * of `google-drive` could not have a brand supplied for it by this transform.
- * That was rejected for the reader's sake, and the vector it guarded against
- * was closed from the other side: the half-protection that reserved `google`
- * while admitting `google-drive` was deleted outright rather than widened,
- * so this transform is no longer the way around a partial list.
- *
- * **A shipped publisher root is still claimable as a handle, deliberately**
- * — `isReservedHandle` says so and gives the reasoning. What answers the
- * collision is the seed refusing to overwrite a registration it did not
- * write, which protects the namespace always, where a name list protects it
- * only while the list stays current.
+ * The rendering is friendly rather than verbatim for the reader's sake. No
+ * root is reserved for a brand, so the transform cannot be used to reach a
+ * name a list would otherwise have refused. A shipped publisher root stays
+ * open to registration under other identifiers; what answers a collision is
+ * the seed refusing to overwrite a registration it did not write.
  *
  * A registered root also renders its member types beside the row —
  * `resolveWildcardExpansions` enumerates what was actually registered under

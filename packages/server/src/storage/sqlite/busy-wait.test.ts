@@ -96,15 +96,11 @@ describe("a write that meets the write lock", () => {
     const seen = (await witness.execute("SELECT n FROM probe ORDER BY n")).rows;
     expect(seen.map((row) => row.n)).toEqual([1, 2]);
     // The lock is free for others, and the wrapper's own connection opens
-    // a transaction with a savepoint, which the refusal had broken.
+    // a transaction of its own, which the refusal had broken.
     const theirs = await other.transaction("write");
     await theirs.execute("INSERT INTO probe (n) VALUES (3)");
     await theirs.commit();
-    const ours = await raw.transaction("write");
-    await ours.execute("SAVEPOINT sp0");
-    await ours.execute("INSERT INTO probe (n) VALUES (4)");
-    await ours.execute("RELEASE sp0");
-    await ours.commit();
+    await raw.batch(["INSERT INTO probe (n) VALUES (4)"], "write");
     const all = (await witness.execute("SELECT n FROM probe ORDER BY n")).rows;
     expect(all.map((row) => row.n)).toEqual([1, 2, 3, 4]);
     witness.close();

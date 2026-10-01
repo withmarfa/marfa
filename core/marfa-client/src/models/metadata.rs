@@ -18,14 +18,18 @@ pub struct Metadata {
     #[serde(rename = "tags")]
     pub tags: Vec<String>,
     #[serde(rename = "extensions")]
-    pub extensions: std::collections::HashMap<String, serde_json::Value>,
+    pub extensions:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl Metadata {
     pub fn new(
         item_id: String,
         tags: Vec<String>,
-        extensions: std::collections::HashMap<String, serde_json::Value>,
+        extensions: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, serde_json::Value>,
+        >,
     ) -> Metadata {
         Metadata {
             item_id,

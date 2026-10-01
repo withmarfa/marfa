@@ -1287,6 +1287,7 @@ fn settle(
                         },
                     )?;
                     store::lay_waiting_edge_writes_over(&tx, &parsed.edge.id)?;
+                    store::let_go_of_untaken_edge(&tx, &parsed.edge.id)?;
                     tx.commit()?;
                     Ok(Settled {
                         replayed: parsed.acknowledged || replayed_header,
@@ -1722,6 +1723,7 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
             Some(edge) => {
                 store::upsert_edge(&conn, &edge)?;
                 store::lay_waiting_edge_writes_over(&conn, edge_id)?;
+                store::let_go_of_untaken_edge(&conn, edge_id)?;
             }
             // The server holds no such edge, which for a refused create is
             // the honest answer and for a refused update means it went

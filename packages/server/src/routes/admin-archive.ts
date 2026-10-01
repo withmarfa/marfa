@@ -452,7 +452,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                     // with no fallback key, so the refusal has to be here:
                     // parsing one would drop every registration it carries
                     // and answer 200.
-                    `Unsupported archive version: ${String(manifest.version)}. This build reads version 0 only, and nothing converts another: export again from a build that writes version 0.`,
+                    `Unsupported archive version ${String(manifest.version)}. Until the first public release an archive is read only by the build that wrote it, and this build reads version 0 only: restore it into the build that exported it.`,
                   ),
                 );
                 return;
@@ -566,10 +566,10 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // A row whose `source` claims a reserved credential shape is refused,
     // on the same terms and for the same reason as the state check below:
     // the restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses those prefixes precisely so no credential can
-    // stamp one. A row carrying `connector:` would otherwise read, ever
-    // after, as written by a connector that never existed — planted
-    // through the one door that does not ask.
+    // `POST /keys` refuses that prefix precisely so no credential can
+    // stamp one. A row carrying `oauth:` would otherwise read, ever after,
+    // as written by a grant that never existed — planted through the one
+    // door that does not ask.
     for (const { item } of items) {
       const source = item.source;
       if (typeof source === "string" && isReservedCredentialSource(source)) {
