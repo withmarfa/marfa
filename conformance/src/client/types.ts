@@ -571,7 +571,11 @@ export type BulkActionInput =
       action: "transition";
       state: "active" | "archived" | "trashed";
     })
-  | (BulkActionBase & { action: "purge"; confirm?: "PURGE" })
+  | (BulkActionBase & {
+      action: "purge";
+      confirm?: "PURGE";
+      expected_ids?: string[];
+    })
   | (BulkActionBase & {
       action: "update_tags";
       add?: string[];

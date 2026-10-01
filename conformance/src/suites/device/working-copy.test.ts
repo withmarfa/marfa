@@ -5,9 +5,11 @@ import {
   KEY,
   hashOf,
   hydratedHarness,
+  requireBinary,
   scriptBlob,
   startHarness,
   scriptHydration,
+  scriptKey,
   scriptWrites,
   type Harness,
 } from "./harness.js";
@@ -25,6 +27,7 @@ import {
   wireType,
   writeAnswers,
 } from "../../device/marfa-answers.js";
+import { CliDevice, newStore } from "../../device/cli-adapter.js";
 
 /** One `core.file` row naming `hash`, for a hydration to pull. */
 function hydrateOneFile(server: Harness["server"], hash: string): void {
@@ -1530,6 +1533,9 @@ describe("the working copy says what it is", () => {
   it("refuses a read before any hydration", async () => {
     harness = await startHarness("read-before-hydration");
     const { device } = harness;
+    // A store made and never hydrated: a path with no store at all is
+    // refused before any slice is asked about (45).
+    expect((await device.status()).ok).toBe(true);
 
     // Every read door, because a refusal on one and an empty page on
     // another is the same wrong answer with a smaller blast radius.
@@ -1579,6 +1585,70 @@ describe("the working copy says what it is", () => {
     ).toBe(true);
   });
 
+  it("makes a store only to hydrate or to report its state, and refuses a path with none to every other command", async () => {
+    harness = await startHarness("no-store-at-path");
+    const { server, device } = harness;
+    expect(
+      existsSync(device.store),
+      "the fixture's store path already holds a file, so nothing below is about a path with no store",
+    ).toBe(false);
+
+    for (const [name, outcome] of [
+      ["a listing", await device.list()],
+      ["a search", await device.search("anything")],
+      ["a read by id", await device.get("whatever")],
+      ["the edges from an item", await device.edgesFrom("whatever")],
+      ["the queue", await device.queue()],
+      [
+        "a local create",
+        await device.create({
+          type: "core.note",
+          properties: { title: "t", body: "b" },
+        }),
+      ],
+    ] as const) {
+      expect(
+        outcome.ok,
+        `${name} answered from a store made for a path nobody had made one at, so a mistyped path reads as an empty copy`,
+      ).toBe(false);
+      if (!outcome.ok) {
+        expect(
+          outcome.refusal.code,
+          `${name} was refused for some other reason than the missing store: ${outcome.refusal.raw}`,
+        ).toBe("no_store");
+      }
+      expect(
+        existsSync(device.store),
+        `${name} made a store at the path it refused`,
+      ).toBe(false);
+    }
+
+    // The state report makes one, so a caller can ask what a store holds
+    // before its first hydration (5).
+    const status = await device.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    expect(
+      existsSync(device.store),
+      "the state report answered without making the store it reports on",
+    ).toBe(true);
+
+    // So does a hydration, on a path of its own.
+    const fresh = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("no-store-hydrate"),
+      url: server.url,
+      key: KEY,
+    });
+    expect(existsSync(fresh.store)).toBe(false);
+    scriptHydration(server, { head: "10" });
+    const hydrated = await fresh.hydrate(["core.note"], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    expect(
+      existsSync(fresh.store),
+      "a hydration did not make the store it fills",
+    ).toBe(true);
+  });
+
   it("refuses a read after an interrupted hydration", async () => {
     harness = await startHarness("interrupted");
     const { server, device } = harness;
@@ -1602,6 +1672,7 @@ describe("the working copy says what it is", () => {
         next_cursor: null,
       },
     });
+    scriptKey(server);
     // The snapshot dies partway: the first page lands, the second never
     // answers, which is what a device meets when a hydration is interrupted.
     server.answer("GET", "/items", { kind: "drop" });

@@ -69,6 +69,8 @@ async function scripted() {
         ],
         next_cursor: null,
       });
+    } else if (path === "/keys/current") {
+      json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {
       json({
         data: [{ item: item("note", "core.note"), metadata: { tags: [] } }],
@@ -131,6 +133,27 @@ test("holds an edge type whole and reports it", async (t) => {
   await core.hydrate(["core.note"], Tier.Library);
   assert.deepEqual(core.status().sliceEdgeTypes, []);
   assert.deepEqual(core.edgesFrom("outer"), []);
+});
+
+test("reads every edge of one type the copy holds in one call", async (t) => {
+  const core = await opened(t);
+  await core.hydrateWith(["core.note"], Tier.Library, ["parent-of"]);
+  core.createEdge({
+    sourceId: "note",
+    targetId: "inner",
+    edgeType: "parent-of",
+    properties: {},
+  });
+  assert.deepEqual(
+    core
+      .edgesOfType("parent-of")
+      .map((edge) => [edge.id === "beneath", edge.sourceId]),
+    [
+      [true, "outer"],
+      [false, "note"],
+    ],
+  );
+  assert.deepEqual(core.edgesOfType("references"), []);
 });
 
 test("pins and unpins a row outside the slice, saying whether it was pinned", async (t) => {

@@ -451,70 +451,22 @@ fn follow_paced(
         };
         let catalog = adopt(core, &types)?;
         let opened = Instant::now();
-        let mut heard = Instant::now();
-        let mut behind = false;
-        loop {
-            if stop.load(Ordering::Relaxed) {
-                return Ok(report);
-            }
-            let frame = match frames.recv_timeout(pace.stop_poll) {
-                Ok(Ok(frame)) => frame,
-                Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => break,
-                Err(RecvTimeoutError::Timeout) if heard.elapsed() > pace.silence => break,
-                Err(RecvTimeoutError::Timeout) => continue,
-            };
-            heard = Instant::now();
-            let Frame::Event { id, name, data } = frame else {
-                continue;
-            };
-            let payload = payload_of(&data)?;
-            match name.as_deref().unwrap_or(&payload.r#type) {
-                "stream_cursor" => {}
-                "stream_live" => {
-                    if let Some(cursor) =
-                        pass_withheld(core, &report.cursor, payload.cursor.as_deref())?
-                    {
-                        report.cursor = cursor;
-                    }
-                }
-                "catchup_too_old" => return Err(aged_out(core, payload)?),
-                "stream_incomplete" => break,
-                kind => {
-                    let Some(id) = id else { continue };
-                    // Left untaken with the cursor before it: the stream
-                    // opened again at once reads the catalog first, then
-                    // replays this event.
-                    let pinned = pinned_row(core, &payload)?;
-                    if let Some(named) =
-                        unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
-                    {
-                        refreshed.insert(named);
-                        behind = true;
-                        break;
-                    }
-                    // A failed read of a row entering the slice reopens the
-                    // stream from before this event rather than ending.
-                    let taken = match take(core, &catalog, &slice, &id, kind, &payload) {
-                        Err(error) if error.is_environmental() => {
-                            report.failed_opens += 1;
-                            report.last_failure = Some(error.to_string());
-                            break;
-                        }
-                        other => other?,
-                    };
-                    match taken {
-                        Some(change) => {
-                            report.applied += 1;
-                            on_change(&change);
-                        }
-                        None => report.skipped += 1,
-                    }
-                    report.cursor = id;
-                }
-            }
-        }
-        if behind {
-            continue;
+        let ended = read_stream(
+            core,
+            &catalog,
+            &slice,
+            &frames,
+            stop,
+            pace,
+            &Instant::now,
+            &mut report,
+            &mut refreshed,
+            on_change,
+        )?;
+        match ended {
+            Ended::Stopped => return Ok(report),
+            Ended::Behind => continue,
+            Ended::Over => {}
         }
         refreshed.clear();
         if opened.elapsed() >= pace.reconnect_most {
@@ -525,6 +477,99 @@ fn follow_paced(
         }
     }
     Ok(report)
+}
+
+/// How the reading of one held stream ended.
+#[derive(Debug, PartialEq)]
+enum Ended {
+    Stopped,
+    /// An event named what the catalog could not explain; the stream is
+    /// opened again at once, with no wait.
+    Behind,
+    /// The stream ended, failed, fell silent or was called incomplete.
+    Over,
+}
+
+/// Reads one held stream's frames until it ends or `stop` is set.
+///
+/// Silence is measured on `now` rather than on the wall clock read here, so
+/// a test can hold time still while it hands frames over one at a time.
+#[allow(clippy::too_many_arguments)]
+fn read_stream(
+    core: &Core,
+    catalog: &Catalog,
+    slice: &Slice,
+    frames: &Receiver<io::Result<Frame>>,
+    stop: &AtomicBool,
+    pace: &Pace,
+    now: &dyn Fn() -> Instant,
+    report: &mut FollowReport,
+    refreshed: &mut HashSet<Unexplained>,
+    on_change: &mut dyn FnMut(&Change),
+) -> Result<Ended> {
+    let mut heard = now();
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(Ended::Stopped);
+        }
+        let frame = match frames.recv_timeout(pace.stop_poll) {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Ok(Ended::Over),
+            Err(RecvTimeoutError::Timeout)
+                if now().saturating_duration_since(heard) > pace.silence =>
+            {
+                return Ok(Ended::Over);
+            }
+            Err(RecvTimeoutError::Timeout) => continue,
+        };
+        heard = now();
+        let Frame::Event { id, name, data } = frame else {
+            continue;
+        };
+        let payload = payload_of(&data)?;
+        match name.as_deref().unwrap_or(&payload.r#type) {
+            "stream_cursor" => {}
+            "stream_live" => {
+                if let Some(cursor) =
+                    pass_withheld(core, &report.cursor, payload.cursor.as_deref())?
+                {
+                    report.cursor = cursor;
+                }
+            }
+            "catchup_too_old" => return Err(aged_out(core, payload)?),
+            "stream_incomplete" => return Ok(Ended::Over),
+            kind => {
+                let Some(id) = id else { continue };
+                // Left untaken with the cursor before it: the stream opened
+                // again at once reads the catalog first, then replays this
+                // event.
+                let pinned = pinned_row(core, &payload)?;
+                if let Some(named) = unexplained(catalog, slice, kind, &payload, refreshed, pinned)
+                {
+                    refreshed.insert(named);
+                    return Ok(Ended::Behind);
+                }
+                // A failed read of a row entering the slice reopens the
+                // stream from before this event rather than ending.
+                let taken = match take(core, catalog, slice, &id, kind, &payload) {
+                    Err(error) if error.is_environmental() => {
+                        report.failed_opens += 1;
+                        report.last_failure = Some(error.to_string());
+                        return Ok(Ended::Over);
+                    }
+                    other => other?,
+                };
+                match taken {
+                    Some(change) => {
+                        report.applied += 1;
+                        on_change(&change);
+                    }
+                    None => report.skipped += 1,
+                }
+                report.cursor = id;
+            }
+        }
+    }
 }
 
 type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
@@ -697,6 +742,7 @@ fn apply(
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
+    use std::sync::atomic::AtomicUsize;
 
     use super::*;
     use crate::Server;
@@ -1121,29 +1167,99 @@ mod tests {
         run.ended().unwrap();
     }
 
+    /// A clock that moves only when told, counting how often it is read.
+    #[derive(Clone)]
+    struct HeldClock {
+        at: Arc<Mutex<Instant>>,
+        reads: Arc<AtomicUsize>,
+    }
+
+    impl HeldClock {
+        fn new() -> HeldClock {
+            HeldClock {
+                at: Arc::new(Mutex::new(Instant::now())),
+                reads: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn now(&self) -> Instant {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            *self.at.lock().unwrap()
+        }
+
+        fn pass(&self, by: Duration) {
+            *self.at.lock().unwrap() += by;
+        }
+
+        /// Moves on by `by`, then waits until the reader has looked at the
+        /// time twice since: at most one of those is the stamp of a frame
+        /// taken before, so the other is a look at silence with the clock
+        /// already moved. A reader that let the stream go instead fails the
+        /// test.
+        fn pass_and_be_seen(&self, by: Duration, end: &Receiver<Result<Ended>>) {
+            let before = self.reads.load(Ordering::SeqCst);
+            self.pass(by);
+            let hung = Instant::now() + Duration::from_secs(10);
+            while self.reads.load(Ordering::SeqCst) < before + 2 {
+                if let Ok(read) = end.try_recv() {
+                    panic!("a stream saying nothing but keepalives was taken as silent: {read:?}");
+                }
+                assert!(
+                    Instant::now() < hung,
+                    "the stream's reader stopped looking at the time"
+                );
+                thread::sleep(MS(1));
+            }
+        }
+    }
+
     #[test]
     fn a_keepalive_is_hearing_from_the_server() {
+        // The frames are handed over one at a time on a clock that moves only
+        // when the test moves it, so how long any thread waits for a core
+        // decides nothing.
         let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on(
-            "/events",
-            vec![stream(
-                vec![connected()],
-                Then::Hold {
-                    keepalive: Some(MS(20)),
-                    lasting: None,
-                },
-            )],
-        );
         let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, None);
-        thread::sleep(QUICK.silence * 4);
-        run.stop();
-        run.ended().unwrap();
+        let clock = HeldClock::new();
+        let (fed, frames) = mpsc::sync_channel::<io::Result<Frame>>(0);
+        let (ended, end) = mpsc::channel();
+        let reading = clock.clone();
+        thread::spawn(move || {
+            let (slice, _) = start(&core).unwrap();
+            let catalog = Catalog::load(&core.conn().unwrap()).unwrap();
+            let read = read_stream(
+                &core,
+                &catalog,
+                &slice,
+                &frames,
+                &AtomicBool::new(false),
+                &QUICK,
+                &|| reading.now(),
+                &mut FollowReport::default(),
+                &mut HashSet::new(),
+                &mut |_| {},
+            );
+            let _ = ended.send(read);
+        });
+        // Four silences pass in all, each keepalive half of one after the
+        // last. A send waits for the reader to take the frame, so it fails
+        // once the reader has let the stream go.
+        for _ in 0..8 {
+            fed.send(Ok(Frame::Comment("keepalive".into())))
+                .expect("a stream saying nothing but keepalives was taken as silent");
+            clock.pass_and_be_seen(QUICK.silence / 2, &end);
+        }
+        // The last keepalive may have been stamped after the clock passed
+        // it, so a whole silence more could leave the reader exactly at the
+        // bound rather than past it.
+        clock.pass(QUICK.silence * 2);
+        let read = end
+            .recv_timeout(Duration::from_secs(10))
+            .expect("a stream silent past the bound was still being read");
         assert_eq!(
-            server.seen("/events").len(),
-            1,
-            "a stream saying nothing but keepalives was taken as silent and opened again"
+            read.unwrap(),
+            Ended::Over,
+            "a stream silent past the bound once its keepalives stopped was not let go"
         );
     }
 
@@ -1494,6 +1610,80 @@ mod tests {
         assert_eq!(report.applied, 1);
         assert_eq!(report.cursor, "14");
         assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
+    }
+
+    /// The bearers each request to `path` carried, in order.
+    fn carried(server: &Scripted, path: &str) -> Vec<String> {
+        server
+            .seen(path)
+            .into_iter()
+            .map(|seen| seen.authorization.unwrap_or_default())
+            .collect()
+    }
+
+    /// A renewal that hands out `fresh-1`, `fresh-2` and so on, recording
+    /// the bearer each was asked to replace.
+    fn renewing(core: &Core) -> Arc<Mutex<Vec<String>>> {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let told = Arc::clone(&asked);
+        core.renew_credential_with(Box::new(move |refused| {
+            let mut told = told.lock().unwrap();
+            told.push(refused.to_string());
+            Ok(format!("fresh-{}", told.len()))
+        }));
+        asked
+    }
+
+    /// A command that outlives its access token goes on: each call the
+    /// server refuses `401` is renewed and sent again once, and every call
+    /// after it carries the renewed bearer.
+    #[test]
+    fn a_catch_up_past_its_token_goes_on_under_a_renewed_one() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![refusal(401, "unauthorized"), types(&[(NOTE, None)])],
+        );
+        server.on(
+            "/events",
+            vec![refusal(401, "unauthorized"), withheld_head(Some("14"))],
+        );
+        let (_dir, core) = hydrated(&server);
+        let asked = renewing(&core);
+        let report = core.catch_up().unwrap();
+        assert_eq!(report.applied, 1);
+        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
+        assert_eq!(*asked.lock().unwrap(), ["k", "fresh-1"]);
+        assert_eq!(carried(&server, "/types"), ["Bearer k", "Bearer fresh-1"]);
+        assert_eq!(
+            carried(&server, "/events"),
+            ["Bearer fresh-1", "Bearer fresh-2"]
+        );
+    }
+
+    /// Once per call: a renewed bearer refused again is the answer. And
+    /// with no renewal set, the first `401` is.
+    #[test]
+    fn a_bearer_refused_after_its_renewal_is_the_answer() {
+        let server = Scripted::start();
+        server.on("/types", vec![refusal(401, "unauthorized")]);
+        let (_dir, core) = hydrated(&server);
+        assert!(matches!(
+            core.catch_up(),
+            Err(CoreError::Unauthorized { .. })
+        ));
+        assert_eq!(carried(&server, "/types"), ["Bearer k"]);
+
+        let asked = renewing(&core);
+        assert!(matches!(
+            core.catch_up(),
+            Err(CoreError::Unauthorized { .. })
+        ));
+        assert_eq!(*asked.lock().unwrap(), ["k"]);
+        assert_eq!(
+            carried(&server, "/types"),
+            ["Bearer k", "Bearer k", "Bearer fresh-1"]
+        );
     }
 
     #[test]

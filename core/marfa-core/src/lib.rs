@@ -25,6 +25,7 @@ mod sse;
 mod store;
 mod wire;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -91,6 +92,10 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 /// takes it away on open: well past any fetch or copy still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
+/// How many times a withdraw reads the server's rows again because the copy
+/// caught up while they were out, before it gives up and says so.
+const WITHDRAW_READS: usize = 3;
+
 impl Core {
     /// Opens the file at `path`, creating it and its schema when absent. A
     /// file bound to a different server than `server` is refused.
@@ -135,6 +140,17 @@ impl Core {
     /// opener that reads and refuses every write.
     pub fn handle(&self) -> Handle {
         self.lock.handle()
+    }
+
+    /// Sets how the server's credential is renewed when the server refuses
+    /// it with a `401`, so a hydration, a catch-up, a held stream or a drain
+    /// that outlives a signed-in session's token goes on under a fresh one.
+    /// Each refused call is sent again once. A copy opened with no server
+    /// has nothing to renew.
+    pub fn renew_credential_with(&self, renew: http::Renew) {
+        if let Some(http) = &self.http {
+            http.renew_with(renew);
+        }
     }
 
     /// How long a silent event stream is read before catch-up decides it has
@@ -382,6 +398,15 @@ impl Core {
         store::edges_to(&conn, id)
     }
 
+    /// Every edge of `edge_type` the copy holds, answered or still queued,
+    /// oldest first: the threads or the attachments of every held item in
+    /// one read rather than one for each item.
+    pub fn edges_of_type(&self, edge_type: &str) -> Result<Vec<Edge>> {
+        let conn = self.conn()?;
+        store::refuse_unless_hydrated(&conn)?;
+        store::edges_of_type(&conn, edge_type)
+    }
+
     /// Full-text search over titles, bodies and tags, best match first,
     /// narrowed as `SearchFilters` says.
     pub fn search(
@@ -468,6 +493,73 @@ impl Core {
         // one, and the count that came back described neither.
         tx.commit()?;
         Ok(released)
+    }
+
+    /// Takes a write that can never be sent out of the queue, and puts the
+    /// copy back to what the server holds (`queue-and-verdicts.md` 46).
+    ///
+    /// Only a write blocked `ancestor_unavailable` or `conflict_unresolved`:
+    /// sent again, under any key, it is refused the same way. Answers `false`
+    /// for any other row, which may yet land or be released. Each write held
+    /// for it is refused unsent, since what it waits for will never be sent.
+    ///
+    /// Everything it puts back is read from the server before anything
+    /// changes, so a withdraw that cannot read leaves the queue and the copy
+    /// as they were.
+    pub fn withdraw(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        for _ in 0..WITHDRAW_READS {
+            let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+                return Err(CoreError::NotFound {
+                    code: "queued_write_not_found".into(),
+                    message: format!("{id} is not a write this queue holds"),
+                });
+            };
+            if !row.withdrawable() {
+                return Ok(false);
+            }
+            let held = store::held_for(&*self.conn()?, id)?;
+            // A catch-up that lands while the reads are out would be rolled back
+            // by the older read, with its event already behind the cursor, so the
+            // versions the copy held when they went out are checked again before
+            // anything is put back.
+            let versions = |conn: &Connection| -> Result<Vec<Option<i64>>> {
+                std::iter::once(&row)
+                    .chain(&held)
+                    .map(|write| match write.item_id.as_deref() {
+                        Some(item) => Ok(store::item_by_id(conn, item)?.map(|held| held.version)),
+                        None => Ok(None),
+                    })
+                    .collect()
+            };
+            let before = versions(&*self.conn()?)?;
+            let mut reads = vec![drain::read_back(self, &row)?];
+            for dependant in &held {
+                reads.push(drain::read_back(self, dependant)?);
+            }
+            let mut conn = self.conn()?;
+            let tx = conn.transaction()?;
+            // Another thread may have released or answered a row while the
+            // reads were out.
+            if store::queued_write(&tx, id)?.as_ref() != Some(&row)
+                || store::held_for(&tx, id)? != held
+            {
+                return Ok(false);
+            }
+            if versions(&tx)? != before {
+                continue;
+            }
+            store::withdraw(&tx, &row, &held)?;
+            for read in &reads {
+                drain::apply_read_back(&tx, read)?;
+            }
+            tx.commit()?;
+            return Ok(true);
+        }
+        Err(CoreError::Invalid(format!(
+            "{id} was not withdrawn: the copy kept catching up while the server's rows were \
+             read back, and withdrawing then would put back an older row; ask again"
+        )))
     }
 
     /// Moves an edit blocked `ancestor_unavailable` onto the version the copy
@@ -919,13 +1011,21 @@ impl Core {
     ) -> Result<T> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_hydrated(&*self.conn()?)?;
-        let hash = self.cache()?.take(path)?;
-        let mut conn = self.conn()?;
-        let catalog = catalog::Catalog::load(&conn)?;
-        let tx = conn.transaction()?;
-        let upload = queue_upload(&tx, &hash, mime_type)?;
-        let queued = then(&tx, &catalog, &upload, &hash)?;
-        tx.commit()?;
+        let cache = self.cache()?;
+        let queued = {
+            // Until the upload is queued, nothing but this hold keeps its
+            // bytes from a trim.
+            let _held = cache.hold();
+            let hash = cache.take(path)?;
+            let mut conn = self.conn()?;
+            let catalog = catalog::Catalog::load(&conn)?;
+            let tx = conn.transaction()?;
+            let upload = queue_upload(&tx, &hash, mime_type)?;
+            let queued = then(&tx, &catalog, &upload, &hash)?;
+            tx.commit()?;
+            queued
+        };
+        self.trim_blobs(None, blob::CACHE_MOST);
         Ok(queued)
     }
 
@@ -997,6 +1097,9 @@ impl Core {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
         if let Some(path) = cache.held(&hash)? {
+            if self.handle() == Handle::Writer {
+                cache.touch(&path);
+            }
             return Ok(path);
         }
         let Some(http) = self.http.as_deref() else {
@@ -1009,7 +1112,57 @@ impl Core {
                 reason: reason.into(),
             });
         };
-        blob::fetch(cache, http, &hash)
+        let path = blob::fetch(cache, http, &hash)?;
+        self.trim_blobs(Some(&hash), blob::CACHE_MOST);
+        Ok(path)
+    }
+
+    /// Keeps what is held beside the working copy to `most` bytes, taking
+    /// the bytes read longest ago first (`device.md` 37). Bytes an upload
+    /// still names are never taken, nor `fetched`, which a caller is about
+    /// to read. A trim that cannot read the queue takes nothing.
+    fn trim_blobs(&self, fetched: Option<&str>, most: u64) {
+        if self.handle() != Handle::Writer {
+            return;
+        }
+        let Ok(cache) = self.cache() else {
+            return;
+        };
+        let _held = cache.hold();
+        if let Some(mut kept) = self.unsent_blobs() {
+            kept.extend(fetched.and_then(|hash| blob::hex_of(hash).ok().map(str::to_string)));
+            cache.trim(most, &kept);
+        }
+    }
+
+    /// Takes away the copy of bytes a folder holds as a file, since the file
+    /// is them (`folders.md` 37), unless an upload still names them.
+    pub(crate) fn let_go_blob(&self, hash: &str) {
+        if self.handle() != Handle::Writer {
+            return;
+        }
+        let Ok(cache) = self.cache() else {
+            return;
+        };
+        if !cache.held(hash).is_ok_and(|held| held.is_some()) {
+            return;
+        }
+        let _held = cache.hold();
+        if let Some(kept) = self.unsent_blobs() {
+            cache.let_go(hash, &kept);
+        }
+    }
+
+    /// The hex of every blob an upload the server has not taken names.
+    fn unsent_blobs(&self) -> Option<HashSet<String>> {
+        let conn = self.conn().ok()?;
+        let hashes = store::unsent_uploads(&conn).ok()?;
+        Some(
+            hashes
+                .iter()
+                .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
+                .collect(),
+        )
     }
 
     /// Whether a blob's bytes are held beside the working copy, with no
@@ -1339,7 +1492,23 @@ fn queue_update(
 /// It waits for both of its endpoints' creates (`queue-and-verdicts.md` 4):
 /// an edge naming a row whose create has not landed is an edge the server
 /// has nowhere to put, and either end can be the one that has not.
+///
+/// An edge from a row the copy does not hold, of a type its slice does not
+/// hold whole, is refused (`device.md` 44): no event about it would reach
+/// the copy, so it would sit there as it was written for good.
 fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
+    if !store::takes_edge(
+        tx,
+        &draft.source_id,
+        &draft.edge_type,
+        &store::whole_edge_types(tx)?,
+    )? {
+        return Err(CoreError::Invalid(format!(
+            "{source} is not a row this copy holds, and {edge_type} is not an edge type its slice holds whole, so the copy cannot hold an edge from it",
+            source = draft.source_id,
+            edge_type = draft.edge_type,
+        )));
+    }
     let id = draft
         .id
         .clone()
@@ -1548,6 +1717,62 @@ mod tests {
             store::meta_delete(&conn, store::META_SLICE_TYPES).unwrap();
         }
         assert_eq!(core.status().unwrap().hydration, Hydration::Never);
+    }
+
+    #[test]
+    fn every_edge_of_one_type_is_read_at_once() {
+        let core = Core::open_in_memory(None).unwrap();
+        assert_eq!(
+            core.edges_of_type("in-thread"),
+            Err(CoreError::HydrationIncomplete)
+        );
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            for id in ["root", "first", "second"] {
+                let row = store::testing::note(id, id, id, "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &row, None, &catalog::Indexing::default()).unwrap();
+            }
+            for (id, source, target, edge_type) in [
+                ("reply-first", "first", "root", "in-thread"),
+                ("cites", "first", "second", "references"),
+                ("reply-second", "second", "root", "in-thread"),
+            ] {
+                store::upsert_edge(
+                    &conn,
+                    &store::testing::wire_edge(id, source, target, edge_type),
+                )
+                .unwrap();
+            }
+        }
+        let queued = core
+            .create_edge(&EdgeDraft {
+                source_id: "second".into(),
+                target_id: "first".into(),
+                edge_type: "in-thread".into(),
+                ..Default::default()
+            })
+            .unwrap();
+        let ids = |edge_type: &str| -> Vec<String> {
+            core.edges_of_type(edge_type)
+                .unwrap()
+                .into_iter()
+                .map(|edge| edge.id)
+                .collect()
+        };
+        assert_eq!(
+            ids("in-thread"),
+            vec![
+                "reply-first".to_string(),
+                "reply-second".to_string(),
+                queued.edge_id.unwrap(),
+            ],
+            "the read is not every edge of the type the copy holds, the unanswered one with them"
+        );
+        assert_eq!(ids("references"), vec!["cites".to_string()]);
+        assert!(ids("attached-to").is_empty());
     }
 
     #[test]
@@ -2003,6 +2228,7 @@ mod tests {
                 "rebase_on_held",
                 reader.rebase_on_held("blocked").unwrap_err(),
             ),
+            ("withdraw", reader.withdraw("blocked").unwrap_err()),
             // A drain writes verdicts and adopts rows, so it is a write door
             // like the rest. It refuses at the handle before it reaches the
             // missing server, which is why this is a `ReadingHandle` and not
@@ -2083,7 +2309,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            30,
+            31,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );
@@ -2277,6 +2503,46 @@ mod tests {
             core.blob(&other),
             Err(CoreError::BytesAbsent { hash, .. }) if hash == other
         ));
+    }
+
+    /// The cap never takes bytes an upload the server has not taken still
+    /// names, since the queue names them and only the cache holds them.
+    #[test]
+    fn a_trim_keeps_the_bytes_an_upload_still_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            core.cache().unwrap().take(&path).unwrap()
+        };
+        let waiting = file("waiting.txt", b"to be sent");
+        let read = file("read.txt", b"fetched once");
+        let upload = queue_upload(&core.conn().unwrap(), &waiting, "text/plain").unwrap();
+
+        core.trim_blobs(None, 0);
+        assert!(
+            core.blob_held(&waiting).unwrap(),
+            "the cap took bytes an upload still names, so it can never be sent"
+        );
+        assert!(!core.blob_held(&read).unwrap(), "nothing was trimmed");
+
+        store::record_verdict(
+            &core.conn().unwrap(),
+            &upload.id,
+            &store::Answered {
+                verdict: Verdict::Accepted,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        core.trim_blobs(None, 0);
+        assert!(
+            !core.blob_held(&waiting).unwrap(),
+            "bytes the server has taken were kept past the cap"
+        );
     }
 
     /// The type catalog a follow asks for on every stream is written only

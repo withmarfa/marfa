@@ -1066,6 +1066,17 @@ impl MarfaCore {
     }
 
     #[napi]
+    pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>> {
+        Ok(self
+            .inner
+            .edges_of_type(&edge_type)
+            .map_err(failure)?
+            .into_iter()
+            .map(edge)
+            .collect())
+    }
+
+    #[napi]
     pub fn search(
         &self,
         query: String,
@@ -1368,6 +1379,15 @@ impl MarfaCore {
     pub fn release_reason(&self, reason: BlockedReason) -> Result<i64> {
         let released = self.inner.release_reason(reason.into()).map_err(failure)?;
         Ok(count(released as u64))
+    }
+
+    /// Takes a write blocked `ancestor_unavailable` or `conflict_unresolved`
+    /// out of the queue, and puts the copy back to what the server holds;
+    /// each write held for it is refused unsent. Answers whether the row was
+    /// one a withdraw takes.
+    #[napi]
+    pub fn withdraw(&self, id: String) -> Result<bool> {
+        self.inner.withdraw(&id).map_err(failure)
     }
 
     /// Clears the writes the server has answered, and says how many went.

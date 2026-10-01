@@ -206,7 +206,10 @@
           },
           "extensions": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {}
+            }
           }
         },
         "required": [
@@ -537,7 +540,7 @@
           "error"
         ]
       },
-      "TypeNotPermittedRefusal": {
+      "UnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -546,6 +549,38 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "unknown_type",
+                  "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "EdgePermissionDeniedOrTypeNotPermittedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "edge_permission_denied",
                   "type_not_permitted"
                 ]
               },
@@ -612,37 +647,6 @@
                   "missing_required_field",
                   "unknown_type",
                   "validation_error"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
-      "EdgePermissionDeniedOrTypeNotPermittedRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "edge_permission_denied",
-                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -779,7 +783,7 @@
           "error"
         ]
       },
-      "ItemNotFoundRefusal": {
+      "TypeNotPermittedRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -788,7 +792,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "item_not_found"
+                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -809,7 +813,7 @@
           "error"
         ]
       },
-      "EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal": {
+      "ItemNotFoundRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -818,12 +822,7 @@
               "code": {
                 "type": "string",
                 "enum": [
-                  "edge_constraint_violation",
-                  "edge_cycle",
-                  "invalid_id",
-                  "invalid_properties",
-                  "missing_required_field",
-                  "validation_error"
+                  "item_not_found"
                 ]
               },
               "message": {
@@ -1889,7 +1888,9 @@
           },
           "property_schema": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EdgePropertyDefinition"
+            }
           },
           "reverse_name": {
             "type": "string"
@@ -1910,6 +1911,38 @@
           "cascade_on_delete",
           "property_schema",
           "written_at"
+        ]
+      },
+      "EdgePropertyDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items_type": {
+            "type": "string",
+            "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
+          },
+          "format": {
+            "type": "string",
+            "description": "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail."
+          }
+        },
+        "required": [
+          "type"
         ]
       },
       "MissingRequiredFieldOrValidationErrorRefusal": {
@@ -2020,36 +2053,7 @@
           "property_schema": {
             "type": "object",
             "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
-                },
-                "description": {
-                  "type": "string"
-                },
-                "required": {
-                  "type": "boolean"
-                },
-                "enum_values": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "items_type": {
-                  "type": "string",
-                  "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
-                },
-                "format": {
-                  "type": "string",
-                  "description": "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail."
-                }
-              },
-              "required": [
-                "type"
-              ]
+              "$ref": "#/components/schemas/EdgePropertyDefinition"
             }
           },
           "reverse_name": {
@@ -2203,7 +2207,9 @@
           },
           "fields": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldDefinition"
+            }
           },
           "version": {
             "type": "number"
@@ -2233,6 +2239,70 @@
         "enum": [
           "container"
         ]
+      },
+      "FieldDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "enum",
+              "array",
+              "object",
+              "thumbnail"
+            ],
+            "description": "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`."
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items_type": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "thumbnail",
+              "bcp47",
+              "iso3166"
+            ],
+            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`."
+          },
+          "searchable": {
+            "type": "boolean"
+          },
+          "maxLength": {
+            "type": "integer"
+          },
+          "maxItems": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {}
       },
       "DisplayHints": {
         "type": "object",
@@ -2500,70 +2570,6 @@
         "required": [
           "fields",
           "id"
-        ],
-        "additionalProperties": {}
-      },
-      "FieldDefinition": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "string",
-              "number",
-              "integer",
-              "boolean",
-              "url",
-              "email",
-              "datetime",
-              "date",
-              "enum",
-              "array",
-              "object",
-              "thumbnail"
-            ],
-            "description": "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`."
-          },
-          "description": {
-            "type": "string"
-          },
-          "required": {
-            "type": "boolean"
-          },
-          "enum_values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "items_type": {
-            "type": "string"
-          },
-          "format": {
-            "type": "string",
-            "enum": [
-              "url",
-              "email",
-              "datetime",
-              "date",
-              "thumbnail",
-              "bcp47",
-              "iso3166"
-            ],
-            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`."
-          },
-          "searchable": {
-            "type": "boolean"
-          },
-          "maxLength": {
-            "type": "integer"
-          },
-          "maxItems": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "type"
         ],
         "additionalProperties": {}
       },
@@ -4270,9 +4276,15 @@
           "key",
           "label",
           "source",
+          "sources",
+          "permissions",
           "default_tier",
           "is_operator",
           "type_permissions",
+          "extension_permissions",
+          "edge_permissions",
+          "metadata_permissions",
+          "profile_permissions",
           "created_at",
           "last_used_at"
         ]
@@ -4400,7 +4412,7 @@
             "items": {
               "$ref": "#/components/schemas/Permission"
             },
-            "description": "The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused."
+            "description": "The permissions this credential holds, as the literals themselves. Empty on a key that holds none."
           },
           "oauth_client_id": {
             "type": "string",
@@ -4466,10 +4478,17 @@
           "id",
           "label",
           "source",
+          "sources",
+          "permissions",
           "default_tier",
           "is_operator",
           "type_permissions",
+          "extension_permissions",
+          "edge_permissions",
+          "metadata_permissions",
+          "profile_permissions",
           "created_at",
+          "expires_at",
           "last_used_at"
         ]
       },
@@ -4782,37 +4801,6 @@
                 "type": "string",
                 "enum": [
                   "owner_exists"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
-      "UnknownTypeOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "unknown_type",
-                  "validation_error"
                 ]
               },
               "message": {
@@ -6158,7 +6146,7 @@
           "Items"
         ],
         "summary": "Get item counts",
-        "description": "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+        "description": "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -6178,11 +6166,133 @@
             "description": "Grouping axis. Defaults to `state`.",
             "name": "by",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page."
+            },
+            "required": false,
+            "description": "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Count only this lifecycle state. Omitting the parameter counts every state, as does `any`."
+            },
+            "required": false,
+            "description": "Count only this lifecycle state. Omitting the parameter counts every state, as does `any`.",
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Narrow to rows stamped with this `source`."
+            },
+            "required": false,
+            "description": "Narrow to rows stamped with this `source`.",
+            "name": "source",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "library",
+                "feed",
+                "all"
+              ],
+              "description": "Tier slice; omit or `all` returns both"
+            },
+            "required": false,
+            "description": "Tier slice; omit or `all` returns both",
+            "name": "tier",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated tags; items must carry all of them"
+            },
+            "required": false,
+            "description": "Comma-separated tags; items must carry all of them",
+            "name": "tags",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included."
+            },
+            "required": false,
+            "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.",
+            "name": "filter",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`."
+            },
+            "required": false,
+            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+            "name": "occurred_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive)."
+            },
+            "required": false,
+            "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+            "name": "occurred_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well."
+            },
+            "required": false,
+            "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+            "name": "updated_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort."
+            },
+            "required": false,
+            "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
+            "name": "updated_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "system"
+              ],
+              "description": "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own."
+            },
+            "required": false,
+            "description": "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own.",
+            "name": "include",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Item counts by state",
+            "description": "Item counts on the chosen axis",
             "content": {
               "application/json": {
                 "schema": {
@@ -6208,6 +6318,36 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "description": "A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnknownTypeOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
               }
             }
           },
@@ -6242,11 +6382,11 @@
             }
           },
           "403": {
-            "description": "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+            "description": "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -6591,7 +6731,7 @@
           "Items"
         ],
         "summary": "Update an item",
-        "description": "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
+        "description": "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
         "security": [
           {
             "bearerAuth": []
@@ -6753,7 +6893,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -9439,7 +9579,7 @@
           "Items"
         ],
         "summary": "Permanently delete an item",
-        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.",
+        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n`version` makes the purge conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, and deletes nothing. Without it the purge applies to the row as it is. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -9455,6 +9595,17 @@
             "description": "Item id",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The version the caller read. Where given and the row has moved since, the purge is refused `409 version_conflict` and nothing is deleted. Trashing does not move a row's version, so the version read before the trash is the one to send."
+            },
+            "required": false,
+            "description": "The version the caller read. Where given and the row has moved since, the purge is refused `409 version_conflict` and nothing is deleted. Trashing does not move a row's version, so the version read before the trash is the one to send.",
+            "name": "version",
+            "in": "query"
           },
           {
             "name": "Idempotency-Key",
@@ -9499,7 +9650,7 @@
             }
           },
           "400": {
-            "description": "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+            "description": "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9625,11 +9776,18 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was purged. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was purged, retry.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },
@@ -10365,7 +10523,7 @@
           "Items"
         ],
         "summary": "Apply a bulk action",
-        "description": "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.\n\nUnrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.",
+        "description": "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match. The job acts for the credential that queued it as that credential stands when each chunk runs: once the key is revoked, deleted or expired, the sign-in's token or grant is revoked, or a purge's credential no longer holds `items.purge`, the job writes nothing further and ends `failed`, keeping the `result` it had gathered. A sign-in's token reaching its ordinary expiry does not stop it. A row whose type the credential may read but no longer write is that row's `type_not_permitted` entry in the job's `errors`, and one whose type it may no longer read is its `item_not_found` entry, naming no type. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.\n\nUnrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -10439,6 +10597,14 @@
                         "enum": [
                           "PURGE"
                         ]
+                      },
+                      "expected_ids": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "minItems": 1,
+                        "description": "The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone."
                       }
                     },
                     "required": [
@@ -26827,7 +26993,7 @@
                       "minLength": 1,
                       "maxLength": 200
                     },
-                    "description": "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused."
+                    "description": "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused."
                   },
                   "permissions": {
                     "type": "array",
@@ -27754,7 +27920,7 @@
                       "minLength": 1,
                       "maxLength": 200
                     },
-                    "description": "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused."
+                    "description": "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused."
                   },
                   "type_permissions": {
                     "type": "object",
@@ -32179,6 +32345,36 @@
               },
               "Retry-After": {
                 "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "503": {
+            "description": "The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
               }
             }
           }

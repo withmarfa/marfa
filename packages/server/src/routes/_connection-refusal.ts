@@ -29,8 +29,8 @@ import type { Item } from "@withmarfa/shared";
  * revoked grant row but the strand itself, tokens live and invisible to both read
  * surfaces, and it is refused like any other live grant: purging it would
  * make the strand permanent, since nothing could ever run the cascade for
- * it again. Anything that is not literally `"revoked"` counts as live, on
- * both kinds, so an unknown or missing status fails closed.
+ * it again. Anything that is not literally `"revoked"` counts as live, so an
+ * unknown or missing status fails closed.
  *
  * **Two call sites, and they are the two doors that reach a connection at
  * all.** The delete cascade asks it of every row the walk reaches, the root
@@ -63,23 +63,14 @@ export function liveConnectionRefusal(
       `here would leave both behind with nothing listing them.`
     );
   }
-  // **`kind`, not just the type.** `system.connection` covers both kinds
-  // and only `connector` has a credential minted for it. A row
-  // with neither kind cannot be written through a validating door; if one
-  // is here anyway, nothing knows what hangs off it, so it stays.
+  // A row of any other kind cannot be written through a validating door; if
+  // one is here anyway, nothing knows what hangs off it, so it stays.
   if (props?.status === "revoked") return undefined;
-  if (props?.kind !== "connector") {
-    return (
-      `Connection ${item.id} has no recognized kind and is not revoked; ` +
-      `nothing knows what credentials hang off it, so it stays. A row in ` +
-      `this shape was not written through a validating door and is an ` +
-      `administrative repair, not a delete.`
-    );
-  }
   return (
-    `Connection ${item.id} is still live. Revoke the credentials it holds ` +
-    `and the grants it was given before removing the row, or they are left ` +
-    `behind with nothing naming their owner.`
+    `Connection ${item.id} has no recognized kind and is not revoked; ` +
+    `nothing knows what credentials hang off it, so it stays. A row in ` +
+    `this shape was not written through a validating door and is an ` +
+    `administrative repair, not a delete.`
   );
 }
 

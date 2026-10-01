@@ -3,11 +3,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use marfa_core::{CoreError, Folder, Server};
+use marfa_core::{CoreError, Folder};
 use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::error::CliError;
+use crate::folders;
 use crate::output;
+use crate::remote::Session;
 
 /// How long the watcher waits for the filesystem to go quiet before it acts.
 ///
@@ -31,24 +33,66 @@ fn full_due(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.duration_since(last) >= FULL_PASS)
 }
 
-/// Whether an event the loop passes over lets the tick's pass run: only once
-/// a tick has gone by since the last pass ended and since the last change,
-/// as a receive that timed out would. inotify reports every open of a file,
-/// so a reader faster than the tick would otherwise keep the receive from
-/// ever timing out.
-fn passed_over_is_due(since_pass: Duration, since_change: Duration) -> bool {
-    since_pass >= TICK && since_change >= TICK
+/// The longest changes that never settle hold off a pass. A file written
+/// more often than the debounce, a log say, would otherwise keep every
+/// other file and every change from the server out of step for as long as
+/// it is written. An editor's save settles long before this, so only a
+/// change that never stops is read mid-write, and the next pass reads it
+/// again.
+const HELD_MOST: Duration = Duration::from_secs(5);
+
+/// When the watch last saw a change and last ran a pass, which decide
+/// whether a pass runs now.
+struct Gate {
+    last_change: Instant,
+    last_pass: Instant,
+}
+
+impl Gate {
+    fn new(now: Instant) -> Gate {
+        Gate {
+            last_change: now,
+            last_pass: now,
+        }
+    }
+
+    fn changed(&mut self, now: Instant) {
+        self.last_change = now;
+    }
+
+    /// Measured from the end: a pass's own reads are events passed over, and
+    /// measured from its start a pass longer than a tick would set off the
+    /// next one.
+    fn passed(&mut self, now: Instant) {
+        self.last_pass = now;
+    }
+
+    /// Whether an event the loop passes over lets the tick's pass run: only
+    /// once a tick has gone by since the last pass ended and since the last
+    /// change, as a receive that timed out would. inotify reports every open
+    /// of a file, so a reader faster than the tick would otherwise keep the
+    /// receive from ever timing out.
+    fn passed_over_is_due(&self, now: Instant) -> bool {
+        now.duration_since(self.last_pass) >= TICK && now.duration_since(self.last_change) >= TICK
+    }
+
+    /// Whether a pass runs now: once the folder has settled, or once
+    /// changes that never settle have held it off for `HELD_MOST`.
+    fn due(&self, now: Instant) -> bool {
+        now.duration_since(self.last_change) >= SETTLE
+            || now.duration_since(self.last_pass) >= HELD_MOST
+    }
 }
 
 /// Watches a folder and keeps it in step. Every pass, the first included,
 /// decides identity by the same rule (`folders.md` 18).
 pub fn watch(
     dir: &Path,
-    server: Server,
+    session: Session,
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
-    let folder = Folder::open(dir, Some(server))?;
+    let folder = folders::opened(dir, Some(session))?;
     let stop = AtomicBool::new(false);
     let (sender, wakes) = mpsc::channel::<Wake>();
     std::thread::scope(|scope| {
@@ -161,8 +205,7 @@ fn watch_files(
     eprintln!("watching {} (interrupt to stop)", dir.display());
 
     let started = Instant::now();
-    let mut quiet_since = Instant::now();
-    let mut last_pass = Instant::now();
+    let mut gate = Gate::new(Instant::now());
     // What stood after the last pass that printed, so a standing condition
     // is said once rather than once a second.
     let mut standing: Option<Standing> = None;
@@ -190,8 +233,8 @@ fn watch_files(
                             && !lists.as_ref().is_some_and(|lists| taken(lists, dir, path))
                     });
                 if !passed_over {
-                    quiet_since = Instant::now();
-                } else if !passed_over_is_due(last_pass.elapsed(), quiet_since.elapsed()) {
+                    gate.changed(Instant::now());
+                } else if !gate.passed_over_is_due(Instant::now()) {
                     continue;
                 }
             }
@@ -211,13 +254,14 @@ fn watch_files(
         // filesystem marks that. So once a tick is due, the only gate is
         // the debounce — an editor writes a file in several steps, and a
         // pass between two of them reads a file halfway through being
-        // written and pushes it.
+        // written and pushes it. Only changes that never settle pass it,
+        // once they have held a pass off for `HELD_MOST`.
         //
         // There is deliberately no "was there a change" flag beside this.
         // A pass with nothing to do is cheap and says nothing, and a flag
         // that gated the pass would stop the journal ever being swept in a
         // folder that went quiet after a delete.
-        if quiet_since.elapsed() < SETTLE {
+        if !gate.due(Instant::now()) {
             continue;
         }
         let full = full_due(last_full, Instant::now());
@@ -230,10 +274,7 @@ fn watch_files(
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }
-        // From the end: a pass's own reads are events passed over, and
-        // measured from its start a pass longer than a tick would set off
-        // the next one.
-        last_pass = Instant::now();
+        gate.passed(Instant::now());
         lists = folder.settings().and_then(|settings| settings.lists()).ok();
     }
     Ok(())
@@ -468,10 +509,62 @@ mod tests {
     #[test]
     fn an_event_passed_over_runs_a_pass_only_a_tick_after_both_the_last_pass_and_change() {
         let under = Duration::from_millis(900);
-        assert!(passed_over_is_due(SECOND, 5 * SECOND));
-        assert!(!passed_over_is_due(under, 5 * SECOND));
-        assert!(!passed_over_is_due(5 * SECOND, under));
-        assert!(!passed_over_is_due(under, under));
+        let due = |since_pass: Duration, since_change: Duration| {
+            let now = Instant::now() + 10 * SECOND;
+            Gate {
+                last_change: now - since_change,
+                last_pass: now - since_pass,
+            }
+            .passed_over_is_due(now)
+        };
+        assert!(due(SECOND, 5 * SECOND));
+        assert!(!due(under, 5 * SECOND));
+        assert!(!due(5 * SECOND, under));
+        assert!(!due(under, under));
+    }
+
+    /// The loop's timing on a clock the test moves: one file changing twice
+    /// a second, each change waking the watch. A pass carries both
+    /// directions, its scan and drain sending what changed on the disk and
+    /// its pull writing what came from the server, so a bound on the wait
+    /// for a pass is a bound on both.
+    #[test]
+    fn steady_changes_hold_a_pass_off_for_a_bounded_time() {
+        let every = Duration::from_millis(500);
+        let start = Instant::now();
+        let mut gate = Gate::new(start);
+        let mut passes = Vec::new();
+        let mut at = start;
+        while at < start + 30 * SECOND {
+            at += every;
+            gate.changed(at);
+            if gate.due(at) {
+                passes.push(at);
+                gate.passed(at);
+            }
+        }
+        assert!(
+            !passes.is_empty(),
+            "no pass ran in thirty seconds of a file changing twice a second, \
+             so nothing from the server reached the folder and no other file \
+             reached the server"
+        );
+        let waits: Vec<Duration> = std::iter::once(start)
+            .chain(passes.iter().copied())
+            .zip(passes.iter().copied())
+            .map(|(before, after)| after - before)
+            .collect();
+        let longest = waits.iter().max().copied().unwrap_or_default();
+        assert!(
+            longest <= HELD_MOST + every,
+            "a pass was held off for {longest:?} by changes that never settled"
+        );
+
+        // Witness: the same clock with the changes stopped settles at once,
+        // so the bound above is what steady changes cost and nothing more.
+        let quiet = at + SETTLE;
+        assert!(gate.due(quiet));
+        assert!(!Gate::new(at).due(at + SETTLE / 2));
     }
 
     #[test]

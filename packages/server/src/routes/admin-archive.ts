@@ -99,18 +99,37 @@ function archiveExtensions(
  *
  * `ArchiveManifest` in `routes/export.ts` is the writer's own declaration
  * and the authority on the format. This one stops at the fields the restore
- * consults — `version`, which it refuses, and `blobs`, whose mime type it
- * falls back to. Widening it to match the writer would have it claim fields
- * of every archive ever written, which is a claim nothing here can keep.
+ * consults — `version`, which it refuses, and `blobs`, whose mime type each
+ * blob entry is stored under. Widening it to match the writer would have it
+ * claim fields of every archive ever written, which is a claim nothing here
+ * can keep. It is checked rather than cast because a blob entry reads it
+ * in a stream callback, where a missing `blobs` would throw outside every
+ * refusal, as an unhandled rejection.
  */
-interface ArchiveManifest {
-  version: number;
-  format: string;
-  created_at: string;
-  item_count: number;
-  edge_count: number;
-  blob_count: number;
-  blobs: Record<string, { mime_type: string; size_bytes: number }>;
+const archiveManifestSchema = z.object({
+  version: z.literal(0),
+  blobs: z.record(
+    z.string(),
+    z.object({
+      mime_type: z.string(),
+      size_bytes: z.number().int().nonnegative(),
+    }),
+  ),
+});
+type ArchiveManifest = z.infer<typeof archiveManifestSchema>;
+
+/** The refusal for a manifest the schema does not take, naming each field. */
+function invalidManifest(error: z.ZodError): MarfaError {
+  const errors = error.issues.map((issue) => ({
+    path: issue.path.map(String).join("."),
+    message: issue.message,
+  }));
+  const named = errors.map((e) => e.path || "the manifest itself").join(", ");
+  return new MarfaError(
+    ErrorCode.VALIDATION_ERROR,
+    `Invalid manifest.json: ${named}`,
+    { errors },
+  );
 }
 
 const restoreArchiveRoute = createRoute({
@@ -442,8 +461,14 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
 
           if (header.name === "manifest.json") {
             try {
-              manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
-              if (manifest.version !== 0) {
+              const parsed: unknown = JSON.parse(buf.toString("utf-8"));
+              const version =
+                typeof parsed === "object" && parsed !== null
+                  ? (parsed as { version?: unknown }).version
+                  : undefined;
+              // Ahead of the shape, because another version's manifest is
+              // free to lay its other fields out differently.
+              if (typeof version === "number" && version !== 0) {
                 reject(
                   new MarfaError(
                     ErrorCode.VALIDATION_ERROR,
@@ -452,11 +477,17 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                     // with no fallback key, so the refusal has to be here:
                     // parsing one would drop every registration it carries
                     // and answer 200.
-                    `Unsupported archive version: ${String(manifest.version)}. This build reads version 0 only, and nothing converts another: export again from a build that writes version 0.`,
+                    `Unsupported archive version ${String(version)}. Until the first public release an archive is read only by the build that wrote it, and this build reads version 0 only: restore it into the build that exported it.`,
                   ),
                 );
                 return;
               }
+              const checked = archiveManifestSchema.safeParse(parsed);
+              if (!checked.success) {
+                reject(invalidManifest(checked.error));
+                return;
+              }
+              manifest = checked.data;
             } catch (err) {
               if (err instanceof MarfaError) {
                 reject(err);
@@ -566,10 +597,10 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // A row whose `source` claims a reserved credential shape is refused,
     // on the same terms and for the same reason as the state check below:
     // the restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses those prefixes precisely so no credential can
-    // stamp one. A row carrying `connector:` would otherwise read, ever
-    // after, as written by a connector that never existed — planted
-    // through the one door that does not ask.
+    // `POST /keys` refuses that prefix precisely so no credential can
+    // stamp one. A row carrying `oauth:` would otherwise read, ever after,
+    // as written by a grant that never existed — planted through the one
+    // door that does not ask.
     for (const { item } of items) {
       const source = item.source;
       if (typeof source === "string" && isReservedCredentialSource(source)) {
@@ -625,7 +656,8 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       }
     }
 
-    // Before the transaction, so a rollback cannot strand the registry
+    // Each registration commits in a transaction of its own before the rows'
+    // transaction opens, so a rollback of the rows cannot strand the registry
     // holding types the database no longer has. See registerArchiveTypes.
     let typeResult;
     try {

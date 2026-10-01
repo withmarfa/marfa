@@ -19,10 +19,14 @@ async function open(): Promise<Storage> {
   return storage;
 }
 
-async function inProgressJob(jobs: BulkActionJobStore, id: string) {
+async function inProgressJob(
+  jobs: BulkActionJobStore,
+  id: string,
+  apiKeyId: string | null = null,
+) {
   await jobs.create({
     id,
-    api_key_id: null,
+    api_key_id: apiKeyId,
     action: "transition",
     input: JSON.stringify({ action: "transition", state: "archived" }),
     matched_ids: JSON.stringify(["a"]),
@@ -82,7 +86,20 @@ describe("SqliteBulkActionJobStore terminal states", () => {
 
   it("keeps a job canceled during its last chunk, with the rows already processed", async () => {
     const s = await open();
-    await inProgressJob(s.bulkActionJobs, "baj_w");
+    // The worker acts only for a credential that still stands.
+    const key = await s.keys.create(
+      {
+        label: "worker",
+        source: "worker",
+        type_permissions: { "*": "write" },
+        extension_permissions: {},
+        edge_permissions: {},
+        default_tier: "library",
+        is_operator: false,
+      },
+      "worker-key-hash",
+    );
+    await inProgressJob(s.bulkActionJobs, "baj_w", key.id);
     // Back to queued so the worker claims it itself.
     await s.bulkActionJobs.recoverStale(at(60_000));
 

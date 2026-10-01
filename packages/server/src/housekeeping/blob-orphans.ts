@@ -21,12 +21,12 @@ const SCAN_PAGE = 200;
 
 /**
  * A report before a deletion. Each run computes the blobs nothing
- * references (an item in any lifecycle state, a metadata extension and a
- * version snapshot all count), records each with the time it was first
- * reported, forgets any that is referenced again, and purges only what an
- * earlier run reported longer ago than the grace. Two runs, never one,
- * stand between an unreferenced blob and its deletion, and the report is
- * readable between them.
+ * references (an item in any lifecycle state, a metadata extension, an
+ * edge's properties and a version snapshot all count), records each with
+ * the time it was first reported, forgets any that is referenced again, and
+ * purges only what an earlier run reported longer ago than the grace. Two
+ * runs, never one, stand between an unreferenced blob and its deletion, and
+ * the report is readable between them.
  */
 export class BlobOrphanReporter {
   constructor(
@@ -92,6 +92,17 @@ export class BlobOrphanReporter {
       }
       cursor = page.next_cursor ?? undefined;
     } while (cursor !== undefined);
+    let edgeCursor: string | undefined;
+    do {
+      const page = await this.storage.edges.list({
+        limit: SCAN_PAGE,
+        cursor: edgeCursor,
+      });
+      for (const edge of page.data) {
+        collectBlobHashes(edge.properties, referenced);
+      }
+      edgeCursor = page.next_cursor ?? undefined;
+    } while (edgeCursor !== undefined);
     let versionCursor: string | undefined;
     for (;;) {
       const page = await this.storage.versions.scanProperties(

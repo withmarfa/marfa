@@ -61,7 +61,8 @@ import { CONTRACT_VERSION } from "../contract.js";
  *
  * **The query string is hashed as written**, so a door taking a free-text
  * query value would refuse a retry that re-encoded it. No door here takes
- * one: `PATCH /items/:id` carries `conflict`, a closed enum, and the rest
+ * one: `PATCH /items/:id` carries `conflict`, a closed enum,
+ * `DELETE /items/:id/purge` carries `version`, a whole number, and the rest
  * carry no query parameter.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [

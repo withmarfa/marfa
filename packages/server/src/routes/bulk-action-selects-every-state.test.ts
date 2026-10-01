@@ -39,7 +39,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
   it("accepts revoked as a filter value", async () => {
     // The vocabulary first: the shape the door parses names all four states.
     const parsed = BulkActionFilterShape.parse({
-      type: "system.webhook",
+      type: "system.folder",
       state: "revoked",
     });
     expect(parsed.state).toBe("revoked");

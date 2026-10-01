@@ -237,7 +237,7 @@ const bulkActionRoute = createRoute({
   tags: ["Items"],
   summary: "Apply a bulk action",
   description:
-    "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.\n\n" +
+    "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match. The job acts for the credential that queued it as that credential stands when each chunk runs: once the key is revoked, deleted or expired, the sign-in's token or grant is revoked, or a purge's credential no longer holds `items.purge`, the job writes nothing further and ends `failed`, keeping the `result` it had gathered. A sign-in's token reaching its ordinary expiry does not stop it. A row whose type the credential may read but no longer write is that row's `type_not_permitted` entry in the job's `errors`, and one whose type it may no longer read is its `item_not_found` entry, naming no type. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.\n\n" +
     UNKNOWN_FILTER_FIELD_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -857,6 +857,22 @@ async function processBulkItem(
     const resultingType =
       retype && raw.type !== existing.type ? raw.type : existing.type;
     const isMove = resultingType !== existing.type;
+    // Refused as `PATCH /items/{id}` and a create refuse it, before the
+    // properties are judged against a schema the destination does not have.
+    if (isMove && getTypeSchema(resultingType) === undefined) {
+      return {
+        result: {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: {
+            code: ErrorCode.UNKNOWN_TYPE,
+            message: `Unknown type: ${resultingType}. Register it via POST /types before moving items into it.`,
+            details: { type: resultingType },
+          },
+        },
+      };
+    }
     if (raw.properties !== undefined) {
       // The same lever the create branch asks a few lines down, asked of
       // the update half for the same reason: this is one door, and a
@@ -919,13 +935,11 @@ async function processBulkItem(
         resolveIncomingProperties(existing.type, raw.properties) ?? {},
         "merge",
       );
-      // The move stays unguarded, which is not an oversight: a destination
-      // with nothing registered is a destination that does not exist, and
-      // `validateProperties` answering `Unknown type` is the right refusal
-      // for a move into it. A same-type update cannot say that about the
-      // row's own type without refusing every write to a type whose schema
-      // this request's registry does not carry, so it asks first — the
-      // same guard the single-item door runs.
+      // A move reaching here has a registered destination. A same-type
+      // update cannot refuse the row's own type for being unregistered
+      // without refusing every write to a type whose schema this request's
+      // registry does not carry, so it asks first, the same guard the
+      // single-item door runs.
       if (isMove || getTypeSchema(resultingType) !== undefined) {
         const validation = validateProperties(resultingType, merged);
         if (!validation.success) {
@@ -1516,6 +1530,15 @@ export function bulkRoutes(storage: Storage) {
       callerKey,
     );
 
+    // A purge naming the ids its dry run returned is narrowed while the
+    // match set is gathered, so a row the filter reached since is never
+    // handed to the worker, and the cap counts what the purge takes rather
+    // than what the filter reaches.
+    const expected =
+      action === "purge" && body.expected_ids !== undefined
+        ? new Set(body.expected_ids)
+        : undefined;
+
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
     const matched: Item[] = [];
@@ -1577,11 +1600,14 @@ export function bulkRoutes(storage: Storage) {
         cursor,
       });
       for (const item of page.data) {
+        if (expected && !expected.has(item.id)) continue;
         matched.push(item);
         if (matched.length > cap) break;
       }
       cursor =
-        matched.length <= cap ? (page.next_cursor ?? undefined) : undefined;
+        matched.length <= cap && matched.length !== expected?.size
+          ? (page.next_cursor ?? undefined)
+          : undefined;
     } while (cursor);
 
     if (matched.length > cap) {

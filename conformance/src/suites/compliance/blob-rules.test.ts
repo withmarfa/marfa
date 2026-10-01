@@ -406,4 +406,72 @@ describe("the rules that keep a blob's bytes", () => {
     expect(working.status).toBe(403);
     expect(working.error?.error.code).toBe("forbidden");
   });
+
+  it("keeps a blob a note links in its body after the file item naming it is purged", async () => {
+    // Two images, each named by a file item that is trashed and purged; a
+    // note links only the first in its body. The second is the witness
+    // that the purge left nothing else naming either.
+    const linked = await uploadText("an image a note links in its body");
+    const unlinked = await uploadText("an image nothing links any more");
+    for (const hash of [linked, unlinked]) {
+      const file = await client.createItem({
+        type: "core.file",
+        source: ctx.source,
+        properties: { blob_ref: hash, mime_type: "text/plain" },
+      });
+      expect(file.ok, JSON.stringify(file.error)).toBe(true);
+      const id = file.data.item.id;
+      expect((await client.deleteItem(id)).status).toBe(200);
+      const purged = await client.purgeItem(id);
+      expect(purged.status, JSON.stringify(purged.error)).toBe(200);
+    }
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `A chart:\n\n![chart](${linked})\n` },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    expect((await client.downloadBlob(unlinked)).status).toBe(404);
+    const download = await client.downloadBlob(linked);
+    expect(download.status).toBe(200);
+    expect(new TextDecoder().decode(download.data)).toBe(
+      text("an image a note links in its body"),
+    );
+  });
+
+  it("keeps a blob named only in an edge's properties", async () => {
+    const whole = await uploadText("an edge property is this hash");
+    const linked = await uploadText("an edge property links this");
+    const unreferenced = await uploadText("no edge or item names this");
+    const ids: string[] = [];
+    for (const body of ["one end", "the other end"]) {
+      const note = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body },
+      });
+      expect(note.ok, JSON.stringify(note.error)).toBe(true);
+      trackItem(ctx, note.data.item.id);
+      ids.push(note.data.item.id);
+    }
+    const edge = await client.createEdge({
+      source_id: ids[0]!,
+      target_id: ids[1]!,
+      edge_type: "about",
+      properties: { cover: whole, caption: `see ![it](${linked})` },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+
+    await run("blob-orphans");
+    await run("blob-orphans");
+
+    expect((await client.downloadBlob(unreferenced)).status).toBe(404);
+    expect((await client.downloadBlob(whole)).status).toBe(200);
+    expect((await client.downloadBlob(linked)).status).toBe(200);
+  });
 });

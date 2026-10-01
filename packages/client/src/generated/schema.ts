@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.
+         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -75,7 +75,7 @@ export interface paths {
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
+         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -203,6 +203,8 @@ export interface paths {
          * @description Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
          *
          *     The purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.
+         *
+         *     `version` makes the purge conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, and deletes nothing. Without it the purge applies to the row as it is. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
          */
         delete: operations["purgeItem"];
         options?: never;
@@ -269,7 +271,7 @@ export interface paths {
         put?: never;
         /**
          * Apply a bulk action
-         * @description Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.
+         * @description Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match. The job acts for the credential that queued it as that credential stands when each chunk runs: once the key is revoked, deleted or expired, the sign-in's token or grant is revoked, or a purge's credential no longer holds `items.purge`, the job writes nothing further and ends `failed`, keeping the `result` it had gathered. A sign-in's token reaching its ordinary expiry does not stop it. A row whose type the credential may read but no longer write is that row's `type_not_permitted` entry in the job's `errors`, and one whose type it may no longer read is its `item_not_found` entry, naming no type. Where the instance's strict-mode lever names a row's type, an `update_properties` patch naming a property the type does not declare is refused for that row, recorded in the job's `errors` under `invalid_properties` with `details.code` `unknown_property`, and the row is not written; the lever is read when the job writes the row, for the credential that queued it.
          *
          *     Unrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.
          */
@@ -1669,7 +1671,9 @@ export interface components {
             item_id: string;
             tags: string[];
             extensions: {
-                [key: string]: unknown;
+                [key: string]: {
+                    [key: string]: unknown;
+                };
             };
         };
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
@@ -1769,10 +1773,20 @@ export interface components {
                 };
             };
         };
-        TypeNotPermittedRefusal: {
+        UnknownTypeOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "type_not_permitted";
+                code: "unknown_type" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        EdgePermissionDeniedOrTypeNotPermittedRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "edge_permission_denied" | "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -1790,16 +1804,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "missing_required_field" | "unknown_type" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        EdgePermissionDeniedOrTypeNotPermittedRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "edge_permission_denied" | "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -1841,20 +1845,20 @@ export interface components {
                 };
             };
         };
-        ItemNotFoundRefusal: {
+        TypeNotPermittedRefusal: {
             error: {
                 /** @enum {string} */
-                code: "item_not_found";
+                code: "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
-        EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
+        ItemNotFoundRefusal: {
             error: {
                 /** @enum {string} */
-                code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "invalid_properties" | "missing_required_field" | "validation_error";
+                code: "item_not_found";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2182,11 +2186,22 @@ export interface components {
             /** @enum {string} */
             cascade_on_delete: "cascade" | "orphan" | "block";
             property_schema: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
             reverse_name?: string;
             /** @enum {string} */
             written_at: "source" | "target";
+        };
+        EdgePropertyDefinition: {
+            /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
+            type: string;
+            description?: string;
+            required?: boolean;
+            enum_values?: string[];
+            /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
+            items_type?: string;
+            /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
+            format?: string;
         };
         MissingRequiredFieldOrValidationErrorRefusal: {
             error: {
@@ -2219,17 +2234,7 @@ export interface components {
             /** @enum {string} */
             cascade_on_delete?: "cascade" | "orphan" | "block";
             property_schema?: {
-                [key: string]: {
-                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
-                    type: string;
-                    description?: string;
-                    required?: boolean;
-                    enum_values?: string[];
-                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
-                    items_type?: string;
-                    /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
-                    format?: string;
-                };
+                [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
             /** @description The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name. */
             reverse_name?: string;
@@ -2277,7 +2282,7 @@ export interface components {
             compatible_with?: string[];
             roles?: components["schemas"]["TypeRole"][];
             fields: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["FieldDefinition"];
             };
             version: number;
             display_hints?: components["schemas"]["DisplayHints"];
@@ -2288,6 +2293,27 @@ export interface components {
         };
         /** @enum {string} */
         TypeRole: "container";
+        FieldDefinition: {
+            /**
+             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
+             * @enum {string}
+             */
+            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
+            description?: string;
+            required?: boolean;
+            enum_values?: string[];
+            items_type?: string;
+            /**
+             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
+             * @enum {string}
+             */
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
+            searchable?: boolean;
+            maxLength?: number;
+            maxItems?: number;
+        } & {
+            [key: string]: unknown;
+        };
         DisplayHints: {
             title_field?: string;
             body_field?: string;
@@ -2374,27 +2400,6 @@ export interface components {
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"];
             id: string;
-        } & {
-            [key: string]: unknown;
-        };
-        FieldDefinition: {
-            /**
-             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
-             * @enum {string}
-             */
-            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
-            description?: string;
-            required?: boolean;
-            enum_values?: string[];
-            items_type?: string;
-            /**
-             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
-             * @enum {string}
-             */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
-            searchable?: boolean;
-            maxLength?: number;
-            maxItems?: number;
         } & {
             [key: string]: unknown;
         };
@@ -2849,24 +2854,24 @@ export interface components {
             label: string;
             source: string;
             /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
-            sources?: string[];
-            permissions?: components["schemas"]["Permission"][];
+            sources: string[];
+            permissions: components["schemas"]["Permission"][];
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"];
             is_operator: boolean;
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            extension_permissions?: {
+            extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            edge_permissions?: {
+            edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            metadata_permissions?: {
+            metadata_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            profile_permissions?: {
+            profile_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
             enforcement_override?: components["schemas"]["EnforcementOverride"];
@@ -2902,9 +2907,9 @@ export interface components {
             label: string;
             source: string;
             /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
-            sources?: string[];
-            /** @description The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused. */
-            permissions?: components["schemas"]["Permission"][];
+            sources: string[];
+            /** @description The permissions this credential holds, as the literals themselves. Empty on a key that holds none. */
+            permissions: components["schemas"]["Permission"][];
             /** @description The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly. */
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"];
@@ -2912,22 +2917,22 @@ export interface components {
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            extension_permissions?: {
+            extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            edge_permissions?: {
+            edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            metadata_permissions?: {
+            metadata_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            profile_permissions?: {
+            profile_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
             enforcement_override?: components["schemas"]["EnforcementOverride"];
             created_at: string;
             /** @description Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. */
-            expires_at?: string | null;
+            expires_at: string | null;
             last_used_at: string | null;
         };
         ApiKeyNotFoundRefusal: {
@@ -3020,16 +3025,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "owner_exists";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        UnknownTypeOrValidationErrorRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "unknown_type" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -3533,6 +3528,28 @@ export interface operations {
             query?: {
                 /** @description Grouping axis. Defaults to `state`. */
                 by?: "state" | "type";
+                /** @description Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page. */
+                type?: string;
+                /** @description Count only this lifecycle state. Omitting the parameter counts every state, as does `any`. */
+                state?: string;
+                /** @description Narrow to rows stamped with this `source`. */
+                source?: string;
+                /** @description Tier slice; omit or `all` returns both */
+                tier?: "library" | "feed" | "all";
+                /** @description Comma-separated tags; items must carry all of them */
+                tags?: string;
+                /** @description Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                filter?: string;
+                /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
+                occurred_after?: string;
+                /** @description Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). */
+                occurred_before?: string;
+                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
+                updated_after?: string;
+                /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
+                updated_before?: string;
+                /** @description `system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own. */
+                include?: "system";
             };
             header?: never;
             path?: never;
@@ -3540,7 +3557,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Item counts by state */
+            /** @description Item counts on the chosen axis */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3554,6 +3571,21 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+            /** @description A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -3571,7 +3603,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. */
+            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3583,7 +3615,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
@@ -3987,7 +4019,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -5116,7 +5148,10 @@ export interface operations {
     };
     purgeItem: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The version the caller read. Where given and the row has moved since, the purge is refused `409 version_conflict` and nothing is deleted. Trashing does not move a row's version, so the version read before the trash is the one to send. */
+                version?: number;
+            };
             header?: {
                 /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
@@ -5144,7 +5179,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner. */
+            /** @description `invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5206,7 +5241,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description `version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was purged. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was purged, retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5219,7 +5254,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
@@ -5587,6 +5622,8 @@ export interface operations {
                     action: "purge";
                     /** @enum {string} */
                     confirm?: "PURGE";
+                    /** @description The ids a dry run of this purge returned. Where given, the purge takes only rows that are both in this list and matched by the filter now: a row the filter has come to match since is left untouched, and a listed id the filter no longer matches is not purged. `matched` counts what the purge will take, and `max_items` caps that rather than what the filter reaches. An empty list is refused, since it names nothing to purge. Taken by `purge` alone. */
+                    expected_ids?: string[];
                 } | {
                     filter?: components["schemas"]["BulkActionFilter"];
                     dry_run?: boolean;
@@ -13567,7 +13604,7 @@ export interface operations {
                 "application/json": {
                     label: string;
                     source: string;
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused. */
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
                     sources?: string[];
                     permissions?: components["schemas"]["Permission"][];
                     default_tier?: components["schemas"]["Tier"];
@@ -13943,7 +13980,7 @@ export interface operations {
                 "application/json": {
                     label?: string;
                     default_tier?: components["schemas"]["Tier"];
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused. */
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
                     sources?: string[];
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];
@@ -16061,6 +16098,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description The write met the database's write lock and did not get it inside the instance's busy budget, which `details.budget_ms` names. Nothing was written, and nothing about the request needs changing: retry it. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
         };

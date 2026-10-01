@@ -31,13 +31,13 @@ afterEach(async () => {
 
 /** The bounded lifecycle belongs to the `system.*` classification rather
  *  than to any one type, so any system type states the same graph. */
-const SYSTEM_TYPE = "system.webhook";
+const SYSTEM_TYPE = "system.folder";
 
-/** Properties a `system.webhook` row accepts. The rows are built through
+/** Properties a `system.folder` row accepts. The rows are built through
  *  the store, because no credential writes a reserved namespace over the
  *  wire. */
 function systemProperties(): Record<string, unknown> {
-  return { url: "https://example.test/lifecycle", events: ["item.created"] };
+  return { title: "lifecycle" };
 }
 
 async function errorOf(

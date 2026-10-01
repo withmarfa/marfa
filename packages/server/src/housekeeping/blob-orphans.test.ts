@@ -3,7 +3,8 @@
  * one run reports, and a later run purges what is still unreferenced once
  * the grace has passed since the report. What counts as a reference is
  * asserted here too: an item in any lifecycle state, a metadata extension,
- * a version snapshot.
+ * a version snapshot and an edge's properties, wherever a string in them
+ * holds the hash.
  */
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
@@ -260,6 +261,78 @@ describe("what the report counts as a reference", () => {
     expect(await ctx.blobs.disk.has(named)).not.toBeNull();
   });
 
+  it("keeps a blob a body links to after the file item naming it is purged", async () => {
+    ctx = await createTestContext();
+    const orphan = await upload(ctx, "nothing links to this");
+    const image = await upload(ctx, "an image a note links in its body");
+    const file = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.file",
+        properties: { blob_ref: image, mime_type: "image/png" },
+      },
+    });
+    expect(file.status).toBe(201);
+    const fileId = ((await file.json()) as { item: { id: string } }).item.id;
+    const note = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        properties: { body: `A chart:\n\n![chart](${image})\n` },
+      },
+    });
+    expect(note.status).toBe(201);
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${fileId}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const purge = await request(ctx.app, "DELETE", `/items/${fileId}/purge`, {
+      key: ctx.workingKey,
+    });
+    expect(purge.status, await purge.clone().text()).toBe(200);
+
+    await reportThenPurge(ctx);
+
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
+    expect(await ctx.storage.blobs.get(image)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(image)).not.toBeNull();
+  });
+
+  it("keeps a blob named only in an edge's properties, whole or inside text", async () => {
+    ctx = await createTestContext();
+    const orphan = await upload(ctx, "no edge names this");
+    const whole = await upload(ctx, "an edge property is this hash");
+    const linked = await upload(ctx, "an edge property links this");
+    const ids: string[] = [];
+    for (const body of ["one end", "the other end"]) {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body } },
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { item: { id: string } }).item.id);
+    }
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: ids[0],
+        target_id: ids[1],
+        edge_type: "about",
+        properties: { cover: whole, caption: `see ![it](${linked})` },
+      },
+    });
+    expect(edge.status, await edge.clone().text()).toBe(201);
+
+    await reportThenPurge(ctx);
+
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
+    expect(await ctx.blobs.disk.has(whole)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(linked)).not.toBeNull();
+  });
+
   it("keeps a blob referenced only by a trashed item", async () => {
     ctx = await createTestContext();
     const orphan = await upload(ctx, "nothing points at this one");
@@ -289,7 +362,7 @@ describe("what the report counts as a reference", () => {
     const kept: string[] = [];
     for (const [state, type, properties] of [
       ["archived", "core.note", { body: "archived, holds a file" }],
-      ["revoked", "system.device", { name: "Revoked laptop", kind: "laptop" }],
+      ["revoked", "system.folder", { title: "Revoked folder" }],
     ] as const) {
       const data = await upload(ctx, `bytes only ${state} points at`);
       kept.push(data);

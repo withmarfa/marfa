@@ -8,7 +8,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { expectMatchesSchema } from "../../utils/openapi.js";
+import { expectMatchesSchema, servedDocument } from "../../utils/openapi.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -263,7 +263,7 @@ describe("key management", () => {
     await expectMatchesSchema("GET", "/keys/current", 200, current.data);
     expect(current.data.id).toBe(minted.data.id);
     expect(current.data.source).toBe(`${ctx.source}-${label}`);
-    expect(current.data.permissions ?? []).toEqual([]);
+    expect(current.data.permissions).toEqual([]);
     expect(current.data.type_permissions).toEqual({ "core.note": "write" });
     expect(current.data).not.toHaveProperty("key");
 
@@ -273,6 +273,76 @@ describe("key management", () => {
 
     const bare = await fetch(`${apiUrl}/keys/current`);
     expect(bare.status).toBe(401);
+  });
+
+  it("every key answer carries its permissions and its maps, empty where it holds nothing", async () => {
+    // The fields every key answer sends, held where nothing is held: the key
+    // below holds no permission, claims no source and names no map but its
+    // type map, so each of these is empty, which is the answer a client could
+    // otherwise mistake for an absent field.
+    const filled = [
+      "sources",
+      "permissions",
+      "extension_permissions",
+      "edge_permissions",
+      "metadata_permissions",
+      "profile_permissions",
+    ];
+    const label = `km-filled-${ctx.runId}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "core.note": "read" },
+      permissions: [],
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const self = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+
+    const listed = await client.listKeys();
+    expect(listed.ok).toBe(true);
+    const row = listed.data.data.find((k) => k.id === minted.data.id);
+    expect(row).toBeDefined();
+    const current = await self.getCurrentKey();
+    expect(current.ok).toBe(true);
+    const updated = await client.updateKey(minted.data.id, {
+      label: `${label}-renamed`,
+    });
+    expect(updated.ok).toBe(true);
+
+    const answers: [string, Record<string, unknown>][] = [
+      ["POST /keys", minted.data as unknown as Record<string, unknown>],
+      ["GET /keys", row as unknown as Record<string, unknown>],
+      ["GET /keys/current", current.data as unknown as Record<string, unknown>],
+      ["PATCH /keys/{id}", updated.data as unknown as Record<string, unknown>],
+    ];
+    for (const [door, body] of answers) {
+      for (const field of filled) {
+        expect(body, `${door} left out \`${field}\``).toHaveProperty(field);
+      }
+      expect(body.permissions, door).toEqual([]);
+      expect(body.sources, door).toEqual([]);
+      expect(body.edge_permissions, door).toEqual({});
+    }
+    // A stored key is answered with its expiry, null on every key a door
+    // mints; the mint itself declares none.
+    for (const [door, body] of answers.slice(1)) {
+      expect(body, `${door} left out \`expires_at\``).toHaveProperty(
+        "expires_at",
+      );
+      expect(body.expires_at, door).toBeNull();
+    }
+
+    // The document says so too, so a generated client types none of these
+    // as one that may be missing.
+    const schemas = (await servedDocument()).components?.schemas as
+      Record<string, { required?: string[] }> | undefined;
+    expect(schemas?.KeyResponse?.required).toEqual(
+      expect.arrayContaining(filled),
+    );
+    expect(schemas?.ApiKey?.required).toEqual(
+      expect.arrayContaining([...filled, "expires_at"]),
+    );
   });
 
   it("a mint naming a map holds no permission it did not name", async () => {

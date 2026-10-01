@@ -1,5 +1,8 @@
 import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import { serve } from "@hono/node-server";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext, request } from "../test-utils.js";
@@ -179,6 +182,65 @@ describe("GET /export", () => {
     };
     expect(bulkData.counts.created).toBe(1);
   });
+  it("sends its first record before reading the rest", async () => {
+    const bulk = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        items: Array.from({ length: 60 }, (_, i) => ({
+          type: "core.note",
+          properties: { body: `Streamed ${String(i)}` },
+        })),
+        mode: "create_only",
+      },
+    });
+    expect(bulk.status).toBe(200);
+
+    const metadata = ctx.storage.metadata;
+    const get = metadata.get.bind(metadata);
+    let reads = 0;
+    metadata.get = (id) => {
+      reads += 1;
+      return get(id);
+    };
+
+    // Over a real socket, because what holds a first byte back is when the
+    // server gets to write it, which an in-process fetch never waits on.
+    const server = serve({ fetch: ctx.app.fetch, port: 0 });
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${String(port)}/export?type=core.note`,
+        { headers: { Authorization: `Bearer ${ctx.workingKey}` } },
+      );
+      expect(res.status).toBe(200);
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      const readsAtFirstRecord = reads;
+      let text = decoder.decode(first.value, { stream: true });
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      const itemLines = text
+        .trim()
+        .split("\n")
+        .filter((line) => "item" in (JSON.parse(line) as object)).length;
+
+      // The witness: every item line cost one counted read, so a body
+      // built before its first byte was sent would show them all here.
+      expect(reads).toBe(itemLines);
+      expect(itemLines).toBeGreaterThanOrEqual(60);
+      expect(readsAtFirstRecord).toBeLessThan(itemLines / 2);
+    } finally {
+      metadata.get = get;
+      server.close();
+    }
+  });
 });
 
 describe("GET /export?format=archive", () => {
@@ -266,5 +328,59 @@ describe("GET /export?format=archive", () => {
     expect(entries.has(`blobs/${blobHash}`)).toBe(true);
     const blobData = entries.get(`blobs/${blobHash}`)!;
     expect(blobData.toString()).toBe("archive-export-blob");
+  });
+
+  it("carries a blob named only in the properties of an edge it carries", async () => {
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: new TextEncoder().encode("edge-property-blob"),
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+    const ids: string[] = [];
+    for (const source_id of ["ae-edge-1", "ae-edge-2"]) {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "an end" }, source_id },
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { item: { id: string } }).item.id);
+    }
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: ids[0],
+        target_id: ids[1],
+        edge_type: "about",
+        properties: { caption: `see ![it](${hash})` },
+      },
+    });
+    expect(edge.status).toBe(201);
+
+    const res = await request(ctx.app, "GET", "/export?format=archive", {
+      key: ctx.workingKey,
+    });
+    expect(res.status).toBe(200);
+    const archive = Buffer.from(await res.arrayBuffer());
+    const entries = new Map<string, Buffer>();
+    const extract = tar.extract();
+    await new Promise<void>((resolve, reject) => {
+      extract.on("entry", (header, stream, next) => {
+        const chunks: Buffer[] = [];
+        stream.on("data", (c: Buffer) => chunks.push(c));
+        stream.on("end", () => {
+          entries.set(header.name, Buffer.concat(chunks));
+          next();
+        });
+        stream.resume();
+      });
+      extract.on("finish", resolve);
+      extract.on("error", reject);
+      Readable.from(archive).pipe(createGunzip()).pipe(extract);
+    });
+    expect(entries.get(`blobs/${hash}`)?.toString()).toBe("edge-property-blob");
   });
 });

@@ -76,17 +76,17 @@ describe("the list filter and the point check agree", () => {
   it("under a global wildcard with an exact exclusion", () => {
     const perms: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.device": "none",
+      "system.folder": "none",
     };
     // Precondition: the resolver really does read this map the way the case
     // needs, so a passing assertion below cannot be vacuous.
-    expect(resolveTypePermission("system.device", perms)).toBe("none");
+    expect(resolveTypePermission("system.folder", perms)).toBe("none");
     expect(resolveTypePermission("core.note", perms)).toBe("read");
 
     expectAgreement(memberKey(perms), [
       "core.note",
-      "system.device",
-      "system.webhook",
+      "system.folder",
+      "system.connection",
     ]);
   });
 
@@ -117,7 +117,7 @@ describe("the list filter and the point check agree", () => {
     // dropped it from every listing while the point check still served it.
     const perms: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.device": "none",
+      "system.folder": "none",
     };
     // The type is never registered, which is exactly the orphan's state:
     // rows exist, the registry does not name it.

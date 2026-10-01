@@ -31,6 +31,7 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import { assertParentChain } from "./_parent-chain.js";
+import { writeTypesInTransaction } from "./_type-write.js";
 import { MergePolicySchema, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -281,7 +282,7 @@ const TypeSchemaResponse = z
     // pointed at a container reads this. Omitting it from the spec would strip
     // it from every generated client while the runtime kept returning it.
     roles: z.array(z.enum(TYPE_ROLES).openapi("TypeRole")).optional(),
-    fields: z.record(z.string(), z.unknown()),
+    fields: z.record(z.string(), FieldDefinitionSchema),
     version: z.number(),
     display_hints: DisplayHintsSchema.optional(),
     link_field: LinkFieldSchema.optional(),
@@ -709,65 +710,74 @@ export function typeRoutes(storage: Storage) {
           );
         }
       }
-      const result = validateTypeSchema(body);
-      if (!result.success) {
-        // Surface specific error codes so clients can disambiguate from generic schema failures.
-        const hasPropertyShadowsField = result.errors.some(
-          (e) => e.code === "property_shadows_field",
-        );
-        const hasInheritanceViolation = result.errors.some(
-          (e) => e.code === "inheritance_violation",
-        );
-        const hasCompatibleWithViolation = result.errors.some(
-          (e) => e.code === "compatible_with_violation",
-        );
-        let code: ErrorCode;
-        let message: string;
-        if (hasPropertyShadowsField) {
-          code = ErrorCode.PROPERTY_SHADOWS_FIELD;
-          message =
-            "Type schema declares a property whose name shadows a first-class Item field";
-        } else if (hasInheritanceViolation) {
-          code = ErrorCode.INHERITANCE_VIOLATION;
-          message = "Child type redefines a field declared by an ancestor";
-        } else if (hasCompatibleWithViolation) {
-          code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
-          message =
-            "Type does not satisfy the structural-superset of its compatible_with target";
-        } else {
-          code = ErrorCode.INVALID_SCHEMA;
-          message = "Invalid type schema";
-        }
-        throw new MarfaError(code, message, { errors: result.errors });
-      }
+      // Validated in the transaction that writes the type: the schema is
+      // judged against its parent's fields and its parent chain, and a
+      // parent changed or deleted meanwhile has to be the one it is judged
+      // against. A delete waiting on this write finds the child and is
+      // refused instead.
+      const created = await writeTypesInTransaction(
+        storage,
+        typeof body.id === "string" ? [body.id] : [],
+        async () => {
+          const result = validateTypeSchema(body);
+          if (!result.success) {
+            // Surface specific error codes so clients can disambiguate from generic schema failures.
+            const hasPropertyShadowsField = result.errors.some(
+              (e) => e.code === "property_shadows_field",
+            );
+            const hasInheritanceViolation = result.errors.some(
+              (e) => e.code === "inheritance_violation",
+            );
+            const hasCompatibleWithViolation = result.errors.some(
+              (e) => e.code === "compatible_with_violation",
+            );
+            let code: ErrorCode;
+            let message: string;
+            if (hasPropertyShadowsField) {
+              code = ErrorCode.PROPERTY_SHADOWS_FIELD;
+              message =
+                "Type schema declares a property whose name shadows a first-class Item field";
+            } else if (hasInheritanceViolation) {
+              code = ErrorCode.INHERITANCE_VIOLATION;
+              message = "Child type redefines a field declared by an ancestor";
+            } else if (hasCompatibleWithViolation) {
+              code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
+              message =
+                "Type does not satisfy the structural-superset of its compatible_with target";
+            } else {
+              code = ErrorCode.INVALID_SCHEMA;
+              message = "Invalid type schema";
+            }
+            throw new MarfaError(code, message, { errors: result.errors });
+          }
 
-      const schema = result.data;
+          const schema = result.data;
 
-      if (!schema.label) {
-        const lastSegment = schema.id.split(".").pop() ?? schema.id;
-        schema.label = lastSegment
-          .replace(/[_-]/g, " ")
-          .replace(/\b\w/g, (ch) => ch.toUpperCase());
-      }
+          if (!schema.label) {
+            const lastSegment = schema.id.split(".").pop() ?? schema.id;
+            schema.label = lastSegment
+              .replace(/[_-]/g, " ")
+              .replace(/\b\w/g, (ch) => ch.toUpperCase());
+          }
 
-      if (schema.parent) {
-        validateParentChain(schema.id, schema.parent);
-      }
-
-      if (getTypeSchema(schema.id)) {
-        throw new MarfaError(
-          ErrorCode.TYPE_ALREADY_EXISTS,
-          `Type "${schema.id}" already exists`,
-        );
-      }
-
-      const created = await storage.types.create(schema);
+          if (schema.parent) {
+            validateParentChain(schema.id, schema.parent);
+          }
+          if (getTypeSchema(schema.id)) {
+            throw new MarfaError(
+              ErrorCode.TYPE_ALREADY_EXISTS,
+              `Type "${schema.id}" already exists`,
+            );
+          }
+          return await storage.types.create(schema);
+        },
+      );
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
         action: "type.register",
         resource_type: "type",
-        resource_id: schema.id,
+        resource_id: created.id,
       });
       return c.json({ type: created }, 201);
     },
@@ -779,35 +789,48 @@ export function typeRoutes(storage: Storage) {
     async (c) => {
       const { id } = c.req.valid("param");
       const body = c.req.valid("json");
-      const result = validateTypeSchema({ ...body, id });
-      if (!result.success) {
-        // The inheritance rule is one rule from either end of the chain,
-        // so this door answers it with the code registration does.
-        if (result.errors.some((e) => e.code === "inheritance_violation")) {
+      // Everything the replacement is judged by is read in the transaction
+      // that writes it: whether the type still exists, its parent chain, and
+      // the subtypes whose fields a new field may not clash with. Each can
+      // be changed by another write, and one checked before the lock is a
+      // check of a registry that may have moved by the time the row does.
+      const updated = await writeTypesInTransaction(storage, [id], async () => {
+        if (!getTypeSchema(id)) {
           throw new MarfaError(
-            ErrorCode.INHERITANCE_VIOLATION,
-            "Type gives a field a shape another type in its chain declares differently",
+            ErrorCode.TYPE_NOT_FOUND,
+            `Type "${id}" not found`,
+          );
+        }
+        const result = validateTypeSchema({ ...body, id });
+        if (!result.success) {
+          // The inheritance rule is one rule from either end of the chain,
+          // so this door answers it with the code registration does.
+          if (result.errors.some((e) => e.code === "inheritance_violation")) {
+            throw new MarfaError(
+              ErrorCode.INHERITANCE_VIOLATION,
+              "Type gives a field a shape another type in its chain declares differently",
+              { errors: result.errors },
+            );
+          }
+          throw new MarfaError(
+            ErrorCode.INVALID_SCHEMA,
+            "Invalid type schema",
             { errors: result.errors },
           );
         }
-        throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
-          errors: result.errors,
-        });
-      }
 
-      const schema = result.data;
-
-      if (schema.parent) {
-        // Measured on the type as it stands, before the update lands, which is
-        // the subtree that would move with it.
-        validateParentChain(
-          schema.id,
-          schema.parent,
-          maxDescendantDepth(schema.id),
-        );
-      }
-
-      const updated = await storage.types.update(id, schema);
+        const schema = result.data;
+        if (schema.parent) {
+          // Measured on the type as it stands, before the update lands, which
+          // is the subtree that would move with it.
+          validateParentChain(
+            schema.id,
+            schema.parent,
+            maxDescendantDepth(schema.id),
+          );
+        }
+        return await storage.types.update(id, schema);
+      });
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
@@ -832,54 +855,63 @@ export function typeRoutes(storage: Storage) {
       );
     }
 
-    const existing = getTypeSchema(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.TYPE_NOT_FOUND, `Type "${id}" not found`);
-    }
-
-    // Checked before the items refusal, and outside `force`, because this
-    // one cannot be forced past. Reporting the forcible obstruction first
-    // would send a caller round again to meet the one that stops them.
-    //
-    // Refusing rather than repairing the children is the deliberate choice.
-    // A child that inherits IS its parent: `isSubtypeOf` answers yes and a
-    // subtree query finds its items. Flattening the inherited fields down
-    // would keep the field names and lose that, changing the child's meaning
-    // as a side effect of a command naming a different type.
-    const subtypes = directChildrenOf(id);
-    if (subtypes.length > 0) {
-      throw new MarfaError(
-        ErrorCode.TYPE_HAS_SUBTYPES,
-        `Type "${id}" cannot be deleted while ${subtypes
-          .map((subtype) => `"${subtype}"`)
-          .join(
-            ", ",
-          )} ${subtypes.length === 1 ? "inherits" : "inherit"} from it. Delete ${subtypes.length === 1 ? "it" : "them"} first, or give ${subtypes.length === 1 ? "it" : "each"} a different parent with PUT /types/{id}. This is not what ?force=true covers, which is existing items.`,
-        { subtype_ids: subtypes },
-      );
-    }
-
     const { force } = c.req.valid("query");
-    if (force !== "true") {
-      const items = await storage.items.list({
-        type: id,
-        // Every state, because the question is whether anything is written
-        // against this type, not whether anything is being worked on. A row
-        // in the bin or the archive still names the type it was validated
-        // against, and deleting it out from under one leaves a row whose
-        // shape nothing can check.
-        all_states: true,
-        limit: 1,
-      });
-      if (items.data.length > 0) {
+    // The existence check, the questions and the delete are one transaction.
+    // The store takes the type out of the registry before it commits, and a
+    // create asks the registry inside its own transaction, so an item written
+    // meanwhile either lands first and is counted or comes after and is
+    // refused; of two deletes in flight, the second finds no type.
+    await writeTypesInTransaction(storage, [id], async () => {
+      const existing = getTypeSchema(id);
+      if (!existing) {
         throw new MarfaError(
-          ErrorCode.TYPE_IN_USE,
-          `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
         );
       }
-    }
 
-    await storage.types.delete(id);
+      // Checked before the items refusal, and outside `force`, because this
+      // one cannot be forced past. Reporting the forcible obstruction first
+      // would send a caller round again to meet the one that stops them.
+      //
+      // Refusing rather than repairing the children is the deliberate choice.
+      // A child that inherits IS its parent: `isSubtypeOf` answers yes and a
+      // subtree query finds its items. Flattening the inherited fields down
+      // would keep the field names and lose that, changing the child's
+      // meaning as a side effect of a command naming a different type.
+      const subtypes = directChildrenOf(id);
+      if (subtypes.length > 0) {
+        throw new MarfaError(
+          ErrorCode.TYPE_HAS_SUBTYPES,
+          `Type "${id}" cannot be deleted while ${subtypes
+            .map((subtype) => `"${subtype}"`)
+            .join(
+              ", ",
+            )} ${subtypes.length === 1 ? "inherits" : "inherit"} from it. Delete ${subtypes.length === 1 ? "it" : "them"} first, or give ${subtypes.length === 1 ? "it" : "each"} a different parent with PUT /types/{id}. This is not what ?force=true covers, which is existing items.`,
+          { subtype_ids: subtypes },
+        );
+      }
+
+      if (force !== "true") {
+        const items = await storage.items.list({
+          type: id,
+          // Every state, because the question is whether anything is written
+          // against this type, not whether anything is being worked on. A row
+          // in the bin or the archive still names the type it was validated
+          // against, and deleting it out from under one leaves a row whose
+          // shape nothing can check.
+          all_states: true,
+          limit: 1,
+        });
+        if (items.data.length > 0) {
+          throw new MarfaError(
+            ErrorCode.TYPE_IN_USE,
+            `Type "${id}" has existing items. Use ?force=true to delete anyway.`,
+          );
+        }
+      }
+      await storage.types.delete(id);
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

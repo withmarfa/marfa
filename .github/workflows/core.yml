@@ -1,18 +1,18 @@
 name: Core
 
-# Path-gated, which ci.yml deliberately is not. The trade is the same one
-# ci.yml weighs for its freshness jobs — a gate that skips is a gate that can
-# be wrong — and it lands the other way here: the Swift FFI crate built for
-# release, the Node binding and its consumer, and a server booted from this
-# checkout, which only the core, the three packages the server is built from
-# and the workspace's own manifests can change.
-# The core's own three commands run on every pull request, as `Core checks`
-# in ci.yml.
+# Path-gated, which ci.yml deliberately is not. A pull request runs it when it
+# changes the core, the root `openapi.json` the core is held to, or this
+# workflow. A push to `main` runs it for anything the booted server is built
+# from as well, and the nightly runs it whatever changed, so a server change
+# that breaks the live tests is caught on `main` without holding a macOS
+# runner for every server pull request. The core's own three commands run as
+# `Core checks` in ci.yml.
 on:
   push:
     branches: [main]
     paths:
       - "core/**"
+      - "openapi.json"
       - "packages/server/**"
       - "packages/shared/**"
       - "packages/types/**"
@@ -25,21 +25,19 @@ on:
     branches: [main]
     paths:
       - "core/**"
-      - "packages/server/**"
-      - "packages/shared/**"
-      - "packages/types/**"
-      - "package.json"
-      - "pnpm-lock.yaml"
-      - "pnpm-workspace.yaml"
-      - "tsconfig.base.json"
+      - "openapi.json"
       - ".github/workflows/core.yml"
+  schedule:
+    - cron: "47 3 * * *"
   # A path-gated workflow has no other way to be started by hand.
   workflow_dispatch:
 
-# Superseded PR runs cancel; each main commit keeps its own validation.
+# A newer push to a branch, `main` included, cancels the run before it, since
+# the newer commit's run covers everything the older one would have. The
+# event keeps the nightly and a dispatch out of the push's group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_BUILD_JOBS: 2
@@ -68,6 +66,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            core/bindings/swift
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: pnpm/action-setup@v6
         with:

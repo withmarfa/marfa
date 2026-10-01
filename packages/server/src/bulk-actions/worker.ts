@@ -16,19 +16,33 @@
  * Restart recovery: on `start()`, jobs whose `worker_heartbeat_at` is
  * older than `staleAfterMs` are reset to `queued`. Default 60s.
  */
-import { generateId } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  generateId,
+  hasPermission,
+  MarfaError,
+} from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
+import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import type {
+  BulkActionJobProgress,
   BulkActionJobRow,
   BulkActionJobStore,
   Storage,
 } from "../storage/interface.js";
 import { runChunk, type ChunkOutcome } from "./runner.js";
+import { resolveJobCredential } from "./credential.js";
 import type {
   BulkActionErrorEntry,
   BulkActionInput,
   BulkActionResult,
 } from "./types.js";
+
+interface JobSummary {
+  result: BulkActionResult;
+  counts: BulkActionJobProgress;
+}
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -256,6 +270,35 @@ export class BulkActionWorker {
     const broughtBack = new Set<string>();
     let processed = 0;
 
+    // What the job has done so far, as `complete` records it and as a job
+    // stopped for its credential keeps it.
+    const summarize = (): JobSummary => ({
+      result: {
+        action: input.action,
+        matched: matchedIds.length,
+        succeeded: accSucceeded.length,
+        errored: accErrors.length,
+        dry_run: false,
+        ...(accSucceeded.length > 0 && accSucceeded.length <= RESPONSE_IDS_CAP
+          ? { ids: accSucceeded }
+          : {}),
+        // Truncated rather than omitted past the cap: a caller with one bad
+        // patch wants to see what the refusal says, and one entry says it as
+        // well as fifty thousand. `errored` carries the count either way.
+        ...(accErrors.length > 0
+          ? { errors: accErrors.slice(0, RESPONSE_ERRORS_CAP) }
+          : {}),
+        ...(input.action === "purge"
+          ? { blob_hashes_referenced: accBlobHashes.size }
+          : {}),
+      },
+      counts: {
+        processed_count: processed,
+        succeeded_count: accSucceeded.length,
+        errored_count: accErrors.length,
+      },
+    });
+
     for (let i = 0; i < matchedIds.length; i += this.chunkSize) {
       // Cancellation check between chunks. Cheap (single SELECT by id)
       // and only adds at most chunkSize / matchedCount latency to a
@@ -272,16 +315,49 @@ export class BulkActionWorker {
         return;
       }
 
+      // The credential is asked again before every chunk, because the job
+      // runs after the request that queued it: a key revoked or narrowed
+      // since is answered as the next request bearing it would be.
+      const credential = await resolveJobCredential(
+        this.storage,
+        job.api_key_id,
+      );
+      if (!credential) {
+        await this.stopForCredential(
+          job.id,
+          "The credential that queued this job no longer authenticates, so the job wrote nothing further.",
+          summarize(),
+        );
+        return;
+      }
+      if (
+        input.action === "purge" &&
+        !hasPermission(credential.permissions, "items.purge")
+      ) {
+        await this.stopForCredential(
+          job.id,
+          "The credential that queued this job no longer holds items.purge, so the job purged nothing further.",
+          summarize(),
+        );
+        return;
+      }
+
       const slice = matchedIds.slice(i, i + this.chunkSize);
-      let outcome: ChunkOutcome;
+      const { permitted, refused } = await this.splitByWriteAccess(
+        credential.key,
+        slice,
+      );
+      accErrors.push(...refused);
+      let outcome: ChunkOutcome = { succeeded: [], errors: [] };
       try {
-        outcome = await runChunk({
-          storage: this.storage,
-          input,
-          ids: slice,
-          broughtBack,
-          apiKeyId: job.api_key_id,
-        });
+        if (permitted.length > 0)
+          outcome = await runChunk({
+            storage: this.storage,
+            input,
+            ids: permitted,
+            broughtBack,
+            credential: credential.key,
+          });
       } catch (err) {
         // Whole-chunk failure inside the transaction — a database error,
         // say. Annotate every id and continue to the next
@@ -289,7 +365,7 @@ export class BulkActionWorker {
         const reason = err instanceof Error ? err.message : String(err);
         outcome = {
           succeeded: [],
-          errors: slice.map((id) => ({
+          errors: permitted.map((id) => ({
             id,
             code: "internal_error",
             message: reason,
@@ -315,35 +391,69 @@ export class BulkActionWorker {
       );
     }
 
-    const result: BulkActionResult = {
-      action: input.action,
-      matched: matchedIds.length,
-      succeeded: accSucceeded.length,
-      errored: accErrors.length,
-      dry_run: false,
-      ...(accSucceeded.length > 0 && accSucceeded.length <= RESPONSE_IDS_CAP
-        ? { ids: accSucceeded }
-        : {}),
-      // Truncated rather than omitted past the cap: a caller with one bad
-      // patch wants to see what the refusal says, and one entry says it as
-      // well as fifty thousand. `errored` carries the count either way.
-      ...(accErrors.length > 0
-        ? { errors: accErrors.slice(0, RESPONSE_ERRORS_CAP) }
-        : {}),
-      ...(input.action === "purge"
-        ? { blob_hashes_referenced: accBlobHashes.size }
-        : {}),
-    };
-
+    const { result, counts } = summarize();
     await this.jobs.complete(
       job.id,
       JSON.stringify(result),
-      {
-        processed_count: processed,
-        succeeded_count: accSucceeded.length,
-        errored_count: accErrors.length,
-      },
+      counts,
       this.nowFn().toISOString(),
     );
+  }
+
+  /** End a job whose credential no longer allows what it was queued for.
+   *  The rows earlier chunks wrote stay written, as a cancel leaves them,
+   *  and the job keeps the result it had gathered. */
+  private async stopForCredential(
+    jobId: string,
+    reason: string,
+    sofar: JobSummary,
+  ): Promise<void> {
+    await this.jobs.fail(jobId, reason, this.nowFn().toISOString(), {
+      result: JSON.stringify(sofar.result),
+      counts: sofar.counts,
+    });
+    log("info", "bulk_action_worker.credential_withdrawn", { jobId, reason });
+  }
+
+  /**
+   * Split a chunk into the rows the credential may still write and a
+   * per-row refusal for the rest, asked of each row's type as the
+   * single-item write doors ask it: a row whose type it may no longer read
+   * is not found, without naming the type, and one it may read but not
+   * write is `type_not_permitted`. A row no longer found goes through, so
+   * the action reports it missing in its own words.
+   */
+  private async splitByWriteAccess(
+    key: ApiKey,
+    ids: string[],
+  ): Promise<{ permitted: string[]; refused: BulkActionErrorEntry[] }> {
+    const rows = await this.storage.items.getMany(ids, {
+      includeTrashed: true,
+    });
+    const permitted: string[] = [];
+    const refused: BulkActionErrorEntry[] = [];
+    for (const id of ids) {
+      const row = rows.get(id);
+      if (!row) {
+        permitted.push(id);
+        continue;
+      }
+      if (!mayReadType(key, row.type)) {
+        refused.push({
+          id,
+          code: ErrorCode.ITEM_NOT_FOUND,
+          message: "Item not found",
+        });
+        continue;
+      }
+      try {
+        checkTypeAccess(key, row.type, "write");
+        permitted.push(id);
+      } catch (err) {
+        if (!(err instanceof MarfaError)) throw err;
+        refused.push({ id, code: err.code, message: err.message });
+      }
+    }
+    return { permitted, refused };
   }
 }

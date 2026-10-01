@@ -90,6 +90,37 @@ async function patchByTag(
   };
 }
 
+/** A key whose own override names `core.note` strictly. */
+async function mintStrictKey(
+  tag: string,
+): Promise<{ id: string; key: string }> {
+  const minted = await request(ctx.app, "POST", "/keys", {
+    key: ctx.workingKey,
+    body: {
+      label: tag,
+      source: tag,
+      default_tier: "feed",
+      type_permissions: { "core.note": "write" },
+      extension_permissions: {},
+      edge_permissions: {},
+      enforcement_override: STRICT_NOTES.enforcement,
+    },
+  });
+  expect(minted.status).toBe(201);
+  return (await minted.json()) as { id: string; key: string };
+}
+
+async function drain(): Promise<void> {
+  const worker = new BulkActionWorker({
+    storage: ctx.storage,
+    chunkSize: 100,
+    pollIntervalMs: 1,
+  });
+  while (await worker.runOnce()) {
+    /* drain */
+  }
+}
+
 describe("the bulk-action door asks the strict-mode lever", () => {
   it("refuses each row of a type the lever names, and writes the rest", async () => {
     const tag = marker("bastrict");
@@ -134,25 +165,41 @@ describe("the bulk-action door asks the strict-mode lever", () => {
   it("asks the lever of the credential that queued the job", async () => {
     const tag = marker("baoverride");
     const note = await seed(tag, "core.note", { body: "before" });
-    const minted = await request(ctx.app, "POST", "/keys", {
-      key: ctx.workingKey,
-      body: {
-        label: tag,
-        source: tag,
-        default_tier: "feed",
-        type_permissions: { "core.note": "write" },
-        extension_permissions: {},
-        edge_permissions: {},
-        enforcement_override: STRICT_NOTES.enforcement,
-      },
-    });
-    expect(minted.status).toBe(201);
-    const { key } = (await minted.json()) as { key: string };
+    const { key } = await mintStrictKey(tag);
 
     const outcome = await patchByTag(tag, { not_a_real_field: "x" }, key);
 
     expect(outcome.succeeded).toBe(0);
     expect(outcome.errors[0]?.details?.code).toBe("unknown_property");
+    expect(await propertiesOf(note)).toEqual({ body: "before" });
+  });
+
+  it("writes nothing for a strict key revoked while its job is queued", async () => {
+    // With the instance lever off, only the key's override refuses the
+    // patch, so a job that lost the key and asked the instance alone would
+    // write it.
+    const tag = marker("barevoked");
+    const note = await seed(tag, "core.note", { body: "before" });
+    const { id: keyId, key } = await mintStrictKey(tag);
+    const queued = await request(ctx.app, "POST", "/items/bulk-actions", {
+      key,
+      body: {
+        action: "update_properties",
+        patch: { not_a_real_field: "x" },
+        filter: { tags: [tag] },
+      },
+    });
+    expect(queued.status).toBe(202);
+    const { id } = (await queued.json()) as BulkActionJob;
+    const revoked = await request(ctx.app, "DELETE", `/keys/${keyId}`, {
+      key: ctx.workingKey,
+    });
+    expect(revoked.status).toBeLessThan(300);
+
+    await drain();
+
+    const job = await ctx.storage.bulkActionJobs.getById(id);
+    expect(job?.status).toBe("failed");
     expect(await propertiesOf(note)).toEqual({ body: "before" });
   });
 
@@ -171,14 +218,7 @@ describe("the bulk-action door asks the strict-mode lever", () => {
     const { id } = (await queued.json()) as BulkActionJob;
 
     await setConfig(STRICT_NOTES);
-    const worker = new BulkActionWorker({
-      storage: ctx.storage,
-      chunkSize: 100,
-      pollIntervalMs: 1,
-    });
-    while (await worker.runOnce()) {
-      /* drain */
-    }
+    await drain();
 
     const read = await request(
       ctx.app,

@@ -1035,6 +1035,15 @@ impl MarfaCore {
             .collect())
     }
 
+    pub fn edges_of_type(&self, edge_type: String) -> Result<Vec<Edge>, MarfaError> {
+        Ok(self
+            .inner
+            .edges_of_type(&edge_type)?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
     pub fn search(
         &self,
         query: String,
@@ -1286,6 +1295,14 @@ impl MarfaCore {
     /// Releases every write blocked for one reason, and says how many.
     pub fn release_reason(&self, reason: BlockedReason) -> Result<u64, MarfaError> {
         Ok(self.inner.release_reason(reason.into())? as u64)
+    }
+
+    /// Takes a write blocked `ancestor_unavailable` or `conflict_unresolved`
+    /// out of the queue, and puts the copy back to what the server holds;
+    /// each write held for it is refused unsent. Answers whether the row was
+    /// one a withdraw takes.
+    pub fn withdraw(&self, id: String) -> Result<bool, MarfaError> {
+        Ok(self.inner.withdraw(&id)?)
     }
 
     /// Clears the writes the server has answered, and says how many went.
@@ -1605,6 +1622,7 @@ mod tests {
                     );
                     let _ = match (path.as_str(), resumed) {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
+                        ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),
                         // A create is refused for a source the key does not
                         // claim; a listing answers an empty slice.
                         ("/items", _) if head.starts_with("POST") => {

@@ -1,6 +1,5 @@
 import type {
   Item,
-  TypeFilter,
   CreateItemInput,
   UpdateItemInput,
   Metadata,
@@ -654,11 +653,10 @@ export interface ItemStore {
    *
    * Trashed rows are excluded by default, because every read surface treats a
    * soft-deleted item as gone. Three callers pass `includeTrashed`. Two are
-   * in `bulk-actions/runner.ts`: purge, whose whole input is trashed rows,
-   * and the tag chunk, which says at its own call site why it is
-   * load-bearing there rather than defensive. Without it the purge runner's
-   * pre-fetch would come back empty, so it would report every id as "not
-   * found" while the delete underneath it succeeded. The third is the edge
+   * in `bulk-actions/runner.ts`: purge, whose input is the rows a job
+   * matched, trashed or not, and which needs the trashed ones to purge them
+   * and the rest to report them, and the tag chunk, which says at its own
+   * call site why it is load-bearing there rather than defensive. The third is the edge
    * read gate in `routes/_edge-visibility.ts`, which resolves an edge's
    * source to ask about its type: a plain read answers null for a trashed
    * source, and a null source has no type to refuse, so trashing the source
@@ -739,15 +737,15 @@ export interface ItemStore {
    *  and `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;
   /**
-   * Hard-delete every id in `ids`. Bypasses the
-   * "must be trashed" gate that single-item `purge` enforces — bulk is an
-   * admin cleanup primitive with explicit confirm. Cascades metadata and
-   * versions via ON DELETE CASCADE; caller must have already wiped edges
-   * (source + target directions). Cleans the search index for each id.
-   * Returns the number of rows actually deleted (unknown ids are
-   * silently skipped).
+   * Hard-delete every row in `ids` that is in its type's soft-deleted
+   * state, the gate single-item `purge` enforces, and return the ids it
+   * took. A row in any other state and an unknown id are skipped, and the
+   * caller reports them. Cascades metadata and versions via ON DELETE
+   * CASCADE; the caller removes the taken rows' edges (source and target
+   * directions) in the same transaction. Cleans the search index for each
+   * row taken.
    */
-  bulkPurge(ids: string[]): Promise<number>;
+  bulkPurge(ids: string[]): Promise<string[]>;
   restore(id: string): Promise<Item>;
   /**
    * Restores the rows a trash took with it through cascading edges that lie
@@ -778,7 +776,7 @@ export interface ItemStore {
    * Item counts for the instance, grouped on one axis.
    *
    * `by` chooses the axis and nothing else: both groupings cover the same
-   * rows — everything this caller can read — so their totals agree. That is
+   * rows, the ones `filters` match, so their totals agree. That is
    * the property `routes/items-stats-by-type.test.ts` asserts, and it is
    * what catches a breakdown that quietly dropped a filter the other keeps.
    *
@@ -786,10 +784,13 @@ export interface ItemStore {
    * else could without paging every row: `GET /types` lists what is
    * registered, a longer and different list, and `countByType` takes one
    * exact identifier per call.
+   *
+   * `filters` mean what they mean to `list`, the active-state default
+   * included, so a count under a listing's filters is the number of rows
+   * that listing walks. Paging and ordering are ignored.
    */
   stats(
-    typeFilter?: TypeFilter,
-    sourceFilter?: SourceFilterSettings,
+    filters: ItemFilters,
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
@@ -1036,6 +1037,9 @@ export interface TypeStore {
   /** Resolves a type by id: the shipped set, then the instance's own. */
   get(id: string): Promise<TypeSchema | undefined>;
   create(schema: TypeSchema, provenance?: TypeProvenance): Promise<TypeSchema>;
+  /** Replaces a type's row and its registry entry. A row that is not there
+   *  is refused `type_not_found`, and nothing is registered: a type deleted
+   *  since the caller looked stays deleted. */
   update(id: string, schema: TypeSchema): Promise<TypeSchema>;
   delete(id: string): Promise<void>;
   /** The instance's own registrations, without the shipped core and system
@@ -1140,6 +1144,26 @@ export interface SearchStore {
  */
 export type KeyRevokeOutcome = "revoked" | "already_revoked" | "not_found";
 
+/**
+ * A key as the store holds it, with every list and map filled and empty
+ * where the key holds nothing. A request's principal cannot promise that:
+ * a signed-in app's projection carries no `permissions`, since its grant
+ * answers them.
+ */
+export type StoredApiKey = ApiKey &
+  Required<
+    Pick<
+      ApiKey,
+      | "sources"
+      | "permissions"
+      | "extension_permissions"
+      | "edge_permissions"
+      | "metadata_permissions"
+      | "profile_permissions"
+      | "expires_at"
+    >
+  >;
+
 export interface KeyStore {
   /**
    * Mint a key.
@@ -1156,13 +1180,15 @@ export interface KeyStore {
   create(
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
-  ): Promise<ApiKey>;
-  list(): Promise<ApiKey[]>;
-  get(id: string): Promise<ApiKey | null>;
+  ): Promise<StoredApiKey>;
+  list(): Promise<StoredApiKey[]>;
+  get(id: string): Promise<StoredApiKey | null>;
   validate(
     keyHash: string,
-  ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
-  update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
+  ): Promise<
+    (StoredApiKey & { key_hash: string; revoked_at: string | null }) | null
+  >;
+  update(id: string, input: UpdateKeyInput): Promise<StoredApiKey>;
   /**
    * Stamp `revoked_at`, and say which of the three things happened. Only
    * `"revoked"` means this call was the one that retired the key, so a
@@ -1663,6 +1689,13 @@ export interface OauthProviderStore {
    *  has expired. Opaque tokens carry no embedded claims, so the row is
    *  read directly. */
   validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
+  /** The token by its id, for work a token queued and that runs after the
+   *  request: null once the token is revoked or gone with its grant. An
+   *  expired token is still answered, because tokens expire within the hour
+   *  and a refresh mints a new one under a new id while the grant stands;
+   *  revoking a grant deletes its tokens, so a row still present and not
+   *  revoked means the grant stands. */
+  getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null>;
   /** Cascade revocation for a grant: delete every access + refresh token
    *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
    *  handler when the user revokes an app's access. The grant's
@@ -2643,8 +2676,15 @@ export interface BulkActionJobStore {
     finishedAt: string,
   ): Promise<void>;
   /** Terminal `failed`. Writes the error string, sets `finished_at`. Changes
-   *  the job only while it is `queued` or `in_progress`, as `complete` does. */
-  fail(id: string, error: string, finishedAt: string): Promise<void>;
+   *  the job only while it is `queued` or `in_progress`, as `complete` does.
+   *  A job stopped partway passes what it had done, which is written as
+   *  `complete` writes it. */
+  fail(
+    id: string,
+    error: string,
+    finishedAt: string,
+    sofar?: { result: string; counts: BulkActionJobProgress },
+  ): Promise<void>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
    *  `canceled`; no-op (returns `false`) on already-terminal rows.
    *  The worker observes the flag between chunks. */

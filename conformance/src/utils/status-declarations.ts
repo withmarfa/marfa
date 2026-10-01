@@ -139,9 +139,7 @@ export const UNREACHED: Readonly<Record<string, string>> = {
  * reported as recorded rather than as a new contradiction, and an entry no
  * run draws any more is stale, since the server stopped answering it.
  */
-export const RECORDED: Readonly<Record<string, string>> = {
-  "POST /auth/oauth2/register 500": "`findings.md` 1",
-};
+export const RECORDED: Readonly<Record<string, string>> = {};
 
 /**
  * The request lines in a server log, which also carries startup and failure
@@ -301,6 +299,7 @@ export function declaredStatuses(
 export function reportStatuses(
   lines: readonly RequestLine[],
   document: OpenApiLike,
+  recordedStatuses: Readonly<Record<string, string>> = RECORDED,
 ): StatusReport {
   const declared = declaredStatuses(document);
   const observed = new Map<string, Map<number, Set<string>>>();
@@ -342,7 +341,7 @@ export function reportStatuses(
     for (const [status, codes] of byStatus) {
       if (allowed.has(status)) continue;
       const key = `${operation} ${String(status)}`;
-      if (RECORDED[key] !== undefined) {
+      if (recordedStatuses[key] !== undefined) {
         recorded.push(key);
         continue;
       }
@@ -419,6 +418,7 @@ export function reportStatuses(
 export function unreachedDebt(
   report: StatusReport,
   listed: Readonly<Record<string, string>> = UNREACHED,
+  recordedStatuses: Readonly<Record<string, string>> = RECORDED,
 ): { unlisted: string[]; stale: string[] } {
   const unanswered = new Set(report.unanswered);
   return {
@@ -428,7 +428,7 @@ export function unreachedDebt(
         .filter((key) => !unanswered.has(key))
         .sort(),
       ...report.staleCodes.map((code) => `code ${code}`),
-      ...Object.keys(RECORDED)
+      ...Object.keys(recordedStatuses)
         .filter((key) => !report.recorded.includes(key))
         .map((key) => `recorded ${key}`),
     ],

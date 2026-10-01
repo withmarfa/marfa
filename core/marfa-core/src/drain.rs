@@ -16,7 +16,7 @@ use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
 use crate::model::{BlockedReason, QueuedWrite, Subject, Verdict, WriteKind};
 use crate::store;
-use crate::wire::{WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
+use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
 
 /// What a drain did.
@@ -545,16 +545,33 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
 ///
 /// No idempotency key: the door is idempotent by content, since bytes it
 /// already holds answer the hash they already have, and it reads no key.
+///
+/// The stream is spent by a send, so one refused `401` and renewed is sent
+/// again here, from the start of the file.
 fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answer, CoreError> {
-    let reply = http.call(Call {
-        method: Method::Post,
-        segments: &["blobs"],
-        params: &[],
-        headers: &[("Content-Type", mime_type)],
-        body: CallBody::Reader(Box::new(bytes)),
-        credential: true,
-        stream: false,
-    })?;
+    let again = bytes
+        .try_clone()
+        .map_err(|error| CoreError::Store(format!("the upload's bytes cannot be read: {error}")))?;
+    let send = |bytes: File| {
+        http.call(Call {
+            method: Method::Post,
+            segments: &["blobs"],
+            params: &[],
+            headers: &[("Content-Type", mime_type)],
+            body: CallBody::Reader(Box::new(bytes)),
+            credential: true,
+            stream: false,
+        })
+    };
+    let sent = http.authorization();
+    let mut reply = send(bytes)?;
+    if reply.status == 401 && http.authorization() != sent {
+        let mut again = again;
+        std::io::Seek::rewind(&mut again).map_err(|error| {
+            CoreError::Store(format!("the upload's bytes cannot be read: {error}"))
+        })?;
+        reply = send(again)?;
+    }
     let body = reply.body;
     let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
         Ok(envelope) => envelope.error.code,
@@ -1287,6 +1304,7 @@ fn settle(
                         },
                     )?;
                     store::lay_waiting_edge_writes_over(&tx, &parsed.edge.id)?;
+                    store::let_go_of_untaken_edge(&tx, &parsed.edge.id)?;
                     tx.commit()?;
                     Ok(Settled {
                         replayed: parsed.acknowledged || replayed_header,
@@ -1645,6 +1663,44 @@ fn moves(payload: &str) -> bool {
 }
 
 fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
+    let read = read_back(core, row);
+    // A refused create's id is the server's only if the read finds it, so
+    // its pin goes even where the read fails.
+    if row.kind == WriteKind::CreateItem
+        && !matches!(read, Ok(ReadBack::Item { held: Some(_), .. }))
+        && let Some(id) = row.item_id.as_deref()
+    {
+        store::unpin(&*core.conn()?, id)?;
+    }
+    let read = read?;
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    apply_read_back(&tx, &read)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// What the server holds of the row or the edge a write names, read back
+/// so the copy can be put to it.
+pub(crate) enum ReadBack {
+    /// The write names nothing a read can put back.
+    Nothing,
+    Item {
+        id: String,
+        held: Option<Box<crate::wire::WireItemWithMetadata>>,
+        /// Whether the write was itself a move, read before anything changes
+        /// the queue.
+        moved: bool,
+    },
+    Edge {
+        id: String,
+        held: Option<Box<WireEdge>>,
+    },
+}
+
+/// Reads back what the server holds of the subject of `row`, changing
+/// nothing.
+pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
     let http = core.http_ref()?;
     // An edge write names the edge, and its endpoints in `item_id` and
     // `target_id`. Reading `item_id` as the subject would re-read the source
@@ -1657,10 +1713,10 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge
     ) {
         let Some(source) = row.item_id.as_deref() else {
-            return Ok(());
+            return Ok(ReadBack::Nothing);
         };
         let Some(edge_id) = row.edge_id.as_deref() else {
-            return Ok(());
+            return Ok(ReadBack::Nothing);
         };
         // The edges the server holds for this source, read by type so the
         // page is the one the edge belongs to.
@@ -1694,7 +1750,13 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         if let Some(edge_type) = &edge_type {
             let mut cursor: Option<String> = None;
             loop {
-                let page = http.item_edges_page(source, edge_type, cursor.as_deref())?;
+                // A source the server does not hold holds no edges, which is
+                // what an edge drawn from a row whose create never landed
+                // meets.
+                let page = match http.item_edges_page(source, edge_type, cursor.as_deref()) {
+                    Err(CoreError::NotFound { .. }) => break,
+                    page => page?,
+                };
                 found = page.data.into_iter().find(|edge| edge.id == edge_id);
                 if found.is_some() {
                     break;
@@ -1714,61 +1776,68 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
                 }
             }
         }
-        let conn = core.conn()?;
-        match found {
-            // A later write to the edge is ordered behind this one and not
-            // refused with it (`queue-and-verdicts.md` 42), so what is still
-            // waiting is laid back over the edge the server holds (35).
-            Some(edge) => {
-                store::upsert_edge(&conn, &edge)?;
-                store::lay_waiting_edge_writes_over(&conn, edge_id)?;
-            }
-            // The server holds no such edge, which for a refused create is
-            // the honest answer and for a refused update means it went
-            // elsewhere.
-            None => {
-                store::delete_edge(&conn, edge_id)?;
-            }
-        }
-        return Ok(());
+        return Ok(ReadBack::Edge {
+            id: edge_id.to_string(),
+            held: found.map(Box::new),
+        });
     }
 
     let Some(id) = row.item_id.as_deref() else {
-        return Ok(());
+        return Ok(ReadBack::Nothing);
     };
-    // A refused create's id is the server's only if the read finds it, so
-    // its pin goes even where the read fails.
-    let read = http.item(id);
-    if row.kind == WriteKind::CreateItem && !matches!(read, Ok(Some(_))) {
-        store::unpin(&*core.conn()?, id)?;
-    }
-    match read? {
-        Some(held) => {
-            let mut conn = core.conn()?;
-            let catalog = Catalog::load(&conn)?;
+    let moved =
+        row.kind == WriteKind::UpdateItem && moves(&store::payload_of(&*core.conn()?, &row.id)?);
+    Ok(ReadBack::Item {
+        id: id.to_string(),
+        held: http.item(id)?.map(Box::new),
+        moved,
+    })
+}
+
+/// Puts the copy to what `read_back` read, with every write still waiting
+/// laid back over it (`queue-and-verdicts.md` 35).
+pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
+    match read {
+        ReadBack::Nothing => {}
+        // A later write to the edge is ordered behind this one and not
+        // refused with it (`queue-and-verdicts.md` 42), so what is still
+        // waiting is laid back over the edge the server holds (35).
+        ReadBack::Edge {
+            id,
+            held: Some(edge),
+        } => {
+            store::upsert_edge(conn, edge)?;
+            store::lay_waiting_edge_writes_over(conn, id)?;
+            store::let_go_of_untaken_edge(conn, id)?;
+        }
+        // The server holds no such edge, which for a refused create is the
+        // honest answer and for a refused update means it went elsewhere.
+        ReadBack::Edge { id, held: None } => {
+            store::delete_edge(conn, id)?;
+        }
+        ReadBack::Item {
+            held: Some(held),
+            moved,
+            ..
+        } => {
+            let catalog = Catalog::load(conn)?;
             let indexing = catalog.indexing(&held.item.r#type);
-            let tx = conn.transaction()?;
             // The server's row outside the slice is not put back where a
             // move answered ahead of this write let it go, and goes where
             // this refused write was itself a move another device's made
             // moot. A row held outside the slice for another reason, an
             // attachment of a row in it, stays.
-            let let_go = !store::slice_holds(&tx, &catalog, &held.item)?
-                && (!store::item_held(&tx, &held.item.id)?
-                    || row.kind == WriteKind::UpdateItem
-                        && moves(&store::payload_of(&tx, &row.id)?));
+            let let_go = !store::slice_holds(conn, &catalog, &held.item)?
+                && (!store::item_held(conn, &held.item.id)? || *moved);
             if let_go {
-                store::evict_item(&tx, &held.item.id, &store::whole_edge_types(&tx)?)?;
-                tx.commit()?;
+                store::evict_item(conn, &held.item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());
             }
-            store::upsert_item(&tx, &held.item, Some(&held.metadata.tags), &indexing)?;
-            store::lay_waiting_writes_over(&tx, &held.item.id, &|laid| catalog.indexing(laid))?;
-            tx.commit()?;
+            store::upsert_item(conn, &held.item, Some(&held.metadata.tags), &indexing)?;
+            store::lay_waiting_writes_over(conn, &held.item.id, &|laid| catalog.indexing(laid))?;
         }
-        None => {
-            let conn = core.conn()?;
-            store::forget_item(&conn, id)?;
+        ReadBack::Item { id, held: None, .. } => {
+            store::forget_item(conn, id)?;
         }
     }
     Ok(())
@@ -2454,6 +2523,79 @@ mod tests {
             behind,
             vec![(blocked.id.clone(), Some(3)), (waiting.id.clone(), Some(3))],
             "the edits behind named one queued before the answered one, one already sent, one refused by the drain, or one of another row"
+        );
+    }
+
+    /// A renewal refused leaves the `401` as the answer, which parks the queue
+    /// and counts nothing; one the network stopped is the environment's.
+    /// Counted instead, every write behind a sign-in that ended would reach
+    /// the ceiling and die, beyond the reach of signing in again.
+    #[test]
+    fn a_refused_renewal_parks_the_queue_and_one_the_network_stopped_waits() {
+        let refused = |renewal: CoreError| {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                "/blobs",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            let http = Http::new(&server.url(), "k").unwrap();
+            let renewal = std::sync::Mutex::new(Some(renewal));
+            http.renew_with(Box::new(move |_| {
+                Err(renewal.lock().unwrap().take().expect("renewed once"))
+            }));
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("bytes");
+            std::fs::write(&path, b"hello").unwrap();
+            classify(&upload(&http, File::open(&path).unwrap(), "text/plain"))
+        };
+
+        assert_eq!(
+            refused(CoreError::Unauthorized {
+                code: "signed_out".into(),
+                message: "the sign-in ended".into(),
+            }),
+            Classified::BlockQueue(BlockedReason::CredentialRefused)
+        );
+        assert_eq!(
+            refused(CoreError::Network(
+                "the token endpoint did not answer".into()
+            )),
+            Classified::Environmental
+        );
+    }
+
+    /// An upload's bytes are a stream its first send spends, so the one sent
+    /// again under a renewed bearer is read from the start of the file.
+    #[test]
+    fn an_upload_refused_for_its_token_is_sent_again_whole_under_a_renewed_one() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/blobs",
+            vec![
+                crate::scripted::refusal(401, "unauthorized"),
+                crate::scripted::json(201, r#"{"hash":"sha256:00","size_bytes":5}"#),
+            ],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        http.renew_with(Box::new(|_| Ok("fresh".into())));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bytes");
+        std::fs::write(&path, b"hello").unwrap();
+
+        let answer = upload(&http, File::open(&path).unwrap(), "text/plain").unwrap();
+
+        assert_eq!(answer.status, 201);
+        let sent: Vec<_> = server
+            .seen("/blobs")
+            .into_iter()
+            .map(|seen| (seen.authorization, seen.body))
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                (Some("Bearer k".into()), b"hello".to_vec()),
+                (Some("Bearer fresh".into()), b"hello".to_vec()),
+            ]
         );
     }
 }

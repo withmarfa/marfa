@@ -119,7 +119,9 @@ describe("the queue answers before there is anything in it", () => {
     // caller asking what is outstanding is asking about what they queued,
     // not about the copy: a device that made them hydrate first would
     // refuse the question at the moment it matters most, which is when the
-    // server cannot be reached.
+    // server cannot be reached. The store is made and never hydrated, since
+    // a path with no store at all is refused (`device.md` 45).
+    expect((await harness.device.status()).ok).toBe(true);
     const queued = await harness.device.queue();
     expect(
       queued.ok,
@@ -3222,6 +3224,101 @@ describe("an answer the device applies keeps what it has not had answered", () =
       queued.filter((row) => row.verdict === null).length,
       "the writes this case lays over the refilled copy were not left waiting",
     ).toBe(5);
+  });
+
+  it("holds no waiting edge whose source a re-hydration left outside the slice, nor its answer", async () => {
+    harness = await startHarness("queue-overlay-edge-source");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "1",
+      rows: {
+        ...held(),
+        "core.event": [
+          {
+            item: {
+              id: "meeting",
+              type: "core.event",
+              properties: { title: "meeting" },
+            },
+          },
+        ],
+      },
+      edges: { references: [] },
+    });
+    const ids = async (read: Promise<{ ok: boolean; value?: unknown }>) => {
+      const outcome = await read;
+      expect(outcome.ok, JSON.stringify(outcome)).toBe(true);
+      return outcome.ok
+        ? (outcome.value as { id: string }[]).map((edge) => edge.id)
+        : [];
+    };
+    expect(
+      (await device.hydrate(["core.note", "core.event"], "library")).ok,
+    ).toBe(true);
+    const fromMeeting = await device.createEdge({
+      source: "meeting",
+      target: HELD.id,
+      type: "references",
+    });
+    const fromNote = await device.createEdge({
+      source: HELD.id,
+      target: "meeting",
+      type: "references",
+    });
+    expect(fromMeeting.ok && fromNote.ok).toBe(true);
+    if (!fromMeeting.ok || !fromNote.ok) return;
+    const away = fromMeeting.value.edge_id ?? "";
+    const kept = fromNote.value.edge_id ?? "";
+    // The witness: the edge is held while its source is.
+    expect(await ids(device.edgesFrom("meeting"))).toEqual([away]);
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    expect(
+      await ids(device.edgesTo(HELD.id)),
+      "the re-hydration laid back an edge whose source the slice no longer holds, which nothing will keep current",
+    ).toEqual([]);
+    expect(
+      await ids(device.edgesFrom(HELD.id)),
+      "the re-hydration dropped a waiting edge whose source it still holds",
+    ).toEqual([kept]);
+    expect(
+      (await queueOf(device))
+        .filter((row) => row.kind === "create_edge")
+        .map((row) => [row.edge_id, row.verdict]),
+      "the edge left the queue with the copy, so a write the caller was told was queued is never sent",
+    ).toEqual([
+      [away, null],
+      [kept, null],
+    ]);
+
+    // Along a type the slice holds whole, the source does not matter.
+    expect(
+      (
+        await device.hydrate(["core.note"], "library", {
+          edgeTypes: ["references"],
+        })
+      ).ok,
+    ).toBe(true);
+    expect(await ids(device.edgesTo(HELD.id))).toEqual([away]);
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    scriptWrites(server, {
+      edges: [
+        (request) => writeAnswers.edge(JSON.parse(request.body) as never),
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(
+      (await queueOf(device))
+        .filter((row) => row.kind === "create_edge")
+        .map((row) => row.verdict),
+    ).toEqual(["accepted", "accepted"]);
+    expect(
+      await ids(device.edgesTo(HELD.id)),
+      "the server's answer put back an edge whose source the copy does not hold",
+    ).toEqual([]);
+    expect(await ids(device.edgesFrom(HELD.id))).toEqual([kept]);
   });
 });
 

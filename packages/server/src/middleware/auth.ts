@@ -15,7 +15,7 @@ import {
   hasPermission,
 } from "@withmarfa/shared";
 import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
-import type { Storage } from "../storage/interface.js";
+import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
@@ -260,6 +260,57 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * The principal a sign-in's access token stands for, as every door reads
+ * it, and as a bulk-action job reads it again before each chunk.
+ */
+export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey {
+  const typePermissions = scopesToTypePermissions(oauthToken.scopes);
+  const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
+  const metadataPermissions = scopesToMetadataPermissions(oauthToken.scopes);
+  const profilePermissions = scopesToProfilePermissions(oauthToken.scopes);
+  // Stable composite label/source. Used in audit rows; doesn't need
+  // to be a real foreign-key handle — system.connection projection
+  // is maintained separately.
+  const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
+  const createdAtIso = oauthToken.createdAtMs
+    ? new Date(oauthToken.createdAtMs).toISOString()
+    : new Date().toISOString();
+  // **No role is projected, because there is no role.** What the app may
+  // do is the grant, which travels beside this principal rather than
+  // inside it.
+  return {
+    id: oauthToken.id,
+    label: `oauth:${grantHandle}`,
+    source: `oauth:${grantHandle}`,
+    // **A sign-in claims no source beyond its own.** A claim is granted
+    // by a key's creator, and a grant is consent to scopes, none of
+    // which names a source, so there is nothing an app was given that
+    // a claim could come from.
+    sources: [],
+    default_tier: "library",
+    // **An operator key is never derivable from a sign-in.** Running the
+    // instance sits outside the permission model, so no consent screen can
+    // offer it and no grant can reach it.
+    is_operator: false,
+    // The permissions the door reads come from the grant beside this
+    // principal rather than from here, because a grant is the live answer
+    // and a projection would be a copy of it taken at request time.
+    //
+    // The client is named on the principal because one thing downstream
+    // needs to know an app chose this credential's label rather than an
+    // operator: see `extensionLabelOf`.
+    oauth_client_id: oauthToken.clientId,
+    type_permissions: typePermissions,
+    extension_permissions: {},
+    edge_permissions: edgePermissions,
+    metadata_permissions: metadataPermissions,
+    profile_permissions: profilePermissions,
+    created_at: createdAtIso,
+    last_used_at: null,
+  };
+}
+
+/**
  * **Nothing here reads how the instance was configured, and that is the
  * point.** What a caller may do turns on the credential in hand and never on
  * a deployment setting.
@@ -343,52 +394,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
-      const typePermissions = scopesToTypePermissions(oauthToken.scopes);
-      const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
-      const metadataPermissions = scopesToMetadataPermissions(
-        oauthToken.scopes,
-      );
-      const profilePermissions = scopesToProfilePermissions(oauthToken.scopes);
-      // Stable composite label/source. Used in audit rows; doesn't need
-      // to be a real foreign-key handle — system.connection projection
-      // is maintained separately.
-      const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
-      const createdAtIso = oauthToken.createdAtMs
-        ? new Date(oauthToken.createdAtMs).toISOString()
-        : new Date().toISOString();
-      // **No role is projected, because there is no role.** What the app may
-      // do is the grant, which travels beside this principal rather than
-      // inside it.
-      c.set("apiKey", {
-        id: oauthToken.id,
-        label: `oauth:${grantHandle}`,
-        source: `oauth:${grantHandle}`,
-        // **A sign-in claims no source beyond its own.** A claim is granted
-        // by a key's creator, and a grant is consent to scopes, none of
-        // which names a source, so there is nothing an app was given that
-        // a claim could come from.
-        sources: [],
-        default_tier: "library",
-        // **An operator key is never derivable from a sign-in.** Running the
-        // instance sits outside the permission model, so no consent screen can
-        // offer it and no grant can reach it.
-        is_operator: false,
-        // The permissions the door reads come from the grant beside this
-        // principal rather than from here, because a grant is the live answer
-        // and a projection would be a copy of it taken at request time.
-        //
-        // The client is named on the principal because one thing downstream
-        // needs to know an app chose this credential's label rather than an
-        // operator: see `extensionLabelOf`.
-        oauth_client_id: oauthToken.clientId,
-        type_permissions: typePermissions,
-        extension_permissions: {},
-        edge_permissions: edgePermissions,
-        metadata_permissions: metadataPermissions,
-        profile_permissions: profilePermissions,
-        created_at: createdAtIso,
-        last_used_at: null,
-      });
+      c.set("apiKey", oauthPrincipal(oauthToken));
       c.set("authType", "oauth");
       // The granted set, beside the projections rather than inside them.
       // Read only by `requirePermission` and by the audit rows that name
@@ -449,27 +455,14 @@ export function authMiddleware(storage: Storage, salt: string) {
  * Credential `source` prefixes a caller may not name for itself, as a key's
  * own source or as one it claims.
  *
- * A caller-supplied `source` is free text, and two readers give it a
- * meaning, so the reservation covers both.
- *
  * `oauth:` is read as authority: the synthetic key an OAuth access token
  * produces is sourced `oauth:<clientId>:<userId>`, and it is synthesized
  * per request in this file, never persisted. A minted key carrying that
  * shape would read later as a grant it has no binding to.
- *
- * `connector:` is read as provenance. `itemProvenanceSource` stamps a
- * credential's source, or one it claims, onto every row it writes, so a
- * minted key carrying or claiming the prefix would put the mark of a
- * connector on rows a caller wrote by hand. The connector registry
- * (`connectors.md`) is where a connector is declared; a credential source
- * is not, and the reservation is what keeps the two from being confusable.
  */
-export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
-  "oauth:",
-  "connector:",
-] as const;
+export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = ["oauth:"] as const;
 
-/** Whether `source` claims one of the reserved connector shapes. */
+/** Whether `source` claims a reserved prefix. */
 export function isReservedCredentialSource(source: string): boolean {
   const normalized = source.trim().toLowerCase();
   return RESERVED_CREDENTIAL_SOURCE_PREFIXES.some((prefix) =>
@@ -513,13 +506,11 @@ export function checkOperatorKey(apiKey: ApiKey | undefined): ApiKey {
  * exception. Restating it there would have been a second copy of the one
  * rule that decides who reaches the platform's own rows.
  *
- * The operator key passes outright; nothing else writes `system.*` or
- * `marfa.*`.
+ * The operator key passes outright; nothing else writes `system.*`.
  */
 export function mayWriteReserved(key: ApiKey, type: string): boolean {
   if (key.is_operator) return true;
-  const tier = classifyNamespace(type);
-  return tier !== "system" && tier !== "marfa";
+  return classifyNamespace(type) !== "system";
 }
 
 /**
@@ -564,12 +555,11 @@ export function checkTypeAccess(
 ): void {
   const key = checkAuth(apiKey);
 
-  // Operator gate. Writes to `system.*` (and the internal-only `marfa.*`)
-  // require `is_operator: true`, which is the instance tier and nothing a
-  // working credential can hold. It is a fence rather than a route: the
-  // operator key's own maps are empty, so in practice the platform's own
-  // machinery writes these rows through the storage layer rather than through
-  // a credential at all.
+  // Operator gate. Writes to `system.*` require `is_operator: true`, which is
+  // the instance tier and nothing a working credential can hold. It is a
+  // fence rather than a route: the operator key's own maps are empty, so in
+  // practice the platform's own machinery writes these rows through the
+  // storage layer rather than through a credential at all.
   //
   // **The message says no credential rather than naming the operator key.**
   // The operator key is the only credential this fence admits, and the
@@ -585,20 +575,14 @@ export function checkTypeAccess(
   // refuses a reserved root to every credential, the operator key included,
   // because the shipped vocabulary is a property of the build.
   //
-  // Only writes are gated. A read of `system.*` or `marfa.*` is bounded by
-  // the caller's own type permissions like any other read, so there is
-  // nothing left for this check to add on that side.
-  if (level === "write") {
-    const tier = classifyNamespace(type);
-    if (
-      (tier === "system" || tier === "marfa") &&
-      !mayWriteReserved(key, type)
-    ) {
-      throw new MarfaError(
-        ErrorCode.TYPE_NOT_PERMITTED,
-        `Reserved namespace: no credential writes ${tier}.* items. The operator key is the only one this fence admits and it holds no type permissions, so the platform writes these rows through the storage layer instead.`,
-      );
-    }
+  // Only writes are gated. A read of `system.*` is bounded by the caller's
+  // own type permissions like any other read, so there is nothing left for
+  // this check to add on that side.
+  if (level === "write" && !mayWriteReserved(key, type)) {
+    throw new MarfaError(
+      ErrorCode.TYPE_NOT_PERMITTED,
+      `Reserved namespace: no credential writes system.* items. The operator key is the only one this fence admits and it holds no type permissions, so the platform writes these rows through the storage layer instead.`,
+    );
   }
 
   checkTypePermission(key, type, level);

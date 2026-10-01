@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type {
   AncestorUnavailableResponse,
+  BulkActionJob,
   ConflictResponse,
   MarfaItem,
   StaleVersionResponse,
@@ -616,6 +617,31 @@ describe("item versioning", () => {
     expect(stale.data.item.properties.title).toBe("Advanced");
   });
 
+  it("refuses a retype into a type nothing registered, and moves nothing", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Stays", body: "Kept" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const destination = `user.retype-absent-${ctx.runId}`;
+    const refused = await client.updateItem(r.data.item.id, {
+      type: destination,
+      retype: true,
+      version: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("unknown_type");
+    expect(refused.error?.error.details?.type).toBe(destination);
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.note");
+    expect(fetched.data.item.version).toBe(1);
+  });
+
   it("moves the type with retype alone at a stale version", async () => {
     const r = await client.createItem(
       createNote({
@@ -1111,6 +1137,62 @@ describe("item versioning", () => {
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
     expect(history.data.data.length).toBe(0);
+  });
+
+  it("moves neither the version nor its history on a transition, a delete or a restore", async () => {
+    const tag = `transition-version-${ctx.runId}`;
+    const r = await client.createItem(
+      createNote({ source: ctx.source, tags: [tag] }),
+    );
+    expect(r.ok).toBe(true);
+    const id = r.data.item.id;
+    trackItem(ctx, id);
+    // The witness: a write to the item's fields moves the version and
+    // records the version it left.
+    const updated = await client.updateItem(id, {
+      properties: { title: "Changed" },
+      version: 1,
+    });
+    expect(updated.data.item.version).toBe(2);
+    const history = async () =>
+      (await client.getVersions(id)).data.data.map((v) => v.version);
+    expect(await history()).toEqual([1]);
+
+    const archived = await client.transitionItem(id, "archived");
+    expect(archived.status).toBe(200);
+    expect(archived.data.item).toMatchObject({ state: "archived", version: 2 });
+    const unarchived = await client.transitionItem(id, "active");
+    expect(unarchived.data.item).toMatchObject({ state: "active", version: 2 });
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    const restored = await client.restoreItem(id);
+    expect(restored.data.item).toMatchObject({ state: "active", version: 2 });
+    const trashed = await client.transitionItem(id, "trashed");
+    expect(trashed.data.item).toMatchObject({ state: "trashed", version: 2 });
+    const back = await client.transitionItem(id, "active");
+    expect(back.data.item).toMatchObject({ state: "active", version: 2 });
+
+    const bulk = await client.bulkAction({
+      action: "transition",
+      state: "archived",
+      filter: { tags: [tag] },
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(202);
+    const job = await client.pollBulkActionToTerminal(
+      (bulk.data as BulkActionJob).id,
+    );
+    expect(job.status).toBe("completed");
+    expect(job.result?.succeeded).toBe(1);
+
+    const read = await client.getItem(id);
+    expect(read.data.item).toMatchObject({ state: "archived", version: 2 });
+    expect(await history()).toEqual([1]);
+
+    const next = await client.updateItem(id, {
+      properties: { title: "Changed again" },
+      version: 2,
+    });
+    expect(next.data.item.version).toBe(3);
+    expect(await history()).toEqual([1, 2]);
   });
 
   it("versions have correct item_id reference", async () => {

@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use marfa_core::{
     Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, MetadataWrite, SearchFilters,
-    Server, Sort,
+    Sort,
 };
 
 use crate::error::CliError;
 use crate::output;
-use crate::remote::Named;
+use crate::remote::{Named, Session, renewing};
 use crate::values::{ItemState, SortDirection, SortField, Tier, properties};
 
 #[derive(Debug, Args)]
@@ -137,6 +137,16 @@ pub enum DeviceCommand {
         /// Release every write blocked for this reason instead of one by id.
         #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
         reason: Option<marfa_core::BlockedReason>,
+    },
+    /// Take a write blocked `ancestor_unavailable` or `conflict_unresolved`
+    /// out of the queue, and put the copy back to what the server holds.
+    ///
+    /// Sent again, such a write is refused the same way under any key. The
+    /// writes held for it are refused unsent.
+    Withdraw {
+        /// The queued write to withdraw.
+        #[arg(value_name = "ID")]
+        id: String,
     },
     /// What the local copy holds and where it came from.
     Status,
@@ -481,6 +491,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
     let store = Store {
         db: args.db,
         reader: args.reader,
+        makes: matches!(
+            args.command,
+            DeviceCommand::Hydrate { .. } | DeviceCommand::Status
+        ),
     };
     match args.command {
         DeviceCommand::Hydrate {
@@ -751,12 +765,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 // Held bytes are answered with no server named at all; only
                 // a fetch needs one, and a store with none says the bytes
                 // are absent rather than that the command was misused.
-                let server = match named.server() {
-                    Ok(server) => Some(server),
-                    Err(CliError::NoServerNamed) => None,
-                    Err(error) => return Err(error),
-                };
-                let path = store.open(server)?.blob(&hash)?;
+                let path = store.open(named.session_if_named()?)?.blob(&hash)?;
                 output::report(
                     &serde_json::json!({ "hash": hash, "path": path }),
                     json,
@@ -892,6 +901,18 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 }
             })
         }
+        DeviceCommand::Withdraw { id } => {
+            let withdrawn = store.open_with_server(named)?.withdraw(&id)?;
+            output::report(&withdrawn, json, || {
+                if withdrawn {
+                    format!("withdrew {id}; the copy holds what the server holds")
+                } else {
+                    format!(
+                        "nothing to withdraw: {id} is not blocked ancestor_unavailable or conflict_unresolved"
+                    )
+                }
+            })
+        }
         DeviceCommand::Status => {
             let status = store.open(None)?.status()?;
             output::report(&status, json, || {
@@ -991,20 +1012,28 @@ fn stop_on_interrupt() {
 struct Store {
     db: Option<PathBuf>,
     reader: bool,
+    /// Whether the command may make the store where none is: only a
+    /// hydration and the state report do (`device.md` 45).
+    makes: bool,
 }
 
 impl Store {
     /// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
     /// there is no default store, because a store nobody named is one nobody
-    /// can find again. The file is made at the named path on first open, so
-    /// the state report is answerable before a hydration (`device.md` 5);
-    /// opened to read, it is never made (`device.md` 41).
-    fn open(&self, server: Option<Server>) -> Result<Core, CliError> {
+    /// can find again. The file is made at the named path by a hydration or
+    /// the state report, so the report is answerable before a hydration
+    /// (`device.md` 5), and by nothing else, so a mistyped path is refused
+    /// rather than answered from a store made for it; opened to read, it is
+    /// never made (`device.md` 41).
+    fn open(&self, session: Option<Session>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);
         };
         if self.reader {
             return Ok(Core::open_reader(path)?);
+        }
+        if !self.makes && !path.exists() {
+            return Err(CliError::NoStoreAt(path.clone()));
         }
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
@@ -1012,7 +1041,10 @@ impl Store {
         {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(Core::open(path, server)?)
+        let (server, renew) = Session::split(session);
+        let core = Core::open(path, server)?;
+        renewing(&core, renew);
+        Ok(core)
     }
 
     /// For the commands that talk to a server. Opened to read, it resolves
@@ -1022,6 +1054,6 @@ impl Store {
         if self.reader {
             return self.open(None);
         }
-        self.open(Some(named.server()?))
+        self.open(Some(named.session()?))
     }
 }

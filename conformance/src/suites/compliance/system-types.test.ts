@@ -48,8 +48,12 @@ describe("system.* set", () => {
   it("rejects system.* writes from every key the API can mint", async () => {
     const np = await narrowClient("np-system-write");
     const r = await np.createItem({
-      type: "system.device",
-      properties: { name: "np-write", kind: "laptop" },
+      type: "system.connection",
+      properties: {
+        kind: "app",
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
     });
     expect(r.status).toBe(403);
     expect(r.error?.error.code).toBe("type_not_permitted");
@@ -102,7 +106,34 @@ describe("system.* set", () => {
     expect(unchanged.data.item.state).toBe("active");
   });
 
-  it("ships none of the eight system.connection fields no door accepts", async () => {
+  it("ships only the system types the server writes", async () => {
+    // **The absence is witnessed.** The two types something writes are
+    // asserted present by the same doors, so a lookup that answered nothing
+    // for every id would redden here.
+    for (const id of ["system.connection", "system.folder"]) {
+      const r = await client.getType(id);
+      expect(r.status, id).toBe(200);
+    }
+    for (const id of [
+      "system.account_holder",
+      "system.app",
+      "system.device",
+      "system.webhook",
+    ]) {
+      const r = await client.getType(id);
+      expect(r.status, id).toBe(404);
+      expect(r.error?.error.code, id).toBe("type_not_found");
+    }
+  });
+
+  it("declares app as the only system.connection kind", async () => {
+    const r = await client.getType("system.connection");
+    expect(r.ok).toBe(true);
+    expect(r.data.fields.kind?.enum_values).toEqual(["app"]);
+    expect(r.data.description ?? "").not.toContain("connector");
+  });
+
+  it("ships none of the system.connection fields no door accepts", async () => {
     // No door accepts these fields and no server path stamps them, so the
     // type declares none of them and its description has nothing to
     // explain about them.
@@ -120,6 +151,11 @@ describe("system.* set", () => {
       "next_run_at",
       "runtime_status",
       "triggers",
+      "connector_id",
+      "credential_id",
+      "configuration",
+      "direction",
+      "mapping",
     ];
     const kept = [
       "kind",
@@ -127,11 +163,8 @@ describe("system.* set", () => {
       "granted_at",
       "client_id",
       "scopes",
-      "connector_id",
-      "credential_id",
-      "configuration",
-      "direction",
-      "mapping",
+      "last_used_at",
+      "revoked_at",
     ];
 
     const r = await client.getType("system.connection");
@@ -157,7 +190,7 @@ describe("system.* set", () => {
     // asserts over whatever the instance happens to hold and is vacuous
     // on a dataset with none. Vacuous and honest beats absent: the
     // moment a grant exists in the run, a server path that started
-    // filling one of the eight reddens here.
+    // filling one of them reddens here.
     const unwritten = [
       "attached_device",
       "feed_activity",
@@ -167,6 +200,11 @@ describe("system.* set", () => {
       "next_run_at",
       "runtime_status",
       "triggers",
+      "connector_id",
+      "credential_id",
+      "configuration",
+      "direction",
+      "mapping",
     ];
     const r = await client.rawRequest<{
       data: { id: string; properties: Record<string, unknown> }[];

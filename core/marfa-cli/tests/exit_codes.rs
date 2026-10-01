@@ -53,6 +53,41 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(envelope["error"]["code"], "no_store");
     assert_eq!(envelope["exit"], 2);
 
+    // A path where no store has been made, to a command that makes none,
+    // is refused the same way and leaves the path as it was.
+    let missing = scratch("missing");
+    let (code, stdout, stderr) = run(&[
+        "--json",
+        "device",
+        "--db",
+        missing.to_str().unwrap(),
+        "queue",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert_eq!(stdout, "");
+    let envelope = read_envelope(&stderr);
+    assert_eq!(envelope["error"]["code"], "no_store");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains(missing.to_str().unwrap()),
+        "{stderr}"
+    );
+    assert!(!missing.exists());
+    let (code, _, stderr) = run(&[
+        "--json",
+        "device",
+        "--db",
+        missing.to_str().unwrap(),
+        "status",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        missing.exists(),
+        "the state report makes the store it reports on"
+    );
+
     let store = scratch("usage");
     let (code, _, stderr) = run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
     assert_eq!(code, 2, "{stderr}");
@@ -65,8 +100,9 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(code, 0);
     assert!(stdout.contains("\"operation_id\""));
 
-    // clap's own refusal: exit 2, its usage text, no envelope.
-    let (code, _, stderr) = run(&[
+    // A command line the parser refuses answers the envelope too, naming
+    // what was wrong, wherever `--json` stands in it.
+    let (code, stdout, stderr) = run(&[
         "--json",
         "device",
         "--db",
@@ -74,8 +110,56 @@ fn a_usage_refusal_leaves_by_two() {
         "nothing",
     ]);
     assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("Usage:"), "{stderr}");
-    assert!(!stderr.trim_start().starts_with('{'), "{stderr}");
+    assert_eq!(stdout, "");
+    let envelope = read_envelope(&stderr);
+    assert_eq!(envelope["error"]["code"], "usage");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("'nothing'"),
+        "{stderr}"
+    );
+    assert!(envelope["error"]["server"].is_null());
+    assert_eq!(envelope["exit"], 2);
+    for args in [
+        &["items", "get", "--json"][..],
+        &["--json", "device"],
+        &["--json", "items", "list", "--sort", "sideways"],
+    ] {
+        let (code, _, stderr) = run(args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        let envelope = read_envelope(&stderr);
+        assert_eq!(envelope["error"]["code"], "usage", "{args:?}");
+        assert_eq!(envelope["exit"], 2, "{args:?}");
+    }
+
+    // Without `--json`, and where it is only a value after `--`, the
+    // parser's usage text.
+    for args in [
+        &["items", "get"][..],
+        &[
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "nothing",
+            "--",
+            "--json",
+        ],
+    ] {
+        let (code, _, stderr) = run(args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stderr.contains("Usage:"), "{stderr}");
+        assert!(!stderr.trim_start().starts_with('{'), "{stderr}");
+    }
+
+    // Help and the version are answers, under `--json` as without it.
+    let (code, stdout, _) = run(&["--json", "--version"]);
+    assert_eq!(code, 0);
+    assert!(stdout.starts_with("marfa "), "{stdout}");
+    let (code, stdout, _) = run(&["--json", "device", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Usage:"), "{stdout}");
 }
 
 /// The binary's own refusal of an argument, before anything is sent.
@@ -142,6 +226,16 @@ fn an_environment_failure_leaves_by_three() {
 #[test]
 fn a_refusal_under_the_device_rules_leaves_by_four() {
     let store = scratch("local");
+    // A store that exists and has never hydrated, which the state report
+    // makes; a path with no store is the command line's refusal instead.
+    let (code, _, stderr) = run(&[
+        "--json",
+        "device",
+        "--db",
+        store.to_str().unwrap(),
+        "status",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
     let (code, _, stderr) = run(&[
         "--json",
         "device",

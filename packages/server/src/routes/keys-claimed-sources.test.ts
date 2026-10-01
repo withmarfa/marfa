@@ -211,7 +211,7 @@ describe("minting a key", () => {
   });
 
   it("refuses a reserved prefix to every caller, the operator key included", async () => {
-    for (const reserved of ["connector:readwise", "OAuth:client:person"]) {
+    for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
       const res = await request(ctx.app, "POST", "/keys", {
         key: ctx.operatorKey,
         body: mintBody({ sources: [reserved] }),
@@ -297,7 +297,7 @@ describe("editing a key's claims", () => {
     const target = await seedKey("reserved-edit", []);
     const res = await request(ctx.app, "PATCH", `/keys/${target.id}`, {
       key: ctx.operatorKey,
-      body: { sources: ["connector:readwise"] },
+      body: { sources: ["oauth:client:person"] },
     });
     expect(res.status).toBe(400);
     expect(((await res.json()) as RefusalBody).error.code).toBe(

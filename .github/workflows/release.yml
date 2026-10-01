@@ -72,8 +72,11 @@ jobs:
       # never reaches `main`, so the run asked for is a push to `main`, not
       # any green run on the SHA. Verifying that run is stronger than
       # recomputing it here: the steps below would pass against the tag's
-      # own tree either way. This is why `ci.yml` does not cancel a
-      # superseded run on `main`: a canceled run is not a successful one.
+      # own tree either way. `ci.yml` cancels a superseded run on `main`, so
+      # the commit tagged is one whose own run finished, normally the newest.
+      # A commit whose run was cancelled is validated by dispatching `ci.yml`
+      # on its tag, and that run counts too: like a push to `main`, it ran
+      # the tree as it is, which a pull request's head did not.
       #
       # A dry run publishes nothing, so it asks only that `ci.yml` passed at
       # the commit by any event, which lets a branch that changes this
@@ -83,10 +86,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           query="head_sha=$GITHUB_SHA&status=success"
+          filter='.workflow_runs | length'
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            query="$query&event=push&branch=main"
+            filter='[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length'
           fi
-          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?$query" --jq '.total_count')
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?$query&per_page=100" --jq "$filter")
           if [ "${runs:-0}" -lt 1 ]; then
             echo "::error::No successful ci.yml run for $GITHUB_SHA ($query). A release refuses a commit that has not passed CI."
             exit 1
@@ -472,7 +476,7 @@ jobs:
         uses: rust-lang/crates-io-auth-action@v1
 
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-${{ needs.build.outputs.version }}
           path: artifacts

@@ -222,7 +222,9 @@ impl Peer {
 fn id_of(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let mut lines = BufReader::new(file).lines();
-    if lines.next()?.ok()?.trim_end() != "---" {
+    let line = lines.next()?.ok()?;
+    let first = line.strip_prefix(super::document::MARK).unwrap_or(&line);
+    if first.trim_end() != "---" {
         return None;
     }
     for line in lines {
@@ -491,5 +493,23 @@ impl<'a> Peers<'a> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file that opens with a byte-order mark names its item as the same
+    /// file without one does, so a move of it is found (`folders.md` 8, 43).
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let plain = dir.path().join("plain.md");
+        let marked = dir.path().join("marked.md");
+        std::fs::write(&plain, "---\nmarfa_id: n1\n---\nbody\n").unwrap();
+        std::fs::write(&marked, "\u{feff}---\nmarfa_id: n1\n---\nbody\n").unwrap();
+        assert_eq!(id_of(&plain).as_deref(), Some("n1"));
+        assert_eq!(id_of(&marked).as_deref(), Some("n1"));
     }
 }

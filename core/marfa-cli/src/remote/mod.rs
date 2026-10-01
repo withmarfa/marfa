@@ -9,13 +9,13 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io::Read;
 
-use marfa_core::Server;
-use marfa_core::http::{Call, CallBody, Reply, ReplyBody};
+use marfa_core::http::{Call, CallBody, Renew, Reply, ReplyBody};
+use marfa_core::{Core, CoreError, Server};
 use serde_json::Value;
 
 use crate::auth;
 use crate::credentials::{self, Kept};
-use crate::error::CliError;
+use crate::error::{CliError, Exit};
 use request::{Body, Request};
 pub use transport::Transport;
 
@@ -60,16 +60,76 @@ impl Named {
     /// What a command that sends from the working copy needs: the server
     /// and the credential, resolved the same way a direct command's are,
     /// so a kept key or a sign-in reaches `device` and `folders` too.
-    pub fn server(&self) -> Result<Server, CliError> {
+    pub fn session(&self) -> Result<Session, CliError> {
         let remote = Remote::resolve(self)?;
         let key = remote.bearer().ok_or_else(|| CliError::NoCredential {
             origin: remote.origin().to_string(),
         })?;
-        Ok(Server {
-            url: remote.url().to_string(),
-            key,
+        Ok(Session {
+            server: Server {
+                url: remote.url().to_string(),
+                key,
+            },
+            renew: renewal(&remote),
         })
     }
+
+    /// The session where a server is named, and none where none is: for a
+    /// command that answers from the copy and only fetches what it lacks.
+    pub fn session_if_named(&self) -> Result<Option<Session>, CliError> {
+        match self.session() {
+            Ok(session) => Ok(Some(session)),
+            Err(CliError::NoServerNamed) => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// A working copy's server, and how its credential is renewed where it is
+/// a signed-in session's token: a hydration, a push or a watch can outlive
+/// the token it started with, and is refused `401` once it has.
+pub struct Session {
+    pub server: Server,
+    pub renew: Option<Renew>,
+}
+
+impl Session {
+    pub fn split(session: Option<Session>) -> (Option<Server>, Option<Renew>) {
+        match session {
+            Some(Session { server, renew }) => (Some(server), renew),
+            None => (None, None),
+        }
+    }
+}
+
+/// Hands a copy the way to renew its credential, where there is one.
+pub fn renewing(core: &Core, renew: Option<Renew>) {
+    if let Some(renew) = renew {
+        core.renew_credential_with(renew);
+    }
+}
+
+/// A kept token renewed by the refresh a direct command's `401` gets, keyed
+/// by the bearer refused, so a token another process or another call
+/// already rotated is taken as it is. A key is never renewed: a `401` to a
+/// key is the answer.
+fn renewal(remote: &Remote) -> Option<Renew> {
+    if !remote.can_refresh() {
+        return None;
+    }
+    let origin = remote.origin().to_string();
+    Some(Box::new(move |refused: &str| {
+        auth::refresh(&origin, Some(refused))
+            .map(|kept| kept.bearer().to_string())
+            .map_err(|error| match error {
+                CliError::Core(core) => core,
+                other if other.exit() == Exit::Environment => CoreError::Network(other.to_string()),
+                other => CoreError::Unauthorized {
+                    code: other.code().to_string(),
+                    message: other.to_string(),
+                },
+            })
+    }))
 }
 
 impl Remote {
@@ -718,6 +778,84 @@ mod tests {
             "{}",
             received[6].body
         );
+    }
+
+    /// A working copy opened with a session goes on past its token: the
+    /// copy's call refused `401` is answered by the direct commands' refresh
+    /// and sent again under the rotated token. A key has nothing to renew.
+    #[test]
+    fn a_copy_opened_with_a_session_renews_its_refused_token_and_goes_on() {
+        const HASH: &str =
+            "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        let door = Door::open_at(|url| {
+            vec![
+                Answer::json(
+                    "401 Unauthorized",
+                    r#"{"error":{"code":"unauthorized","message":"expired"}}"#,
+                ),
+                root(&marfa_client::CONTRACT_VERSION.to_string()),
+                Answer::json(
+                    "200 OK",
+                    r#"{"access_token":"marfa_at_new","refresh_token":"marfa_rt_new","expires_in":3600,"token_type":"Bearer"}"#,
+                ),
+                Answer::json("200 OK", &format!(r#"{{"url":"{url}/bytes"}}"#)),
+                Answer::json("200 OK", "hello"),
+            ]
+        });
+        let kept = Kept::Token {
+            access_token: "marfa_at_old".into(),
+            refresh_token: Some("marfa_rt_old".into()),
+            expires_at: Some(crate::auth::now_seconds() + 3600),
+            client_id: "client".into(),
+            scope: None,
+            token_endpoint: format!("{}/auth/oauth2/token", door.url),
+            revocation_endpoint: None,
+        };
+        let origin = Transport::new(&door.url, None).unwrap().origin();
+        let _keychain = credentials::hold(&origin);
+        credentials::keep(&origin, &kept).unwrap();
+        let remote = Remote::holding(&door.url, kept).unwrap();
+        let dir = std::env::temp_dir().join(format!(
+            "marfa-session-{}-{}",
+            std::process::id(),
+            crate::auth::now_seconds()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let core = Core::open(
+            dir.join("copy.sqlite"),
+            Some(Server {
+                url: door.url.clone(),
+                key: "marfa_at_old".into(),
+            }),
+        )
+        .unwrap();
+        renewing(&core, renewal(&remote));
+        assert!(renewal(&remote_at(&door, Some("marfa_k1_x"))).is_none());
+
+        let held = core.blob(HASH).unwrap();
+
+        assert_eq!(std::fs::read(held).unwrap(), b"hello");
+        let received = door.received();
+        let paths: Vec<&str> = received.iter().map(|r| r.path()).collect();
+        let link = format!("/blobs/{HASH}/url");
+        assert_eq!(
+            paths,
+            vec![&link, "/", "/auth/oauth2/token", &link, "/bytes"]
+        );
+        assert_eq!(
+            received[0].header("authorization"),
+            Some("Bearer marfa_at_old")
+        );
+        assert!(
+            received[2].body.contains("refresh_token=marfa_rt_old"),
+            "{}",
+            received[2].body
+        );
+        assert_eq!(
+            received[3].header("authorization"),
+            Some("Bearer marfa_at_new")
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The call sent again after a refresh is held to the contract as the

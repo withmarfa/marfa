@@ -181,6 +181,12 @@ export function createErrorHandler(config: {
       stack: err instanceof Error ? err.stack : undefined,
     });
 
+    globalThis.__marfaReportException?.(err, {
+      request_id: c.get("requestId"),
+      method: c.req.method,
+      path: loggablePath(c.req.path),
+    });
+
     // Mark span as errored so the error-aware sampler forces 100% export on this trace.
     // API-only + null-guarded — no-op when OTel is off.
     const span = trace.getActiveSpan();

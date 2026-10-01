@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   startHarness,
   scriptHydration,
+  scriptKey,
   scriptWrites,
   type Harness,
 } from "./harness.js";
@@ -1085,6 +1086,7 @@ describe("catch-up replays from the cursor", () => {
         },
       };
     });
+    scriptKey(server);
     server.answer(
       "GET",
       "/events",
@@ -2971,6 +2973,7 @@ describe("catch-up keeps the copy to its slice", () => {
         },
       },
     );
+    scriptKey(server);
     server.answer("GET", "/items", itemsPage([]));
     server.answer(
       "GET",
@@ -3017,6 +3020,7 @@ describe("catch-up keeps the copy to its slice", () => {
         next_cursor: null,
       },
     });
+    scriptKey(server);
     server.answer("GET", "/items", itemsPage([]));
     server.answer(
       "GET",
