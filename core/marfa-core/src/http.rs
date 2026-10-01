@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::Duration;
 
 use serde::de::DeserializeOwned;
@@ -16,9 +17,21 @@ pub struct Http {
     agent: Agent,
     base: Url,
     /// A device's transport always carries its key; a call says whether the
-    /// door it reaches needs it.
-    authorization: String,
+    /// door it reaches needs it. Replaced where a renewal answers a `401`.
+    authorization: RwLock<String>,
+    renew: OnceLock<Renew>,
+    /// Held while a renewal runs, so two calls refused at once renew once.
+    renewing: Mutex<()>,
 }
+
+/// Asked for a fresh bearer once the server refuses the one it was handed
+/// with a `401`: a signed-in session's token runs out, and a command that
+/// holds a stream open or walks a large slice can outlive it. Handed the
+/// refused bearer, so a caller that keeps the credential elsewhere can tell
+/// whether another process has rotated it already.
+pub type Renew = Box<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
+
+type Response = ureq::http::Response<ureq::Body>;
 
 pub struct ItemsQuery<'a> {
     /// `None` lists every type the key reads.
@@ -185,8 +198,83 @@ impl Http {
         Ok(Http {
             agent,
             base,
-            authorization: format!("Bearer {key}"),
+            authorization: RwLock::new(format!("Bearer {key}")),
+            renew: OnceLock::new(),
+            renewing: Mutex::new(()),
         })
+    }
+
+    /// Sets how a refused bearer is renewed. Set once; a second is ignored.
+    pub fn renew_with(&self, renew: Renew) {
+        let _ = self.renew.set(renew);
+    }
+
+    /// The `Authorization` header a call carries now.
+    pub(crate) fn authorization(&self) -> String {
+        self.authorization
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// After a `401` to `sent`, the header to send again with: the one
+    /// another call renewed to meanwhile, or a fresh one. `None` where
+    /// nothing renews, or where the renewal was itself refused, so the `401`
+    /// stands as the answer: a drain parks its queue on that answer and
+    /// counts nothing (`queue-and-verdicts.md` 20), where an error would be
+    /// counted against each write until every one was dead. A renewal the
+    /// environment stopped is the environment's, and says so.
+    fn renewed(&self, sent: &str) -> Result<Option<String>, CoreError> {
+        match self.renewal(sent) {
+            Ok(fresh) => Ok(fresh),
+            Err(
+                error @ (CoreError::Network(_)
+                | CoreError::RateLimited { .. }
+                | CoreError::Server { .. }),
+            ) => Err(CoreError::Network(format!(
+                "the credential could not be renewed: {error}"
+            ))),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn renewal(&self, sent: &str) -> Result<Option<String>, CoreError> {
+        let Some(renew) = self.renew.get() else {
+            return Ok(None);
+        };
+        let _one = self
+            .renewing
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = self.authorization();
+        if current != sent {
+            return Ok(Some(current));
+        }
+        let header = format!(
+            "Bearer {}",
+            renew(sent.strip_prefix("Bearer ").unwrap_or(sent))?
+        );
+        self.authorization
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&header);
+        Ok(Some(header))
+    }
+
+    /// Runs a call with the credential, and once more under a renewed one
+    /// where the first was refused `401` and a renewal is set.
+    fn authorized(
+        &self,
+        run: impl Fn(&str) -> Result<Response, CoreError>,
+    ) -> Result<Response, CoreError> {
+        let sent = self.authorization();
+        let response = run(&sent)?;
+        if response.status().as_u16() == 401
+            && let Some(fresh) = self.renewed(&sent)?
+        {
+            return run(&fresh);
+        }
+        Ok(response)
     }
 
     /// Scheme, host, port and path prefix: what identifies a server without
@@ -382,20 +470,22 @@ impl Http {
         // per-method builders: those split at the type level on whether a
         // method carries a body, and the drain's four methods would then be
         // four copies of the same header list with one of them able to drift.
-        let mut builder = ureq::http::Request::builder()
-            .method(outgoing.method.as_str())
-            .uri(url.as_str())
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/json")
-            .header("Idempotency-Key", outgoing.idempotency_key);
-        builder = builder.header("Authorization", &self.authorization);
-        let request = builder
-            .body(outgoing.body)
-            .map_err(|error| CoreError::Invalid(format!("this write cannot be sent: {error}")))?;
-        let response = self
-            .agent
-            .run(request)
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let response = self.authorized(|authorization| {
+            let request = ureq::http::Request::builder()
+                .method(outgoing.method.as_str())
+                .uri(url.as_str())
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("Idempotency-Key", outgoing.idempotency_key)
+                .header("Authorization", authorization)
+                .body(outgoing.body)
+                .map_err(|error| {
+                    CoreError::Invalid(format!("this write cannot be sent: {error}"))
+                })?;
+            self.agent
+                .run(request)
+                .map_err(|error| CoreError::Network(error.to_string()))
+        })?;
         let status = response.status().as_u16();
         self.hold(&response, status, true)?;
         let retry_after_seconds = retry_after(&response);
@@ -431,20 +521,22 @@ impl Http {
         body_timeout: Duration,
     ) -> Result<Box<dyn Read + Send>, CoreError> {
         let url = self.url(&["events"], &[("edges", "all")]);
-        let mut request = self
-            .agent
-            .get(url.as_str())
-            .header("Accept", "text/event-stream")
-            .config()
-            .timeout_recv_body(Some(body_timeout))
-            .build();
-        request = request.header("Authorization", &self.authorization);
-        if let Some(cursor) = last_event_id {
-            request = request.header("Last-Event-ID", cursor);
-        }
-        let response = request
-            .call()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let response = self.authorized(|authorization| {
+            let mut request = self
+                .agent
+                .get(url.as_str())
+                .header("Accept", "text/event-stream")
+                .config()
+                .timeout_recv_body(Some(body_timeout))
+                .build()
+                .header("Authorization", authorization);
+            if let Some(cursor) = last_event_id {
+                request = request.header("Last-Event-ID", cursor);
+            }
+            request
+                .call()
+                .map_err(|error| CoreError::Network(error.to_string()))
+        })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
         if !(200..300).contains(&status) {
@@ -458,36 +550,69 @@ impl Http {
     /// Sends one call and reads its answer whole. An answer on another
     /// contract is refused before its body is read, as every answer the
     /// core reads is.
+    ///
+    /// A call refused `401` is sent again under a renewed credential, but for
+    /// one whose body is a reader, which the first send spent: the credential
+    /// is renewed for the calls after it, and its caller sends it again.
     pub fn call(&self, call: Call<'_>) -> Result<Reply<String>, CoreError> {
         let url = self.url(call.segments, call.params);
-        let mut builder = ureq::http::Request::builder()
-            .method(call.method.as_str())
-            .uri(url.as_str())
-            .header("Accept", "application/json");
-        if call.credential {
-            builder = builder.header("Authorization", &self.authorization);
-        }
-        if matches!(call.body, CallBody::Json(_)) {
-            builder = builder.header("Content-Type", "application/json");
-        }
-        for (name, value) in call.headers {
-            builder = builder.header(*name, *value);
-        }
+        let json = matches!(call.body, CallBody::Json(_));
+        let builder = |authorization: Option<&str>| {
+            let mut builder = ureq::http::Request::builder()
+                .method(call.method.as_str())
+                .uri(url.as_str())
+                .header("Accept", "application/json");
+            if let Some(authorization) = authorization {
+                builder = builder.header("Authorization", authorization);
+            }
+            if json {
+                builder = builder.header("Content-Type", "application/json");
+            }
+            for (name, value) in call.headers {
+                builder = builder.header(*name, *value);
+            }
+            builder
+        };
         let cannot_send = |error: ureq::http::Error| {
             CoreError::Invalid(format!("this call cannot be sent: {error}"))
         };
-        let response = match call.body {
-            CallBody::None => self.agent.run(builder.body(()).map_err(cannot_send)?),
-            CallBody::Json(text) | CallBody::Text(text) => {
-                self.agent.run(builder.body(text).map_err(cannot_send)?)
+        let network = |error: ureq::Error| CoreError::Network(error.to_string());
+        let send = |authorization: Option<&str>, text: Option<&str>| {
+            let builder = builder(authorization);
+            match text {
+                Some(text) => self.agent.run(builder.body(text).map_err(cannot_send)?),
+                None => self.agent.run(builder.body(()).map_err(cannot_send)?),
             }
-            CallBody::Reader(reader) => self.agent.run(
-                builder
-                    .body(ureq::SendBody::from_owned_reader(reader))
-                    .map_err(cannot_send)?,
-            ),
-        }
-        .map_err(|error| CoreError::Network(error.to_string()))?;
+            .map_err(network)
+        };
+        let text = match &call.body {
+            CallBody::None => None,
+            CallBody::Json(text) | CallBody::Text(text) => Some(*text),
+            CallBody::Reader(_) => None,
+        };
+        let response = match call.body {
+            CallBody::Reader(reader) => {
+                let sent = call.credential.then(|| self.authorization());
+                let response = self
+                    .agent
+                    .run(
+                        builder(sent.as_deref())
+                            .body(ureq::SendBody::from_owned_reader(reader))
+                            .map_err(cannot_send)?,
+                    )
+                    .map_err(network)?;
+                if let Some(sent) = &sent
+                    && response.status().as_u16() == 401
+                {
+                    self.renewed(sent)?;
+                }
+                response
+            }
+            _ if call.credential => {
+                self.authorized(|authorization| send(Some(authorization), text))?
+            }
+            _ => send(None, text)?,
+        };
         let status = response.status().as_u16();
         self.hold(&response, status, call.method != Method::Get)?;
         let retry_after_seconds = retry_after(&response);
@@ -557,14 +682,14 @@ impl Http {
         params: &[(&str, &str)],
     ) -> Result<T, CoreError> {
         let url = self.url(segments, params);
-        let mut request = self
-            .agent
-            .get(url.as_str())
-            .header("Accept", "application/json");
-        request = request.header("Authorization", &self.authorization);
-        let response = request
-            .call()
-            .map_err(|error| CoreError::Network(error.to_string()))?;
+        let response = self.authorized(|authorization| {
+            self.agent
+                .get(url.as_str())
+                .header("Accept", "application/json")
+                .header("Authorization", authorization)
+                .call()
+                .map_err(|error| CoreError::Network(error.to_string()))
+        })?;
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
         let served = header(&response, CONTRACT_HEADER);

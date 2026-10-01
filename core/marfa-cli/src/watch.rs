@@ -3,11 +3,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use marfa_core::{CoreError, Folder, Server};
+use marfa_core::{CoreError, Folder};
 use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::error::CliError;
+use crate::folders;
 use crate::output;
+use crate::remote::Session;
 
 /// How long the watcher waits for the filesystem to go quiet before it acts.
 ///
@@ -86,11 +88,11 @@ impl Gate {
 /// decides identity by the same rule (`folders.md` 18).
 pub fn watch(
     dir: &Path,
-    server: Server,
+    session: Session,
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
-    let folder = Folder::open(dir, Some(server))?;
+    let folder = folders::opened(dir, Some(session))?;
     let stop = AtomicBool::new(false);
     let (sender, wakes) = mpsc::channel::<Wake>();
     std::thread::scope(|scope| {

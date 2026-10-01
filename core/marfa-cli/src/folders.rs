@@ -1,6 +1,6 @@
 //! Folders on this machine: a directory that holds what a search matches, as files.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::Subcommand;
@@ -11,7 +11,7 @@ use crate::commands::folders as folder_settings;
 use crate::commands::items::IdempotencyArgs;
 use crate::error::CliError;
 use crate::output::{self, Printer};
-use crate::remote::{Named, Remote};
+use crate::remote::{Named, Remote, Session, renewing};
 use crate::watch;
 
 #[derive(Debug, Subcommand)]
@@ -102,7 +102,9 @@ pub enum FoldersCommand {
 pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), CliError> {
     match command {
         FoldersCommand::Add { dir, folder } => {
-            let folder = Folder::add(&dir, &folder, Some(named.server()?))?;
+            let session = named.session()?;
+            let folder = Folder::add(&dir, &folder, Some(session.server))?;
+            renewing(folder.core(), session.renew);
             output::report(
                 &serde_json::json!({
                     "dir": folder.root(),
@@ -172,12 +174,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Restore { dir } => {
-            let server = match named.server() {
-                Ok(server) => Some(server),
-                Err(CliError::NoServerNamed) => None,
-                Err(error) => return Err(error),
-            };
-            let restored = Folder::open(&dir, server)?.restore()?;
+            let restored = opened(&dir, named.session_if_named()?)?.restore()?;
             output::report(&restored, json, || {
                 format!(
                     "{} file(s) written back; {} item(s) restored, sent at the next push",
@@ -186,7 +183,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Hydrate { dir } => {
-            let folder = Folder::open(&dir, Some(named.server()?))?;
+            let folder = opened(&dir, Some(named.session()?))?;
             let report = folder.hydrate()?;
             output::report(&report, json, || {
                 format!("{} item(s) into {}", report.items, dir.display())
@@ -200,16 +197,11 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             // A server where one is named, because a file item's bytes are
             // fetched when the pull asks for them; with none, a file whose
             // bytes are not held is reported rather than written.
-            let server = match named.server() {
-                Ok(server) => Some(server),
-                Err(CliError::NoServerNamed) => None,
-                Err(error) => return Err(error),
-            };
-            let report = Folder::open(&dir, server)?.pull()?;
+            let report = opened(&dir, named.session_if_named()?)?.pull()?;
             output::report(&report, json, || describe_pull(&report))
         }
         FoldersCommand::Push { dir } => {
-            let folder = Folder::open(&dir, Some(named.server()?))?;
+            let folder = opened(&dir, Some(named.session()?))?;
             let hydrated = folder.resume()?;
             // First, so the rest of the push works on the settings the person
             // just wrote.
@@ -293,7 +285,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             )
         }
         FoldersCommand::Watch { dir, r#for } => {
-            watch::watch(&dir, named.server()?, r#for.map(Duration::from_secs), json)
+            watch::watch(&dir, named.session()?, r#for.map(Duration::from_secs), json)
         }
         FoldersCommand::Create(args) => send(folder_settings::create_request(&args)?, named, json),
         FoldersCommand::Change(args) => send(folder_settings::change_request(&args)?, named, json),
@@ -338,6 +330,14 @@ pub fn unplaced_line(unplaced: usize) -> Option<String> {
 }
 
 /// Each file the folder holds rather than sends, with why, in words.
+/// Opens a folder with the server a session names, where it names one.
+pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
+    let (server, renew) = Session::split(session);
+    let folder = Folder::open(dir, server)?;
+    renewing(folder.core(), renew);
+    Ok(folder)
+}
+
 pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
     flagged
         .iter()
