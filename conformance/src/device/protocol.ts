@@ -373,6 +373,18 @@ export interface DeviceUnderTest {
     options?: { mimeType?: string; title?: string; type?: string; tier?: Tier },
   ): Promise<Outcome<QueuedWrite[]>>;
 
+  /** A file added as an item of its own: the upload, the file item. */
+  addFile(
+    path: string,
+    options?: {
+      mimeType?: string;
+      title?: string;
+      type?: string;
+      tier?: Tier;
+      tags?: string[];
+    },
+  ): Promise<Outcome<QueuedWrite[]>>;
+
   /** A second device over the same store, for the one-writer rule. */
   reopen(options?: { url?: string; key?: string }): DeviceUnderTest;
 }

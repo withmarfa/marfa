@@ -364,6 +364,10 @@ pub fn mime_type_for(path: &Path, given: Option<&str>) -> String {
         "svg" => "image/svg+xml",
         "heic" => "image/heic",
         "pdf" => "application/pdf",
+        "epub" => "application/epub+zip",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "txt" => "text/plain",
         "md" | "markdown" => "text/markdown",
         "html" | "htm" => "text/html",
@@ -453,6 +457,22 @@ mod tests {
         assert_eq!(
             mime_type_for(Path::new("x.png"), Some("image/webp")),
             "image/webp"
+        );
+        assert_eq!(
+            mime_type_for(Path::new("novel.epub"), None),
+            "application/epub+zip"
+        );
+        assert_eq!(
+            mime_type_for(Path::new("lease.docx"), None),
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        );
+        assert_eq!(
+            mime_type_for(Path::new("budget.xlsx"), None),
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        );
+        assert_eq!(
+            mime_type_for(Path::new("talk.PPTX"), None),
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation"
         );
         assert_eq!(
             mime_type_for(Path::new("noext"), None),
