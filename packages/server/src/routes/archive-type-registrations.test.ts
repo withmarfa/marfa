@@ -24,6 +24,7 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { getTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 
 async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
   const entries = new Map<string, Buffer>();
@@ -267,6 +268,77 @@ describe("archives carry type registrations", () => {
     const result = (await res.json()) as RestoreResult;
     expect(result.types_registered).toBe(2);
     expect(result.imported).toBe(1);
+  });
+
+  it("checks a type's parent where it writes it, so the parent's delete meanwhile is refused", async () => {
+    const source = await newContext();
+    const destination = await newContext();
+    const suffix = uniqueSuffix();
+    const parentId = `user.held_${suffix}`;
+    const childId = `user.held_${suffix}.child`;
+    const fields = {
+      title: { type: "string", required: true, description: "Name." },
+    } as const;
+
+    await destination.storage.types.create({
+      id: parentId,
+      label: "Held",
+      description: "A parent the destination holds.",
+      version: 1,
+      fields,
+    });
+    await source.storage.types.create({
+      id: childId,
+      label: "Held child",
+      description: "A child the archive carries.",
+      parent: parentId,
+      version: 1,
+      fields,
+    });
+    const archive = await exportArchive(source);
+    // One registry serves both instances in this process. Forgetting the
+    // child the source registered leaves the destination's delete seeing
+    // only what the destination's own writes put there.
+    unregisterTypeSchema(childId);
+
+    // Held just before the restore writes the child, after its checks.
+    const types = destination.storage.types as unknown as {
+      create: (...args: unknown[]) => Promise<unknown>;
+    };
+    const create = types.create;
+    let reached = (): void => undefined;
+    const atCreate = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    types.create = async (...args: unknown[]) => {
+      types.create = create;
+      reached();
+      await gate;
+      return await create.apply(destination.storage.types, args);
+    };
+
+    const restoring = restore(destination, archive);
+    await atCreate;
+    const deleting = request(destination.app, "DELETE", `/types/${parentId}`, {
+      key: destination.workingKey,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+
+    const [restored, deleted] = await Promise.all([restoring, deleting]);
+    expect(
+      restored.status,
+      `restore -> ${String(restored.status)}: ${await restored.clone().text()}`,
+    ).toBe(200);
+    expect(deleted.status).toBe(409);
+    expect(
+      ((await deleted.json()) as { error: { code: string } }).error.code,
+    ).toBe("type_has_subtypes");
+    expect(getTypeSchema(childId)?.parent).toBe(parentId);
   });
 
   it("re-restoring skips the registrations it already made", async () => {

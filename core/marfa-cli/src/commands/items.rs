@@ -437,7 +437,9 @@ pub enum BulkActionCommand {
         #[command(flatten)]
         filter: BulkFilterArgs,
     },
-    /// Destroy every matching trashed item. Needs `items.purge` and `--confirm PURGE`.
+    /// Destroy every matching item that is in the trash when the job reaches it; any other
+    /// match is left as it is and reported. Match the bin with `--state trashed`. Needs
+    /// `items.purge` and `--confirm PURGE`.
     Purge {
         /// The word `PURGE`, because the door asks for it out loud.
         #[arg(long, value_name = "PURGE")]

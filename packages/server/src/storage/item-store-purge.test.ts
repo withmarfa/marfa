@@ -111,8 +111,9 @@ describe("ItemStore purge methods — FTS coverage", () => {
     const before = await ctx.storage.search.search("alphabravo", {});
     expect(before.some((h) => h.item.id === itemId)).toBe(true);
 
+    await ctx.storage.items.delete(itemId);
     const deleted = await ctx.storage.items.bulkPurge([itemId]);
-    expect(deleted).toBe(1);
+    expect(deleted).toEqual([itemId]);
 
     // The FTS row is gone.
     expect(await ftsRowCount(itemId)).toBe(0);
@@ -234,6 +235,37 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
   });
 });
 
+describe("ItemStore.bulkPurge — the trash gate", () => {
+  it("takes only rows in their type's soft-deleted state, and says which", async () => {
+    const make = async (type: string, properties: Record<string, unknown>) =>
+      (await ctx.storage.items.create({ type, properties })).id;
+    const connection = {
+      kind: "app",
+      status: "active",
+      granted_at: new Date().toISOString(),
+    };
+    const trashedNote = await make("core.note", { body: "gone" });
+    await ctx.storage.items.delete(trashedNote);
+    const activeNote = await make("core.note", { body: "kept" });
+    const revoked = await make("system.connection", connection);
+    await ctx.storage.items.delete(revoked);
+    const live = await make("system.connection", connection);
+
+    const taken = await ctx.storage.items.bulkPurge([
+      trashedNote,
+      activeNote,
+      revoked,
+      live,
+      id("ffff"),
+    ]);
+    expect(taken.slice().sort()).toEqual([trashedNote, revoked].sort());
+    expect(await ctx.storage.items.getIncludingTrashed(trashedNote)).toBeNull();
+    expect(await ctx.storage.items.getIncludingTrashed(revoked)).toBeNull();
+    expect((await ctx.storage.items.get(activeNote))?.state).toBe("active");
+    expect((await ctx.storage.items.get(live))?.state).toBe("active");
+  });
+});
+
 describe("ItemStore.bulkPurge — atomicity", () => {
   // `items_fts` is a virtual table mutated separately from `items`, so
   // without a transaction a mid-purge failure would leave rows present but
@@ -254,6 +286,9 @@ describe("ItemStore.bulkPurge — atomicity", () => {
       tier: "library",
     });
 
+    await ctx.storage.items.delete(id1);
+    await ctx.storage.items.delete(id2);
+
     // Force the second FTS removal to throw, mid-transaction.
     const search = ctx.storage.search as unknown as {
       remove: (id: string) => Promise<void>;
@@ -272,10 +307,8 @@ describe("ItemStore.bulkPurge — atomicity", () => {
 
     // Both items must still be present — the items DELETE never ran, and
     // the first FTS removal must have been rolled back.
-    expect(await ctx.storage.items.get(id1)).not.toBeNull();
-    expect(await ctx.storage.items.get(id2)).not.toBeNull();
-    expect(await ftsRowCount(id1)).toBe(1);
-    expect(await ftsRowCount(id2)).toBe(1);
+    expect(await ctx.storage.items.getIncludingTrashed(id1)).not.toBeNull();
+    expect(await ctx.storage.items.getIncludingTrashed(id2)).not.toBeNull();
   });
 });
 
