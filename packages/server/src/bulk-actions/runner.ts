@@ -24,7 +24,11 @@ import type { CascadeRoot, Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
-import { getTypeSchema, validateProperties } from "@withmarfa/shared";
+import {
+  getTypeSchema,
+  softDeleteState,
+  validateProperties,
+} from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
@@ -184,32 +188,48 @@ async function runPurgeChunk({
   // analysis cannot see it.
   const chunk = { failed: false };
   await storage.runInTransaction(async () => {
-    // Trashed included: purge is the terminal step after a soft delete, so
-    // every id it is handed is trashed. Excluding them left this map empty,
-    // which sent every id down the not-found branch below while `bulkPurge`
-    // deleted them anyway — and took the blob-hash collection with it, so the
-    // hashes a purged item referenced were never reported for collection.
+    // Trashed included, because the trashed rows are the ones a purge takes.
     const found = await storage.items.getMany(ids, { includeTrashed: true });
     // No live-connection refusal, for the reason the transition chunk
     // carries: the door's reserved-namespace narrowing means a
     // `system.connection` never reaches this runner's match set.
+    //
+    // The state is judged here, inside the transaction that deletes, rather
+    // than when the job was queued: a row restored since then is a row the
+    // person took back, and the filter may have matched a row that was
+    // never in the trash at all. The gate is the single purge's, the type's
+    // own soft-deleted state.
+    const purgeable: string[] = [];
+    const notTrashed: Item[] = [];
     for (const item of found.values()) {
+      if (item.state !== softDeleteState(item.type)) {
+        notTrashed.push(item);
+        continue;
+      }
+      purgeable.push(item.id);
       collectBlobHashes(item.properties, blob_hashes);
       removed.push(item);
     }
-    marks = await storage.items.cascadeMarks([...found.keys()]);
+    marks = await storage.items.cascadeMarks(purgeable);
     // One DELETE per direction + one DELETE on items = 3 statements
     // instead of 3 × ids.length. The two edge deletes return the rows
     // they removed, which is what the announcement below names.
     try {
-      cascaded.push(
-        ...(await storage.edges.deleteBySourceBatch(ids)),
-        ...(await storage.edges.deleteByTargetBatch(ids)),
-      );
-      const purged = await storage.items.bulkPurge(ids);
-      // Ids in `found` were in-scope and purged; ids absent from the map
-      // weren't found and surface as not-found errors.
-      for (const id of found.keys()) succeeded.push(id);
+      if (purgeable.length > 0) {
+        cascaded.push(
+          ...(await storage.edges.deleteBySourceBatch(purgeable)),
+          ...(await storage.edges.deleteByTargetBatch(purgeable)),
+        );
+        await storage.items.bulkPurge(purgeable);
+      }
+      succeeded.push(...purgeable);
+      for (const item of notTrashed) {
+        errors.push({
+          id: item.id,
+          code: "invalid_transition",
+          message: `Only ${softDeleteState(item.type)} items can be purged`,
+        });
+      }
       for (const id of ids) {
         if (!found.has(id)) {
           errors.push({
@@ -219,7 +239,6 @@ async function runPurgeChunk({
           });
         }
       }
-      void purged;
     } catch (err) {
       chunk.failed = true;
       // The chunk did not complete, so nothing it staged may be
@@ -258,7 +277,7 @@ async function runPurgeChunk({
   //
   // Edges first and rows after, the ordering the single-item door states.
   if (!chunk.failed) {
-    const purgedIds = new Set(ids);
+    const purgedIds = new Set(succeeded);
     for (const edge of cascaded) {
       await publishEdge({
         type: "edge_deleted",
