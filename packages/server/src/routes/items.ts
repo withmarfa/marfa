@@ -422,8 +422,7 @@ const getItemStatsRoute = createRoute({
   path: "/stats",
   tags: ["Items"],
   summary: "Get item counts",
-  description:
-    "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+  description: `Returns a count of items, grouped on one axis. \`by=state\` (the default) counts per lifecycle state; \`by=type\` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -441,6 +440,15 @@ const getItemStatsRoute = createRoute({
         },
       },
       description: "Item counts by state",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "A query parameter the door does not declare, or a grouping it does not have.",
     },
     401: {
       content: {
@@ -2009,6 +2017,7 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
+    refuseUnknownQueryParams(c.req.raw.url, getItemStatsRoute.request.query);
     const callerKey = c.get("apiKey");
     const { by } = c.req.valid("query");
     const typeFilter = getTypeFilter(c);

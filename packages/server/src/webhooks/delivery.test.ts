@@ -7,6 +7,7 @@ import type {
   WebhookStore,
 } from "../storage/interface.js";
 import {
+  __listenerCountForTests,
   publish,
   publishEdge,
   type ItemEvent,
@@ -936,5 +937,111 @@ describe("WebhookConsumer payload marks", () => {
     expect(sent("edge_purged")?.purged_with).toBe("01HAAAAAAAAAAAAAAAAAAAAAAA");
     expect(sent("edge_direct")).toBeDefined();
     expect(sent("edge_direct")).not.toHaveProperty("purged_with");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WebhookConsumer — stopping ends both subscriptions
+// ---------------------------------------------------------------------------
+
+describe("WebhookConsumer stop", () => {
+  function consumer(): {
+    consumer: WebhookConsumer;
+    scheduledCount: () => number;
+  } {
+    let scheduled = 0;
+    const webhook: Webhook = {
+      id: "wh_stop",
+      url: "https://example.test/hook",
+      secret: "s",
+      events: ["item.created"],
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const store: WebhookDeliveryStore = {
+      cleanup: () => Promise.resolve(0),
+      list: () => Promise.resolve({ data: [], next_cursor: null }),
+      schedule: () => {
+        scheduled += 1;
+        return Promise.resolve(`del_stop_${String(scheduled)}`);
+      },
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+    return {
+      consumer: new WebhookConsumer(webhookStore, store),
+      scheduledCount: () => scheduled,
+    };
+  }
+
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+
+  it("leaves no listener behind after several start and stop cycles on a quiet bus", async () => {
+    const baseline = __listenerCountForTests();
+    const { consumer: c } = consumer();
+    for (let cycle = 0; cycle < 5; cycle++) {
+      c.start();
+      await settle();
+      // The witness: a running consumer holds one listener per loop.
+      expect(__listenerCountForTests()).toBe(baseline + 2);
+      c.stop();
+      await settle();
+      expect(__listenerCountForTests()).toBe(baseline);
+    }
+  });
+
+  it("starts again after a stop and delivers what follows", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    try {
+      const baseline = __listenerCountForTests();
+      const { consumer: c, scheduledCount } = consumer();
+      c.start();
+      c.stop();
+      c.start();
+      await settle();
+      expect(__listenerCountForTests()).toBe(baseline + 2);
+
+      await publish({
+        type: "created",
+        item: {
+          id: "01HEEEEEEEEEEEEEEEEEEEEEEE",
+          type: "core.note",
+          version: 1,
+          state: "active",
+          tier: "library",
+          source: "test",
+          properties: { title: "after restart" },
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        } as unknown as ItemEvent["item"],
+      });
+      await settle();
+      c.stop();
+      await settle();
+
+      expect(scheduledCount()).toBe(1);
+      expect(__listenerCountForTests()).toBe(baseline);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
