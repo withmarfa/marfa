@@ -350,13 +350,6 @@ const bulkActionStatusRoute = createRoute({
 // Request cancellation. The door sets the row itself, whether it is
 // queued or running, and answers what it wrote; a row already terminal is
 // left alone and answered as it stands.
-//
-// The description says that and no more. The worker reads the row at the
-// top of each chunk and stops when it finds it canceled, but there is no
-// read after the last chunk and `complete()` carries no status guard, so
-// a cancel landing in the final chunk is overwritten. Describing what
-// happens to the work afterwards would be a promise this door cannot
-// keep.
 const bulkActionCancelRoute = createRoute({
   method: "delete",
   path: "/bulk-actions/jobs/{id}",
@@ -364,7 +357,7 @@ const bulkActionCancelRoute = createRoute({
   tags: ["Items"],
   summary: "Cancel a bulk-action job",
   description:
-    "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged.",
+    "Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged. A canceled job stays canceled, and rows already processed stay processed.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

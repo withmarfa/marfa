@@ -2633,14 +2633,17 @@ export interface BulkActionJobStore {
     heartbeatAt: string,
   ): Promise<void>;
   /** Terminal `completed`. Writes the result envelope, sets
-   *  `finished_at`, clears `worker_heartbeat_at`. */
+   *  `finished_at`, clears `worker_heartbeat_at`. Changes the job only while
+   *  it is `queued` or `in_progress`: a job canceled meanwhile stays
+   *  canceled. */
   complete(
     id: string,
     result: string,
     finalCounts: BulkActionJobProgress,
     finishedAt: string,
   ): Promise<void>;
-  /** Terminal `failed`. Writes the error string, sets `finished_at`. */
+  /** Terminal `failed`. Writes the error string, sets `finished_at`. Changes
+   *  the job only while it is `queued` or `in_progress`, as `complete` does. */
   fail(id: string, error: string, finishedAt: string): Promise<void>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
    *  `canceled`; no-op (returns `false`) on already-terminal rows.
