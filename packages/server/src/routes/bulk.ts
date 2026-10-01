@@ -237,7 +237,7 @@ const bulkActionRoute = createRoute({
   tags: ["Items"],
   summary: "Apply a bulk action",
   description:
-    "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item.\n\n" +
+    "Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched.\n\n" +
     UNKNOWN_FILTER_FIELD_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -1592,16 +1592,27 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
+    // Narrowed before the match set is frozen into the job, so a row the
+    // filter reached after the caller's dry run is never handed to the
+    // worker at all.
+    const expected =
+      action === "purge" && body.expected_ids !== undefined
+        ? new Set(body.expected_ids)
+        : undefined;
+    const targets = expected
+      ? matched.filter((item) => expected.has(item.id))
+      : matched;
+
     // Dry run: report matched ids without mutating anything. No audit.
     if (dryRun) {
       return c.json(
         {
           action,
-          matched: matched.length,
+          matched: targets.length,
           succeeded: 0,
           errored: 0,
           dry_run: true,
-          ids: matched.map((i) => i.id),
+          ids: targets.map((i) => i.id),
         },
         200,
       );
@@ -1624,8 +1635,8 @@ export function bulkRoutes(storage: Storage) {
       api_key_id: apiKeyId,
       action,
       input: JSON.stringify(body),
-      matched_ids: JSON.stringify(matched.map((i) => i.id)),
-      matched_count: matched.length,
+      matched_ids: JSON.stringify(targets.map((i) => i.id)),
+      matched_count: targets.length,
       idempotency_key: idempotencyKey,
       created_at: new Date().toISOString(),
     });
@@ -1640,7 +1651,7 @@ export function bulkRoutes(storage: Storage) {
       resource_type: "items.bulk_action",
       details: {
         sub_action: action,
-        matched: matched.length,
+        matched: targets.length,
         job_id: job.id,
         idempotency_replay: !!(
           idempotencyKey &&

@@ -1255,11 +1255,20 @@ const purgeItemRoute = createRoute({
   path: "/{id}/purge",
   tags: ["Items"],
   summary: "Permanently delete an item",
-  description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `items.purge` and write on the item's type. Each edge it takes is announced `edge.deleted` with `purged_with` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a `link_field` and the row held a value there, and its natural key, where it had one, each with the purge time as `purged_at` and `settled_at`. `POST /items/lookup` reads them and `POST /items/tombstones` moves `settled_at` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.",
+  description: `Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires \`items.purge\` and write on the item's type. Each edge it takes is announced \`edge.deleted\` with \`purged_with\` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live \`system.connection\` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a \`link_field\` and the row held a value there, and its natural key, where it had one, each with the purge time as \`purged_at\` and \`settled_at\`. \`POST /items/lookup\` reads them and \`POST /items/tombstones\` moves \`settled_at\` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n\`version\` makes the purge conditional on the row being where the caller read it: at any other version it answers \`409 version_conflict\` with the row as it now stands under \`current\`, and deletes nothing. Without it the purge applies to the row as it is. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
+    query: z.object({
+      version: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "The version the caller read. Where given and the row has moved since, the purge is refused `409 version_conflict` and nothing is deleted. Trashing does not move a row's version, so the version read before the trash is the one to send.",
+        ),
+    }),
   },
   responses: {
     200: {
@@ -1279,7 +1288,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+        "`invalid_id` for a malformed id. `invalid_transition` when the item is not soft-deleted: purging is the hard delete behind a soft one, and the same code the restore door beside it answers for the same class of mistake. `validation_error` when the item is a live `system.connection` — revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
     },
     401: {
       content: {
@@ -1306,6 +1315,13 @@ const purgeItemRoute = createRoute({
       },
       description:
         "No such item, including one this door has already purged. An item of a type the credential may not read answers alike.",
+    },
+    409: {
+      content: {
+        "application/json": { schema: StaleVersionSchema },
+      },
+      description:
+        "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was purged. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was purged, retry.",
     },
   },
 });
@@ -3026,6 +3042,10 @@ export function itemRoutes(storage: Storage) {
 
     requireAuth(c);
     requirePermission(c, "items.purge");
+    // A misspelled `version` stripped by the validator would purge
+    // unconditionally, which is the act the parameter exists to guard.
+    refuseUnknownQueryParams(c.req.raw.url, purgeItemRoute.request.query);
+    const { version } = c.req.valid("query");
     // Including trashed, because purge follows trash; the message is the one
     // `storage.items.purge` answers, so a hidden row and no row read alike.
     const purgeTarget = requireReadableRow(
@@ -3077,14 +3097,37 @@ export function itemRoutes(storage: Storage) {
     // atomicity has to open its own.
     // Read before the purge, which takes the mark with the row.
     const trashedWith = (await storage.items.cascadeMarks([id])).get(id);
-    const cascaded = await storage.runInTransaction(async () => {
+    //
+    // The version is compared inside the same transaction, against the row
+    // re-read there: a check before it would let a write land between the
+    // two and be destroyed unseen.
+    const outcome = await storage.runInTransaction(async () => {
+      if (version !== undefined) {
+        const current = await storage.items.getIncludingTrashed(id);
+        if (current && current.version !== version) {
+          return staleVersion(current.version, current.properties, version, {
+            id: current.id,
+            tier: current.tier ?? "library",
+            occurred_at: current.occurred_at,
+            source_id: current.source_id ?? null,
+            type: current.type,
+          });
+        }
+      }
       const removed = [
         ...(await storage.edges.deleteBySource(id)),
         ...(await storage.edges.deleteByTarget(id)),
       ];
       await storage.items.purge(id);
-      return removed;
+      return { removed };
     });
+    if ("error" in outcome) {
+      // Returned rather than thrown, so the error handler that sets this
+      // never runs.
+      c.header("X-Error-Code", outcome.error.code);
+      return c.json(outcome, 409);
+    }
+    const cascaded = outcome.removed;
     for (const edge of cascaded) {
       await publishEdge({ type: "edge_deleted", edge, purgedWith: id });
     }
