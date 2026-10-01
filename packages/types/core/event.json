@@ -2,7 +2,7 @@
   "id": "core.event",
   "label": "Event",
   "description": "Something that happens at a time.",
-  "version": 2,
+  "version": 0,
   "fields": {
     "title": {
       "type": "string",

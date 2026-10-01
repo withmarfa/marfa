@@ -401,8 +401,8 @@ describe("a core edge type", () => {
       {
         name: "manifest.json",
         body: JSON.stringify({
-          version: 2,
-          format: "marfa-archive-v2",
+          version: 0,
+          format: "marfa-archive-v0",
           created_at: new Date().toISOString(),
           item_count: 0,
           edge_count: 0,

@@ -106,8 +106,8 @@ describe("global request-body size cap", () => {
     pack.pipe(gzip);
     const manifest = Buffer.from(
       JSON.stringify({
-        version: 2,
-        format: "marfa-archive-v2",
+        version: 0,
+        format: "marfa-archive-v0",
         created_at: new Date().toISOString(),
         item_count: 1,
         blob_count: 1,

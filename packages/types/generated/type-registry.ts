@@ -7,7 +7,7 @@ const coreBookmark: TypeSchema = {
   id: "core.bookmark",
   label: "Bookmark",
   description: "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
-  version: 1,
+  version: 0,
   fields: {
     url: { type: "url", description: "The saved URL" },
     body: { type: "string", description: "Captured text (a highlight, excerpt, or clipping)" },
@@ -29,7 +29,7 @@ const coreEntity: TypeSchema = {
   id: "core.entity",
   label: "Entity",
   description: "A non-person entity — a company, band, team, charity, brand, school.",
-  version: 1,
+  version: 0,
   fields: {
     name: { type: "string", description: "Display name", required: true },
     url: { type: "url", description: "Web address" },
@@ -50,7 +50,7 @@ const coreEvent: TypeSchema = {
   id: "core.event",
   label: "Event",
   description: "Something that happens at a time.",
-  version: 2,
+  version: 0,
   fields: {
     title: { type: "string", description: "Event name", required: true },
     description: { type: "string", description: "Event details" },
@@ -78,7 +78,7 @@ const coreFile: TypeSchema = {
   id: "core.file",
   label: "File",
   description: "A file or binary reference — the generic fallback for non-media files.",
-  version: 1,
+  version: 0,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
@@ -100,7 +100,7 @@ const coreHighlight: TypeSchema = {
   id: "core.highlight",
   label: "Highlight",
   description: "A user's engagement with content — the highlighted passage plus optional annotation. The canonical relationship (what was highlighted) is carried by a references edge; the moment of highlighting is the item's own `occurred_at`.",
-  version: 1,
+  version: 0,
   fields: {
     text: { type: "string", description: "The highlighted passage", required: true },
     note: { type: "string", description: "User annotation on the highlight" },
@@ -117,7 +117,7 @@ const coreMedia: TypeSchema = {
   id: "core.media",
   label: "Media",
   description: "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
-  version: 1,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -138,7 +138,7 @@ const coreMessage: TypeSchema = {
   id: "core.message",
   label: "Message",
   description: "A light, cross-platform message. Threading is edge-based via in-thread; reply trees via parent-of. Tool-specific richness lives in app namespaces.",
-  version: 1,
+  version: 0,
   fields: {
     body: { type: "string", description: "The message text", required: true },
     from: { type: "string", description: "Sender identifier — format-agnostic (phone number, email, handle, etc.)", required: true },
@@ -152,7 +152,7 @@ const coreNote: TypeSchema = {
   id: "core.note",
   label: "Note",
   description: "Text content you created.",
-  version: 1,
+  version: 0,
   fields: {
     body: { type: "string", description: "The note text", required: true },
     title: { type: "string", description: "Heading or title" },
@@ -167,7 +167,7 @@ const coreTask: TypeSchema = {
   id: "core.task",
   label: "Task",
   description: "Something to be done.",
-  version: 1,
+  version: 0,
   fields: {
     title: { type: "string", description: "What needs doing", required: true },
     description: { type: "string", description: "Brief context" },
@@ -191,7 +191,7 @@ const coreEntityPerson: TypeSchema = {
   parent: "core.entity",
   label: "Person",
   description: "Contact information for an individual. Inherits all core.entity fields.",
-  version: 1,
+  version: 0,
   fields: {
     name: { type: "string", description: "Display name", required: true },
     url: { type: "url", description: "Web address" },
@@ -224,7 +224,7 @@ const coreEntityPlace: TypeSchema = {
   parent: "core.entity",
   label: "Place",
   description: "A location or venue. Inherits all core.entity fields.",
-  version: 1,
+  version: 0,
   fields: {
     name: { type: "string", description: "Display name", required: true },
     url: { type: "url", description: "Web address" },
@@ -255,7 +255,7 @@ const coreFileAudio: TypeSchema = {
   parent: "core.file",
   label: "Audio",
   description: "Recordings, music files, voice memos. Inherits all core.file fields.",
-  version: 2,
+  version: 0,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
@@ -279,7 +279,7 @@ const coreFileImage: TypeSchema = {
   parent: "core.file",
   label: "Image",
   description: "Photos, screenshots, diagrams. Inherits all core.file fields.",
-  version: 2,
+  version: 0,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
@@ -307,7 +307,7 @@ const coreFileVideo: TypeSchema = {
   parent: "core.file",
   label: "Video",
   description: "Video files. Inherits all core.file fields.",
-  version: 2,
+  version: 0,
   fields: {
     blob_ref: { type: "string", description: "Reference to the binary content (sha256:<hex>)", required: true },
     mime_type: { type: "string", description: "MIME type", required: true },
@@ -336,7 +336,7 @@ const coreMediaAlbum: TypeSchema = {
   parent: "core.media",
   label: "Album",
   description: "An album. Inherits all core.media fields.",
-  version: 2,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -361,7 +361,7 @@ const coreMediaArticle: TypeSchema = {
   parent: "core.media",
   label: "Article",
   description: "An article. Inherits all core.media fields.",
-  version: 1,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "The article text", required: true },
@@ -385,7 +385,7 @@ const coreMediaBook: TypeSchema = {
   parent: "core.media",
   label: "Book",
   description: "A book. Inherits all core.media fields.",
-  version: 1,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -410,7 +410,7 @@ const coreMediaEpisode: TypeSchema = {
   parent: "core.media",
   label: "Episode",
   description: "Any member of an ongoing series: a TV episode, a podcast episode, one part of a serial. Inherits all core.media fields. Joins its series through the in-collection edge, so one episode can belong to several series and outlives any of them.",
-  version: 2,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -438,7 +438,7 @@ const coreMediaFilm: TypeSchema = {
   parent: "core.media",
   label: "Film",
   description: "A film. Inherits all core.media fields.",
-  version: 2,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -465,7 +465,7 @@ const coreMediaSeries: TypeSchema = {
   parent: "core.media",
   label: "Series",
   description: "Any ongoing media container: a TV show, a podcast, a radio serial, a video series. Inherits all core.media fields. Episodes join it through the in-collection edge; containment is never part of a type name.",
-  version: 4,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -490,7 +490,7 @@ const coreMediaSong: TypeSchema = {
   parent: "core.media",
   label: "Song",
   description: "A song. Inherits all core.media fields.",
-  version: 2,
+  version: 0,
   fields: {
     title: { type: "string", description: "Name of the work", required: true },
     body: { type: "string", description: "Text content or description" },
@@ -541,7 +541,7 @@ const systemAccountHolder: TypeSchema = {
   id: "system.account_holder",
   label: "Account holder",
   description: "The graph handle for the person who owns this instance. Exactly one row, created at provisioning, so edges such as authored-by can name the account holder instead of a free-floating stand-in. It carries no profile fields: the profile endpoints remain the source of truth for username, name, bio and avatar, and mirroring them here would give the same facts two writers. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
-  version: 1,
+  version: 0,
   fields: {
   },
 };
@@ -550,7 +550,7 @@ const systemApp: TypeSchema = {
   id: "system.app",
   label: "App",
   description: "A registered app identity. Carries the human-readable identity (display name, homepage) for an app whose types live under `app.<name>.<type>`. The wire layer does not require a `system.app` record to exist when a type under `app.<name>.*` registers — these records are advisory metadata for surfacing in connected-apps UIs, not registration prerequisites. Has no tier and no lifecycle status; the row's existence is the activation signal.",
-  version: 1,
+  version: 0,
   fields: {
     name: { type: "string", description: "Stable identifier slug used in app.<name>.<type> registrations", required: true },
     display_name: { type: "string", description: "Human-readable display name" },
@@ -563,7 +563,7 @@ const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
   description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (a connector acting on this user's behalf, whatever its upstream). Lifecycle bounded to active | revoked. Has no tier.",
-  version: 5,
+  version: 0,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "connector"] },
     client_id: { type: "string", description: "OAuth client identifier (for kind: app)" },
@@ -584,7 +584,7 @@ const systemDevice: TypeSchema = {
   id: "system.device",
   label: "Device",
   description: "A connected device — phone, laptop, watch, sync agent. Surfaces a Devices list in the console; carries a name, kind, and last-active timestamp; revocable. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
-  version: 1,
+  version: 0,
   fields: {
     name: { type: "string", description: "Display name (e.g. \"Work laptop\")", required: true },
     kind: { type: "enum", description: "Device class", required: true, enum_values: ["phone", "tablet", "laptop", "desktop", "watch", "sync-agent", "other"] },
@@ -596,7 +596,7 @@ const systemFolder: TypeSchema = {
   id: "system.folder",
   label: "Folder",
   description: "A folder's settings, held here and shared by every machine bound to the folder; each machine chooses only the directory. The settings are written only through `/folders`: created, changed at a version, and revoked. Lifecycle bounded to active | revoked. Has no tier.",
-  version: 1,
+  version: 0,
   fields: {
     title: { type: "string", description: "The folder's name", required: true },
     search: { type: "object", description: "Which items the folder holds. `types`: type identifiers, each with its subtypes; empty or absent holds every type the folder's key reads. `tier`: `library` or `feed`, the one tier the folder holds; absent is `library`. `state`: `active`, `archived` or both; absent is both. `filter`: an expression in the listing grammar's `filter`. `beneath`: an item id; the item and everything under it by `parent-of`." },
@@ -613,7 +613,7 @@ const systemWebhook: TypeSchema = {
   id: "system.webhook",
   label: "Webhook",
   description: "A registered webhook subscription. Surfaces a Webhooks list; carries URL, event filter, delivery history; editable. Lifecycle is bounded to active/revoked. Has no tier.",
-  version: 1,
+  version: 0,
   fields: {
     url: { type: "url", description: "Delivery URL", required: true },
     events: { type: "array", description: "Subscribed event family names", required: true, items_type: "string" },
@@ -712,7 +712,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "notes": "keep_both_copies"
       }
     },
-    "version": 1
+    "version": 0
   },
   "core.entity": {
     "display_hints": {
@@ -754,7 +754,7 @@ export const SHIPPED_TYPE_SHAPES = {
     "merge_policy": {
       "default": "last_writer_wins"
     },
-    "version": 1
+    "version": 0
   },
   "core.entity.person": {
     "display_hints": {
@@ -830,7 +830,7 @@ export const SHIPPED_TYPE_SHAPES = {
       "default": "last_writer_wins"
     },
     "parent": "core.entity",
-    "version": 1
+    "version": 0
   },
   "core.entity.place": {
     "display_hints": {
@@ -901,7 +901,7 @@ export const SHIPPED_TYPE_SHAPES = {
       "default": "last_writer_wins"
     },
     "parent": "core.entity",
-    "version": 1
+    "version": 0
   },
   "core.event": {
     "display_hints": {
@@ -975,7 +975,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "notes": "keep_both_copies"
       }
     },
-    "version": 2
+    "version": 0
   },
   "core.file": {
     "display_hints": {
@@ -1022,7 +1022,7 @@ export const SHIPPED_TYPE_SHAPES = {
     "merge_policy": {
       "default": "last_writer_wins"
     },
-    "version": 1
+    "version": 0
   },
   "core.file.audio": {
     "display_hints": {
@@ -1073,7 +1073,7 @@ export const SHIPPED_TYPE_SHAPES = {
       "default": "last_writer_wins"
     },
     "parent": "core.file",
-    "version": 2
+    "version": 0
   },
   "core.file.image": {
     "display_hints": {
@@ -1136,7 +1136,7 @@ export const SHIPPED_TYPE_SHAPES = {
       "default": "last_writer_wins"
     },
     "parent": "core.file",
-    "version": 2
+    "version": 0
   },
   "core.file.video": {
     "display_hints": {
@@ -1202,7 +1202,7 @@ export const SHIPPED_TYPE_SHAPES = {
       "default": "last_writer_wins"
     },
     "parent": "core.file",
-    "version": 2
+    "version": 0
   },
   "core.highlight": {
     "display_hints": {
@@ -1252,7 +1252,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "note": "keep_both_copies"
       }
     },
-    "version": 1
+    "version": 0
   },
   "core.media": {
     "display_hints": {
@@ -1300,7 +1300,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "notes": "keep_both_copies"
       }
     },
-    "version": 1
+    "version": 0
   },
   "core.media.album": {
     "display_hints": {
@@ -1358,7 +1358,7 @@ export const SHIPPED_TYPE_SHAPES = {
     "roles": [
       "container"
     ],
-    "version": 2
+    "version": 0
   },
   "core.media.article": {
     "display_hints": {
@@ -1414,7 +1414,7 @@ export const SHIPPED_TYPE_SHAPES = {
       }
     },
     "parent": "core.media",
-    "version": 1
+    "version": 0
   },
   "core.media.book": {
     "display_hints": {
@@ -1472,7 +1472,7 @@ export const SHIPPED_TYPE_SHAPES = {
       }
     },
     "parent": "core.media",
-    "version": 1
+    "version": 0
   },
   "core.media.episode": {
     "display_hints": {
@@ -1546,7 +1546,7 @@ export const SHIPPED_TYPE_SHAPES = {
       }
     },
     "parent": "core.media",
-    "version": 2
+    "version": 0
   },
   "core.media.film": {
     "display_hints": {
@@ -1610,7 +1610,7 @@ export const SHIPPED_TYPE_SHAPES = {
       }
     },
     "parent": "core.media",
-    "version": 2
+    "version": 0
   },
   "core.media.series": {
     "display_hints": {
@@ -1680,7 +1680,7 @@ export const SHIPPED_TYPE_SHAPES = {
     "roles": [
       "container"
     ],
-    "version": 4
+    "version": 0
   },
   "core.media.song": {
     "display_hints": {
@@ -1747,7 +1747,7 @@ export const SHIPPED_TYPE_SHAPES = {
       }
     },
     "parent": "core.media",
-    "version": 2
+    "version": 0
   },
   "core.message": {
     "display_hints": {
@@ -1773,7 +1773,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "body": "keep_both_copies"
       }
     },
-    "version": 1
+    "version": 0
   },
   "core.note": {
     "display_hints": {
@@ -1803,7 +1803,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "notes": "keep_both_copies"
       }
     },
-    "version": 1
+    "version": 0
   },
   "core.task": {
     "display_hints": {
@@ -1868,11 +1868,11 @@ export const SHIPPED_TYPE_SHAPES = {
         "notes": "keep_both_copies"
       }
     },
-    "version": 1
+    "version": 0
   },
   "system.account_holder": {
     "fields": {},
-    "version": 1
+    "version": 0
   },
   "system.app": {
     "fields": {
@@ -1890,7 +1890,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       }
     },
-    "version": 1
+    "version": 0
   },
   "system.connection": {
     "fields": {
@@ -1948,7 +1948,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "enum"
       }
     },
-    "version": 5
+    "version": 0
   },
   "system.device": {
     "fields": {
@@ -1973,7 +1973,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       }
     },
-    "version": 1
+    "version": 0
   },
   "system.folder": {
     "fields": {
@@ -2005,7 +2005,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "string"
       }
     },
-    "version": 1
+    "version": 0
   },
   "system.webhook": {
     "fields": {
@@ -2025,7 +2025,7 @@ export const SHIPPED_TYPE_SHAPES = {
         "type": "url"
       }
     },
-    "version": 1
+    "version": 0
   }
 } as const;
 

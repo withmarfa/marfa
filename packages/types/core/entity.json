@@ -2,7 +2,7 @@
   "id": "core.entity",
   "label": "Entity",
   "description": "A non-person entity — a company, band, team, charity, brand, school.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "name": {
       "type": "string",

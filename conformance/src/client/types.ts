@@ -117,7 +117,7 @@ export interface FieldDefinition {
 
 export interface TypeSchema {
   id: string; // Type identifier: "core.note", "acme.deal"
-  version?: number; // Server defaults to 1 on registration
+  version?: number; // Server defaults to 0 on registration
   label?: string; // Optional human-readable display name (server auto-generates from id if omitted)
   description?: string;
   // Explicit parent in the inheritance chain. Dotted ids alone do not imply

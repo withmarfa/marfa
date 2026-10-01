@@ -38,7 +38,7 @@ export function rowToItem(row: ItemRow): Item {
     version: row.version,
     source: row.source ?? "unknown",
     ...(row.source_id != null && { source_id: row.source_id }),
-    schema_version: row.schema_version ?? 1,
+    schema_version: row.schema_version ?? 0,
     ...(row.capture_latitude != null && {
       capture_latitude: row.capture_latitude,
     }),

@@ -205,7 +205,7 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   [CONTRACT_HEADER]: {
     description:
       "The contract version this server speaks, the same integer as the document's `info.version` and the root's `contract`. Sent on every response the application gives, refusals included, so a client can check the answer it is about to read. A client generated for another number cannot trust the body. A request refused by the HTTP layer before it reaches the application, such as one with a malformed host, is answered without it.",
-    schema: { type: "integer", minimum: 1 },
+    schema: { type: "integer", minimum: 0 },
   },
   "X-Request-ID": {
     description:
@@ -569,9 +569,9 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   instance_id: { type: "string" },
                   contract: {
                     type: "integer",
-                    minimum: 1,
+                    minimum: 0,
                     description:
-                      "The contract version, which moves only when the wire changes in a way a client generated for the old number cannot read.",
+                      "The contract version, which stays at 0 until the first public release.",
                   },
                   features: { type: "array", items: { type: "string" } },
                 },

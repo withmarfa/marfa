@@ -2,16 +2,6 @@ import { OFFICE_MIME_TO_FILE_TYPE, extractOfficeText } from "./office.js";
 import { OCR_MIMES } from "./ocr.js";
 import type { OcrEngine } from "./ocr.js";
 
-/**
- * Bump when enrichment output changes materially (new formats, a parser
- * swap, different truncation, a new extractor kind). The sweeper re-admits
- * every already-done item whose row carries an older version, so a bump is
- * a deliberate re-derivation of the whole corpus, and it is the only thing
- * that reaches a row already marked done — the config signature reaches
- * only the skipped ones.
- */
-export const EXTRACTOR_VERSION = 3;
-
 const TEXT_MIMES: ReadonlySet<string> = new Set([
   "text/plain",
   "text/markdown",

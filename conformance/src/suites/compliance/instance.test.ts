@@ -168,7 +168,7 @@ describe("the instance", () => {
     const root = await client.root();
     expect(root.ok).toBe(true);
     expect(Number.isInteger(root.data.contract)).toBe(true);
-    expect(root.data.contract).toBeGreaterThanOrEqual(1);
+    expect(root.data.contract).toBe(0);
     const document = (await (await fetch(`${apiUrl}/openapi.json`)).json()) as {
       info: { version: string };
     };
@@ -232,7 +232,7 @@ describe("the instance", () => {
     // The witness. Without it a reader that silently returned the wrong
     // member, or an empty one, would satisfy the identity assertion below
     // for the wrong reason.
-    expect(manifest.version).toBe(2);
+    expect(manifest.version).toBe(0);
     expect(manifest.instance_id).toBe(root.instance_id);
   });
 

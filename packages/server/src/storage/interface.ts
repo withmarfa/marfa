@@ -2672,7 +2672,6 @@ export interface EnrichmentCandidate {
 export interface EnrichmentStateInput {
   item_id: string;
   blob_ref: string;
-  extractor_version: number;
   status: "done" | "failed" | "skipped";
   attempts: number;
   error?: string | null;
@@ -2698,10 +2697,10 @@ export interface EnrichmentStateRecord extends EnrichmentStateInput {
 export interface EnrichmentStore {
   /**
    * Files needing extraction: `core.file` and descendants, not trashed,
-   * with a `blob_ref`, unprocessed by version/config, oldest-first, capped.
+   * with a `blob_ref`, unprocessed for that blob or config, oldest-first,
+   * capped.
    */
   listCandidates(
-    extractorVersion: number,
     maxAttempts: number,
     limit: number,
     configSignature: string,

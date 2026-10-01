@@ -177,7 +177,7 @@ describe("type registry", () => {
     await expectMatchesSchema("DELETE", "/types/{id}", 403, removed.error);
   });
 
-  it("updates type schema: adding a field with a version bump succeeds", async () => {
+  it("updates type schema: adding a field succeeds", async () => {
     const typeId = testTypeId("update-add");
     const schema: TypeSchema = {
       id: typeId,
@@ -188,12 +188,10 @@ describe("type registry", () => {
     const created = await client.registerType(schema);
     expect(created.ok).toBe(true);
 
-    // Adding a field is a minor change — requires version > 1.
-    // Detailed semver-diff coverage lives in type-versioning.test.ts;
-    // this is the registry-CRUD smoke for the additive path.
+    // The registry-CRUD smoke for the additive path; what a replacement
+    // does with the version is type-versioning.test.ts's.
     const updated = await client.updateType(typeId, {
       ...schema,
-      version: 2,
       fields: {
         ...schema.fields,
         description: { type: "string" },
@@ -201,32 +199,6 @@ describe("type registry", () => {
     });
     expect(updated.ok).toBe(true);
     await expectMatchesSchema("PUT", "/types/{id}", 200, updated.data);
-  });
-
-  it("rejects type schema update at the same version (additive without bump)", async () => {
-    const typeId = testTypeId("update-no-bump");
-    const schema: TypeSchema = {
-      id: typeId,
-      version: 1,
-      fields: { name: { type: "string", required: true } },
-    };
-
-    const created = await client.registerType(schema);
-    expect(created.ok).toBe(true);
-
-    // Adding a field while keeping version=1 must fail with a clear
-    // version_bump_mismatch error: under semver-diff, additive and breaking
-    // changes alike need a version bump.
-    const updated = await client.updateType(typeId, {
-      ...schema,
-      fields: {
-        ...schema.fields,
-        description: { type: "string" },
-      },
-    });
-    expect(updated.ok).toBe(false);
-    expect(updated.status).toBe(422);
-    expect(updated.error?.error.code).toBe("version_bump_mismatch");
   });
 
   it("deletes a type with no items", async () => {

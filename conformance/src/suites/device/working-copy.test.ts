@@ -1411,7 +1411,7 @@ describe("the working copy belongs to one server", () => {
         .get() as { value: string };
       store
         .prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'")
-        .run(String(Number(value) - 1));
+        .run(String(Number(value) + 1));
     } finally {
       store.close();
     }

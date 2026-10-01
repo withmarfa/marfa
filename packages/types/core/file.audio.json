@@ -3,7 +3,7 @@
   "parent": "core.file",
   "label": "Audio",
   "description": "Recordings, music files, voice memos. Inherits all core.file fields.",
-  "version": 2,
+  "version": 0,
   "fields": {
     "duration": {
       "type": "number",

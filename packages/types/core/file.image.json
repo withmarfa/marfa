@@ -3,7 +3,7 @@
   "parent": "core.file",
   "label": "Image",
   "description": "Photos, screenshots, diagrams. Inherits all core.file fields.",
-  "version": 2,
+  "version": 0,
   "fields": {
     "width": {
       "type": "integer",

@@ -330,8 +330,8 @@ describe("export → restore round trip", () => {
     const missingId = "01912345-0000-7000-8000-00000000dead";
     const archive = await buildArchive(
       {
-        version: 2,
-        format: "marfa-archive-v2",
+        version: 0,
+        format: "marfa-archive-v0",
         created_at: new Date().toISOString(),
         item_count: 1,
         edge_count: 1,
