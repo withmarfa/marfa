@@ -155,11 +155,15 @@ export function blobHash(data: Uint8Array): string {
 /**
  * A minimal version 0 archive: `items`, and the `blobs` and `types` given.
  * Emitted empty, not omitted, so a restore can tell damaged from empty.
+ * `reshape` takes the manifest as built and answers the one written, for a
+ * case that needs a manifest the server would not write.
  */
 export function itemsArchive(
   items: ArchiveItem[],
   blobs: ArchiveBlob[] = [],
   types: Record<string, unknown>[] = [],
+  reshape: (manifest: Record<string, unknown>) => unknown = (manifest) =>
+    manifest,
 ): Uint8Array {
   const manifest = {
     version: 0,
@@ -183,7 +187,10 @@ export function itemsArchive(
     )
     .join("\n");
   return tarGz([
-    { name: "manifest.json", body: JSON.stringify(manifest, null, 2) },
+    {
+      name: "manifest.json",
+      body: JSON.stringify(reshape(manifest), null, 2),
+    },
     { name: "items.ndjson", body: lines === "" ? "" : `${lines}\n` },
     ...blobs.map((blob) => ({
       name: `blobs/${blob.named ?? blobHash(blob.data)}`,
