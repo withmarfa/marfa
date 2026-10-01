@@ -1010,6 +1010,21 @@ export class SqliteItemStore implements ItemStore {
           "Cannot update trashed item",
         );
       }
+      // Asked inside the write lock, as a create asks it: a type deleted
+      // since any earlier check is out of the registry before its delete
+      // commits, so a move entering it now is refused rather than landing
+      // a row that names nothing.
+      if (
+        input.type !== undefined &&
+        input.type !== row.type &&
+        !getTypeSchema(input.type)
+      ) {
+        throw new MarfaError(
+          ErrorCode.UNKNOWN_TYPE,
+          `Unknown type: ${input.type}. Register it via POST /types before moving items into it.`,
+          { type: input.type },
+        );
+      }
 
       const currentProps = safeJsonParse<Record<string, unknown>>(
         row.properties,

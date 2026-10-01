@@ -750,18 +750,21 @@ export function typeRoutes(storage: Storage) {
           .replace(/\b\w/g, (ch) => ch.toUpperCase());
       }
 
-      if (schema.parent) {
-        validateParentChain(schema.id, schema.parent);
-      }
-
-      if (getTypeSchema(schema.id)) {
-        throw new MarfaError(
-          ErrorCode.TYPE_ALREADY_EXISTS,
-          `Type "${schema.id}" already exists`,
-        );
-      }
-
-      const created = await storage.types.create(schema);
+      // The parent chain is checked in the transaction that writes the type,
+      // so a parent deleted meanwhile refuses this registration, and a delete
+      // waiting on this one finds the child and is refused instead.
+      const created = await storage.runInTransaction(async () => {
+        if (schema.parent) {
+          validateParentChain(schema.id, schema.parent);
+        }
+        if (getTypeSchema(schema.id)) {
+          throw new MarfaError(
+            ErrorCode.TYPE_ALREADY_EXISTS,
+            `Type "${schema.id}" already exists`,
+          );
+        }
+        return await storage.types.create(schema);
+      });
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,
@@ -797,17 +800,21 @@ export function typeRoutes(storage: Storage) {
 
       const schema = result.data;
 
-      if (schema.parent) {
-        // Measured on the type as it stands, before the update lands, which is
-        // the subtree that would move with it.
-        validateParentChain(
-          schema.id,
-          schema.parent,
-          maxDescendantDepth(schema.id),
-        );
-      }
-
-      const updated = await storage.types.update(id, schema);
+      // Checked in the transaction that writes the type, for the reason
+      // registration is, and so two re-parents in flight cannot each pass the
+      // loop check and close a loop between them.
+      const updated = await storage.runInTransaction(async () => {
+        if (schema.parent) {
+          // Measured on the type as it stands, before the update lands, which
+          // is the subtree that would move with it.
+          validateParentChain(
+            schema.id,
+            schema.parent,
+            maxDescendantDepth(schema.id),
+          );
+        }
+        return await storage.types.update(id, schema);
+      });
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
         key_id: c.get("apiKey")?.id,

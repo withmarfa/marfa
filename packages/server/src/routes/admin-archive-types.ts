@@ -364,29 +364,36 @@ export async function registerArchiveTypes(
       const entry = pending[i];
       if (!entry) continue;
       const schema = entry.schema;
-      if (schema.parent && !getTypeSchema(schema.parent)) continue;
-      if (schema.parent) {
-        assertParentChainResolves(schema.id, schema.parent);
-        // Checked again now its parent is registered: the first pass ran
-        // before the batch's own parents were, so it could not see what a
-        // child inherits from one of them, a second thumbnail among it.
-        const inherited = validateTypeSchema(schema);
-        if (!inherited.success) {
-          throw new MarfaError(
-            ErrorCode.INVALID_SCHEMA,
-            `Archive carries an invalid type schema for "${schema.id}"`,
-            { errors: inherited.errors },
-          );
+      // The parent is asked in the transaction that writes the type, as
+      // `POST /types` asks it, so a parent deleted meanwhile is not inherited
+      // from, and a delete waiting on this write finds the child.
+      const wrote = await storage.runInTransaction(async () => {
+        if (schema.parent && !getTypeSchema(schema.parent)) return false;
+        if (schema.parent) {
+          assertParentChainResolves(schema.id, schema.parent);
+          // Checked again now its parent is registered: the first pass ran
+          // before the batch's own parents were, so it could not see what a
+          // child inherits from one of them, a second thumbnail among it.
+          const inherited = validateTypeSchema(schema);
+          if (!inherited.success) {
+            throw new MarfaError(
+              ErrorCode.INVALID_SCHEMA,
+              `Archive carries an invalid type schema for "${schema.id}"`,
+              { errors: inherited.errors },
+            );
+          }
         }
-      }
-      // `types.create` registers into the registry as part of the write, so
-      // nothing here calls it directly.
-      //
-      // Provenance is passed rather than defaulted: the column defaults to
-      // `user`, the one the consent screen offers a read-and-write wildcard
-      // over, so defaulting would turn a row recorded as `unknown` into the
-      // person's own on a round trip.
-      await storage.types.create(schema, entry.provenance);
+        // `types.create` registers into the registry as part of the write,
+        // so nothing here calls it directly.
+        //
+        // Provenance is passed rather than defaulted: the column defaults to
+        // `user`, the one the consent screen offers a read-and-write wildcard
+        // over, so defaulting would turn a row recorded as `unknown` into the
+        // person's own on a round trip.
+        await storage.types.create(schema, entry.provenance);
+        return true;
+      });
+      if (!wrote) continue;
       written.push(entry);
       pending.splice(i, 1);
       progress = true;
