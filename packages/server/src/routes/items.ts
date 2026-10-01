@@ -441,6 +441,15 @@ const getItemStatsRoute = createRoute({
       },
       description: "Item counts by state",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "A query parameter the door does not declare, or a grouping it does not have.",
+    },
     401: {
       content: {
         "application/json": {

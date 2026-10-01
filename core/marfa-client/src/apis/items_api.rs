@@ -491,6 +491,7 @@ pub enum GetItemError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum GetItemStatsError {
+    Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status429(models::RateLimitedRefusal),
