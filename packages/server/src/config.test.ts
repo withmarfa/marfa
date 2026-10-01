@@ -7,6 +7,7 @@ import {
   parseGrantInactivityDays,
   parseConnectorHoldMs,
   DEFAULT_CONNECTOR_HOLD_MS,
+  defaultTessdataDir,
 } from "./config.js";
 
 /**
@@ -224,5 +225,38 @@ describe("loadConfig MARFA_CONNECTOR_HOLD_MS", () => {
       process.env.MARFA_CONNECTOR_HOLD_MS = raw;
       expect(() => loadConfig(), raw).toThrow(/MARFA_CONNECTOR_HOLD_MS/);
     }
+  });
+});
+
+describe("loadConfig MARFA_ENRICHMENT_TESSDATA_DIR", () => {
+  const saved = {
+    SQLITE_PATH: process.env.SQLITE_PATH,
+    MARFA_ENRICHMENT_TESSDATA_DIR: process.env.MARFA_ENRICHMENT_TESSDATA_DIR,
+  };
+
+  afterEach(() => {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) Reflect.deleteProperty(process.env, name);
+      else process.env[name] = value;
+    }
+  });
+
+  it("caches the OCR model beside the database by default", () => {
+    delete process.env.MARFA_ENRICHMENT_TESSDATA_DIR;
+    process.env.SQLITE_PATH = "/data/marfa.db";
+    expect(loadConfig().enrichmentTessdataDir).toBe("/data/tessdata");
+    delete process.env.SQLITE_PATH;
+    expect(loadConfig().enrichmentTessdataDir).toBe("data/tessdata");
+  });
+
+  it("takes the variable over the database's directory", () => {
+    process.env.SQLITE_PATH = "/data/marfa.db";
+    process.env.MARFA_ENRICHMENT_TESSDATA_DIR = "/models";
+    expect(loadConfig().enrichmentTessdataDir).toBe("/models");
+  });
+
+  it("falls back to the working directory for a database with no directory", () => {
+    expect(defaultTessdataDir(":memory:")).toBe("./data/tessdata");
+    expect(defaultTessdataDir("file:marfa.db?mode=ro")).toBe("./data/tessdata");
   });
 });

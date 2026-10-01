@@ -1,5 +1,8 @@
+import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { Worker } from "node:worker_threads";
+import { log } from "../middleware/logger.js";
 
 export const OCR_MIMES: ReadonlySet<string> = new Set([
   "image/png",
@@ -118,8 +121,26 @@ export class TesseractOcr implements OcrEngine {
     }
   }
 
+  /** The library fetches a model it does not find in the cache and says
+   *  nothing, so an owner whose cache is not kept would otherwise never
+   *  learn it is fetched on every start. */
+  private reportUncachedModels(): void {
+    const langs = (this.opts.langs ?? "eng")
+      .split("+")
+      .filter(
+        (lang) => !existsSync(join(this.opts.cachePath, `${lang}.traineddata`)),
+      );
+    if (langs.length === 0) return;
+    log("info", "OCR language model not cached; fetching it", {
+      cache_path: this.opts.cachePath,
+      langs,
+      setting: "MARFA_ENRICHMENT_TESSDATA_DIR",
+    });
+  }
+
   private getThread(): Worker {
     if (this.thread) return this.thread;
+    this.reportUncachedModels();
     const thread = this.spawn();
     thread.on(
       "message",

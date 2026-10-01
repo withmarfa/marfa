@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
@@ -274,7 +275,7 @@ export interface AppConfig {
    *  wasm core is the heaviest thing extraction loads. */
   enrichmentOcrEnabled?: boolean;
   /** Directory the OCR language model is cached in across runs. Default
-   *  `./data/tessdata`; env override `MARFA_ENRICHMENT_TESSDATA_DIR`.
+   *  {@link defaultTessdataDir}; env override `MARFA_ENRICHMENT_TESSDATA_DIR`.
    *  The model downloads on first use, so a writable path here is what
    *  stops every restart re-fetching it. */
   enrichmentTessdataDir?: string;
@@ -648,6 +649,19 @@ export function getPermissionBundles(): PermissionBundle[] {
   );
 }
 
+/**
+ * The OCR model cache sits beside the database, so it lands on whatever
+ * volume holds the instance's data rather than under the working
+ * directory. An in-memory or `file:` database has no directory to sit
+ * beside.
+ */
+export function defaultTessdataDir(sqlitePath: string): string {
+  if (sqlitePath === ":memory:" || sqlitePath.startsWith("file:")) {
+    return "./data/tessdata";
+  }
+  return join(dirname(sqlitePath), "tessdata");
+}
+
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
@@ -683,10 +697,11 @@ export function loadConfig(): AppConfig {
   }
 
   const port = envNumber(process.env.PORT, 8600);
+  const sqlitePath = process.env.SQLITE_PATH ?? "./data/marfa.db";
   return {
     isProduction: process.env.NODE_ENV === "production",
     port,
-    sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
+    sqlitePath,
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     maxRequestBytes: envNumber(process.env.MARFA_MAX_REQUEST_BYTES, 1_048_576),
     maxBulkRequestBytes: envNumber(
@@ -835,7 +850,8 @@ export function loadConfig(): AppConfig {
     ),
     enrichmentOcrEnabled: process.env.MARFA_ENRICHMENT_OCR_ENABLED !== "false",
     enrichmentTessdataDir:
-      process.env.MARFA_ENRICHMENT_TESSDATA_DIR ?? "./data/tessdata",
+      process.env.MARFA_ENRICHMENT_TESSDATA_DIR ??
+      defaultTessdataDir(sqlitePath),
     bulkActionJobRetentionMs: envNumber(
       process.env.MARFA_BULK_ACTION_JOB_RETENTION_MS,
       7 * 24 * 3_600_000,

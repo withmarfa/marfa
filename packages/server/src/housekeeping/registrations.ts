@@ -1,6 +1,6 @@
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import type { AppConfig } from "../config.js";
-import { DEFAULT_INBOUND_LIMITS } from "../config.js";
+import { DEFAULT_INBOUND_LIMITS, defaultTessdataDir } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import type { Housekeeping } from "./scheduler.js";
@@ -337,7 +337,9 @@ export function registerHousekeepingJobs(
       ocr:
         config.enrichmentOcrEnabled !== false
           ? new TesseractOcr({
-              cachePath: config.enrichmentTessdataDir ?? "./data/tessdata",
+              cachePath:
+                config.enrichmentTessdataDir ??
+                defaultTessdataDir(config.sqlitePath),
             })
           : null,
       batchSize: config.enrichmentBatchSize ?? 8,
