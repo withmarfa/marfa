@@ -477,6 +477,8 @@ pub mod permission;
 pub use self::permission::Permission;
 pub mod permission_level;
 pub use self::permission_level::PermissionLevel;
+pub mod purge_item_409_response;
+pub use self::purge_item_409_response::PurgeItem409Response;
 pub mod range_not_satisfiable_refusal;
 pub use self::range_not_satisfiable_refusal::RangeNotSatisfiableRefusal;
 pub mod range_not_satisfiable_refusal_error;

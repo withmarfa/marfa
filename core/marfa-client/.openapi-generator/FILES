@@ -259,6 +259,7 @@ src/models/owner_not_found_refusal.rs
 src/models/owner_not_found_refusal_error.rs
 src/models/permission.rs
 src/models/permission_level.rs
+src/models/purge_item_409_response.rs
 src/models/range_not_satisfiable_refusal.rs
 src/models/range_not_satisfiable_refusal_error.rs
 src/models/rate_limited_refusal.rs
