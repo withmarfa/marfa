@@ -1720,7 +1720,7 @@ mod tests {
         assert!(SCHEMA.contains("\n  --"), "schema.sql carries no comments");
         assert!(!statements.contains("--"), "a comment survived the strip");
         // The strip reads `--` alone, so a block comment would ride through
-        // it and price prose at a version bump again, silently.
+        // it and let prose move the hash, silently.
         assert!(!SCHEMA.contains("/*"), "schema.sql grew a block comment");
         assert!(statements.contains("CREATE TABLE IF NOT EXISTS queue ("));
         assert!(statements.len() < SCHEMA.len());
