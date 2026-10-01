@@ -421,6 +421,76 @@ describe("POST /admin/restore-archive", () => {
     );
   });
 
+  it("refuses a manifest missing or mistyping a field it reads, naming the field, and writes nothing", async () => {
+    const blob = makeBlobData("manifest-shape-blob");
+    const line = (sourceId: string) =>
+      noteLine(blob, { source: "manifest-shape", source_id: sourceId });
+    const withoutBlobs: Record<string, unknown> = manifestFor(blob);
+    delete withoutBlobs.blobs;
+    const cases: { manifest: unknown; path: string }[] = [
+      { manifest: withoutBlobs, path: "blobs" },
+      { manifest: { ...manifestFor(blob), blobs: null }, path: "blobs" },
+      {
+        manifest: {
+          ...manifestFor(blob),
+          blobs: { [blob.hash]: { mime_type: 7, size_bytes: 1 } },
+        },
+        path: `blobs.${blob.hash}.mime_type`,
+      },
+      {
+        manifest: {
+          ...manifestFor(blob),
+          blobs: { [blob.hash]: { mime_type: "text/plain" } },
+        },
+        path: `blobs.${blob.hash}.size_bytes`,
+      },
+      { manifest: { ...manifestFor(blob), version: "0" }, path: "version" },
+      { manifest: { blobs: {} }, path: "version" },
+      { manifest: [], path: "" },
+    ];
+
+    for (const [index, { manifest, path }] of cases.entries()) {
+      const sourceId = `manifest-shape-${String(index)}`;
+      const res = await postArchive(
+        await buildArchive(
+          manifest as Record<string, unknown>,
+          [line(sourceId)],
+          [blob],
+        ),
+      );
+      expect(res.status, JSON.stringify(manifest)).toBe(400);
+      const body = (await res.json()) as {
+        error: {
+          code: string;
+          message: string;
+          details?: { errors?: { path: string }[] };
+        };
+      };
+      expect(body.error.code).toBe("validation_error");
+      expect(body.error.message).toContain("manifest.json");
+      expect(body.error.details?.errors?.map((e) => e.path)).toContain(path);
+      expect(
+        await ctx.storage.items.findBySourceId("manifest-shape", sourceId),
+      ).toBeNull();
+    }
+
+    // The witness: the same archive under a well-formed manifest restores.
+    const restored = await postArchive(
+      await buildArchive(
+        manifestFor(blob),
+        [line("manifest-shape-ok")],
+        [blob],
+      ),
+    );
+    expect(restored.status).toBe(200);
+    expect(
+      await ctx.storage.items.findBySourceId(
+        "manifest-shape",
+        "manifest-shape-ok",
+      ),
+    ).not.toBeNull();
+  });
+
   it("rejects empty bodies", async () => {
     const res = await ctx.app.request("/admin/restore-archive", {
       method: "POST",
