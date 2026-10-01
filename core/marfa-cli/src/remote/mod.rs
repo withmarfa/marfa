@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::auth;
 use crate::credentials::{self, Kept};
-use crate::error::CliError;
+use crate::error::{CliError, Exit};
 use request::{Body, Request};
 pub use transport::Transport;
 
@@ -121,9 +121,13 @@ fn renewal(remote: &Remote) -> Option<Renew> {
     Some(Box::new(move |refused: &str| {
         auth::refresh(&origin, Some(refused))
             .map(|kept| kept.bearer().to_string())
-            .map_err(|error| CoreError::Unauthorized {
-                code: error.code().to_string(),
-                message: error.to_string(),
+            .map_err(|error| match error {
+                CliError::Core(core) => core,
+                other if other.exit() == Exit::Environment => CoreError::Network(other.to_string()),
+                other => CoreError::Unauthorized {
+                    code: other.code().to_string(),
+                    message: other.to_string(),
+                },
             })
     }))
 }

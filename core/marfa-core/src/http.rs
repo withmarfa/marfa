@@ -219,8 +219,26 @@ impl Http {
 
     /// After a `401` to `sent`, the header to send again with: the one
     /// another call renewed to meanwhile, or a fresh one. `None` where
-    /// nothing renews.
+    /// nothing renews, or where the renewal was itself refused, so the `401`
+    /// stands as the answer: a drain parks its queue on that answer and
+    /// counts nothing (`queue-and-verdicts.md` 20), where an error would be
+    /// counted against each write until every one was dead. A renewal the
+    /// environment stopped is the environment's, and says so.
     fn renewed(&self, sent: &str) -> Result<Option<String>, CoreError> {
+        match self.renewal(sent) {
+            Ok(fresh) => Ok(fresh),
+            Err(
+                error @ (CoreError::Network(_)
+                | CoreError::RateLimited { .. }
+                | CoreError::Server { .. }),
+            ) => Err(CoreError::Network(format!(
+                "the credential could not be renewed: {error}"
+            ))),
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn renewal(&self, sent: &str) -> Result<Option<String>, CoreError> {
         let Some(renew) = self.renew.get() else {
             return Ok(None);
         };

@@ -2476,6 +2476,44 @@ mod tests {
         );
     }
 
+    /// A renewal refused leaves the `401` as the answer, which parks the queue
+    /// and counts nothing; one the network stopped is the environment's.
+    /// Counted instead, every write behind a sign-in that ended would reach
+    /// the ceiling and die, beyond the reach of signing in again.
+    #[test]
+    fn a_refused_renewal_parks_the_queue_and_one_the_network_stopped_waits() {
+        let refused = |renewal: CoreError| {
+            let server = crate::scripted::Scripted::start();
+            server.on(
+                "/blobs",
+                vec![crate::scripted::refusal(401, "unauthorized")],
+            );
+            let http = Http::new(&server.url(), "k").unwrap();
+            let renewal = std::sync::Mutex::new(Some(renewal));
+            http.renew_with(Box::new(move |_| {
+                Err(renewal.lock().unwrap().take().expect("renewed once"))
+            }));
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("bytes");
+            std::fs::write(&path, b"hello").unwrap();
+            classify(&upload(&http, File::open(&path).unwrap(), "text/plain"))
+        };
+
+        assert_eq!(
+            refused(CoreError::Unauthorized {
+                code: "signed_out".into(),
+                message: "the sign-in ended".into(),
+            }),
+            Classified::BlockQueue(BlockedReason::CredentialRefused)
+        );
+        assert_eq!(
+            refused(CoreError::Network(
+                "the token endpoint did not answer".into()
+            )),
+            Classified::Environmental
+        );
+    }
+
     /// An upload's bytes are a stream its first send spends, so the one sent
     /// again under a renewed bearer is read from the start of the file.
     #[test]
