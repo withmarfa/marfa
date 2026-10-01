@@ -2205,6 +2205,72 @@ mod tests {
         );
     }
 
+    /// A withdraw refuses the whole chain held behind it, and nothing on that
+    /// chain is released or left waiting on a row clearing took.
+    #[test]
+    fn a_withdraw_refuses_the_chain_behind_it_and_clearing_takes_all_of_it() {
+        let conn = conn();
+        let row = |id: &str, verdict: Option<&str>, sent: i64, depends: &str| {
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, depends_on, queued_at)
+                 VALUES (?1, 'update_item', ?1, '{}', ?2, ?3, ?4, ?5, '2026-01-01T00:00:00Z')",
+                params![
+                    id,
+                    verdict,
+                    verdict.map(|_| "conflict_unresolved"),
+                    sent,
+                    depends
+                ],
+            )
+            .unwrap();
+        };
+        row("stuck", Some("blocked"), 1, "[]");
+        row("next", None, 0, "[\"stuck\"]");
+        row("after-next", None, 0, "[\"next\"]");
+        let ids = |rows: Vec<QueuedWrite>| rows.into_iter().map(|r| r.id).collect::<Vec<_>>();
+        let held = held_for(&conn, "stuck").unwrap();
+        assert_eq!(
+            ids(held.clone()),
+            vec!["next".to_string(), "after-next".to_string()],
+            "the write two steps behind is held for the withdrawn one too"
+        );
+
+        let stuck = queued_write(&conn, "stuck").unwrap().unwrap();
+        withdraw(&conn, &stuck, &held).unwrap();
+        assert!(
+            !release(&conn, "after-next").unwrap(),
+            "a write refused behind one refused for a withdrawn write was released, \
+             to be refused again by the next drain"
+        );
+        // The witness: a row refused unsent for a write still queued is
+        // released, so the refusal above is the chain's doing.
+        row("ahead", Some("refused"), 1, "[]");
+        row("behind", Some("refused"), 0, "[\"ahead\"]");
+        assert!(release(&conn, "behind").unwrap());
+
+        // Kept while a row with a verdict still to come names it.
+        row("orphan", Some("refused"), 0, "[\"gone\"]");
+        row("waiting-on-orphan", None, 0, "[\"orphan\"]");
+        forget_answered(&conn).unwrap();
+        let left: Vec<String> = conn
+            .prepare("SELECT id FROM queue ORDER BY id")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(
+            left,
+            vec![
+                "ahead".to_string(),
+                "behind".to_string(),
+                "orphan".to_string(),
+                "waiting-on-orphan".to_string()
+            ],
+            "the refused chain should go whole, and a row an unanswered one names should stay"
+        );
+    }
+
     #[test]
     fn a_queued_write_round_trips_through_every_column() {
         let conn = conn();
@@ -3007,28 +3073,44 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
         .collect())
 }
 
-/// Whether a row names among the writes it waits for one the queue no longer
-/// holds. Clearing keeps every row a row refused unsent waits for, so for
-/// such a row the one way to lose a dependency is a withdraw.
+/// Whether a row waits, itself or through rows refused unsent before it, for
+/// one the queue no longer holds. Clearing keeps every row a row refused
+/// unsent waits for, so for such a row the one way to lose a dependency is a
+/// withdraw, and the chain matters because a row refused for a row refused
+/// for a withdrawn one can land no more than its neighbor can.
 fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.query_row(
-        "SELECT EXISTS (
-           SELECT 1 FROM queue, json_each(queue.depends_on) AS named
-            WHERE queue.id = ?1 AND named.value NOT IN (SELECT id FROM queue)
-         )",
-        [id],
+        "WITH RECURSIVE chain(id) AS (
+           SELECT ?1
+           UNION
+           SELECT named.value FROM queue, chain, json_each(queue.depends_on) AS named
+            WHERE queue.id = chain.id AND queue.verdict = ?2 AND queue.sent = 0
+         )
+         SELECT EXISTS (SELECT 1 FROM chain WHERE id NOT IN (SELECT id FROM queue))",
+        [id, Verdict::Refused.as_str()],
         |row| row.get(0),
     )?)
 }
 
-/// The writes held for `id` that never went out: each names it among the
-/// writes it cannot go without (`queue-and-verdicts.md` 4) and has had no
-/// answer, or is blocked.
+/// The writes held for `id` that never went out, and those held for them in
+/// turn: each names one of them among the writes it cannot go without
+/// (`queue-and-verdicts.md` 4) and has had no answer, or is blocked. The
+/// whole chain, because a write two steps behind a withdrawn one could no
+/// more land than the one between, and left unanswered it would wait on a
+/// row that clearing is free to take.
 pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
-        "WHERE sent = 0 AND (verdict IS NULL OR verdict = ?2)
-           AND EXISTS (SELECT 1 FROM json_each(queue.depends_on) WHERE value = ?1)",
+        "WHERE id IN (
+           WITH RECURSIVE held(id) AS (
+             SELECT ?1
+             UNION
+             SELECT waiting.id FROM queue AS waiting, held, json_each(waiting.depends_on) AS named
+              WHERE named.value = held.id
+                AND waiting.sent = 0 AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
+           )
+           SELECT id FROM held WHERE id <> ?1
+         )",
         [id, Verdict::Blocked.as_str()],
     )
 }
@@ -3098,14 +3180,26 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
 }
 
 fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
+    // Kept while a row with a verdict still to come, or one a caller may
+    // release, names it: clearing it would leave that row waiting on a write
+    // no drain can find.
     let unreleasable = conn.execute(
         "DELETE FROM queue
           WHERE verdict = ?1 AND sent = 0
             AND EXISTS (
               SELECT 1 FROM json_each(queue.depends_on) AS named
                WHERE named.value NOT IN (SELECT id FROM queue)
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
+               WHERE named.value = queue.id
+                 AND (waiting.verdict IS NULL OR waiting.verdict IN (?2, ?3))
             )",
-        [Verdict::Refused.as_str()],
+        [
+            Verdict::Refused.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str(),
+        ],
     )?;
     Ok(unreleasable
         + conn.execute(

@@ -91,6 +91,10 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 /// takes it away on open: well past any fetch or copy still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
+/// How many times a withdraw reads the server's rows again because the copy
+/// caught up while they were out, before it gives up and says so.
+const WITHDRAW_READS: usize = 3;
+
 impl Core {
     /// Opens the file at `path`, creating it and its schema when absent. A
     /// file bound to a different server than `server` is refused.
@@ -483,34 +487,58 @@ impl Core {
     /// as they were.
     pub fn withdraw(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        let Some(row) = store::queued_write(&*self.conn()?, id)? else {
-            return Err(CoreError::NotFound {
-                code: "queued_write_not_found".into(),
-                message: format!("{id} is not a write this queue holds"),
-            });
-        };
-        if !row.withdrawable() {
-            return Ok(false);
+        for _ in 0..WITHDRAW_READS {
+            let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+                return Err(CoreError::NotFound {
+                    code: "queued_write_not_found".into(),
+                    message: format!("{id} is not a write this queue holds"),
+                });
+            };
+            if !row.withdrawable() {
+                return Ok(false);
+            }
+            let held = store::held_for(&*self.conn()?, id)?;
+            // A catch-up that lands while the reads are out would be rolled back
+            // by the older read, with its event already behind the cursor, so the
+            // versions the copy held when they went out are checked again before
+            // anything is put back.
+            let versions = |conn: &Connection| -> Result<Vec<Option<i64>>> {
+                std::iter::once(&row)
+                    .chain(&held)
+                    .map(|write| match write.item_id.as_deref() {
+                        Some(item) => Ok(store::item_by_id(conn, item)?.map(|held| held.version)),
+                        None => Ok(None),
+                    })
+                    .collect()
+            };
+            let before = versions(&*self.conn()?)?;
+            let mut reads = vec![drain::read_back(self, &row)?];
+            for dependant in &held {
+                reads.push(drain::read_back(self, dependant)?);
+            }
+            let mut conn = self.conn()?;
+            let tx = conn.transaction()?;
+            // Another thread may have released or answered a row while the
+            // reads were out.
+            if store::queued_write(&tx, id)?.as_ref() != Some(&row)
+                || store::held_for(&tx, id)? != held
+            {
+                return Ok(false);
+            }
+            if versions(&tx)? != before {
+                continue;
+            }
+            store::withdraw(&tx, &row, &held)?;
+            for read in &reads {
+                drain::apply_read_back(&tx, read)?;
+            }
+            tx.commit()?;
+            return Ok(true);
         }
-        let held = store::held_for(&*self.conn()?, id)?;
-        let mut reads = vec![drain::read_back(self, &row)?];
-        for dependant in &held {
-            reads.push(drain::read_back(self, dependant)?);
-        }
-        let mut conn = self.conn()?;
-        let tx = conn.transaction()?;
-        // Another thread may have released or answered a row while the
-        // reads were out.
-        if store::queued_write(&tx, id)?.as_ref() != Some(&row) || store::held_for(&tx, id)? != held
-        {
-            return Ok(false);
-        }
-        store::withdraw(&tx, &row, &held)?;
-        for read in &reads {
-            drain::apply_read_back(&tx, read)?;
-        }
-        tx.commit()?;
-        Ok(true)
+        Err(CoreError::Invalid(format!(
+            "{id} was not withdrawn: the copy kept catching up while the server's rows were \
+             read back, and withdrawing then would put back an older row; ask again"
+        )))
     }
 
     /// Moves an edit blocked `ancestor_unavailable` onto the version the copy
