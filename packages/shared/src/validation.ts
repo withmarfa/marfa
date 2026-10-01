@@ -94,19 +94,15 @@ export function isValidLanguageCode(value: string): boolean {
 const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 
 /**
- * First segments a publisher may never claim, in the type grammar or as a
- * handle. Five name a namespace tier the platform defines
- * (`classifyNamespace`). The rest name none, and are reserved for the
- * opposite reason — each is a root an OAuth scope family lives under, and
- * reserving it is what stops a registered type ever sharing a literal with a
- * grant. A reserved root without a tier is therefore a namespace nothing can
+ * First segments a publisher may never claim in the type grammar. Five name
+ * a namespace tier the platform defines (`classifyNamespace`). The rest name
+ * none, and are reserved for the opposite reason — each is a root an OAuth
+ * scope family lives under, and reserving it is what stops a registered type
+ * ever sharing a literal with a grant. A reserved root without a tier is therefore a namespace nothing can
  * occupy, which is the intent.
  *
- * **Derived rather than typed out**, from `scope-roots.ts`. It was a hand
- * list, and every scope family that arrived needed a second edit here to be
- * protected — the permission root got one, `content` got one, and `metadata` and
- * `edge` never did, which is the hole this closes. Composing it means the
- * next family is protected by having been declared.
+ * **Derived rather than typed out**, from `scope-roots.ts`, so the next
+ * scope family is protected by having been declared.
  *
  * **Reserving a root is not what makes a scope literal under it
  * unambiguous**, and the note is worth a line because the two look like one
@@ -118,44 +114,6 @@ const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
  * grammar asks that one.
  */
 export const RESERVED_ROOTS: ReadonlySet<string> = new Set(RESERVED_ROOT_NAMES);
-
-/**
- * Returns true if the value names a reserved root, which is the whole of what
- * a handle claim is refused for.
- *
- * A handle is a namespace claim, not a URL path — it appears in a type
- * identifier, in a scope literal and on a consent screen, and no route in the
- * server is shaped like `/<handle>` — so the string's ordinary meaning is not
- * this function's business.
- *
- * **`metadata` and `edge` are refused here now, and the previous reasoning
- * for admitting them did not survive a read of the parser.** It held that
- * they head scope literals the parser resolves and are therefore ordinary
- * claimable handles. `parseScope` tries the metadata and edge matchers BEFORE
- * the type matcher, so a type registered under a claimed `metadata` handle
- * can never have its scope literal read as a type grant at all:
- * `metadata.types:write` is taken by the metadata family first, and that is
- * the scope gating `POST /types`.
- *
- * **A publisher root the registry holds is deliberately NOT refused here.**
- * A handle naming one is a namespace collision rather than a grammar
- * confusion, and reserving `acme` while admitting `acme-corp` is a
- * half-protection:
- * the set matches whole handles only, so the obvious neighbors stay
- * claimable and the list reads as a defense it cannot provide. The collision
- * is answered where it happens, by the seed refusing to overwrite a
- * registration it did not write, rather than by a name list here.
- *
- * This stays a function rather than an inlined `RESERVED_ROOTS.has` for two
- * reasons. Callers needing a typed-error surface branch on it BEFORE
- * calling `isValidHandle`, which collapses every failure mode into a single
- * boolean; and the question a caller asks is whether a handle may be
- * claimed, which should outlive whatever currently answers it.
- */
-export function isReservedHandle(value: string): boolean {
-  if (typeof value !== "string") return false;
-  return RESERVED_ROOTS.has(value);
-}
 
 /**
  * A single-segment kebab edge name: `parent-of`, `in-thread`, `attached-to`.
@@ -183,55 +141,6 @@ export function isValidEdgeTypeIdentifier(value: string): boolean {
   if (typeof value !== "string") return false;
   if (!value.includes(".")) return EDGE_KEBAB_NAME.test(value);
   return isValidTypeIdentifier(value);
-}
-
-const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
-
-/**
- * Returns true if the value is a valid handle: lowercase alphanumeric and
- * hyphens, 3–32 characters, no leading, trailing or consecutive hyphens,
- * and not a reserved root. Comparison is case-insensitive — the canonical
- * form is lowercase; collision detection at the storage layer also
- * lowercases.
- */
-export function isValidHandle(value: string): boolean {
-  if (typeof value !== "string") return false;
-  if (value.length < 3 || value.length > 32) return false;
-  if (value.includes("--")) return false;
-  if (!HANDLE_RE.test(value)) return false;
-  if (isReservedHandle(value)) return false;
-  return true;
-}
-
-/**
- * Derive a syntactically valid handle base from an email address, for the
- * programmatic sign-up path (`POST /auth/sign-up/email`) where the user
- * supplies no handle of their own. The result satisfies `isValidHandle`
- * (lowercase, 3–32 chars, single hyphens, not reserved), but callers must
- * still resolve collisions at the storage layer before claiming it — this
- * is a deterministic *candidate*, not a guaranteed-free claim.
- *
- * Sanitization maps any run of non-`[a-z0-9]` characters (including
- * existing hyphens) to a single hyphen, trims leading/trailing hyphens,
- * and caps at 32 chars. A too-short or empty local part is padded to the
- * 3-char floor with a `user-` prefix; a result that lands on a reserved
- * root is suffixed so it clears `isReservedHandle`.
- */
-export function deriveHandleFromEmail(email: string): string {
-  const sanitize = (s: string): string =>
-    s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 32)
-      .replace(/-+$/g, "");
-
-  const local = typeof email === "string" ? (email.split("@")[0] ?? "") : "";
-  let base = sanitize(local);
-  if (base.length < 3) base = sanitize(`user-${base}`);
-  if (base.length < 3) base = "user";
-  if (isReservedHandle(base)) base = sanitize(`${base}-1`);
-  return base;
 }
 
 /**

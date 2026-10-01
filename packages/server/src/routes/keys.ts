@@ -54,12 +54,12 @@ function generateRawKey(): string {
 }
 
 /**
- * Refuse a caller-supplied `source` that claims a connector shape.
+ * Refuse a caller-supplied `source` under a reserved prefix.
  *
- * `source` is otherwise free text, but two prefixes are read elsewhere as
+ * `source` is otherwise free text, but a reserved prefix is read elsewhere as
  * proof of an identity a caller cannot earn by naming it: see
  * `RESERVED_CREDENTIAL_SOURCE_PREFIXES`. Nothing legitimate is turned away
- * here, because no credential this route mints holds either shape.
+ * here, because no credential this route mints holds that shape.
  *
  * `POST /keys` writes `source` straight from the body.
  */
@@ -67,15 +67,15 @@ export function assertUnreservedSource(source: string): void {
   if (!isReservedCredentialSource(source)) return;
   throw new MarfaError(
     ErrorCode.VALIDATION_ERROR,
-    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — those prefixes name an identity a credential cannot claim for itself.`,
+    `\`source\` may not start with ${RESERVED_CREDENTIAL_SOURCE_PREFIXES.map((p) => `"${p}"`).join(", ")} — a reserved prefix names an identity a credential cannot claim for itself.`,
   );
 }
 
 /**
  * Refuse a claim under a prefix no key may hold, for the reason
  * `assertUnreservedSource` refuses one as a key's own: a claimed source is
- * stamped on rows exactly as an own one is, so the reservation that keeps a
- * connector's mark off hand-written rows has to cover both.
+ * stamped on rows exactly as an own one is, so the reservation has to cover
+ * both.
  *
  * Asked of every caller, the operator key included. The operator may grant
  * any source a key can hold, and these are the ones no key can.
@@ -102,7 +102,7 @@ function assertUnreservedSources(sources: readonly string[] | undefined): void {
 const SourcesSchema = z
   .array(z.string().trim().min(1, "a claimed source is not empty").max(200))
   .describe(
-    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused.",
+    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.",
   );
 
 /** A stored key as every door that returns one returns it, plaintext aside. */
