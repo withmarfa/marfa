@@ -19,6 +19,9 @@ pub struct BulkUpsertItemsRequestItemsInner {
     pub r#type: String,
     #[serde(rename = "properties", skip_serializing_if = "Option::is_none")]
     pub properties: Option<std::collections::HashMap<String, serde_json::Value>>,
+    /// How `properties` lands on a row this entry resolves, as on `PATCH /items/{id}`: `merge`, the default, lays them over the row's, and `replace` takes them as the row's whole properties, so a field left out is cleared. A stale `replace` clears a field nobody changed since and collides on one the other writer changed. An entry that creates a row writes its properties whole either way.
+    #[serde(rename = "properties_mode", skip_serializing_if = "Option::is_none")]
+    pub properties_mode: Option<PropertiesMode>,
     #[serde(rename = "state", skip_serializing_if = "Option::is_none")]
     pub state: Option<models::ItemState>,
     #[serde(rename = "tier", skip_serializing_if = "Option::is_none")]
@@ -45,6 +48,7 @@ impl BulkUpsertItemsRequestItemsInner {
             id: None,
             r#type,
             properties: None,
+            properties_mode: None,
             state: None,
             tier: None,
             occurred_at: None,
@@ -54,5 +58,19 @@ impl BulkUpsertItemsRequestItemsInner {
             tags: None,
             edges: None,
         }
+    }
+}
+/// How `properties` lands on a row this entry resolves, as on `PATCH /items/{id}`: `merge`, the default, lays them over the row's, and `replace` takes them as the row's whole properties, so a field left out is cleared. A stale `replace` clears a field nobody changed since and collides on one the other writer changed. An entry that creates a row writes its properties whole either way.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub enum PropertiesMode {
+    #[serde(rename = "merge")]
+    Merge,
+    #[serde(rename = "replace")]
+    Replace,
+}
+
+impl Default for PropertiesMode {
+    fn default() -> PropertiesMode {
+        Self::Merge
     }
 }
