@@ -159,10 +159,7 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  *   invents do not exist at request time, so no concrete list can name
  *   them. `user.*` always; `extraCustomNamespaces` (the runtime roots from
  *   {@link resolveRegisteredNamespaceRoots}) extend it so custom types under
- *   a claimed handle are offerable through the same toggle. A publisher
- *   root the registry itself occupies is excluded: its types are platform
- *   rows rather than the person's, so its wildcard stays requestable
- *   without being part of the default grant.
+ *   a claimed handle are offerable through the same toggle.
  */
 export function buildDefaultPermissionBundles(
   runtimeRoots: Partial<RuntimeNamespaceRoots> = {},
@@ -173,11 +170,10 @@ export function buildDefaultPermissionBundles(
     .filter((id) => classifyNamespace(id) === "core")
     .sort();
 
-  const registryRoots = new Set(deriveRequestableNamespaceRoots());
   const customWildcardRoots = [
     "user",
     ...[...new Set(extraCustomNamespaces)]
-      .filter((ns) => !registryRoots.has(ns) && !isReservedRoot(ns))
+      .filter((ns) => !isReservedRoot(ns))
       .sort(),
   ];
   // Roots reachable only through a type whose provenance nobody recorded.
@@ -189,10 +185,7 @@ export function buildDefaultPermissionBundles(
   // is the rule for a root that appears more than once.
   const writableRoots = new Set(customWildcardRoots);
   const readOnlyCustomRoots = [...new Set(readOnlyCustomNamespaces)]
-    .filter(
-      (ns) =>
-        !writableRoots.has(ns) && !registryRoots.has(ns) && !isReservedRoot(ns),
-    )
+    .filter((ns) => !writableRoots.has(ns) && !isReservedRoot(ns))
     .sort();
 
   return [

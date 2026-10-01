@@ -1188,7 +1188,7 @@ describe("a key's claims", () => {
   });
 
   it("refuses a reserved prefix, even to the operator key", async () => {
-    for (const reserved of ["connector:elsewhere", "OAuth:client:person"]) {
+    for (const reserved of ["oauth:client:person", "OAuth:client:person"]) {
       const refused = await operator.createKey({
         label: "reserved",
         source: `${ctx.source}-reserved`,
@@ -1196,7 +1196,7 @@ describe("a key's claims", () => {
       });
       expect(
         refused.status,
-        `the operator granted ${reserved}, so a key's rows can read as a connector's or an app's`,
+        `the operator granted ${reserved}, so a key's rows can read as an app's`,
       ).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
     }
@@ -1215,7 +1215,7 @@ describe("a key's claims", () => {
     trackKey(ctx, target.data.id);
 
     const refusedUpdate = await operator.updateKey(target.data.id, {
-      sources: [folder, "connector:elsewhere"],
+      sources: [folder, "oauth:client:person"],
     });
     expect(
       refusedUpdate.status,
@@ -1230,6 +1230,22 @@ describe("a key's claims", () => {
       "the operator could not update a key to ordinary claims",
     ).toBe(200);
     expect(kept.data.sources).toEqual([folder, elsewhere]);
+  });
+
+  it("grants a source under any other prefix, connector: included", async () => {
+    // Only `oauth:` names an identity a key cannot earn. A connector holds
+    // a key like any other writer, so its source is the key's own choice.
+    const own = `connector:${ctx.source}`;
+    const claim = `connector:${ctx.source}-claim`;
+    const minted = await operator.createKey({
+      label: "connector-prefix",
+      source: own,
+      sources: [claim],
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    expect(minted.data.source).toBe(own);
+    expect(minted.data.sources).toEqual([claim]);
   });
 
   it("refuses a claim that is empty or longer than a source may be, and trims one", async () => {

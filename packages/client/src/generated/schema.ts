@@ -13561,7 +13561,7 @@ export interface operations {
                 "application/json": {
                     label: string;
                     source: string;
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused. */
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
                     sources?: string[];
                     permissions?: components["schemas"]["Permission"][];
                     default_tier?: components["schemas"]["Tier"];
@@ -13937,7 +13937,7 @@ export interface operations {
                 "application/json": {
                     label?: string;
                     default_tier?: components["schemas"]["Tier"];
-                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused. */
+                    /** @description The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused. */
                     sources?: string[];
                     type_permissions?: {
                         [key: string]: components["schemas"]["TypePermissionLevel"];

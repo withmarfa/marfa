@@ -6,7 +6,7 @@ import type {
 import { isValidTypePattern, resolveTypePermission } from "./validation.js";
 import {
   PERMISSION_FAMILY_ROOTS,
-  RETIRED_ROOT,
+  BANNED_ROOT,
   CONTENT_ROOT,
   PROFILE_ROOT,
 } from "./scope-roots.js";
@@ -203,7 +203,7 @@ const PERMISSION_SET: ReadonlySet<string> = new Set(PERMISSIONS);
  * `scopeCovers` answer a permission question through the item-type axis,
  * which is the fail-open this family exists to remove.
  *
- * **`RETIRED_ROOT` is claimed here although it heads no member**, so the
+ * **`BANNED_ROOT` is claimed here although it heads no member**, so the
  * membership test below refuses everything beneath it. Reservation alone
  * would not: `isValidTypePattern` consults the prefix grammar and not the
  * reserved roots, so an unclaimed `space` root leaves `space.*:read` parsing
@@ -213,7 +213,7 @@ const PERMISSION_SET: ReadonlySet<string> = new Set(PERMISSIONS);
  */
 const PERMISSION_ROOT_SET: ReadonlySet<string> = new Set([
   ...PERMISSION_FAMILY_ROOTS,
-  RETIRED_ROOT,
+  BANNED_ROOT,
 ]);
 
 /** Returns true if the literal names a permission this build recognizes. */
@@ -718,7 +718,7 @@ export function isValidScope(scope: string): boolean {
  * reaches is decided per request by {@link resolveTypePermission}, exactly as
  * it is for `*:read`.
  *
- * Four deliberate entries:
+ * Three deliberate entries:
  *
  * - **`SYSTEM_TYPE_IDS` is the authority for the exclusion, and it is
  *   family-backed.** Boot reads the stored `family` column off every
@@ -733,16 +733,6 @@ export function isValidScope(scope: string): boolean {
  *   `SYSTEM_TYPE_IDS` and keeping this string is the change to refuse: every
  *   system type ships under `system.`, so the swap looks equivalent and
  *   stops being so the moment a system-family type is named anything else.
- * - **`marfa.*` reads but does not write.** The build ships no `marfa.*`
- *   type, but an instance can hold a platform row under the root. It is
- *   outside the system family, so it is in the category and its reads are
- *   unrestricted.
- *   But the middleware refuses every `marfa.*` write from a credential that
- *   is not `is_operator`, and an OAuth token is not. **A parent must never claim
- *   what a hard gate will refuse**: a grant that reads as covering a write
- *   nothing will ever permit is a consent screen telling a person something
- *   untrue, and a permission model that misdescribes itself where it could
- *   instead have refused out loud.
  * - **The global entry carries the level itself**, so `resolveTypePermission`
  *   does the rest unchanged: exact beats the longest subtree wildcard beats
  *   the global one.
@@ -755,9 +745,6 @@ function contentCategoryPermissions(
   };
   for (const id of SYSTEM_TYPE_IDS) perms[id] = "none";
   perms[`system.${GLOBAL_TYPE_WILDCARD}`] = "none";
-  if (level === "write") {
-    perms[`marfa.${GLOBAL_TYPE_WILDCARD}`] = "read";
-  }
   return perms;
 }
 
@@ -808,14 +795,11 @@ export function scopesToTypePermissions(
     // adding the category to a grant can only widen it.** Do not read it as
     // one. `resolveTypePermission` puts an exact key ahead of any wildcard,
     // and the category writes exact keys — every `SYSTEM_TYPE_IDS` member at
-    // `"none"`, and `marfa.*` clamped to `"read"` on the write level. So a
-    // grant already holding a wildcard that reached those ids loses them when
-    // the category is added beside it:
+    // `"none"`. So a grant already holding a wildcard that reached those ids
+    // loses them when the category is added beside it:
     //
     //   ["*:read"]                   → system.device resolves "read"
     //   ["*:read", "content:read"]   → system.device resolves "none"
-    //   ["*:write"]                  → marfa.relic resolves "write"
-    //   ["*:write", "content:write"] → marfa.relic resolves "read"
     //
     // A strictly larger scope set therefore covers strictly less, and
     // `grantCoversScope` flips from true to false across the same pair. That
@@ -824,7 +808,7 @@ export function scopesToTypePermissions(
     // the category is asked for again rather than waved through, and any
     // caller reasoning that a superset is safe to substitute is wrong.
     //
-    // The four resolutions above are asserted rather than described.
+    // The two resolutions above are asserted rather than described.
     // `scopes.test.ts` holds them under "adding the content category to a
     // wildcard grant can narrow it", so a change that stops one of them
     // being true reddens there instead of leaving this comment standing
@@ -1140,11 +1124,10 @@ export function edgePermissionCovers(
  *
  * **It is not the whole of what the middleware refuses, and should not be
  * mistaken for it.** The reserved-namespace gate turns down every `system.*`
- * and `marfa.*` write from an OAuth token before any permission map is
- * consulted, so a grant can cover `system.connection:write` here and be
- * refused there. That direction is harmless — a screen skipped for access
- * that then does not work — but it is the direction to check before adding an
- * arm.
+ * write from an OAuth token before any permission map is consulted, so a
+ * grant can cover `system.connection:write` here and be refused there. That
+ * direction is harmless — a screen skipped for access that then does not
+ * work — but it is the direction to check before adding an arm.
  *
  * The two verb-less families diverge from each other here. A permission
  * has a middleware counterpart and is enforced on the request path:

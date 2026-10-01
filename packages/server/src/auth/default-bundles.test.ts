@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  TYPE_REGISTRY,
-  classifyNamespace,
-  seedPlatformTypes,
-  shippedPlatformTypes,
-} from "@withmarfa/shared";
+import { TYPE_REGISTRY, classifyNamespace } from "@withmarfa/shared";
 import {
   buildDefaultPermissionBundles,
   deriveRequestableNamespaceRoots,
@@ -104,35 +99,6 @@ describe("default permission bundles derive from the registry", () => {
       "acme.*:write",
     ]);
   });
-
-  it("leaves out a root the registry itself occupies", () => {
-    // A platform row this build does not ship still resolves once seeded,
-    // which is the one way a publisher root reaches the registry. Its types
-    // are the platform's rather than the person's.
-    seedPlatformTypes([
-      ...shippedPlatformTypes(),
-      {
-        schema: { id: "relic.widget", version: 1, fields: {} },
-        family: "core",
-      },
-    ]);
-    try {
-      expect(deriveRequestableNamespaceRoots()).toContain("relic");
-      const custom = buildDefaultPermissionBundles({
-        own: ["acme", "relic"],
-        ownReadOnly: ["relic", "salvage"],
-      }).find((b) => b.id === "custom");
-      expect(custom?.scopes).toEqual([
-        "user.*:read",
-        "user.*:write",
-        "acme.*:read",
-        "acme.*:write",
-        "salvage.*:read",
-      ]);
-    } finally {
-      seedPlatformTypes(shippedPlatformTypes());
-    }
-  });
 });
 
 describe("runtime custom-namespace resolution", () => {
@@ -228,8 +194,7 @@ describe("a type whose provenance nobody recorded", () => {
 describe("the read-only bucket obeys the same filters as the others", () => {
   it("drops reserved roots", () => {
     // A reserved root can hold no custom type at all, so one arriving here
-    // would be offering something that cannot exist. The registry-root half
-    // of the filter is the test above that seeds one.
+    // would be offering something that cannot exist.
     const scopes =
       buildDefaultPermissionBundles({
         ownReadOnly: ["user", "core", "salvage"],

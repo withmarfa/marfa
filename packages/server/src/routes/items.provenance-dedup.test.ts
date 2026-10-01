@@ -24,10 +24,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** A credential standing in for a connector.
- *  The real provenance prefix (`connector:`) is reserved and refused to
- *  every minting door, which is a separate guard working as intended; the
- *  dedup behavior under test does not depend on it. */
+/** A credential standing in for a connector. */
 async function connectorKey(label: string, source: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.workingKey,

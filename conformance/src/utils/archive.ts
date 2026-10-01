@@ -6,13 +6,11 @@ import { gunzipSync, gzipSync } from "node:zlib";
  *
  * Every other archive fixture posts back what `GET /export?format=archive`
  * produced, which keeps the round trip honest and needs no tar of our own.
- * Three preconditions cannot be arranged that way. A connector's copy of an
- * external record: no door mints a row whose `source` carries the
- * `connector:` prefix — `POST /keys` refuses the prefix as a key's own source
- * and as a claim, and `POST /items` refuses a source the key does not claim —
- * so the server can never be asked to export one, while
- * `POST /admin/restore-archive` writes `item.source` through verbatim and is
- * the one door that does mint one. A row in a state its type's lifecycle cannot produce, which no door
+ * Three preconditions cannot be arranged that way. A row under a source no
+ * key may hold: `POST /keys` refuses the `oauth:` prefix as a key's own
+ * source and as a claim, and `POST /items` refuses a source the key does not
+ * claim, while `POST /admin/restore-archive` writes `item.source` through
+ * verbatim. A row in a state its type's lifecycle cannot produce, which no door
  * writes and the restore refuses. And a blob larger than the request cap
  * that nothing on the instance names yet, which only an archive carries in.
  *

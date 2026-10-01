@@ -705,7 +705,7 @@ describe("null on an optional property is treated as unset", () => {
 
 describe("POST /items — the operator gate", () => {
   it("rejects a working credential writing system.* even with explicit type_permissions", async () => {
-    // Only operator credentials may write `system.*` or `marfa.*`, and the
+    // Only operator credentials may write `system.*`, and the
     // fence stands ahead of the type map: naming the literal does not open
     // it. Reads are unrestricted.
     const workingKey = "marfa_k1_test_working_bound";
@@ -772,27 +772,6 @@ describe("POST /items — the operator gate", () => {
     };
     expect(body.error.message).not.toMatch(/operator key/i);
     expect(body.error.message).toContain("system.connection");
-  });
-
-  it("refuses a `marfa.*` write the same way, whatever the type map names", async () => {
-    // The fence answers for the namespace before any lookup, so it refuses a
-    // `marfa.*` literal whether or not a type of that name resolves.
-    const humanKey = "marfa_k1_test_human_marfa_literal";
-    await ctx.storage.keys.create(
-      {
-        label: "human-marfa-literal",
-        source: "human-marfa-literal",
-        type_permissions: { "marfa.relic": "write" },
-      },
-      hashApiKey(humanKey, TEST_API_KEY_SALT),
-    );
-    const res = await request(ctx.app, "POST", "/items", {
-      key: humanKey,
-      body: { type: "marfa.relic", properties: { title: "A relic" } },
-    });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("marfa.*");
   });
 
   it("does not gate reads to system.* (a working credential lists its own system.connection rows)", async () => {
