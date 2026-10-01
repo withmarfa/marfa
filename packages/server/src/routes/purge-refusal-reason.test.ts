@@ -43,8 +43,8 @@ afterAll(async () => {
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
   const item = await ctx.storage.items.create({
-    type: "system.device",
-    properties: { name: "A device", kind: "laptop" },
+    type: "system.folder",
+    properties: { title: "A folder" },
     source: "test/purge-refusal",
     source_id: sourceId,
   });
@@ -53,7 +53,7 @@ async function seedReservedRow(sourceId: string): Promise<string> {
 
 describe("purging a row a working credential may not write", () => {
   it("names the namespace rather than the trashed-state precondition", async () => {
-    const id = await seedReservedRow("device:refusal-1");
+    const id = await seedReservedRow("folder:refusal-1");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: workingKey,
@@ -111,7 +111,7 @@ describe("purging a row a working credential may not write", () => {
     // An already soft-deleted reserved row is purged as any other, by a key
     // whose map writes the type. Soft-deleted through storage, standing in
     // for the cascade and archive restore that put such rows there.
-    const id = await seedReservedRow("device:refusal-2");
+    const id = await seedReservedRow("folder:refusal-2");
     await ctx.storage.items.delete(id);
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
@@ -190,7 +190,7 @@ describe("purging a soft-deleted row", () => {
   });
 
   it("answers a soft-deleted reserved-namespace row to a key whose map does not reach it as no row", async () => {
-    const id = await seedReservedRow("device:narrow-map");
+    const id = await seedReservedRow("folder:narrow-map");
     await ctx.storage.items.delete(id);
 
     await expectHidden(id, coreOnlyKey);
@@ -206,10 +206,10 @@ describe("purging a soft-deleted row", () => {
     const conn = await ctx.storage.items.create({
       type: "system.connection",
       properties: {
-        kind: "connector",
+        kind: "app",
         status: "revoked",
         granted_at: new Date().toISOString(),
-        connector_id: "acme.demo",
+        client_id: "acme.demo",
       },
     });
     await ctx.storage.items.delete(conn.id);

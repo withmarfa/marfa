@@ -298,22 +298,8 @@ export interface SubscribeOptions {
    * `iterator.return()` alone cannot unwind a generator suspended on an
    * event that never comes, so a quiet instance accumulates one listener
    * per departed viewer indefinitely. Long-lived per-request consumers
-   * (the SSE route) pass one to `subscribeAll`.
-   *
-   * The webhook delivery consumer is the only process-lifetime consumer,
-   * and it passes none from either of its two loops, items and edges.
-   * **That is a gap rather than a property.** `WebhookConsumer.start()`
-   * builds an `AbortController` and `stop()` aborts it, but the signal is
-   * never handed to `subscribe()`, so the loops exit only on the
-   * `if (!this.running) break` that runs after the next matching event
-   * arrives. A consumer stopped on a quiet bus keeps both listeners
-   * attached — the very leak this option exists to prevent. Production
-   * never meets it, because it starts once and stops at shutdown, but the
-   * delivery tests start and stop several consumers against the process
-   * global emitter and do leak, and are saved only by later fixtures
-   * publishing events that wake the stale generators. Wiring the existing
-   * controller through is the fix; it wants a test that counts listeners,
-   * which is why it is recorded rather than done here.
+   * (the SSE route) pass one to `subscribeAll`, and the webhook consumer
+   * hands the one its `stop()` aborts to both of its loops.
    */
   signal?: AbortSignal;
 }

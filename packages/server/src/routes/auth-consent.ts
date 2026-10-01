@@ -1568,12 +1568,8 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.song": "Songs.",
 
   // System
-  "system.account_holder": "The entry that represents you on your server.",
-  "system.app": "Connected apps.",
   "system.connection": "Connections to other apps and services.",
-  "system.device": "Devices signed in to your account.",
   "system.folder": "The settings of your folders.",
-  "system.webhook": "Webhook subscriptions.",
 
   // Edge types: relationships between items.
   //
@@ -1664,7 +1660,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // Says what it reaches by saying what it does not, because the only
   // thing separating it from `*` above is the system family: the
   // category projects every system type to `none`, so a person holding
-  // it grants nothing about their connections, devices, apps or webhooks.
+  // it grants nothing about their connections or folders.
   // Naming those would date the sentence the next time one is added;
   // naming the thing they have in common does not.
   content: "Everything you save, and nothing about your account.",

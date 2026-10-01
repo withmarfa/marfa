@@ -2882,13 +2882,13 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
  * Every case that asserts an absence pairs it with an ordinary row that must be
  * present, because an assertion checking only that the system row is missing
  * passes against a listing that returned nothing at all. The type-filter case
- * asserts a presence only, and is right to: under `type=system.device` the
+ * asserts a presence only, and is right to: under `type=system.folder` the
  * ordinary row is correctly absent.
  */
 describe("GET /items?include=system", () => {
   async function seedPair(
     marker: string,
-  ): Promise<{ noteId: string; deviceId: string }> {
+  ): Promise<{ noteId: string; folderId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: {
@@ -2902,12 +2902,12 @@ describe("GET /items?include=system", () => {
     // The system row goes in through the storage layer, because the reserved
     // namespace refuses a write to every credential. What this block is about
     // is who reads one back; the seed is not the claim.
-    const device = await ctx.storage.items.create({
-      type: "system.device",
-      properties: { name: `include-system-${marker}`, kind: "laptop" },
+    const folder = await ctx.storage.items.create({
+      type: "system.folder",
+      properties: { title: `include-system-${marker}` },
     });
-    await ctx.storage.metadata.set(device.id, [`include-system-${marker}`]);
-    return { noteId: noteItem.id, deviceId: device.id };
+    await ctx.storage.metadata.set(folder.id, [`include-system-${marker}`]);
+    return { noteId: noteItem.id, folderId: folder.id };
   }
 
   async function listedIdsAs(key: string, query: string): Promise<string[]> {
@@ -2922,27 +2922,27 @@ describe("GET /items?include=system", () => {
   }
 
   it("omits system.* rows when the token is absent", async () => {
-    const { noteId, deviceId } = await seedPair("absent");
+    const { noteId, folderId } = await seedPair("absent");
     const ids = await listedIds("/items?tags=include-system-absent&limit=200");
     expect(ids).toContain(noteId);
-    expect(ids).not.toContain(deviceId);
+    expect(ids).not.toContain(folderId);
   });
 
   it("returns system.* rows when the token is present", async () => {
-    const { noteId, deviceId } = await seedPair("present");
+    const { noteId, folderId } = await seedPair("present");
     const ids = await listedIds(
       "/items?tags=include-system-present&include=system&limit=200",
     );
     expect(ids).toContain(noteId);
-    expect(ids).toContain(deviceId);
+    expect(ids).toContain(folderId);
   });
 
   it("opts in on a specific system.* type filter without the token", async () => {
-    const { deviceId } = await seedPair("bytype");
+    const { folderId } = await seedPair("bytype");
     const ids = await listedIds(
-      "/items?type=system.device&tags=include-system-bytype&limit=200",
+      "/items?type=system.folder&tags=include-system-bytype&limit=200",
     );
-    expect(ids).toContain(deviceId);
+    expect(ids).toContain(folderId);
   });
 
   // The cases above run as `ctx.workingKey`, which holds `"*": "write"`, so
@@ -2976,10 +2976,10 @@ describe("GET /items?include=system", () => {
   }
 
   it("composes with the caller's type permissions rather than bypassing them", async () => {
-    const { noteId, deviceId } = await seedPair("granted");
+    const { noteId, folderId } = await seedPair("granted");
     const key = await scopedKey("include-system-granted", {
       "core.note": "read",
-      "system.device": "read",
+      "system.folder": "read",
     });
 
     const withToken = await listedIdsAs(
@@ -2994,13 +2994,13 @@ describe("GET /items?include=system", () => {
     // Granted the type, the token is what decides. Both directions, so the
     // case reddens if `system` stops being read.
     expect(withToken).toContain(noteId);
-    expect(withToken).toContain(deviceId);
+    expect(withToken).toContain(folderId);
     expect(without).toContain(noteId);
-    expect(without).not.toContain(deviceId);
+    expect(without).not.toContain(folderId);
   });
 
   it("does not let the token reach past a type the caller cannot read", async () => {
-    const { noteId, deviceId } = await seedPair("withheld");
+    const { noteId, folderId } = await seedPair("withheld");
     const key = await scopedKey("include-system-withheld", {
       "core.note": "read",
     });
@@ -3012,11 +3012,11 @@ describe("GET /items?include=system", () => {
     // The fence outranks the token: the note is readable and the device is not,
     // even though the token asked for it.
     expect(ids).toContain(noteId);
-    expect(ids).not.toContain(deviceId);
+    expect(ids).not.toContain(folderId);
   });
 
   it("composes with a hydrating token without either losing its effect", async () => {
-    const { noteId, deviceId } = await seedPair("compose");
+    const { noteId, folderId } = await seedPair("compose");
     const res = await request(
       ctx.app,
       "GET",
@@ -3033,7 +3033,7 @@ describe("GET /items?include=system", () => {
     };
     const ids = body.data.map((r) => r.item.id);
     expect(ids).toContain(noteId);
-    expect(ids).toContain(deviceId);
+    expect(ids).toContain(folderId);
     // Assert the tag rather than that `metadata` is defined. The handler falls
     // back to `{ item_id, tags: [], extensions: {} }` for a row it found no
     // metadata for, so `toBeDefined()` holds even if hydration dropped the

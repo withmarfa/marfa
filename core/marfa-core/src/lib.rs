@@ -1339,7 +1339,23 @@ fn queue_update(
 /// It waits for both of its endpoints' creates (`queue-and-verdicts.md` 4):
 /// an edge naming a row whose create has not landed is an edge the server
 /// has nowhere to put, and either end can be the one that has not.
+///
+/// An edge from a row the copy does not hold, of a type its slice does not
+/// hold whole, is refused (`device.md` 44): no event about it would reach
+/// the copy, so it would sit there as it was written for good.
 fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
+    if !store::takes_edge(
+        tx,
+        &draft.source_id,
+        &draft.edge_type,
+        &store::whole_edge_types(tx)?,
+    )? {
+        return Err(CoreError::Invalid(format!(
+            "{source} is not a row this copy holds, and {edge_type} is not an edge type its slice holds whole, so the copy cannot hold an edge from it",
+            source = draft.source_id,
+            edge_type = draft.edge_type,
+        )));
+    }
     let id = draft
         .id
         .clone()

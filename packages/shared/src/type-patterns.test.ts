@@ -27,7 +27,7 @@ const CASES: {
   { pattern: "*", type: "core.note", matches: true, why: "global wildcard" },
   {
     pattern: "*",
-    type: "system.device",
+    type: "system.folder",
     matches: true,
     why: "global wildcard reaches reserved namespaces",
   },

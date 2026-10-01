@@ -1,5 +1,8 @@
 import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import { serve } from "@hono/node-server";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
 import { createTestContext, request } from "../test-utils.js";
@@ -178,6 +181,65 @@ describe("GET /export", () => {
       counts: { created: number };
     };
     expect(bulkData.counts.created).toBe(1);
+  });
+  it("sends its first record before reading the rest", async () => {
+    const bulk = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        items: Array.from({ length: 60 }, (_, i) => ({
+          type: "core.note",
+          properties: { body: `Streamed ${String(i)}` },
+        })),
+        mode: "create_only",
+      },
+    });
+    expect(bulk.status).toBe(200);
+
+    const metadata = ctx.storage.metadata;
+    const get = metadata.get.bind(metadata);
+    let reads = 0;
+    metadata.get = (id) => {
+      reads += 1;
+      return get(id);
+    };
+
+    // Over a real socket, because what holds a first byte back is when the
+    // server gets to write it, which an in-process fetch never waits on.
+    const server = serve({ fetch: ctx.app.fetch, port: 0 });
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${String(port)}/export?type=core.note`,
+        { headers: { Authorization: `Bearer ${ctx.workingKey}` } },
+      );
+      expect(res.status).toBe(200);
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      const readsAtFirstRecord = reads;
+      let text = decoder.decode(first.value, { stream: true });
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+      const itemLines = text
+        .trim()
+        .split("\n")
+        .filter((line) => "item" in (JSON.parse(line) as object)).length;
+
+      // The witness: every item line cost one counted read, so a body
+      // built before its first byte was sent would show them all here.
+      expect(reads).toBe(itemLines);
+      expect(itemLines).toBeGreaterThanOrEqual(60);
+      expect(readsAtFirstRecord).toBeLessThan(itemLines / 2);
+    } finally {
+      metadata.get = get;
+      server.close();
+    }
   });
 });
 

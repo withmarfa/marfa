@@ -20,9 +20,9 @@ describe("firstReachBeyondMap on the type axis", () => {
   it("refuses a wildcard that erases a denial the held map carries", () => {
     // The escalation this function exists for. The request reads as a no-op
     // and is a widening: the same wildcard, minus the entries beneath it.
-    const held = { "*": "read", "system.device": "none" } as const;
+    const held = { "*": "read", "system.folder": "none" } as const;
     expect(firstReachBeyondMap("type", held, { "*": "read" })).toBe(
-      "system.device",
+      "system.folder",
     );
   });
 

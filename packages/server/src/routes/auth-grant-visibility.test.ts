@@ -292,8 +292,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
 
     // The grants door. It moves `properties.status` and
     // deliberately leaves `state: "active"`, precisely so a later approval
-    // has a row to reactivate — an app grant is a re-grantable
-    // relationship, unlike a connector connection's terminal uninstall.
+    // has a row to reactivate: an app grant is a re-grantable relationship.
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grantId}`, {
       key: c.workingKey,
     });

@@ -220,8 +220,7 @@ export const versions = sqliteTable(
     occurred_at: text("occurred_at"),
     source_id: text("source_id"),
     // And the type, so a stale move can tell whether the row was moved
-    // since the version the caller read. `REQUIRED_COLUMNS` in
-    // `connection.ts` refuses a file whose table lacks it.
+    // since the version the caller read.
     type: text("type").notNull(),
     created_at: text("created_at").notNull(),
   },
@@ -245,7 +244,6 @@ export const apiKeys = sqliteTable(
     is_operator: integer("is_operator", { mode: "boolean" })
       .notNull()
       .default(false),
-    connection_id: text("connection_id"),
     /**
      * The permissions this credential holds, as a JSON array of the
      * literals themselves.

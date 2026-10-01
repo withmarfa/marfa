@@ -154,7 +154,7 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  *   on the next connect.
  * - Everything in `system.*` stays out except `system.connection:read` (the
  *   "Connections" toggle), so an app reading "your content" cannot
- *   read the instance's own records (devices, apps, webhooks).
+ *   read the instance's own records, such as its folders.
  * - `custom` is the one wildcard bundle, deliberately: types a person
  *   invents do not exist at request time, so no concrete list can name
  *   them. `user.*` always; `extraCustomNamespaces` (the runtime roots from

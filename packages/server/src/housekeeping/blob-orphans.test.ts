@@ -362,7 +362,7 @@ describe("what the report counts as a reference", () => {
     const kept: string[] = [];
     for (const [state, type, properties] of [
       ["archived", "core.note", { body: "archived, holds a file" }],
-      ["revoked", "system.device", { name: "Revoked laptop", kind: "laptop" }],
+      ["revoked", "system.folder", { title: "Revoked folder" }],
     ] as const) {
       const data = await upload(ctx, `bytes only ${state} points at`);
       kept.push(data);

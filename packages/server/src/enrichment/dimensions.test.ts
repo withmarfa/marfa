@@ -104,6 +104,83 @@ describe("deriveDimensions", () => {
     });
   });
 
+  it("reads a GIF, a JPEG and each kind of WebP whose header is whole", async () => {
+    // The witnesses for the malformed cases below: each format's reader is
+    // reached and answers a size when its header is a real one.
+    for (const [name, mime] of [
+      ["sample.gif", "image/gif"],
+      ["sample.jpg", "image/jpeg"],
+      ["sample.webp", "image/webp"],
+      ["sample-lossless.webp", "image/webp"],
+      ["sample-extended.webp", "image/webp"],
+    ] as const) {
+      expect(await deriveDimensions(await fixture(name), mime), name).toEqual({
+        kind: "dimensions",
+        values: { width: 30, height: 20 },
+      });
+    }
+  });
+
+  const noHeader = { kind: "unreadable", reason: "no image header" };
+
+  it("makes up no size from bytes that only start like a GIF", async () => {
+    // The screen size sits at fixed offsets after the signature, so garbage
+    // there reads as a size unless something checks what follows it.
+    const real = await fixture("sample.gif");
+    const garbage = Buffer.concat([
+      real.subarray(0, 6),
+      Buffer.alloc(64, 0x5a),
+    ]);
+    expect(await deriveDimensions(garbage, "image/gif")).toEqual(noHeader);
+    // Cut inside its color table, the screen descriptor leads nowhere.
+    expect(await deriveDimensions(real.subarray(0, 20), "image/gif")).toEqual(
+      noHeader,
+    );
+  });
+
+  it("makes up no size from bytes that only start like a JPEG", async () => {
+    // A frame marker straight after the start of image, over garbage: the
+    // reader takes the next bytes as a size though the segment runs past
+    // the end of the file.
+    const garbage = Buffer.concat([
+      Buffer.from([0xff, 0xd8, 0xff, 0xc0]),
+      Buffer.alloc(64, 0x5a),
+    ]);
+    expect(await deriveDimensions(garbage, "image/jpeg")).toEqual(noHeader);
+    // A segment whose marker is not one, after the first: the reader skips
+    // it by its length and finds the real frame after it.
+    const real = await fixture("sample.jpg");
+    const firstEnd = 4 + real.readUInt16BE(4);
+    const notAMarker = Buffer.concat([
+      real.subarray(0, firstEnd),
+      Buffer.from([0x12, 0x34, 0x00, 0x02]),
+      real.subarray(firstEnd),
+    ]);
+    expect(await deriveDimensions(notAMarker, "image/jpeg")).toEqual(noHeader);
+    // A frame header whose length disagrees with its component count.
+    const sof = real.indexOf(Buffer.from([0xff, 0xc0]));
+    expect(sof).toBeGreaterThan(0);
+    const miscounted = Buffer.from(real);
+    miscounted[sof + 9] = 7;
+    expect(await deriveDimensions(miscounted, "image/jpeg")).toEqual(noHeader);
+  });
+
+  it("makes up no size from bytes that only start like a WebP", async () => {
+    // Each chunk kind is read at fixed offsets once the RIFF header and the
+    // chunk's name match, so each needs its own check of a real header.
+    for (const name of [
+      "sample.webp",
+      "sample-lossless.webp",
+      "sample-extended.webp",
+    ]) {
+      const head = (await fixture(name)).subarray(0, 16);
+      const garbage = Buffer.concat([head, Buffer.alloc(64, 0x5a)]);
+      expect(await deriveDimensions(garbage, "image/webp"), name).toEqual(
+        noHeader,
+      );
+    }
+  });
+
   it("reports a media file it cannot read rather than throwing", async () => {
     const outcome = await deriveDimensions(
       Buffer.from("not a recording either"),

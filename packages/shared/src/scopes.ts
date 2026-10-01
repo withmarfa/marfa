@@ -798,8 +798,8 @@ export function scopesToTypePermissions(
     // `"none"`. So a grant already holding a wildcard that reached those ids
     // loses them when the category is added beside it:
     //
-    //   ["*:read"]                   → system.device resolves "read"
-    //   ["*:read", "content:read"]   → system.device resolves "none"
+    //   ["*:read"]                   → system.folder resolves "read"
+    //   ["*:read", "content:read"]   → system.folder resolves "none"
     //
     // A strictly larger scope set therefore covers strictly less, and
     // `grantCoversScope` flips from true to false across the same pair. That
@@ -1305,7 +1305,7 @@ function atLeast(
  * cannot say "everything except this", so measuring a request against a grant
  * only ever has to ask whether each requested literal is reached. A permission
  * map is different in kind: an exact entry outranks every wildcard, so
- * `{"*":"read","system.device":"none"}` is a denial rather than an
+ * `{"*":"read","system.folder":"none"}` is a denial rather than an
  * absence, and that shape is what every `content:*` grant projects to. Reduce
  * such a map to the literals it confers and the denials vanish — the caller
  * then asks for `{"*":"read"}`, which reads as a no-op and is a widening,

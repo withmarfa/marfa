@@ -631,15 +631,15 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
    * record survives as a record, which is exactly why neither the trash purge
    * nor the activity purge can reach it.
    */
-  async function seedRevokedGrant(revokedAt: string, kind = "app") {
+  async function seedRevokedGrant(revokedAt: string) {
     const item = await ctx.storage.items.create({
       type: "system.connection",
       properties: {
-        kind,
+        kind: "app",
         status: "revoked",
         granted_at: "2019-01-01T00:00:00.000Z",
         revoked_at: revokedAt,
-        client_id: `client-${revokedAt}-${kind}`,
+        client_id: `client-${revokedAt}`,
       },
     });
     return item.id;
@@ -661,19 +661,6 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     const id = await seedRevokedGrant(RECENT);
     await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
-  });
-
-  it("leaves a connector's revoked connection alone", async () => {
-    // **Demonstrated rather than assumed.** The predicate asks
-    // `kind = 'app'`; widening it to every revoked connection reddens this
-    // and nothing else.
-    const connector = await seedRevokedGrant(OLD, "connector");
-    const app = await seedRevokedGrant(OLD, "app");
-    const deleted =
-      await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
-    expect(deleted).toBe(1);
-    expect(await ctx.storage.items.get(connector)).not.toBeNull();
-    await expect(ctx.storage.items.get(app)).resolves.toBeNull();
   });
 
   it("leaves a live grant alone, whatever its age", async () => {

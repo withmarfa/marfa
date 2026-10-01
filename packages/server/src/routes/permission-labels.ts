@@ -10,10 +10,9 @@
  * permission fails to compile until it has been named in both. That is
  * the only guard that matters here: the fallback these replace is
  * `humanizeType`, which takes the last dotted segment, so an unnamed
- * `webhooks.manage` renders as "Webhooks" — byte-identical to what
- * `system.webhook:read` gets from the same fallback. One grant is sight of a
- * webhook row and the other is the power to point a new webhook anywhere, and
- * the one place a person inspects that difference would show none.
+ * `webhooks.manage` renders as "Webhooks", which reads as a kind of content
+ * rather than the power to point a new webhook anywhere, on the one screen
+ * where a person decides whether to hand that power over.
  */
 import type { Permission } from "@withmarfa/shared";
 import { isPermission } from "@withmarfa/shared";

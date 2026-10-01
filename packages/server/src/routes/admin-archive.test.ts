@@ -411,6 +411,14 @@ describe("POST /admin/restore-archive", () => {
       body: archive,
     });
     expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain("version 99");
+    expect(body.error.message).toContain(
+      "read only by the build that wrote it",
+    );
   });
 
   it("rejects empty bodies", async () => {

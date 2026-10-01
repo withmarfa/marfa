@@ -4,6 +4,8 @@ The words this repository uses, and the words it does not. One name per thing. A
 
 American English throughout, as `AGENTS.md` requires.
 
+Where Marfa has no rule of its own, the API's names and shapes follow Stripe's API conventions. An object in the API document declares its shape unless it is open on purpose, and `packages/server/src/openapi-open-objects.test.ts` lists each one that is, with the reason.
+
 ## The words
 
 | Word                 | What it means                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -52,14 +54,14 @@ American English throughout, as `AGENTS.md` requires.
 
 These name things that were removed. None of them belongs in a tracked file, in code, a comment, a description or a document. Naming one in order to remove it is not a use, which is why they appear below and in the notes beside the permissions; the final legacy sweep greps this list and should not flag its own authority.
 
-| Banned                              | Say instead                                                                                                                                                                                                                                                                                        |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **integration**                     | **connector**                                                                                                                                                                                                                                                                                      |
-| **space**                           | Nothing. There is no noun for the whole; permissions are named by what they permit, and the instance config lives at `/config`.                                                                                                                                                                    |
-| **sync**, as a program or product   | **folders**, for the thing that watches a directory; plain synchronization is still an ordinary English word. The `sync-agent` value of `system.device`'s `kind` is a carve-out: it is a live wire enum, and `last_sync_at` and the `sync` conformance project name the act rather than a product. |
-| **cancelled**, the British spelling | **canceled**, and `canceling` for the same reason; `cancellation` is the American spelling too and is untouched.                                                                                                                                                                                   |
-| **substrate**                       | Name the thing itself — the store, the queue, the job table.                                                                                                                                                                                                                                       |
-| **hosted mode**                     | Nothing. There is one mode. "Self-hosted runner" and a virtual-hosted S3 URL are different words and are fine.                                                                                                                                                                                     |
+| Banned                              | Say instead                                                                                                                                                                                         |
+| ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **integration**                     | **connector**                                                                                                                                                                                       |
+| **space**                           | Nothing. There is no noun for the whole; permissions are named by what they permit, and the instance config lives at `/config`.                                                                     |
+| **sync**, as a program or product   | **folders**, for the thing that watches a directory; plain synchronization is still an ordinary English word. `last_sync_at` and the `sync` conformance project name the act rather than a product. |
+| **cancelled**, the British spelling | **canceled**, and `canceling` for the same reason; `cancellation` is the American spelling too and is untouched.                                                                                    |
+| **substrate**                       | Name the thing itself — the store, the queue, the job table.                                                                                                                                        |
+| **hosted mode**                     | Nothing. There is one mode. "Self-hosted runner" and a virtual-hosted S3 URL are different words and are fine.                                                                                      |
 
 ## Permissions
 

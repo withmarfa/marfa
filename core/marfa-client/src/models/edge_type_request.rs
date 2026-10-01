@@ -34,8 +34,7 @@ pub struct EdgeTypeRequest {
     #[serde(rename = "cascade_on_delete", skip_serializing_if = "Option::is_none")]
     pub cascade_on_delete: Option<CascadeOnDelete>,
     #[serde(rename = "property_schema", skip_serializing_if = "Option::is_none")]
-    pub property_schema:
-        Option<std::collections::HashMap<String, models::EdgeTypeRequestPropertySchemaValue>>,
+    pub property_schema: Option<std::collections::HashMap<String, models::EdgePropertyDefinition>>,
     /// The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name.
     #[serde(rename = "reverse_name", skip_serializing_if = "Option::is_none")]
     pub reverse_name: Option<String>,
