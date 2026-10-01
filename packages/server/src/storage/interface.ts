@@ -1,6 +1,5 @@
 import type {
   Item,
-  TypeFilter,
   CreateItemInput,
   UpdateItemInput,
   Metadata,
@@ -777,7 +776,7 @@ export interface ItemStore {
    * Item counts for the instance, grouped on one axis.
    *
    * `by` chooses the axis and nothing else: both groupings cover the same
-   * rows — everything this caller can read — so their totals agree. That is
+   * rows, the ones `filters` match, so their totals agree. That is
    * the property `routes/items-stats-by-type.test.ts` asserts, and it is
    * what catches a breakdown that quietly dropped a filter the other keeps.
    *
@@ -785,10 +784,13 @@ export interface ItemStore {
    * else could without paging every row: `GET /types` lists what is
    * registered, a longer and different list, and `countByType` takes one
    * exact identifier per call.
+   *
+   * `filters` mean what they mean to `list`, the active-state default
+   * included, so a count under a listing's filters is the number of rows
+   * that listing walks. Paging and ordering are ignored.
    */
   stats(
-    typeFilter?: TypeFilter,
-    sourceFilter?: SourceFilterSettings,
+    filters: ItemFilters,
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**

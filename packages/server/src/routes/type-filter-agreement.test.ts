@@ -143,6 +143,27 @@ const SURFACES: Surface[] = [
       return { status: 200, types: [...new Set(types)].sort() };
     },
   },
+  {
+    // Counts rather than rows: grouped by type, the keys are the types the
+    // filter matched.
+    name: "GET /items/stats",
+    typesFor: async (type) => {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/items/stats?by=type&type=${encodeURIComponent(type)}`,
+        { key: ctx.workingKey },
+      );
+      if (res.status !== 200) return { status: res.status, types: [] };
+      const counts = (await res.json()) as Record<string, number>;
+      return {
+        status: 200,
+        types: Object.keys(counts)
+          .filter((t) => (counts[t] ?? 0) > 0)
+          .sort(),
+      };
+    },
+  },
 ];
 
 /** Non-null indexed access, so the strict-mode reads below stay honest. */

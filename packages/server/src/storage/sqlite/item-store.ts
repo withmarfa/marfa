@@ -43,8 +43,7 @@ import {
   resolveIncomingProperties,
 } from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
-import type { SourceFilterSettings } from "../filter-sql.js";
-import type { TypeFilter, Edge } from "@withmarfa/shared";
+import type { Edge } from "@withmarfa/shared";
 import type {
   ItemStatsAxis,
   StoredCreateItemInput,
@@ -366,6 +365,169 @@ async function insertConflictedSibling(
     } satisfies Item,
     edges: copied,
   };
+}
+
+/**
+ * The WHERE terms a listing's filters compile to, cursor aside.
+ *
+ * One builder for the listing and the counts, so a count asked with a
+ * listing's filters is the number of rows that listing would walk.
+ */
+function itemFilterConditions(filters: ItemFilters): SQL[] {
+  // Every bound is re-spelled to the shape the stored columns carry
+  // before it reaches a comparison: they are text columns and the
+  // comparison is lexical, so a valid RFC 3339 instant at the wrong
+  // width silently answers a different question. See
+  // `normalizeTimeBound`.
+  const updatedAfter = normalizeTimeBound(
+    filters.updated_after,
+    "updated_after",
+  );
+  const occurredAfter = normalizeTimeBound(
+    filters.occurred_after,
+    "occurred_after",
+  );
+  const occurredBefore = normalizeTimeBound(
+    filters.occurred_before,
+    "occurred_before",
+  );
+  const updatedBefore = normalizeTimeBound(
+    filters.updated_before,
+    "updated_before",
+  );
+
+  const conditions: SQL[] = [];
+
+  if (filters.state) {
+    conditions.push(eq(items.state, filters.state));
+  } else if (!filters.all_states) {
+    // The default is the active state. A listing answers what the reader
+    // is working with, and archived, trashed and revoked are all rows
+    // they put away. It is also the narrower of the two masks this door
+    // could carry, which is what a caller who named nothing should get:
+    // `revoked` is reachable only on a reserved type, and a default that
+    // let it through published platform rows to an ordinary query.
+    //
+    // `all_states` suppresses the narrowing and adds nothing else: a
+    // catch-up has to see a row leave the active state, because that
+    // transition is how a client learns to prune its local copy, and a
+    // listing that moves the modification time and then hides the row
+    // reports that nothing changed.
+    const excluded = filters.exclude_states;
+    if (excluded && excluded.length > 0) {
+      conditions.push(notInArray(items.state, [...excluded]));
+    } else {
+      conditions.push(eq(items.state, "active"));
+    }
+  }
+
+  if (filters.type) {
+    // `core.entity` and `core.entity.*` mean the same thing: the type and
+    // everything under it. A bare identifier has always included its
+    // subtypes here, so the explicit wildcard must too.
+    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+      filters.type,
+    );
+    if (!global && exact && descendantPattern) {
+      const typeClause = or(
+        eq(items.type, exact),
+        sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
+        ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
+      );
+      if (typeClause) conditions.push(typeClause);
+    }
+  }
+
+  if (filters.source) conditions.push(eq(items.source, filters.source));
+
+  if (filters.tier !== undefined) {
+    conditions.push(eq(items.tier, filters.tier));
+  }
+
+  if (filters.exclude_system_types) {
+    conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
+  }
+
+  if (occurredAfter !== undefined) {
+    conditions.push(
+      sql`COALESCE(${items.occurred_at}, ${items.created_at}) > ${occurredAfter}`,
+    );
+  }
+  if (occurredBefore !== undefined) {
+    conditions.push(
+      sql`COALESCE(${items.occurred_at}, ${items.created_at}) < ${occurredBefore}`,
+    );
+  }
+  // The one bound that stays inclusive. `updated_at` ties across a bulk
+  // write, so a strict comparison drops every row sharing the cursor's
+  // instant and a resuming client never learns they existed.
+  if (updatedAfter !== undefined) {
+    conditions.push(gte(items.updated_at, updatedAfter));
+  }
+  if (updatedBefore !== undefined) {
+    conditions.push(lt(items.updated_at, updatedBefore));
+  }
+
+  // The normalized instant columns compare as text because they are
+  // written in one fixed-width shape, so the calendar's window is a
+  // range scan rather than a read of every event.
+  if (filters.startsAtFrom !== undefined) {
+    conditions.push(sql`${items.starts_at} >= ${filters.startsAtFrom}`);
+  }
+  if (filters.startsAtTo !== undefined) {
+    conditions.push(sql`${items.starts_at} < ${filters.startsAtTo}`);
+  }
+
+  if (filters.hasProperty !== undefined) {
+    // The JSON path is assembled in JS and bound as a parameter, so a
+    // caller-supplied key never reaches the statement text.
+    conditions.push(
+      sql`json_extract(${items.properties}, ${`$."${filters.hasProperty}"`}) IS NOT NULL`,
+    );
+  }
+
+  if (filters.tags && filters.tags.length > 0) {
+    for (const tag of filters.tags) {
+      conditions.push(
+        sql`EXISTS (
+            SELECT 1 FROM metadata m, json_each(m.tags) je
+            WHERE m.item_id = ${items.id} AND je.value = ${tag}
+          )`,
+      );
+    }
+  }
+
+  if (filters.allowed_types) {
+    const clause = allowedTypesCondition(
+      filters.allowed_types,
+      filters.excluded_types,
+    );
+    if (clause) conditions.push(clause);
+  }
+
+  const sourceLever = sourceFilterToSql(
+    filters.source_filter,
+    items.type,
+    items.source,
+  );
+  if (sourceLever) conditions.push(sourceLever);
+
+  if (filters.filter) {
+    const expr = parseFilter(filters.filter);
+    const filterConds = filterToSqlConditions(
+      expr,
+      items,
+      filters.readable_sources,
+    );
+    if (expr.logical === "OR") {
+      const orClause = or(...filterConds);
+      if (orClause) conditions.push(orClause);
+    } else {
+      conditions.push(...filterConds);
+    }
+  }
+
+  return conditions;
 }
 
 export class SqliteItemStore implements ItemStore {
@@ -714,27 +876,9 @@ export class SqliteItemStore implements ItemStore {
     // contradicting sort, so the override below is never a caller's
     // explicit choice being discarded; holding the invariant in the store
     // as well is what makes it true for internal callers too.
-    //
-    // Every bound is re-spelled to the shape the stored columns carry
-    // before it reaches a comparison: they are text columns and the
-    // comparison is lexical, so a valid RFC 3339 instant at the wrong
-    // width silently answers a different question. See
-    // `normalizeTimeBound`.
     const updatedAfter = normalizeTimeBound(
       filters.updated_after,
       "updated_after",
-    );
-    const occurredAfter = normalizeTimeBound(
-      filters.occurred_after,
-      "occurred_after",
-    );
-    const occurredBefore = normalizeTimeBound(
-      filters.occurred_before,
-      "occurred_before",
-    );
-    const updatedBefore = normalizeTimeBound(
-      filters.updated_before,
-      "updated_before",
     );
 
     // One test of the field decides both the ordering and the bound. Two
@@ -765,136 +909,7 @@ export class SqliteItemStore implements ItemStore {
         ? buildPropertySortExpr(items.properties, sort.field, filters.type)
         : null;
 
-    const conditions: (SQL | undefined)[] = [];
-
-    if (filters.state) {
-      conditions.push(eq(items.state, filters.state));
-    } else if (!filters.all_states) {
-      // The default is the active state. A listing answers what the reader
-      // is working with, and archived, trashed and revoked are all rows
-      // they put away. It is also the narrower of the two masks this door
-      // could carry, which is what a caller who named nothing should get:
-      // `revoked` is reachable only on a reserved type, and a default that
-      // let it through published platform rows to an ordinary query.
-      //
-      // `all_states` suppresses the narrowing and adds nothing else: a
-      // catch-up has to see a row leave the active state, because that
-      // transition is how a client learns to prune its local copy, and a
-      // listing that moves the modification time and then hides the row
-      // reports that nothing changed.
-      const excluded = filters.exclude_states;
-      if (excluded && excluded.length > 0) {
-        conditions.push(notInArray(items.state, [...excluded]));
-      } else {
-        conditions.push(eq(items.state, "active"));
-      }
-    }
-
-    if (filters.type) {
-      // `core.entity` and `core.entity.*` mean the same thing: the type and
-      // everything under it. A bare identifier has always included its
-      // subtypes here, so the explicit wildcard must too.
-      const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
-        filters.type,
-      );
-      if (!global && exact && descendantPattern) {
-        const typeClause = or(
-          eq(items.type, exact),
-          sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-          ...(extraTypes.length > 0 ? [inArray(items.type, extraTypes)] : []),
-        );
-        if (typeClause) conditions.push(typeClause);
-      }
-    }
-
-    if (filters.source) conditions.push(eq(items.source, filters.source));
-
-    if (filters.tier !== undefined) {
-      conditions.push(eq(items.tier, filters.tier));
-    }
-
-    if (filters.exclude_system_types) {
-      conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
-    }
-
-    if (occurredAfter !== undefined) {
-      conditions.push(
-        sql`COALESCE(${items.occurred_at}, ${items.created_at}) > ${occurredAfter}`,
-      );
-    }
-    if (occurredBefore !== undefined) {
-      conditions.push(
-        sql`COALESCE(${items.occurred_at}, ${items.created_at}) < ${occurredBefore}`,
-      );
-    }
-    // The one bound that stays inclusive. `updated_at` ties across a bulk
-    // write, so a strict comparison drops every row sharing the cursor's
-    // instant and a resuming client never learns they existed.
-    if (updatedAfter !== undefined) {
-      conditions.push(gte(items.updated_at, updatedAfter));
-    }
-    if (updatedBefore !== undefined) {
-      conditions.push(lt(items.updated_at, updatedBefore));
-    }
-
-    // The normalized instant columns compare as text because they are
-    // written in one fixed-width shape, so the calendar's window is a
-    // range scan rather than a read of every event.
-    if (filters.startsAtFrom !== undefined) {
-      conditions.push(sql`${items.starts_at} >= ${filters.startsAtFrom}`);
-    }
-    if (filters.startsAtTo !== undefined) {
-      conditions.push(sql`${items.starts_at} < ${filters.startsAtTo}`);
-    }
-
-    if (filters.hasProperty !== undefined) {
-      // The JSON path is assembled in JS and bound as a parameter, so a
-      // caller-supplied key never reaches the statement text.
-      conditions.push(
-        sql`json_extract(${items.properties}, ${`$."${filters.hasProperty}"`}) IS NOT NULL`,
-      );
-    }
-
-    if (filters.tags && filters.tags.length > 0) {
-      for (const tag of filters.tags) {
-        conditions.push(
-          sql`EXISTS (
-            SELECT 1 FROM metadata m, json_each(m.tags) je
-            WHERE m.item_id = ${items.id} AND je.value = ${tag}
-          )`,
-        );
-      }
-    }
-
-    if (filters.allowed_types) {
-      const clause = allowedTypesCondition(
-        filters.allowed_types,
-        filters.excluded_types,
-      );
-      if (clause) conditions.push(clause);
-    }
-
-    const sourceLever = sourceFilterToSql(
-      filters.source_filter,
-      items.type,
-      items.source,
-    );
-    if (sourceLever) conditions.push(sourceLever);
-
-    if (filters.filter) {
-      const expr = parseFilter(filters.filter);
-      const filterConds = filterToSqlConditions(
-        expr,
-        items,
-        filters.readable_sources,
-      );
-      if (expr.logical === "OR") {
-        const orClause = or(...filterConds);
-        if (orClause) conditions.push(orClause);
-      } else {
-        conditions.push(...filterConds);
-      }
-    }
+    const conditions: (SQL | undefined)[] = itemFilterConditions(filters);
 
     const systemSortCol =
       sort.kind === "system"
@@ -1866,24 +1881,10 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async stats(
-    typeFilter?: TypeFilter,
-    sourceFilter?: SourceFilterSettings,
+    filters: ItemFilters,
     by: ItemStatsAxis = "state",
   ): Promise<Record<string, number>> {
-    const conditions: (SQL | undefined)[] = [];
-    const typeClause = allowedTypesCondition(
-      typeFilter?.allowed,
-      typeFilter?.excluded,
-    );
-    if (typeClause) conditions.push(typeClause);
-    // Counts have to agree with the listing they summarize, so the read
-    // lever applies here too.
-    const sourceLever = sourceFilterToSql(
-      sourceFilter,
-      items.type,
-      items.source,
-    );
-    if (sourceLever) conditions.push(sourceLever);
+    const conditions = itemFilterConditions(filters);
 
     const rows = await this.db
       .select({

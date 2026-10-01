@@ -540,7 +540,7 @@
           "error"
         ]
       },
-      "ValidationErrorRefusal": {
+      "UnknownTypeOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -549,6 +549,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "unknown_type",
                   "validation_error"
                 ]
               },
@@ -570,7 +571,7 @@
           "error"
         ]
       },
-      "TypeNotPermittedRefusal": {
+      "EdgePermissionDeniedOrTypeNotPermittedRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -579,6 +580,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "edge_permission_denied",
                   "type_not_permitted"
                 ]
               },
@@ -645,37 +647,6 @@
                   "missing_required_field",
                   "unknown_type",
                   "validation_error"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
-      "EdgePermissionDeniedOrTypeNotPermittedRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "edge_permission_denied",
-                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -792,6 +763,36 @@
                 "type": "string",
                 "enum": [
                   "invalid_id"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "TypeNotPermittedRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "type_not_permitted"
                 ]
               },
               "message": {
@@ -1604,6 +1605,36 @@
                 "type": "string",
                 "enum": [
                   "invalid_id",
+                  "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "ValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
                   "validation_error"
                 ]
               },
@@ -4773,37 +4804,6 @@
           "error"
         ]
       },
-      "UnknownTypeOrValidationErrorRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "unknown_type",
-                  "validation_error"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
       "Webhook": {
         "type": "object",
         "properties": {
@@ -6129,7 +6129,7 @@
           "Items"
         ],
         "summary": "Get item counts",
-        "description": "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
+        "description": "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -6149,11 +6149,133 @@
             "description": "Grouping axis. Defaults to `state`.",
             "name": "by",
             "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page."
+            },
+            "required": false,
+            "description": "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
+            "name": "type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Count only this lifecycle state. Omitting the parameter counts every state, as does `any`."
+            },
+            "required": false,
+            "description": "Count only this lifecycle state. Omitting the parameter counts every state, as does `any`.",
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Narrow to rows stamped with this `source`."
+            },
+            "required": false,
+            "description": "Narrow to rows stamped with this `source`.",
+            "name": "source",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "library",
+                "feed",
+                "all"
+              ],
+              "description": "Tier slice; omit or `all` returns both"
+            },
+            "required": false,
+            "description": "Tier slice; omit or `all` returns both",
+            "name": "tier",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated tags; items must carry all of them"
+            },
+            "required": false,
+            "description": "Comma-separated tags; items must carry all of them",
+            "name": "tags",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included."
+            },
+            "required": false,
+            "description": "Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included.",
+            "name": "filter",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`."
+            },
+            "required": false,
+            "description": "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+            "name": "occurred_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive)."
+            },
+            "required": false,
+            "description": "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+            "name": "occurred_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well."
+            },
+            "required": false,
+            "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+            "name": "updated_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort."
+            },
+            "required": false,
+            "description": "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
+            "name": "updated_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "system"
+              ],
+              "description": "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own."
+            },
+            "required": false,
+            "description": "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own.",
+            "name": "include",
+            "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "Item counts by state",
+            "description": "Item counts on the chosen axis",
             "content": {
               "application/json": {
                 "schema": {
@@ -6183,11 +6305,11 @@
             }
           },
           "400": {
-            "description": "A query parameter the door does not declare, or a grouping it does not have.",
+            "description": "A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/UnknownTypeOrValidationErrorRefusal"
                 }
               }
             },
@@ -6243,11 +6365,11 @@
             }
           },
           "403": {
-            "description": "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+            "description": "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
                 }
               }
             },
