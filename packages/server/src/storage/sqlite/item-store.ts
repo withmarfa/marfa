@@ -1835,14 +1835,6 @@ export class SqliteItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
     }
 
-    // State transitions always snapshot current properties.
-    await this.versionStore.create(id, row.version, row.properties, {
-      tier: row.tier ?? null,
-      occurred_at: row.occurred_at,
-      source_id: row.source_id ?? null,
-      type: row.type,
-    });
-
     const now = new Date().toISOString();
     await this.db
       .update(items)
