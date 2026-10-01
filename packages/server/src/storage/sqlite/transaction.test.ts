@@ -15,7 +15,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createConnection, type RawDb } from "./connection.js";
+import { createConnection, setBusyBudgetMs, type RawDb } from "./connection.js";
 import { createSqliteStorage } from "./index.js";
 import type { Storage } from "../interface.js";
 
@@ -150,6 +150,53 @@ describe("a raw transaction", () => {
     }, 50);
     await second;
     expect(await values()).toEqual([1, 2]);
+  });
+
+  it("waits for another of this process without opening a connection per try", async () => {
+    const open = () => readdirSync("/dev/fd").length;
+    const warm = await raw.transaction("write");
+    await warm.commit();
+    const before = open();
+    const first = await raw.transaction("write");
+    await first.execute("INSERT INTO probe (n) VALUES (1)");
+    setTimeout(() => {
+      void first.commit();
+    }, 500);
+    const second = await raw.transaction("write");
+    await second.execute("INSERT INTO probe (n) VALUES (2)");
+    await second.commit();
+    expect(await values()).toEqual([1, 2]);
+    // A wait spent retrying a refused `BEGIN` leaves a connection behind
+    // for every try, which half a second of backoff makes a dozen or more.
+    expect(open() - before).toBeLessThanOrEqual(4);
+  });
+
+  it("gives up waiting once the budget is spent, and the next still gets its turn", async () => {
+    setBusyBudgetMs(50);
+    try {
+      const first = await raw.transaction("write");
+      await first.execute("INSERT INTO probe (n) VALUES (1)");
+      await expect(raw.transaction("write")).rejects.toMatchObject({
+        code: "write_contention",
+        status: 503,
+      });
+      await first.commit();
+      const third = await raw.transaction("write");
+      await third.execute("INSERT INTO probe (n) VALUES (3)");
+      await third.commit();
+      expect(await values()).toEqual([1, 3]);
+    } finally {
+      setBusyBudgetMs(5_000);
+    }
+  });
+
+  it("refuses to begin once the client is closed", async () => {
+    const tx = await raw.transaction("write");
+    await tx.commit();
+    raw.close();
+    await expect(raw.transaction("write")).rejects.toMatchObject({
+      code: "CLIENT_CLOSED",
+    });
   });
 
   it("rolls back on close and serves the next transaction", async () => {

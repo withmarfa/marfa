@@ -184,6 +184,14 @@ function isBusy(err: unknown): boolean {
  * lock another process holds, a sidecar's checkpoint, frees on its own
  * either way. Exported for its test.
  */
+function contention(budgetMs: number): MarfaError {
+  return new MarfaError(
+    ErrorCode.WRITE_CONTENTION,
+    "The row is being written by something else and the lock did not free in time. Nothing was written; retry.",
+    { budget_ms: budgetMs },
+  );
+}
+
 export async function untilNotBusy<T>(
   attempt: () => Promise<T>,
   budgetMs = busyBudgetMs,
@@ -204,11 +212,7 @@ export async function untilNotBusy<T>(
         // A device reads a `5xx` as retryable and a `500` as a fault, so
         // the status would be right by accident while the code said the
         // wrong thing.
-        throw new MarfaError(
-          ErrorCode.WRITE_CONTENTION,
-          "The row is being written by something else and the lock did not free in time. Nothing was written; retry.",
-          { budget_ms: budgetMs },
-        );
+        throw contention(budgetMs);
       }
       await new Promise((resolve) => {
         setTimeout(resolve, Math.min(wait, remaining));
@@ -320,7 +324,15 @@ const BEGIN: Record<TransactionMode, string> = {
  * that SQLite ended itself, hands its connection on. One whose `BEGIN`,
  * `COMMIT` or `ROLLBACK` failed, or whose statement was refused the lock,
  * is closed instead, for the reason `waitingForTheLock` gives for dropping
- * a refused connection.
+ * a refused connection, and that connection too stays open until a
+ * collection, since its refused statement still refers to it.
+ *
+ * So a write transaction waits here for the one before it in this process
+ * to end, rather than meeting its lock in `BEGIN IMMEDIATE`: every refusal
+ * the retry absorbed cost a connection, a hundred of them for one wait at
+ * the shortest backoff. The wait is held to the same budget as the retry
+ * and ends in the same refusal. A lock another process holds still meets
+ * the retry.
  */
 function transactionConnections(url: string): {
   begin: (mode: TransactionMode) => Promise<Transaction>;
@@ -328,31 +340,79 @@ function transactionConnections(url: string): {
 } {
   const idle: Client[] = [];
   let shut = false;
+  let lastWriter: Promise<void> = Promise.resolve();
+  const awaitTurn = async (turn: Promise<void>): Promise<void> => {
+    const budgetMs = busyBudgetMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        turn,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(contention(budgetMs));
+          }, budgetMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   const handBack = (conn: Client, sound: boolean) => {
     if (sound && !shut && !conn.closed) idle.push(conn);
     else conn.close();
   };
 
+  const refuseOnceShut = () => {
+    if (shut) throw new LibsqlError("The client is closed", "CLIENT_CLOSED");
+  };
+
   const begin = async (mode: TransactionMode): Promise<Transaction> => {
+    refuseOnceShut();
+    let leave: () => void = () => undefined;
+    if (mode === "write") {
+      const turn = lastWriter;
+      lastWriter = new Promise((resolve) => {
+        // A transaction that gave up waiting still holds its place until
+        // the one ahead of it ends, so the next never overtakes that one.
+        leave = () => {
+          void turn.then(() => {
+            resolve();
+          });
+        };
+      });
+      try {
+        await awaitTurn(turn);
+        refuseOnceShut();
+      } catch (err) {
+        leave();
+        throw err;
+      }
+    }
     const conn = idle.pop() ?? createClient({ url });
     try {
       await conn.execute(BEGIN[mode]);
     } catch (err) {
       handBack(conn, false);
+      leave();
       throw err;
     }
     let open = true;
     const closedError = () =>
       new LibsqlError("The transaction is closed", "TRANSACTION_CLOSED");
+    const finish = (sound: boolean) => {
+      open = false;
+      handBack(conn, sound);
+      leave();
+    };
     const end = async (sql: "COMMIT" | "ROLLBACK") => {
       open = false;
       try {
         await conn.execute(sql);
       } catch (err) {
-        handBack(conn, false);
+        finish(false);
         throw err;
       }
-      handBack(conn, true);
+      finish(true);
     };
     // A failed statement may have ended the transaction on SQLite's side
     // (a full disk, an I/O error), and the next statement would then run
@@ -379,13 +439,8 @@ function transactionConnections(url: string): {
           ? await conn.execute(stmtOrSql, args)
           : await conn.execute(stmtOrSql);
       } catch (err) {
-        if (isBusy(err)) {
-          open = false;
-          handBack(conn, false);
-        } else if (!(await stillOpen())) {
-          open = false;
-          handBack(conn, true);
-        }
+        if (isBusy(err)) finish(false);
+        else if (!(await stillOpen())) finish(true);
         throw err;
       }
     };
