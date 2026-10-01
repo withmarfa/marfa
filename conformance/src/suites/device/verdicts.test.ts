@@ -1,7 +1,18 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { answers, refusal, wireItem } from "../../device/marfa-answers.js";
+import {
+  answers,
+  itemEvent,
+  refusal,
+  replay,
+  wireItem,
+} from "../../device/marfa-answers.js";
 import type { DrainReport } from "../../device/protocol.js";
-import { hydratedHarness, scriptWrites } from "./harness.js";
+import {
+  hydratedHarness,
+  scriptHydration,
+  scriptWrites,
+  startHarness,
+} from "./harness.js";
 import type { Harness, ScriptedWrites } from "./harness.js";
 
 let harness: Harness | undefined;
@@ -352,6 +363,65 @@ describe("the server took the write", () => {
       queue.value[0]?.conflicted_copy_id,
       "the queue does not carry the sibling the drain reported, so a caller who missed the drain's output cannot find it",
     ).toBe(sibling);
+  });
+
+  it("conflicted: the sibling reaches the copy with a later event, not with the answer", async () => {
+    harness = await startHarness("verdicts-conflicted-later");
+    const { server, device } = harness;
+    const sibling = "01a00000-0000-7000-8000-0000000000bb";
+    scriptHydration(server, { head: "1", rows: held() });
+    // The catch-up after the drain reads this: the server logs the sibling
+    // as a create of its own, in the same transaction as the update.
+    server.answer(
+      "GET",
+      "/events",
+      replay("2", [
+        itemEvent(
+          "2",
+          "item.created",
+          wireItem({
+            id: sibling,
+            properties: { title: "edited", body: "edited" },
+          }),
+          { tags: ["conflicted-copy"] },
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const report = await updateAndDrain(harness, [
+      answers.resolved(
+        wireItem({
+          id: HELD.id,
+          version: 5,
+          properties: { title: "held", body: "the server's" },
+        }),
+        { body: "keep_both_copies" },
+        sibling,
+      ),
+    ]);
+    expect(report.verdicts[0]?.conflicted_copy_id).toBe(sibling);
+
+    // The answer names the sibling and carries only the row written to, so
+    // a read of the sibling straight after the drain races the stream. The
+    // read after the catch-up below is the witness that the copy can hold
+    // it.
+    const before = await device.get(sibling);
+    expect(
+      before.ok,
+      "the copy held the sibling before any event brought it, so it was made up from an answer that carries only the row written to",
+    ).toBe(false);
+    if (!before.ok) expect(before.refusal.code).toBe("not_held");
+
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    const after = await device.get(sibling);
+    expect(
+      after.ok,
+      "the sibling's event was caught up and the copy still does not hold it, so the losing edit is named by the verdict and reachable nowhere",
+    ).toBe(true);
+    if (!after.ok) return;
+    expect(after.value.properties.body).toBe("edited");
+    expect(after.value.tags).toEqual(["conflicted-copy"]);
   });
 });
 
