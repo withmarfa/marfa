@@ -46,4 +46,65 @@ describe("GET /items/stats", () => {
       "group_by",
     ]);
   });
+
+  it("counts the rows a listing's filters match", async () => {
+    const tag = `stats-count-${ctx.runId}`;
+    const ids: string[] = [];
+    for (const [body, tags] of [
+      ["kept one", [tag]],
+      ["kept two", [tag]],
+      ["put away", [tag]],
+      ["untagged", []],
+    ] as [string, string[]][]) {
+      const made = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: `${body} ${ctx.runId}` },
+        tags,
+      });
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      trackItem(ctx, made.data.item.id);
+      ids.push(made.data.item.id);
+    }
+    const archived = await client.transitionItem(ids[2] ?? "", "archived");
+    expect(archived.ok, JSON.stringify(archived.error)).toBe(true);
+
+    const scope = `source=${encodeURIComponent(ctx.source)}&tags=${encodeURIComponent(tag)}`;
+
+    // The listing these counts size: two active rows carry the tag, so a
+    // count that ignored the tag or the source would read higher.
+    const listed = await client.rawRequest<{ data: { id: string }[] }>(
+      `/items?${scope}&limit=50`,
+    );
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    expect(listed.data.data.map((r) => r.id).sort()).toEqual(
+      [ids[0], ids[1]].sort(),
+    );
+
+    const byState = await client.rawRequest<Record<string, number>>(
+      `/items/stats?${scope}`,
+    );
+    expect(byState.ok, JSON.stringify(byState.error)).toBe(true);
+    expect(byState.data).toEqual({ active: 2, archived: 1 });
+
+    const active = await client.rawRequest<Record<string, number>>(
+      `/items/stats?${scope}&state=active&by=type`,
+    );
+    expect(active.ok, JSON.stringify(active.error)).toBe(true);
+    expect(active.data).toEqual({ "core.note": 2 });
+
+    const expression = await client.rawRequest<Record<string, number>>(
+      `/items/stats?source=${encodeURIComponent(ctx.source)}&filter=${encodeURIComponent(`properties.body eq "untagged ${ctx.runId}"`)}`,
+    );
+    expect(expression.ok, JSON.stringify(expression.error)).toBe(true);
+    expect(expression.data).toEqual({ active: 1 });
+
+    // A filter the listing refuses is refused here too, rather than counted
+    // as if it matched everything.
+    const unknownType = await client.rawRequest<unknown>(
+      `/items/stats?type=${encodeURIComponent(`user.unregistered_${ctx.runId.replace(/[^a-z0-9]/g, "")}`)}`,
+    );
+    expect(unknownType.status).toBe(400);
+    expect(unknownType.error?.error.code).toBe("unknown_type");
+  });
 });

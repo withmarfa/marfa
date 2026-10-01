@@ -275,7 +275,7 @@ describe("GET /search?include=system", () => {
 
   async function seedPair(
     word: string,
-  ): Promise<{ noteId: string; deviceId: string }> {
+  ): Promise<{ noteId: string; folderId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: {
@@ -290,11 +290,11 @@ describe("GET /search?include=system", () => {
     // store indexes it for search on the way in, which is all this pair needs
     // — the claim under test is what the read surface does with the row, not
     // how it got there.
-    const device = await ctx.storage.items.create({
-      type: "system.device",
-      properties: { name: word, kind: "laptop" },
+    const folder = await ctx.storage.items.create({
+      type: "system.folder",
+      properties: { title: word },
     });
-    return { noteId: n.id, deviceId: device.id };
+    return { noteId: n.id, folderId: folder.id };
   }
 
   async function foundIds(query: string): Promise<string[]> {
@@ -306,25 +306,25 @@ describe("GET /search?include=system", () => {
 
   it("omits system.* rows when the token is absent", async () => {
     const word = token("absent");
-    const { noteId, deviceId } = await seedPair(word);
+    const { noteId, folderId } = await seedPair(word);
     const ids = await foundIds(`/search?q=${word}`);
     expect(ids).toContain(noteId);
-    expect(ids).not.toContain(deviceId);
+    expect(ids).not.toContain(folderId);
   });
 
   it("returns system.* rows when the token is present", async () => {
     const word = token("present");
-    const { noteId, deviceId } = await seedPair(word);
+    const { noteId, folderId } = await seedPair(word);
     const ids = await foundIds(`/search?q=${word}&include=system`);
     expect(ids).toContain(noteId);
-    expect(ids).toContain(deviceId);
+    expect(ids).toContain(folderId);
   });
 
   it("opts in on a specific system.* type filter without the token", async () => {
     const word = token("bytype");
-    const { deviceId } = await seedPair(word);
-    const ids = await foundIds(`/search?q=${word}&type=system.device`);
-    expect(ids).toContain(deviceId);
+    const { folderId } = await seedPair(word);
+    const ids = await foundIds(`/search?q=${word}&type=system.folder`);
+    expect(ids).toContain(folderId);
   });
 });
 

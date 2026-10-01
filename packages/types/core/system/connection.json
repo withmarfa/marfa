@@ -1,20 +1,19 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (a connector acting on this user's behalf, whatever its upstream). Lifecycle bounded to active | revoked. Has no tier.",
+  "description": "An OAuth client this user has authorized, written when the user approves the client's consent or device sign-in. `kind` is `app`. Lifecycle bounded to active | revoked. Has no tier.",
   "version": 0,
   "fields": {
     "kind": {
       "type": "enum",
       "description": "Discriminator for connection variant",
       "enum_values": [
-        "app",
-        "connector"
+        "app"
       ]
     },
     "client_id": {
       "type": "string",
-      "description": "OAuth client identifier (for kind: app)"
+      "description": "OAuth client identifier"
     },
     "scopes": {
       "type": "array",
@@ -23,7 +22,7 @@
     },
     "status": {
       "type": "enum",
-      "description": "Lifecycle status (universal across all kinds)",
+      "description": "Lifecycle status",
       "enum_values": [
         "active",
         "revoked"
@@ -40,31 +39,6 @@
     "revoked_at": {
       "type": "datetime",
       "description": "When the grant was revoked, if any"
-    },
-    "connector_id": {
-      "type": "string",
-      "description": "For kind: connector \u2014 id of the connector this connection belongs to"
-    },
-    "credential_id": {
-      "type": "string",
-      "description": "For kind: connector \u2014 id of the credential the connector authenticates its upstream with"
-    },
-    "configuration": {
-      "type": "object",
-      "description": "For kind: connector \u2014 the connector's own configuration, shaped by the connector"
-    },
-    "direction": {
-      "type": "enum",
-      "description": "For kind: connector \u2014 does this connector read from its upstream, write to it, or both",
-      "enum_values": [
-        "read",
-        "write",
-        "both"
-      ]
-    },
-    "mapping": {
-      "type": "object",
-      "description": "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Validated as a whole document rather than field by field; shape and semantics live with the shared mapping module, not this schema."
     }
   },
   "required": [

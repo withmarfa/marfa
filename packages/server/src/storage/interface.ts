@@ -1,6 +1,5 @@
 import type {
   Item,
-  TypeFilter,
   CreateItemInput,
   UpdateItemInput,
   Metadata,
@@ -777,7 +776,7 @@ export interface ItemStore {
    * Item counts for the instance, grouped on one axis.
    *
    * `by` chooses the axis and nothing else: both groupings cover the same
-   * rows — everything this caller can read — so their totals agree. That is
+   * rows, the ones `filters` match, so their totals agree. That is
    * the property `routes/items-stats-by-type.test.ts` asserts, and it is
    * what catches a breakdown that quietly dropped a filter the other keeps.
    *
@@ -785,10 +784,13 @@ export interface ItemStore {
    * else could without paging every row: `GET /types` lists what is
    * registered, a longer and different list, and `countByType` takes one
    * exact identifier per call.
+   *
+   * `filters` mean what they mean to `list`, the active-state default
+   * included, so a count under a listing's filters is the number of rows
+   * that listing walks. Paging and ordering are ignored.
    */
   stats(
-    typeFilter?: TypeFilter,
-    sourceFilter?: SourceFilterSettings,
+    filters: ItemFilters,
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
@@ -1142,6 +1144,26 @@ export interface SearchStore {
  */
 export type KeyRevokeOutcome = "revoked" | "already_revoked" | "not_found";
 
+/**
+ * A key as the store holds it, with every list and map filled and empty
+ * where the key holds nothing. A request's principal cannot promise that:
+ * a signed-in app's projection carries no `permissions`, since its grant
+ * answers them.
+ */
+export type StoredApiKey = ApiKey &
+  Required<
+    Pick<
+      ApiKey,
+      | "sources"
+      | "permissions"
+      | "extension_permissions"
+      | "edge_permissions"
+      | "metadata_permissions"
+      | "profile_permissions"
+      | "expires_at"
+    >
+  >;
+
 export interface KeyStore {
   /**
    * Mint a key.
@@ -1158,13 +1180,15 @@ export interface KeyStore {
   create(
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
-  ): Promise<ApiKey>;
-  list(): Promise<ApiKey[]>;
-  get(id: string): Promise<ApiKey | null>;
+  ): Promise<StoredApiKey>;
+  list(): Promise<StoredApiKey[]>;
+  get(id: string): Promise<StoredApiKey | null>;
   validate(
     keyHash: string,
-  ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
-  update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
+  ): Promise<
+    (StoredApiKey & { key_hash: string; revoked_at: string | null }) | null
+  >;
+  update(id: string, input: UpdateKeyInput): Promise<StoredApiKey>;
   /**
    * Stamp `revoked_at`, and say which of the three things happened. Only
    * `"revoked"` means this call was the one that retired the key, so a

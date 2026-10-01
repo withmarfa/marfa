@@ -483,12 +483,12 @@ export class MarfaClient {
   }
 
   /**
-   * `GET /items/stats` — counts keyed by lifecycle state, not by type.
+   * `GET /items/stats` with no parameters — counts keyed by lifecycle state.
    *
-   * Takes no parameters, so the narrowing is entirely the caller's own scope.
-   * That is what makes it worth asserting on: it returns numbers rather than
-   * rows, so a filter applied while shaping a response instead of inside the
-   * query leaves this answer unchanged while every other read narrows.
+   * With no filter the narrowing is entirely the caller's own scope. That is
+   * what makes it worth asserting on: it returns numbers rather than rows, so
+   * a filter applied while shaping a response instead of inside the query
+   * leaves this answer unchanged while every other read narrows.
    */
   async itemStats(): Promise<ApiResponse<Record<string, number>>> {
     return this.request<Record<string, number>>("/items/stats");

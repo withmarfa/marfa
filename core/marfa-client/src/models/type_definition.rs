@@ -26,7 +26,7 @@ pub struct TypeDefinition {
     #[serde(rename = "roles", skip_serializing_if = "Option::is_none")]
     pub roles: Option<Vec<models::TypeRole>>,
     #[serde(rename = "fields")]
-    pub fields: std::collections::HashMap<String, serde_json::Value>,
+    pub fields: std::collections::HashMap<String, models::FieldDefinition>,
     #[serde(rename = "version")]
     pub version: f64,
     #[serde(rename = "display_hints", skip_serializing_if = "Option::is_none")]
@@ -43,7 +43,7 @@ pub struct TypeDefinition {
 impl TypeDefinition {
     pub fn new(
         id: String,
-        fields: std::collections::HashMap<String, serde_json::Value>,
+        fields: std::collections::HashMap<String, models::FieldDefinition>,
         version: f64,
     ) -> TypeDefinition {
         TypeDefinition {

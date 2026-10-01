@@ -70,7 +70,7 @@ describe("projectPlatformRows", () => {
     // Asserting "not core" as well as "is system" because the first is
     // the property that matters and the second is only today's spelling
     // of it.
-    const rows = projectPlatformRows([row({ id: "system.device" })]);
+    const rows = projectPlatformRows([row({ id: "system.folder" })]);
     expect(rows[0]?.family).toBe("system");
     expect(rows[0]?.family).not.toBe("core");
   });
@@ -95,7 +95,7 @@ describe("projectPlatformRows", () => {
   it("says so, naming the row and what it did", () => {
     // A projection nobody can see is a silent fallback.
     projectPlatformRows([
-      row({ id: "system.webhook", family: "" as LoadedType["family"] }),
+      row({ id: "system.folder", family: "" as LoadedType["family"] }),
     ]);
     expect(logSpy).toHaveBeenCalledWith(
       "error",
@@ -103,7 +103,7 @@ describe("projectPlatformRows", () => {
       expect.objectContaining({
         table: "types",
         column: "family",
-        row_id: "system.webhook",
+        row_id: "system.folder",
         projected_as: "system",
       }),
     );

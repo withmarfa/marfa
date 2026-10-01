@@ -3,6 +3,8 @@ import { betterAuth } from "better-auth";
 import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
+import { isAPIError } from "better-auth/api";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { createLocalAccountIssuer } from "better-auth/db";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
 import { log } from "../middleware/logger.js";
@@ -226,6 +228,23 @@ export interface MarfaAuth {
   api: unknown;
 }
 
+/**
+ * Whether the storage layer's write-lock refusal is somewhere in this
+ * error's `cause` chain. The adapter's statements reach the database through
+ * Drizzle, which wraps what the driver threw, so the refusal does not arrive
+ * at the top. Bounded because a chain is data and may cycle.
+ */
+function carriesWriteContention(err: unknown): boolean {
+  for (let step: unknown = err, depth = 0; depth < 8; depth++) {
+    if (step instanceof MarfaError) {
+      return step.code === ErrorCode.WRITE_CONTENTION;
+    }
+    if (step === null || typeof step !== "object") return false;
+    step = (step as { cause?: unknown }).cause;
+  }
+  return false;
+}
+
 export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   const schema = {
     user: sqliteSchema.auth_user,
@@ -285,6 +304,22 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     database: withIdempotentConsent(
       drizzleAdapter(options.db, { provider: "sqlite", schema }),
     ),
+    onAPIError: {
+      // Better Auth answers anything its handler throws that is not one of
+      // its own errors with a bare `500`. Write contention is a failure this
+      // server answers on every door as `503 write_contention`, so it is
+      // rethrown out of the handler to the server's error handler; throwing
+      // is the only way out, since this hook's return is ignored. Anything
+      // else is logged as Better Auth logs it when no hook is set: its own
+      // errors only when they are a `500`.
+      onError: (error, ctx) => {
+        if (carriesWriteContention(error)) throw error;
+        if (isAPIError(error) && error.status !== "INTERNAL_SERVER_ERROR") {
+          return;
+        }
+        ctx.logger.error(error instanceof Error ? error.name : "", error);
+      },
+    },
     emailAndPassword: {
       enabled: true,
       // Auto-sign-in keeps the consent flow seamless when an account

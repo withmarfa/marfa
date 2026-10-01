@@ -7,7 +7,6 @@ import {
   isPermission,
 } from "@withmarfa/shared";
 import type {
-  ApiKey,
   CreateKeyInput,
   UpdateKeyInput,
   EdgePermission,
@@ -18,7 +17,7 @@ import type {
   Tier,
   TypePermission,
 } from "@withmarfa/shared";
-import type { KeyRevokeOutcome, KeyStore } from "../interface.js";
+import type { KeyRevokeOutcome, KeyStore, StoredApiKey } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -28,7 +27,7 @@ import type { DrizzleDb } from "./connection.js";
  */
 const LAST_USED_DEBOUNCE_MS = 3_600_000;
 
-function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
+function mapRow(row: typeof apiKeys.$inferSelect): StoredApiKey {
   return {
     id: row.id,
     label: row.label,
@@ -103,7 +102,7 @@ export class SqliteKeyStore implements KeyStore {
   async create(
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
-  ): Promise<ApiKey> {
+  ): Promise<StoredApiKey> {
     const collision = await this.db
       .select({ id: apiKeys.id })
       .from(apiKeys)
@@ -158,11 +157,12 @@ export class SqliteKeyStore implements KeyStore {
         enforcement_override: input.enforcement_override,
       }),
       created_at: now,
+      expires_at: null,
       last_used_at: null,
     };
   }
 
-  async list(): Promise<ApiKey[]> {
+  async list(): Promise<StoredApiKey[]> {
     const rows = await this.db
       .select()
       .from(apiKeys)
@@ -171,7 +171,7 @@ export class SqliteKeyStore implements KeyStore {
     return rows.map(mapRow);
   }
 
-  async get(id: string): Promise<ApiKey | null> {
+  async get(id: string): Promise<StoredApiKey | null> {
     const row = await this.db
       .select()
       .from(apiKeys)
@@ -180,7 +180,7 @@ export class SqliteKeyStore implements KeyStore {
     return row ? mapRow(row) : null;
   }
 
-  async update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
+  async update(id: string, input: UpdateKeyInput): Promise<StoredApiKey> {
     const existing = await this.db
       .select()
       .from(apiKeys)
@@ -240,7 +240,7 @@ export class SqliteKeyStore implements KeyStore {
   async validate(
     keyHash: string,
   ): Promise<
-    (ApiKey & { key_hash: string; revoked_at: string | null }) | null
+    (StoredApiKey & { key_hash: string; revoked_at: string | null }) | null
   > {
     const row = await this.db
       .select()

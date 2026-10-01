@@ -93,7 +93,7 @@ export function metricsRoutes(storage: Storage) {
 
     const [itemStats, blobStats, keyCount, webhookCount, registeredTypeCount] =
       await Promise.all([
-        storage.items.stats(undefined),
+        storage.items.stats({ all_states: true }),
         storage.blobs.count(),
         storage.keys.count(),
         storage.outboundWebhooks.count(),
