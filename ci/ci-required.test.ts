@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +18,8 @@ const git = (...args: string[]) =>
 let base: string;
 let docs: string;
 let code: string;
+let coreChange: string;
+let api: string;
 let renamed: string;
 
 beforeAll(() => {
@@ -31,6 +39,15 @@ beforeAll(() => {
   git("add", ".");
   git("commit", "-qm", "code");
   code = git("rev-parse", "HEAD");
+  mkdirSync(join(directory, "core"));
+  writeFileSync(join(directory, "core", "lib.rs"), "pub fn value() {}\n");
+  git("add", ".");
+  git("commit", "-qm", "core");
+  coreChange = git("rev-parse", "HEAD");
+  writeFileSync(join(directory, "openapi.json"), "{}\n");
+  git("add", ".");
+  git("commit", "-qm", "api");
+  api = git("rev-parse", "HEAD");
   git("mv", "runtime.ts", "ARCHITECTURE.md");
   git("commit", "-qm", "rename");
   renamed = git("rev-parse", "HEAD");
@@ -63,22 +80,42 @@ function classify(event: string, from: string, to: string) {
 
 describe("CI path selection", () => {
   it("skips a documentation-only PR", () => {
-    expect(classify("pull_request", base, docs)).toBe("required=false\n");
+    expect(classify("pull_request", base, docs)).toBe(
+      "required=false\ncore=false\n",
+    );
   });
-  it("runs a mixed documentation and code PR", () => {
-    expect(classify("pull_request", base, code)).toBe("required=true\n");
+  it("runs a mixed documentation and code PR, without the core's checks", () => {
+    expect(classify("pull_request", base, code)).toBe(
+      "required=true\ncore=false\n",
+    );
+  });
+  it("runs the core's checks when the core changes", () => {
+    expect(classify("pull_request", code, coreChange)).toBe(
+      "required=true\ncore=true\n",
+    );
+  });
+  it("runs the core's checks when the API document they read changes", () => {
+    expect(classify("pull_request", coreChange, api)).toBe(
+      "required=true\ncore=true\n",
+    );
   });
   it("does not hide code deleted by a rename into documentation", () => {
-    expect(classify("pull_request", code, renamed)).toBe("required=true\n");
+    expect(classify("pull_request", api, renamed)).toBe(
+      "required=true\ncore=false\n",
+    );
   });
   it("runs when a diff is unavailable or empty", () => {
-    expect(classify("pull_request", "invalid", docs)).toBe("required=true\n");
-    expect(classify("pull_request", docs, docs)).toBe("required=true\n");
+    expect(classify("pull_request", "invalid", docs)).toBe(
+      "required=true\ncore=true\n",
+    );
+    expect(classify("pull_request", docs, docs)).toBe(
+      "required=true\ncore=true\n",
+    );
   });
   it.each(["push", "schedule", "workflow_dispatch"])(
     "keeps %s fully validated",
     (event) => {
-      expect(classify(event, base, docs)).toBe("required=true\n");
+      expect(classify(event, base, docs)).toBe("required=true\ncore=true\n");
     },
   );
   it("only skips existing checks after successful explicit classification", () => {
@@ -89,11 +126,11 @@ describe("CI path selection", () => {
       ([name]) => name !== "changes",
     );
     expect(jobs).toHaveLength(9);
-    for (const [, value] of jobs) {
-      const job = value;
+    for (const [name, job] of jobs) {
+      const output = name === "core-checks" ? "core" : "required";
       expect(job.needs).toBe("changes");
       expect(job.if).toBe(
-        "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}",
+        `\${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.${output} != 'false') }}`,
       );
     }
   });
