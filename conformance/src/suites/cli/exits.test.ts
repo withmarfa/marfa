@@ -47,8 +47,14 @@ describe("the exit codes", () => {
     expect(refused.envelope.error.server?.status).toBe(404);
   });
 
-  it("leaves by 2 when the command line is wrong, with clap's usage text rather than the envelope", async () => {
-    const outcome = await c.cli.run(["--json", "items", "get"]);
+  it("leaves by 2 when the command line is wrong, with the envelope under --json and the usage text without it", async () => {
+    const refused = await c.cli.refused(["items", "get"]);
+    expect(refused.code).toBe(2);
+    expect(refused.envelope.exit).toBe(2);
+    expect(refused.envelope.error.code).toBe("usage");
+    expect(refused.envelope.error.server).toBeNull();
+
+    const outcome = await c.cli.run(["items", "get"]);
     expect(outcome.code).toBe(2);
     expect(outcome.stdout).toBe("");
     expect(outcome.stderr).toContain("Usage:");

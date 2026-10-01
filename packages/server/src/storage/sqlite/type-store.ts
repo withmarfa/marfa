@@ -61,10 +61,18 @@ export class SqliteTypeStore implements TypeStore {
   async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.transaction(async (tx) => {
-      await tx.run(sql`
+      const written = await tx.run(sql`
         UPDATE types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
         WHERE id = ${id}
       `);
+      // A type deleted since the caller looked is not brought back by
+      // registering the replacement for a row that is no longer there.
+      if (written.rowsAffected === 0) {
+        throw new MarfaError(
+          ErrorCode.TYPE_NOT_FOUND,
+          `Type "${id}" not found`,
+        );
+      }
       if (getTypeSchema(id)?.link_field !== schema.link_field) {
         await rebuildTypeLinks(tx, id, schema.link_field);
       }

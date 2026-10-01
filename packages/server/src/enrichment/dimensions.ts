@@ -1,4 +1,4 @@
-import { imageDimensionsFromData } from "image-dimensions";
+import { imageDimensionsFromData, type ImageType } from "image-dimensions";
 import { parseBuffer } from "music-metadata";
 
 /**
@@ -44,30 +44,103 @@ export function isDimensionMime(mime: string): boolean {
   );
 }
 
-const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 /** The largest width or height any of these formats can state. */
 const MAX_SIDE = 2 ** 31 - 1;
+
+const ascii = (data: Uint8Array, start: number, end: number): string =>
+  String.fromCharCode(...data.subarray(start, end));
+
+/**
+ * A GIF's logical screen descriptor, and its global color table when the
+ * descriptor declares one, must be whole and followed by an extension, an
+ * image descriptor or the trailer.
+ */
+function wellFormedGif(data: Uint8Array): boolean {
+  const flags = data[10] ?? 0;
+  const table = flags & 0x80 ? 3 * 2 ** ((flags & 0x07) + 1) : 0;
+  const next = data[13 + table];
+  return next === 0x21 || next === 0x2c || next === 0x3b;
+}
+
+/**
+ * The reader walks a JPEG's segments by their lengths without checking
+ * their markers, so each segment up to the frame header must open with a
+ * marker, and the frame header must be whole, with a length that matches
+ * its component count.
+ */
+function wellFormedJpeg(data: Uint8Array): boolean {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let offset = 2;
+  while (offset + 4 <= data.length) {
+    if (data[offset] !== 0xff) return false;
+    const marker = data[offset + 1] ?? 0;
+    const length = view.getUint16(offset + 2);
+    if (length < 2 || offset + 2 + length > data.length) return false;
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      const components = data[offset + 9] ?? 0;
+      return components > 0 && length === 8 + 3 * components;
+    }
+    offset += 2 + length;
+  }
+  return false;
+}
+
+/**
+ * Each WebP chunk kind carries a mark of its own beside the size the reader
+ * takes: the lossy frame's start code, the lossless signature byte and zero
+ * version, and the extended header's fixed chunk length.
+ */
+function wellFormedWebp(data: Uint8Array): boolean {
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  switch (ascii(data, 12, 16)) {
+    case "VP8 ":
+      return (
+        data.length >= 30 &&
+        ((data[20] ?? 1) & 0x01) === 0 &&
+        data[23] === 0x9d &&
+        data[24] === 0x01 &&
+        data[25] === 0x2a
+      );
+    case "VP8L":
+      return (
+        data.length >= 25 && data[20] === 0x2f && (data[24] ?? 0) >> 5 === 0
+      );
+    case "VP8X":
+      return data.length >= 30 && view.getUint32(16, true) === 10;
+    default:
+      return false;
+  }
+}
 
 /**
  * Whether a size read from a header can be a real one. The reader looks at
  * a signature and then at fixed offsets, so bytes that merely start like a
- * PNG yield whatever sits at those offsets; a PNG states its size in the
+ * PNG, GIF, JPEG or WebP yield whatever sits at those offsets; each format
+ * is held to the structure around its size. A PNG states its size in the
  * `IHDR` chunk that has to come first (Apple's variant puts `CgBI` there),
  * and no format states a side of zero or past `MAX_SIDE`.
  */
 function plausibleHeader(
   data: Uint8Array,
-  size: { width: number; height: number },
+  size: { width: number; height: number; type: ImageType },
 ): boolean {
   const inRange = (side: number) =>
     Number.isInteger(side) && side > 0 && side <= MAX_SIDE;
   if (!inRange(size.width) || !inRange(size.height)) return false;
-  if (PNG_SIGNATURE.every((byte, i) => data[i] === byte)) {
-    const chunk = String.fromCharCode(...data.subarray(12, 16));
-    if (chunk === "CgBI") return true;
-    return chunk === "IHDR";
+  switch (size.type) {
+    case "png": {
+      const chunk = ascii(data, 12, 16);
+      return chunk === "IHDR" || chunk === "CgBI";
+    }
+    case "gif":
+      return wellFormedGif(data);
+    case "jpeg":
+      return wellFormedJpeg(data);
+    case "webp":
+      return wellFormedWebp(data);
+    default:
+      return true;
   }
-  return true;
 }
 
 /**

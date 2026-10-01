@@ -100,8 +100,9 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(code, 0);
     assert!(stdout.contains("\"operation_id\""));
 
-    // clap's own refusal: exit 2, its usage text, no envelope.
-    let (code, _, stderr) = run(&[
+    // A command line the parser refuses answers the envelope too, naming
+    // what was wrong, wherever `--json` stands in it.
+    let (code, stdout, stderr) = run(&[
         "--json",
         "device",
         "--db",
@@ -109,8 +110,56 @@ fn a_usage_refusal_leaves_by_two() {
         "nothing",
     ]);
     assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("Usage:"), "{stderr}");
-    assert!(!stderr.trim_start().starts_with('{'), "{stderr}");
+    assert_eq!(stdout, "");
+    let envelope = read_envelope(&stderr);
+    assert_eq!(envelope["error"]["code"], "usage");
+    assert!(
+        envelope["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("'nothing'"),
+        "{stderr}"
+    );
+    assert!(envelope["error"]["server"].is_null());
+    assert_eq!(envelope["exit"], 2);
+    for args in [
+        &["items", "get", "--json"][..],
+        &["--json", "device"],
+        &["--json", "items", "list", "--sort", "sideways"],
+    ] {
+        let (code, _, stderr) = run(args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        let envelope = read_envelope(&stderr);
+        assert_eq!(envelope["error"]["code"], "usage", "{args:?}");
+        assert_eq!(envelope["exit"], 2, "{args:?}");
+    }
+
+    // Without `--json`, and where it is only a value after `--`, the
+    // parser's usage text.
+    for args in [
+        &["items", "get"][..],
+        &[
+            "device",
+            "--db",
+            store.to_str().unwrap(),
+            "nothing",
+            "--",
+            "--json",
+        ],
+    ] {
+        let (code, _, stderr) = run(args);
+        assert_eq!(code, 2, "{args:?}: {stderr}");
+        assert!(stderr.contains("Usage:"), "{stderr}");
+        assert!(!stderr.trim_start().starts_with('{'), "{stderr}");
+    }
+
+    // Help and the version are answers, under `--json` as without it.
+    let (code, stdout, _) = run(&["--json", "--version"]);
+    assert_eq!(code, 0);
+    assert!(stdout.starts_with("marfa "), "{stdout}");
+    let (code, stdout, _) = run(&["--json", "device", "--help"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("Usage:"), "{stdout}");
 }
 
 /// The binary's own refusal of an argument, before anything is sent.

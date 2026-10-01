@@ -422,8 +422,7 @@ const getItemStatsRoute = createRoute({
   path: "/stats",
   tags: ["Items"],
   summary: "Get item counts",
-  description:
-    "Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+  description: `Returns a count of items, grouped on one axis. \`by=state\` (the default) counts per lifecycle state; \`by=type\` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -441,6 +440,15 @@ const getItemStatsRoute = createRoute({
         },
       },
       description: "Item counts by state",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "A query parameter the door does not declare, or a grouping it does not have.",
     },
     401: {
       content: {
@@ -709,7 +717,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
+    "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -827,6 +835,7 @@ const updateItemRoute = createRoute({
             "missing_required_field",
             "invalid_id",
             "invalid_properties",
+            "unknown_type",
             "edge_constraint_violation",
             "edge_cycle",
           ]),
@@ -2008,6 +2017,7 @@ export function itemRoutes(storage: Storage) {
 
   router.openapi(getItemStatsRoute, async (c) => {
     requireAuth(c);
+    refuseUnknownQueryParams(c.req.raw.url, getItemStatsRoute.request.query);
     const callerKey = c.get("apiKey");
     const { by } = c.req.valid("query");
     const typeFilter = getTypeFilter(c);

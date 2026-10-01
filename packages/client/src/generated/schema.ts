@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.
+         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -75,7 +75,7 @@ export interface paths {
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
+         * @description Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -271,7 +271,7 @@ export interface paths {
         put?: never;
         /**
          * Apply a bulk action
-         * @description Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match.
+         * @description Applies one action (transition, purge, retag, retier, or a property or own-time update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error. A transition out of the bin brings back every row each item's trash took through a cascading edge, each announced `item.restored` with `restored_with` naming the item moved to a subscriber that may read its type, and a purge announces each edge it takes `edge.deleted` with `purged_with` naming the purged item. A purge takes only rows in the trash when the job reaches them: any other match, live or restored since the job was queued, is left untouched and reported in the job's `errors` with `invalid_transition`. A purge may carry `expected_ids`, the ids its dry run returned, and then takes only the rows in that list the filter still matches: a row the filter has come to match since the dry run is left untouched, and `max_items` caps the rows the purge takes rather than the filter's whole match.
          *
          *     Unrecognized fields are refused with `400` rather than ignored, in the request body and inside `filter` alike: a dropped filter field is not a narrower match set but every item, and a dropped `dry_run` is the action running for real. A field of your own must start with `_`, which is always ignored.
          */
@@ -1771,6 +1771,16 @@ export interface components {
                 };
             };
         };
+        ValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         TypeNotPermittedRefusal: {
             error: {
                 /** @enum {string} */
@@ -1847,16 +1857,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "item_not_found";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "edge_constraint_violation" | "edge_cycle" | "invalid_id" | "invalid_properties" | "missing_required_field" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2097,16 +2097,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "invalid_id" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        ValidationErrorRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -3555,6 +3545,21 @@ export interface operations {
                     };
                 };
             };
+            /** @description A query parameter the door does not declare, or a grouping it does not have. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
             /** @description Unauthorized */
             401: {
                 headers: {
@@ -3986,7 +3991,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */

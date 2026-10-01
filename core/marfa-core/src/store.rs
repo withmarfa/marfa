@@ -1253,6 +1253,35 @@ pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
     }
 }
 
+/// Whether the copy takes an edge of `edge_type` drawn from `source_id`: one
+/// from a row it holds, or of a type in `whole` (`device.md` 1, 43).
+pub fn takes_edge(
+    conn: &Connection,
+    source_id: &str,
+    edge_type: &str,
+    whole: &[String],
+) -> Result<bool, CoreError> {
+    Ok(whole.iter().any(|held| held == edge_type) || item_held(conn, source_id)?)
+}
+
+/// Drops edge `id` from the copy where the copy no longer takes it and no
+/// write of this device's to it waits, which is laid over it until answered.
+pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    let Some(edge) = edge_by_id(conn, id)? else {
+        return Ok(false);
+    };
+    if takes_edge(
+        conn,
+        &edge.source_id,
+        &edge.edge_type,
+        &whole_edge_types(conn)?,
+    )? || edge_write_waits(conn, id)?
+    {
+        return Ok(false);
+    }
+    delete_edge(conn, id)
+}
+
 /// Holds `id` by id from now on. Answers whether it was not pinned already.
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0)
