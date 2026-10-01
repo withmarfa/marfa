@@ -206,7 +206,10 @@
           },
           "extensions": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {}
+            }
           }
         },
         "required": [
@@ -1850,7 +1853,9 @@
           },
           "property_schema": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EdgePropertyDefinition"
+            }
           },
           "reverse_name": {
             "type": "string"
@@ -1871,6 +1876,38 @@
           "cascade_on_delete",
           "property_schema",
           "written_at"
+        ]
+      },
+      "EdgePropertyDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items_type": {
+            "type": "string",
+            "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
+          },
+          "format": {
+            "type": "string",
+            "description": "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail."
+          }
+        },
+        "required": [
+          "type"
         ]
       },
       "MissingRequiredFieldOrValidationErrorRefusal": {
@@ -1981,36 +2018,7 @@
           "property_schema": {
             "type": "object",
             "additionalProperties": {
-              "type": "object",
-              "properties": {
-                "type": {
-                  "type": "string",
-                  "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
-                },
-                "description": {
-                  "type": "string"
-                },
-                "required": {
-                  "type": "boolean"
-                },
-                "enum_values": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "items_type": {
-                  "type": "string",
-                  "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
-                },
-                "format": {
-                  "type": "string",
-                  "description": "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail."
-                }
-              },
-              "required": [
-                "type"
-              ]
+              "$ref": "#/components/schemas/EdgePropertyDefinition"
             }
           },
           "reverse_name": {
@@ -2164,7 +2172,9 @@
           },
           "fields": {
             "type": "object",
-            "additionalProperties": {}
+            "additionalProperties": {
+              "$ref": "#/components/schemas/FieldDefinition"
+            }
           },
           "version": {
             "type": "number"
@@ -2194,6 +2204,70 @@
         "enum": [
           "container"
         ]
+      },
+      "FieldDefinition": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "enum",
+              "array",
+              "object",
+              "thumbnail"
+            ],
+            "description": "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`."
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "items_type": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "url",
+              "email",
+              "datetime",
+              "date",
+              "thumbnail",
+              "bcp47",
+              "iso3166"
+            ],
+            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`."
+          },
+          "searchable": {
+            "type": "boolean"
+          },
+          "maxLength": {
+            "type": "integer"
+          },
+          "maxItems": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "additionalProperties": {}
       },
       "DisplayHints": {
         "type": "object",
@@ -2461,70 +2535,6 @@
         "required": [
           "fields",
           "id"
-        ],
-        "additionalProperties": {}
-      },
-      "FieldDefinition": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": [
-              "string",
-              "number",
-              "integer",
-              "boolean",
-              "url",
-              "email",
-              "datetime",
-              "date",
-              "enum",
-              "array",
-              "object",
-              "thumbnail"
-            ],
-            "description": "`thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`."
-          },
-          "description": {
-            "type": "string"
-          },
-          "required": {
-            "type": "boolean"
-          },
-          "enum_values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "items_type": {
-            "type": "string"
-          },
-          "format": {
-            "type": "string",
-            "enum": [
-              "url",
-              "email",
-              "datetime",
-              "date",
-              "thumbnail",
-              "bcp47",
-              "iso3166"
-            ],
-            "description": "Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`."
-          },
-          "searchable": {
-            "type": "boolean"
-          },
-          "maxLength": {
-            "type": "integer"
-          },
-          "maxItems": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "type"
         ],
         "additionalProperties": {}
       },

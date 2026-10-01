@@ -1671,7 +1671,9 @@ export interface components {
             item_id: string;
             tags: string[];
             extensions: {
-                [key: string]: unknown;
+                [key: string]: {
+                    [key: string]: unknown;
+                };
             };
         };
         EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal: {
@@ -2171,11 +2173,22 @@ export interface components {
             /** @enum {string} */
             cascade_on_delete: "cascade" | "orphan" | "block";
             property_schema: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
             reverse_name?: string;
             /** @enum {string} */
             written_at: "source" | "target";
+        };
+        EdgePropertyDefinition: {
+            /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
+            type: string;
+            description?: string;
+            required?: boolean;
+            enum_values?: string[];
+            /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
+            items_type?: string;
+            /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
+            format?: string;
         };
         MissingRequiredFieldOrValidationErrorRefusal: {
             error: {
@@ -2208,17 +2221,7 @@ export interface components {
             /** @enum {string} */
             cascade_on_delete?: "cascade" | "orphan" | "block";
             property_schema?: {
-                [key: string]: {
-                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
-                    type: string;
-                    description?: string;
-                    required?: boolean;
-                    enum_values?: string[];
-                    /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
-                    items_type?: string;
-                    /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
-                    format?: string;
-                };
+                [key: string]: components["schemas"]["EdgePropertyDefinition"];
             };
             /** @description The name the edge goes by read from its target, such as `child-of` for `parent-of`. It takes the edge-type identifier grammar, and no other edge type may hold it as an id or a reverse name. */
             reverse_name?: string;
@@ -2266,7 +2269,7 @@ export interface components {
             compatible_with?: string[];
             roles?: components["schemas"]["TypeRole"][];
             fields: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["FieldDefinition"];
             };
             version: number;
             display_hints?: components["schemas"]["DisplayHints"];
@@ -2277,6 +2280,27 @@ export interface components {
         };
         /** @enum {string} */
         TypeRole: "container";
+        FieldDefinition: {
+            /**
+             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
+             * @enum {string}
+             */
+            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
+            description?: string;
+            required?: boolean;
+            enum_values?: string[];
+            items_type?: string;
+            /**
+             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
+             * @enum {string}
+             */
+            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
+            searchable?: boolean;
+            maxLength?: number;
+            maxItems?: number;
+        } & {
+            [key: string]: unknown;
+        };
         DisplayHints: {
             title_field?: string;
             body_field?: string;
@@ -2363,27 +2387,6 @@ export interface components {
             version_policy?: components["schemas"]["VersionPolicy"];
             merge_policy?: components["schemas"]["MergePolicy"];
             id: string;
-        } & {
-            [key: string]: unknown;
-        };
-        FieldDefinition: {
-            /**
-             * @description `thumbnail` holds a small image the writer supplies: `data:image/png;base64,…`, `image/jpeg` or `image/webp`, canonical base64, at most 16 KiB decoded, beginning with that format's signature. A type carries at most one, never under a name search indexes whatever its type (`title`, `body`, `description`, `name`), and never as an array's `items_type`.
-             * @enum {string}
-             */
-            type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail";
-            description?: string;
-            required?: boolean;
-            enum_values?: string[];
-            items_type?: string;
-            /**
-             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
-             * @enum {string}
-             */
-            format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";
-            searchable?: boolean;
-            maxLength?: number;
-            maxItems?: number;
         } & {
             [key: string]: unknown;
         };

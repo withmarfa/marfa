@@ -78,6 +78,19 @@ const EdgePropertyFormatSchema = z
     "A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.",
   );
 
+/** One property an edge of the type carries, as registration takes it and
+ *  the type answers it. */
+const EdgePropertyDefinitionSchema = z
+  .object({
+    type: EdgePropertyTypeSchema,
+    description: z.string().optional(),
+    required: z.boolean().optional(),
+    enum_values: z.array(z.string()).optional(),
+    items_type: EdgePropertyTypeSchema.optional(),
+    format: EdgePropertyFormatSchema.optional(),
+  })
+  .openapi("EdgePropertyDefinition");
+
 /** Exported so the archive restore validates a carried edge type through
  *  exactly the shape this route accepts, rather than a second reading of
  *  the same rules that can drift from it. */
@@ -96,17 +109,7 @@ export const EdgeTypeRequestSchema = z
     target_type_constraints: z.array(TypeConstraintSchema).optional(),
     cascade_on_delete: z.enum(["cascade", "orphan", "block"]).optional(),
     property_schema: z
-      .record(
-        z.string(),
-        z.object({
-          type: EdgePropertyTypeSchema,
-          description: z.string().optional(),
-          required: z.boolean().optional(),
-          enum_values: z.array(z.string()).optional(),
-          items_type: EdgePropertyTypeSchema.optional(),
-          format: EdgePropertyFormatSchema.optional(),
-        }),
-      )
+      .record(z.string(), EdgePropertyDefinitionSchema)
       .optional(),
     reverse_name: z
       .string()
@@ -137,7 +140,7 @@ const EdgeTypeResponseSchema = z
     source_type_constraints: z.array(z.string()),
     target_type_constraints: z.array(z.string()),
     cascade_on_delete: z.enum(["cascade", "orphan", "block"]),
-    property_schema: z.record(z.string(), z.unknown()),
+    property_schema: z.record(z.string(), EdgePropertyDefinitionSchema),
     reverse_name: z.string().optional(),
     written_at: z.enum(["source", "target"]),
   })

@@ -207,7 +207,7 @@ export const MetadataSchema = z
   .object({
     item_id: z.string(),
     tags: z.array(z.string()),
-    extensions: z.record(z.string(), z.unknown()),
+    extensions: z.record(z.string(), z.record(z.string(), z.unknown())),
   })
   .openapi("Metadata");
 
