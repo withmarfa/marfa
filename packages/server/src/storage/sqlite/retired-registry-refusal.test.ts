@@ -19,7 +19,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createConnection } from "./connection.js";
+import { createConnection, SCHEMA_SQL } from "./connection.js";
 
 const dirs: string[] = [];
 
@@ -120,7 +120,9 @@ describe("a retired registry table is refused on open", () => {
       .update(readFileSync(path))
       .digest("hex");
 
-    await expect(createConnection(path)).rejects.toThrow(/no occurred_at/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the items table lacks [^;]*\boccurred_at\b/,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
       before,
@@ -135,7 +137,9 @@ describe("a retired registry table is refused on open", () => {
     );
     seed.close();
 
-    await expect(createConnection(path)).rejects.toThrow(/no created_at/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the audit_log table lacks [^;]*\bcreated_at\b/,
+    );
   });
 
   it("refuses an api_keys that predates the permissions rename", async () => {
@@ -151,7 +155,9 @@ describe("a retired registry table is refused on open", () => {
     );
     seed.close();
 
-    await expect(createConnection(path)).rejects.toThrow(/no permissions/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the api_keys table lacks [^;]*\bpermissions\b/,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
@@ -166,7 +172,9 @@ describe("a retired registry table is refused on open", () => {
     );
     seed.close();
 
-    await expect(createConnection(path)).rejects.toThrow(/no sources/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the api_keys table lacks [^;]*\bsources\b/,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
@@ -189,7 +197,9 @@ describe("a retired registry table is refused on open", () => {
       .update(readFileSync(path))
       .digest("hex");
 
-    await expect(createConnection(path)).rejects.toThrow(/no size_bytes/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the blobs table lacks [^;]*\bsize_bytes\b/,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
       before,
@@ -199,8 +209,7 @@ describe("a retired registry table is refused on open", () => {
   it("refuses a blobs table that still carries storage_path", async () => {
     // The retired column was NOT NULL, so the DDL passes against a file
     // still carrying it and the boot says nothing; the first upload then
-    // dies on a constraint naming a column no source file mentions. Same
-    // witness as the rename above, so a stranger's `blobs` is still opened.
+    // dies on a constraint naming a column no source file mentions.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
@@ -212,7 +221,7 @@ describe("a retired registry table is refused on open", () => {
       .digest("hex");
 
     await expect(createConnection(path)).rejects.toThrow(
-      /still has a storage_path/,
+      /the blobs table has storage_path, which this build does not declare/,
     );
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
@@ -223,7 +232,6 @@ describe("a retired registry table is refused on open", () => {
   it("refuses an enrichment_state table that still carries extractor_version", async () => {
     // NOT NULL as storage_path was, so the boot would pass and the sweeper's
     // first write would die on a column nothing here writes.
-    // `config_signature` is the witness.
     const table = (extra: string) =>
       `CREATE TABLE enrichment_state (item_id TEXT PRIMARY KEY, blob_ref TEXT NOT NULL,${extra} status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, config_signature TEXT NOT NULL, updated_at TEXT NOT NULL)`;
     const path = scratch();
@@ -235,17 +243,17 @@ describe("a retired registry table is refused on open", () => {
       .digest("hex");
 
     await expect(createConnection(path)).rejects.toThrow(
-      /still has a extractor_version/,
+      /the enrichment_state table has extractor_version, which this build does not declare/,
     );
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
       before,
     );
 
-    // The witness: the same table without the column opens.
+    // The witness: a file built from this build's schema opens.
     const current = scratch();
     const fresh = createClient({ url: `file:${current}` });
-    await fresh.execute(table(""));
+    await fresh.executeMultiple(SCHEMA_SQL);
     fresh.close();
     const opened = await createConnection(current);
     await opened.close();
@@ -262,11 +270,6 @@ describe("a retired registry table is refused on open", () => {
     // and the poller throws on its own schedule for as long as the process
     // runs. A subscription that receives nothing is exactly the failure the
     // wildcard refusal exists to prevent, arriving by another door.
-    //
-    // `webhook_secret` is the witness: this build keeps the signing secret
-    // on the delivery row so a worker can sign without joining back to the
-    // subscription, which a table of this name written by anything else
-    // would not.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
@@ -277,7 +280,9 @@ describe("a retired registry table is refused on open", () => {
       .update(readFileSync(path))
       .digest("hex");
 
-    await expect(createConnection(path)).rejects.toThrow(/no event_type/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the outbound_webhook_deliveries table lacks [^;]*\bevent_type\b/,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
     expect(createHash("sha256").update(readFileSync(path)).digest("hex")).toBe(
       before,
@@ -293,9 +298,7 @@ describe("a retired registry table is refused on open", () => {
     // sweep after the upgrade.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
-    await seed.execute(
-      "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-    );
+    await seed.executeMultiple(SCHEMA_SQL);
     await seed.execute(
       "INSERT INTO settings (key, value) VALUES ('space_config', '{\"trash_retention_days\":90}')",
     );
@@ -317,17 +320,11 @@ describe("a retired registry table is refused on open", () => {
     );
   });
 
-  it("does not die on a settings table of another shape", async () => {
-    // The probe asks `PRAGMA table_info` for the column it needs rather than
-    // naming it in the SELECT. Naming it answers a foreign `settings` table
-    // with libsql's own `no such column: key` — no file, no remedy, and an
-    // open client never closed — which is the failure this whole block
-    // exists to replace with one sentence.
-    //
-    // Recognizing a stranger's schema is not this check's job, so the right
-    // answer here is to say nothing and move on. Whether such a database is
-    // usable afterwards is a different question and not one a check for a
-    // retired key of our own should be answering.
+  it("refuses a settings table of another shape, naming the file", async () => {
+    // Not this build's table, so not a file this build can serve: the first
+    // read of the configuration would fail on the missing `key`. Refused in
+    // one sentence naming the file, rather than a driver error naming
+    // neither.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
@@ -335,8 +332,10 @@ describe("a retired registry table is refused on open", () => {
     );
     seed.close();
 
-    const opened = await createConnection(path);
-    await opened.close();
+    await expect(createConnection(path)).rejects.toThrow(
+      /the settings table lacks key/,
+    );
+    await expect(createConnection(path)).rejects.toThrow(path);
   });
 
   it("opens a database whose settings hold something else entirely", async () => {
@@ -345,9 +344,7 @@ describe("a retired registry table is refused on open", () => {
     // would refuse every database that has ever been booted.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
-    await seed.execute(
-      "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
-    );
+    await seed.executeMultiple(SCHEMA_SQL);
     await seed.execute(
       "INSERT INTO settings (key, value) VALUES ('bootstrap_done', 'true')",
     );
@@ -383,13 +380,10 @@ describe("a retired registry table is refused on open", () => {
     await opened.close();
   });
 
-  it("opens a stranger's table that happens to share a name", async () => {
-    // `blobs` is a name anything might use, so the table alone is not
-    // evidence the file is one of ours. Each entry names a witness column
-    // this build's table has and an unrelated one would not, and concludes
-    // nothing without it. Refusing a foreign database with advice about a
-    // build that never wrote it is worse than opening it — the sibling
-    // `settings` probe reached the same answer from the other direction.
+  it("refuses a stranger's table that shares a name, without saying it is older", async () => {
+    // Whatever wrote it, this build cannot serve it: every blob door reads
+    // columns it lacks. The sentence says the schema is not this build's,
+    // which is true of a stranger's file, and claims nothing about its age.
     const path = scratch();
     const seed = createClient({ url: `file:${path}` });
     await seed.execute(
@@ -397,8 +391,10 @@ describe("a retired registry table is refused on open", () => {
     );
     seed.close();
 
-    const opened = await createConnection(path);
-    await opened.close();
+    await expect(createConnection(path)).rejects.toThrow(
+      /is not this build's: the blobs table lacks/,
+    );
+    await expect(createConnection(path)).rejects.not.toThrow(/predates/);
   });
 
   it("opens a fresh database, and one it has already opened", async () => {

@@ -6,8 +6,6 @@
  * nothing to a table that exists, so without the refusal such a file opens
  * and every write that takes a version step then fails on the snapshot's
  * insert, with a driver error naming a column the operator never heard of.
- * `REQUIRED_COLUMNS` in `connection.ts` is where an added column is named
- * for this, and this holds it there.
  */
 import { createClient } from "@libsql/client";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -52,8 +50,9 @@ describe("a versions table without the type column", () => {
     await seed.executeMultiple(schemaWithoutVersionsType());
     seed.close();
 
-    await expect(createConnection(path)).rejects.toThrow(/versions table/);
-    await expect(createConnection(path)).rejects.toThrow(/no type column/);
+    await expect(createConnection(path)).rejects.toThrow(
+      /the versions table lacks type\./,
+    );
     await expect(createConnection(path)).rejects.toThrow(path);
   });
 
