@@ -237,6 +237,75 @@ describe("type registry", () => {
     await expectMatchesSchema("PUT", "/types/{id}", 200, updated.data);
   });
 
+  it("keeps the rows a type already has as they are when it gains a field", async () => {
+    const typeId = testTypeId("gain-field");
+    const schema: TypeSchema = {
+      id: typeId,
+      fields: { name: { type: "string" } },
+    };
+    expect((await client.registerType(schema)).status).toBe(201);
+
+    // Undeclared, so nothing judges it yet.
+    const created = await client.createItem({
+      type: typeId,
+      properties: { name: "kept", count: "not a number" },
+    });
+    expect(created.status).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    const before = created.data.item;
+
+    const gained = await client.updateType(typeId, {
+      ...schema,
+      fields: {
+        ...schema.fields,
+        count: { type: "number" },
+        rank: { type: "number", required: true },
+      },
+    });
+    expect(gained.status).toBe(200);
+
+    // The witness: the new fields refuse what the stored row holds.
+    const refused = await client.createItem({
+      type: typeId,
+      properties: { name: "new", count: "not a number", rank: 1 },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const missing = await client.createItem({
+      type: typeId,
+      properties: { name: "new" },
+    });
+    expect(missing.status).toBe(400);
+
+    const read = await client.getItem(before.id);
+    expect(read.status).toBe(200);
+    expect(read.data.item.properties).toEqual(before.properties);
+    expect(read.data.item.version).toBe(before.version);
+    const listed = await client.listItems({ type: typeId });
+    expect(listed.status).toBe(200);
+    expect(listed.data.data.map((i) => i.id)).toEqual([before.id]);
+    expect(listed.data.data[0]!.properties).toEqual(before.properties);
+
+    const unrelated = await client.updateItem(before.id, {
+      properties: { name: "renamed" },
+      version: before.version,
+    });
+    // A write is judged on the properties the row would hold after it, so
+    // the stored values meet the new fields at the row's next write.
+    expect(unrelated.status).toBe(400);
+    expect(unrelated.error?.error.code).toBe("invalid_properties");
+    const fields = (
+      unrelated.error?.error.details?.errors as { field: string }[]
+    ).map((e) => e.field);
+    expect(fields.sort()).toEqual(["count", "rank"]);
+
+    const mended = await client.updateItem(before.id, {
+      properties: { name: "renamed", count: 3, rank: 1 },
+      version: before.version,
+    });
+    expect(mended.status).toBe(200);
+  });
+
   it("deletes a type with no items", async () => {
     const typeId = testTypeId("delete-empty");
     const schema: TypeSchema = {
