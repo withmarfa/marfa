@@ -548,6 +548,48 @@ describe("what a connector keeps on the instance", () => {
     });
   });
 
+  it("keeps a top-level __proto__ key in the state and in a record as sent", async () => {
+    const mine = await connector("state-proto");
+    const process = await holding(mine);
+    const row = await note();
+    const sent = '{"__proto__":{"vendor":"v"},"cursor":"c"}';
+    // Parsed rather than written as a literal, where `__proto__` would set
+    // the prototype instead of naming a key the request then carries.
+    const document = JSON.parse(sent) as Record<string, unknown>;
+    expect(JSON.stringify({ state: document })).toBe(`{"state":${sent}}`);
+
+    // The transport's own parser drops a `__proto__` key from what it reads,
+    // so each answer is read with `JSON.parse`, which keeps it.
+    const call = <T>(path: string, method: string, body?: unknown) =>
+      mine.client.rawRequest<T>(`/connectors/${mine.id}${path}`, {
+        method,
+        body: body as Record<string, unknown> | undefined,
+        parseResponse: JSON.parse,
+      });
+
+    const put = await call<{ state: unknown }>("/state", "PUT", {
+      process,
+      state: document,
+    });
+    expect(put.status).toBe(200);
+    expect(JSON.stringify(put.data.state)).toBe(sent);
+    const got = await call<{ state: unknown }>("/state", "GET");
+    expect(JSON.stringify(got.data.state)).toBe(sent);
+
+    const written = await call("/agreements", "POST", {
+      process,
+      set: [{ item_id: row.id, waiting: false, record: document }],
+    });
+    expect(written.status).toBe(200);
+    const read = await call<{ data: { record: unknown }[] }>(
+      "/agreements/find",
+      "POST",
+      { item_ids: [row.id] },
+    );
+    expect(read.status).toBe(200);
+    expect(JSON.stringify(read.data.data[0]?.record)).toBe(sent);
+  });
+
   it("refuses a state over its cap and takes one at it", async () => {
     const mine = await connector("state-cap");
     const process = await holding(mine);
