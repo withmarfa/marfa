@@ -811,9 +811,7 @@ async function processBulkItem(
       // Blast radius differs from the single-item doors and it is worth
       // knowing which mode you are in. `atomic` defaults to true, so one
       // refused entry rolls the page back as `bulk_atomic_rollback`
-      // carrying this refusal in `details.code`, at `400` rather than the
-      // `409` the other doors answer with: a rollback takes `403` for a
-      // permission the caller lacks and `400` for everything else.
+      // carrying this refusal in `details.code`, at its `409`.
       //
       // **Which code depends on which resolution got here.** An entry the
       // natural key resolved named no id, so the declaration is the
@@ -1237,8 +1235,8 @@ export function bulkRoutes(storage: Storage) {
     // an item row, so a page carrying an entry its key may not write, or
     // naming a source its key does not claim, is refused for that entry
     // whatever rows the store holds. Left to the per-entry pass, a stale
-    // entry ahead of it would answer first, as a `400`, and the caller would
-    // re-read its body over a refusal whose cause is a permission it lacks
+    // entry ahead of it would answer first, as a `409`, and the caller would
+    // re-read the row over a refusal whose cause is a permission it lacks
     // (`items.md` 31).
     if (atomic) {
       for (const [i, raw] of items.entries()) {
