@@ -15,7 +15,7 @@ import {
   hasPermission,
 } from "@withmarfa/shared";
 import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
-import type { Storage } from "../storage/interface.js";
+import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
 // ---------------------------------------------------------------------------
@@ -260,6 +260,57 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * The principal a sign-in's access token stands for, as every door reads
+ * it, and as a bulk-action job reads it again before each chunk.
+ */
+export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey {
+  const typePermissions = scopesToTypePermissions(oauthToken.scopes);
+  const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
+  const metadataPermissions = scopesToMetadataPermissions(oauthToken.scopes);
+  const profilePermissions = scopesToProfilePermissions(oauthToken.scopes);
+  // Stable composite label/source. Used in audit rows; doesn't need
+  // to be a real foreign-key handle — system.connection projection
+  // is maintained separately.
+  const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
+  const createdAtIso = oauthToken.createdAtMs
+    ? new Date(oauthToken.createdAtMs).toISOString()
+    : new Date().toISOString();
+  // **No role is projected, because there is no role.** What the app may
+  // do is the grant, which travels beside this principal rather than
+  // inside it.
+  return {
+    id: oauthToken.id,
+    label: `oauth:${grantHandle}`,
+    source: `oauth:${grantHandle}`,
+    // **A sign-in claims no source beyond its own.** A claim is granted
+    // by a key's creator, and a grant is consent to scopes, none of
+    // which names a source, so there is nothing an app was given that
+    // a claim could come from.
+    sources: [],
+    default_tier: "library",
+    // **An operator key is never derivable from a sign-in.** Running the
+    // instance sits outside the permission model, so no consent screen can
+    // offer it and no grant can reach it.
+    is_operator: false,
+    // The permissions the door reads come from the grant beside this
+    // principal rather than from here, because a grant is the live answer
+    // and a projection would be a copy of it taken at request time.
+    //
+    // The client is named on the principal because one thing downstream
+    // needs to know an app chose this credential's label rather than an
+    // operator: see `extensionLabelOf`.
+    oauth_client_id: oauthToken.clientId,
+    type_permissions: typePermissions,
+    extension_permissions: {},
+    edge_permissions: edgePermissions,
+    metadata_permissions: metadataPermissions,
+    profile_permissions: profilePermissions,
+    created_at: createdAtIso,
+    last_used_at: null,
+  };
+}
+
+/**
  * **Nothing here reads how the instance was configured, and that is the
  * point.** What a caller may do turns on the credential in hand and never on
  * a deployment setting.
@@ -343,52 +394,7 @@ export function authMiddleware(storage: Storage, salt: string) {
         return next();
       }
 
-      const typePermissions = scopesToTypePermissions(oauthToken.scopes);
-      const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
-      const metadataPermissions = scopesToMetadataPermissions(
-        oauthToken.scopes,
-      );
-      const profilePermissions = scopesToProfilePermissions(oauthToken.scopes);
-      // Stable composite label/source. Used in audit rows; doesn't need
-      // to be a real foreign-key handle — system.connection projection
-      // is maintained separately.
-      const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
-      const createdAtIso = oauthToken.createdAtMs
-        ? new Date(oauthToken.createdAtMs).toISOString()
-        : new Date().toISOString();
-      // **No role is projected, because there is no role.** What the app may
-      // do is the grant, which travels beside this principal rather than
-      // inside it.
-      c.set("apiKey", {
-        id: oauthToken.id,
-        label: `oauth:${grantHandle}`,
-        source: `oauth:${grantHandle}`,
-        // **A sign-in claims no source beyond its own.** A claim is granted
-        // by a key's creator, and a grant is consent to scopes, none of
-        // which names a source, so there is nothing an app was given that
-        // a claim could come from.
-        sources: [],
-        default_tier: "library",
-        // **An operator key is never derivable from a sign-in.** Running the
-        // instance sits outside the permission model, so no consent screen can
-        // offer it and no grant can reach it.
-        is_operator: false,
-        // The permissions the door reads come from the grant beside this
-        // principal rather than from here, because a grant is the live answer
-        // and a projection would be a copy of it taken at request time.
-        //
-        // The client is named on the principal because one thing downstream
-        // needs to know an app chose this credential's label rather than an
-        // operator: see `extensionLabelOf`.
-        oauth_client_id: oauthToken.clientId,
-        type_permissions: typePermissions,
-        extension_permissions: {},
-        edge_permissions: edgePermissions,
-        metadata_permissions: metadataPermissions,
-        profile_permissions: profilePermissions,
-        created_at: createdAtIso,
-        last_used_at: null,
-      });
+      c.set("apiKey", oauthPrincipal(oauthToken));
       c.set("authType", "oauth");
       // The granted set, beside the projections rather than inside them.
       // Read only by `requirePermission` and by the audit rows that name

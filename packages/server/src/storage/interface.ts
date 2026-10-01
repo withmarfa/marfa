@@ -1689,6 +1689,13 @@ export interface OauthProviderStore {
    *  has expired. Opaque tokens carry no embedded claims, so the row is
    *  read directly. */
   validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
+  /** The token by its id, for work a token queued and that runs after the
+   *  request: null once the token is revoked or gone with its grant. An
+   *  expired token is still answered, because tokens expire within the hour
+   *  and a refresh mints a new one under a new id while the grant stands;
+   *  revoking a grant deletes its tokens, so a row still present and not
+   *  revoked means the grant stands. */
+  getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null>;
   /** Cascade revocation for a grant: delete every access + refresh token
    *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
    *  handler when the user revokes an app's access. The grant's
@@ -2669,8 +2676,15 @@ export interface BulkActionJobStore {
     finishedAt: string,
   ): Promise<void>;
   /** Terminal `failed`. Writes the error string, sets `finished_at`. Changes
-   *  the job only while it is `queued` or `in_progress`, as `complete` does. */
-  fail(id: string, error: string, finishedAt: string): Promise<void>;
+   *  the job only while it is `queued` or `in_progress`, as `complete` does.
+   *  A job stopped partway passes what it had done, which is written as
+   *  `complete` writes it. */
+  fail(
+    id: string,
+    error: string,
+    finishedAt: string,
+    sofar?: { result: string; counts: BulkActionJobProgress },
+  ): Promise<void>;
   /** Request cancellation. Flips `queued` or `in_progress` rows to
    *  `canceled`; no-op (returns `false`) on already-terminal rows.
    *  The worker observes the flag between chunks. */

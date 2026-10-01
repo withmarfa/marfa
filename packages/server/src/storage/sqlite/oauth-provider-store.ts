@@ -3,7 +3,7 @@
  * `interface.ts` (`OauthProviderStore`) for the contract.
  */
 
-import { eq, and, desc, lt, isNotNull, sql } from "drizzle-orm";
+import { eq, and, desc, lt, isNotNull, sql, type SQL } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -172,6 +172,20 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async validateAccessToken(
     tokenHash: string,
   ): Promise<OauthAccessTokenRow | null> {
+    return this.unrevokedAccessToken(
+      eq(auth_oauth_access_token.token, tokenHash),
+      true,
+    );
+  }
+
+  async getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null> {
+    return this.unrevokedAccessToken(eq(auth_oauth_access_token.id, id), false);
+  }
+
+  private async unrevokedAccessToken(
+    where: SQL,
+    honorExpiry: boolean,
+  ): Promise<OauthAccessTokenRow | null> {
     const rows = await this.db
       .select({
         id: auth_oauth_access_token.id,
@@ -183,7 +197,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         revoked: auth_oauth_access_token.revoked,
       })
       .from(auth_oauth_access_token)
-      .where(eq(auth_oauth_access_token.token, tokenHash))
+      .where(where)
       .limit(1);
     const row = rows[0];
     if (!row) return null;
@@ -194,7 +208,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     if (row.revoked !== null) return null;
     // Expired tokens return null — fail closed.
     const expMs = row.expiresAt ? row.expiresAt.getTime() : null;
-    if (expMs !== null && expMs < Date.now()) return null;
+    if (honorExpiry && expMs !== null && expMs < Date.now()) return null;
     const parsedScopes = safeJsonParse<unknown>(
       row.scopes,
       [],

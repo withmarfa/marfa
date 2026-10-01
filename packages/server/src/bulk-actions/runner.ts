@@ -8,7 +8,8 @@
  * can stay per-row.
  *
  * Authorization: matched_ids were resolved at job-create-time inside a
- * request context with full type-permission narrowing.
+ * request context with full type-permission narrowing, and the worker
+ * hands each chunk only the ids the queuing credential may still write.
  *
  * Every chunk publishes what it wrote, on every action. The publish is
  * what appends to the event log, and the log is what a client rebuilding
