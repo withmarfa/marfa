@@ -1287,6 +1287,7 @@ fn settle(
                         },
                     )?;
                     store::lay_waiting_edge_writes_over(&tx, &parsed.edge.id)?;
+                    store::let_go_of_untaken_edge(&tx, &parsed.edge.id)?;
                     tx.commit()?;
                     Ok(Settled {
                         replayed: parsed.acknowledged || replayed_header,
@@ -1790,6 +1791,7 @@ pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> R
         } => {
             store::upsert_edge(conn, edge)?;
             store::lay_waiting_edge_writes_over(conn, id)?;
+            store::let_go_of_untaken_edge(conn, id)?;
         }
         // The server holds no such edge, which for a refused create is the
         // honest answer and for a refused update means it went elsewhere.
