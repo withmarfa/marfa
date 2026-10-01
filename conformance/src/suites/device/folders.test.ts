@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -2662,6 +2663,71 @@ describe("files and items", () => {
       );
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
+      await watching.stop();
+    }
+  });
+
+  it("keeps syncing both ways while a file changes twice a second", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c4";
+    harness = await folderHarness("folder-watch-steady", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "remote", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "remote", body: "changed elsewhere" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    const log = put(harness, "log.md", "a log\n");
+    let lines = 0;
+    // Faster than the watch's debounce lets the folder settle, and for the
+    // whole run, so nothing below can be waiting for it to stop.
+    const writing = setInterval(() => {
+      lines += 1;
+      appendFileSync(log, `line ${lines}\n`);
+    }, 500);
+    const watching = harness.folder.watch();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      put(
+        harness,
+        "other.md",
+        "---\ntitle: Other\n---\nwritten beside the log\n",
+      );
+      await vi.waitFor(
+        () => {
+          expect(
+            read(harness!, "remote.md"),
+            "a change from the server never reached the folder while one file kept changing",
+          ).toContain("changed elsewhere");
+          expect(
+            sentTitles(harness!),
+            "a new file never reached the server while another file kept changing",
+          ).toContain("Other");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      clearInterval(writing);
       await watching.stop();
     }
   });
