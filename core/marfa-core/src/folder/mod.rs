@@ -14,7 +14,7 @@ pub mod identity;
 mod lines;
 pub mod lists;
 mod names;
-mod placement;
+pub(crate) mod placement;
 mod removal;
 pub use removal::{Confirmed, Restored};
 pub mod registry;

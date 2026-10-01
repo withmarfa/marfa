@@ -392,7 +392,7 @@ pub(super) fn places(key: &Value) -> bool {
 const OPERATOR: &str = "operator";
 
 /// Whether a key reads items of `item_type`.
-pub(super) fn reads(key: &Value, item_type: &str) -> bool {
+pub(crate) fn reads(key: &Value, item_type: &str) -> bool {
     matches!(
         resolved(key, "type_permissions", item_type).as_deref(),
         Some("read" | "write")
