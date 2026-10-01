@@ -1281,6 +1281,52 @@ describe("a key's claims", () => {
     ).toEqual([atBound, folder]);
   });
 
+  it("refuses a mint or an update claiming more than 1,000 sources", async () => {
+    const claims = (n: number): string[] =>
+      Array.from({ length: n }, (_, i) => `${ctx.source}-many-${String(i)}`);
+
+    // The witness. A key claiming exactly the cap is granted, so the
+    // refusals below are the count and not the claims themselves.
+    const atCap = await operator.createKey({
+      label: "many",
+      source: `${ctx.source}-many`,
+      sources: claims(1000),
+    });
+    expect(
+      atCap.status,
+      "a key claiming 1,000 sources was refused, so the refusals below may be every long list",
+    ).toBe(201);
+    trackKey(ctx, atCap.data.id);
+    expect(atCap.data.sources).toHaveLength(1000);
+
+    const refusedMint = await operator.createKey({
+      label: "too-many",
+      source: `${ctx.source}-too-many`,
+      sources: claims(1001),
+    });
+    expect(
+      refusedMint.status,
+      "a mint claiming 1,001 sources was granted, so a key's claims grow without bound",
+    ).toBe(400);
+    expect(refusedMint.error?.error.code).toBe("validation_error");
+
+    const refusedUpdate = await operator.updateKey(atCap.data.id, {
+      sources: claims(1001),
+    });
+    expect(
+      refusedUpdate.status,
+      "an update claiming 1,001 sources was granted, so a key's claims grow without bound",
+    ).toBe(400);
+    expect(refusedUpdate.error?.error.code).toBe("validation_error");
+
+    const listed = await operator.listKeys();
+    expect(listed.ok, "the key listing failed").toBe(true);
+    expect(
+      listed.data.data.find((k) => k.id === atCap.data.id)?.sources,
+      "a refused update changed the key's claims",
+    ).toHaveLength(1000);
+  });
+
   it("a mint naming nothing takes the creator's claims", async () => {
     const creator = await claimingKey("creator", [folder]);
     const inherited = await creator.client.createKey({
