@@ -94,6 +94,9 @@ function assertUnreservedSources(sources: readonly string[] | undefined): void {
 // Schemas
 // ---------------------------------------------------------------------------
 
+/** Every write naming a source and every read of the key walks the list. */
+const MAX_CLAIMED_SOURCES = 1000;
+
 /**
  * The sources a key claims besides its own, as the two writing doors take
  * them. Trimmed and bounded as `source` is, so a claim can be anything a
@@ -101,8 +104,12 @@ function assertUnreservedSources(sources: readonly string[] | undefined): void {
  */
 const SourcesSchema = z
   .array(z.string().trim().min(1, "a claimed source is not empty").max(200))
+  .max(
+    MAX_CLAIMED_SOURCES,
+    `a key claims at most ${String(MAX_CLAIMED_SOURCES)} sources`,
+  )
   .describe(
-    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.",
+    "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. At most 1,000 entries. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` is refused.",
   );
 
 /** A stored key as every door that returns one returns it, plaintext aside. */
@@ -224,7 +231,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "`missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, or the bootstrap secret was refused.",
+        "`missing_required_field` for a body without `label` or `source`. `validation_error` when the body named a reserved `source` or claimed one in `sources`, claimed more than 1,000 sources, or the bootstrap secret was refused.",
     },
     401: {
       content: {
