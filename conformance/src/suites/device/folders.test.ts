@@ -2294,6 +2294,43 @@ describe("files and items", () => {
     ).toBe(0);
   });
 
+  it("reads past a byte-order mark and writes the file back without it", async () => {
+    harness = await folderHarness("folder-byte-order-mark");
+    scriptFolderWrites(harness);
+    const text = "---\ntitle: Marked\ncolor: blue\n---\nThe body.\n";
+    put(harness, "marked.md", `\uFEFF${text}`);
+    expect(
+      readFileSync(join(harness.dir, "marked.md")).subarray(0, 3),
+      "the file was not written with the mark, so what follows proves nothing about one",
+    ).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const [sent] = sentCreates(harness);
+    const properties = sent?.properties as Record<string, unknown>;
+    expect(
+      [properties.title, properties.color, properties.body],
+      "a byte-order mark hid the frontmatter, so the fields became body text and the title and properties are gone",
+    ).toEqual(["Marked", "blue", "The body.\n"]);
+
+    const written = readFileSync(join(harness.dir, "marked.md"));
+    expect(
+      written.toString("utf8"),
+      "the folder never wrote the file back, so the absence of the mark below would be the fixture's own",
+    ).toMatch(/^marfa_id:/m);
+    expect(
+      written.subarray(0, 3).toString("utf8"),
+      "the folder wrote the mark back, or wrote its fields after it where only it can see them",
+    ).toBe("---");
+
+    const again = await harness.folder.scan();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(
+      again.value.updated,
+      "the file changed under the folder's own hand, so every pass pushes a change nobody made",
+    ).toBe(0);
+  });
+
   it("takes the edge with a link the body no longer names", async () => {
     harness = await folderHarness("folder-link-removed");
     scriptFolderWrites(harness);
