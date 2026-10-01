@@ -16,15 +16,22 @@
  * Restart recovery: on `start()`, jobs whose `worker_heartbeat_at` is
  * older than `staleAfterMs` are reset to `queued`. Default 60s.
  */
-import { generateId } from "@withmarfa/shared";
+import { generateId, hasPermission, MarfaError } from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
+import { checkTypeAccess } from "../middleware/auth.js";
 import type {
   BulkActionJobRow,
   BulkActionJobStore,
   Storage,
 } from "../storage/interface.js";
 import { runChunk, type ChunkOutcome } from "./runner.js";
-import type { BulkActionInput, BulkActionResult } from "./types.js";
+import { resolveJobCredential } from "./credential.js";
+import type {
+  BulkActionErrorEntry,
+  BulkActionInput,
+  BulkActionResult,
+} from "./types.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -247,7 +254,7 @@ export class BulkActionWorker {
     const input = JSON.parse(job.input) as BulkActionInput;
 
     const accSucceeded: string[] = [];
-    const accErrors: { id: string; code: string; message: string }[] = [];
+    const accErrors: BulkActionErrorEntry[] = [];
     const accBlobHashes = new Set<string>();
     const broughtBack = new Set<string>();
     let processed = 0;
@@ -268,15 +275,46 @@ export class BulkActionWorker {
         return;
       }
 
+      // The credential is asked again before every chunk, because the job
+      // runs after the request that queued it: a key revoked or narrowed
+      // since is answered as the next request bearing it would be.
+      const credential = await resolveJobCredential(
+        this.storage,
+        job.api_key_id,
+      );
+      if (!credential) {
+        await this.stopForCredential(
+          job.id,
+          "The credential that queued this job no longer authenticates, so the job wrote nothing further.",
+        );
+        return;
+      }
+      if (
+        input.action === "purge" &&
+        !hasPermission(credential.permissions, "items.purge")
+      ) {
+        await this.stopForCredential(
+          job.id,
+          "The credential that queued this job no longer holds items.purge, so the job purged nothing further.",
+        );
+        return;
+      }
+
       const slice = matchedIds.slice(i, i + this.chunkSize);
-      let outcome: ChunkOutcome;
+      const { permitted, refused } = await this.splitByWriteAccess(
+        credential.key,
+        slice,
+      );
+      accErrors.push(...refused);
+      let outcome: ChunkOutcome = { succeeded: [], errors: [] };
       try {
-        outcome = await runChunk({
-          storage: this.storage,
-          input,
-          ids: slice,
-          broughtBack,
-        });
+        if (permitted.length > 0)
+          outcome = await runChunk({
+            storage: this.storage,
+            input,
+            ids: permitted,
+            broughtBack,
+          });
       } catch (err) {
         // Whole-chunk failure inside the transaction — a database error,
         // say. Annotate every id and continue to the next
@@ -284,7 +322,7 @@ export class BulkActionWorker {
         const reason = err instanceof Error ? err.message : String(err);
         outcome = {
           succeeded: [],
-          errors: slice.map((id) => ({
+          errors: permitted.map((id) => ({
             id,
             code: "internal_error",
             message: reason,
@@ -340,5 +378,47 @@ export class BulkActionWorker {
       },
       this.nowFn().toISOString(),
     );
+  }
+
+  /** End a job whose credential no longer allows what it was queued for.
+   *  The rows earlier chunks wrote stay written, as a cancel leaves them. */
+  private async stopForCredential(
+    jobId: string,
+    reason: string,
+  ): Promise<void> {
+    await this.jobs.fail(jobId, reason, this.nowFn().toISOString());
+    log("info", "bulk_action_worker.credential_withdrawn", { jobId, reason });
+  }
+
+  /**
+   * Split a chunk into the rows the credential may still write and a
+   * per-row refusal for the rest, asked of each row's type as the
+   * single-item write doors ask it. A row no longer found goes through, so
+   * the action reports it missing in its own words.
+   */
+  private async splitByWriteAccess(
+    key: ApiKey,
+    ids: string[],
+  ): Promise<{ permitted: string[]; refused: BulkActionErrorEntry[] }> {
+    const rows = await this.storage.items.getMany(ids, {
+      includeTrashed: true,
+    });
+    const permitted: string[] = [];
+    const refused: BulkActionErrorEntry[] = [];
+    for (const id of ids) {
+      const row = rows.get(id);
+      if (!row) {
+        permitted.push(id);
+        continue;
+      }
+      try {
+        checkTypeAccess(key, row.type, "write");
+        permitted.push(id);
+      } catch (err) {
+        if (!(err instanceof MarfaError)) throw err;
+        refused.push({ id, code: err.code, message: err.message });
+      }
+    }
+    return { permitted, refused };
   }
 }

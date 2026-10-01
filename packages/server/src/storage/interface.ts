@@ -1689,6 +1689,10 @@ export interface OauthProviderStore {
    *  has expired. Opaque tokens carry no embedded claims, so the row is
    *  read directly. */
   validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
+  /** The same answer by the token's id, for work a token queued and that
+   *  runs after the request: null once the token is revoked, expired or
+   *  gone with its grant. */
+  getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null>;
   /** Cascade revocation for a grant: delete every access + refresh token
    *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
    *  handler when the user revokes an app's access. The grant's

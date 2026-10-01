@@ -11,8 +11,8 @@ import {
   runBulkActionAsync,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { BulkActionWorker } from "../bulk-actions/index.js";
-import type { BulkActionJob, BulkActionResult } from "../bulk-actions/types.js";
+import { BulkActionWorker, runChunk } from "../bulk-actions/index.js";
+import type { BulkActionJob } from "../bulk-actions/types.js";
 
 let ctx: TestContext;
 
@@ -137,8 +137,9 @@ describe("a bulk purge takes only trashed rows", () => {
   });
 
   it("judges a type with its own soft-deleted state by that state", async () => {
-    // A `system.*` row ends `revoked`, not `trashed`. The door never hands
-    // one to a working credential's job, so the job is queued directly.
+    // A `system.*` row ends `revoked`, not `trashed`. No credential may
+    // write a `system.*` row, so no job reaches one, and the chunk is run
+    // directly.
     async function connection(): Promise<string> {
       const item = await ctx.storage.items.create({
         type: "system.connection",
@@ -155,28 +156,12 @@ describe("a bulk purge takes only trashed rows", () => {
     const active = await connection();
     expect((await ctx.storage.items.get(revoked))?.state).toBe("revoked");
 
-    const jobId = `job-${Math.random().toString(36).slice(2, 10)}`;
-    await ctx.storage.bulkActionJobs.create({
-      id: jobId,
-      api_key_id: null,
-      action: "purge",
-      input: JSON.stringify({ action: "purge", confirm: "PURGE" }),
-      matched_ids: JSON.stringify([revoked, active]),
-      matched_count: 2,
-      idempotency_key: null,
-      created_at: new Date().toISOString(),
-    });
-    const worker = new BulkActionWorker({
+    const result = await runChunk({
       storage: ctx.storage,
-      chunkSize: 100,
-      pollIntervalMs: 1,
+      input: { action: "purge", confirm: "PURGE" },
+      ids: [revoked, active],
     });
-    while (await worker.runOnce()) {
-      /* keep draining */
-    }
-    const job = await ctx.storage.bulkActionJobs.getById(jobId);
-    const result = JSON.parse(job?.result ?? "null") as BulkActionResult;
-    expect(result.succeeded).toBe(1);
+    expect(result.succeeded).toEqual([revoked]);
     expect(result.errors).toEqual([
       expect.objectContaining({
         id: active,

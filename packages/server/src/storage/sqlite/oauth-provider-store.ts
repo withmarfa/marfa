@@ -3,7 +3,7 @@
  * `interface.ts` (`OauthProviderStore`) for the contract.
  */
 
-import { eq, and, desc, lt, isNotNull, sql } from "drizzle-orm";
+import { eq, and, desc, lt, isNotNull, sql, type SQL } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
 import type {
@@ -172,6 +172,16 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async validateAccessToken(
     tokenHash: string,
   ): Promise<OauthAccessTokenRow | null> {
+    return this.liveAccessToken(eq(auth_oauth_access_token.token, tokenHash));
+  }
+
+  async getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null> {
+    return this.liveAccessToken(eq(auth_oauth_access_token.id, id));
+  }
+
+  private async liveAccessToken(
+    where: SQL,
+  ): Promise<OauthAccessTokenRow | null> {
     const rows = await this.db
       .select({
         id: auth_oauth_access_token.id,
@@ -183,7 +193,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         revoked: auth_oauth_access_token.revoked,
       })
       .from(auth_oauth_access_token)
-      .where(eq(auth_oauth_access_token.token, tokenHash))
+      .where(where)
       .limit(1);
     const row = rows[0];
     if (!row) return null;
