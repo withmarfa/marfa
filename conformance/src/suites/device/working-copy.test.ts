@@ -9,6 +9,7 @@ import {
   scriptBlob,
   startHarness,
   scriptHydration,
+  scriptKey,
   scriptWrites,
   type Harness,
 } from "./harness.js";
@@ -1671,6 +1672,7 @@ describe("the working copy says what it is", () => {
         next_cursor: null,
       },
     });
+    scriptKey(server);
     // The snapshot dies partway: the first page lands, the second never
     // answers, which is what a device meets when a hydration is interrupted.
     server.answer("GET", "/items", { kind: "drop" });

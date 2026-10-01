@@ -138,6 +138,17 @@ impl Core {
         self.lock.handle()
     }
 
+    /// Sets how the server's credential is renewed when the server refuses
+    /// it with a `401`, so a hydration, a catch-up, a held stream or a drain
+    /// that outlives a signed-in session's token goes on under a fresh one.
+    /// Each refused call is sent again once. A copy opened with no server
+    /// has nothing to renew.
+    pub fn renew_credential_with(&self, renew: http::Renew) {
+        if let Some(http) = &self.http {
+            http.renew_with(renew);
+        }
+    }
+
     /// How long a silent event stream is read before catch-up decides it has
     /// nothing more to replay.
     pub fn with_catch_up_idle(mut self, idle: Duration) -> Core {

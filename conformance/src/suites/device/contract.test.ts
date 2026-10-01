@@ -27,6 +27,7 @@ import {
   requireBinary,
   scriptBlob,
   scriptHydration,
+  scriptKey,
   scriptWrites,
   startHarness,
   type Harness,
@@ -1084,6 +1085,7 @@ describe("the contract the working copy was built for", () => {
     let pageOn = other;
     scripted.answer("GET", "/events", headRead("10"));
     scripted.answer("GET", "/types", typeCatalog());
+    scriptKey(scripted);
     scripted.answer("GET", "/items", () =>
       naming(itemsPage([{ item: wireItem({ id: "n1" }) }]), pageOn),
     );
@@ -1092,7 +1094,12 @@ describe("the contract the working copy was built for", () => {
       false,
     );
     if (!refused.ok) expect(refused.refusal.code).toBe("contract_mismatch");
-    expect(sent(scripted)).toEqual(["GET /events", "GET /types", "GET /items"]);
+    expect(sent(scripted)).toEqual([
+      "GET /events",
+      "GET /types",
+      "GET /keys/current",
+      "GET /items",
+    ]);
     const status = await device.status();
     expect(
       status.ok && status.value.items,
@@ -1116,6 +1123,7 @@ describe("the contract the working copy was built for", () => {
       replay("11", [itemEvent("11", "item.created", wireItem({ id: "n2" }))]),
     );
     scripted.answer("GET", "/types", () => naming(typeCatalog(), catalogOn));
+    scriptKey(scripted);
     scripted.answer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
@@ -1167,6 +1175,7 @@ describe("the contract the working copy was built for", () => {
     const { server: scripted, device } = harness;
     scripted.answer("GET", "/events", headRead("10"));
     scripted.answer("GET", "/types", typeCatalog(), endless);
+    scriptKey(scripted);
     scripted.answer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     await waitsOnTheBody(device.hold(["catch-up"]));
@@ -1325,6 +1334,7 @@ describe("the contract the working copy was built for", () => {
     let catalogOn = orders[0] ?? [];
     scripted.answer("GET", "/events", headRead("10"));
     scripted.answer("GET", "/types", () => naming(typeCatalog(), catalogOn));
+    scriptKey(scripted);
     scripted.answer("GET", "/items", itemsPage([]));
     for (const order of orders.slice(0, 2)) {
       catalogOn = order;

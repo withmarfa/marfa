@@ -17,10 +17,13 @@ on:
         type: boolean
         default: false
 
-# Superseded PR runs cancel; each main commit keeps its own validation.
+# A newer push to a branch, `main` included, cancels the run before it, since
+# the newer commit's run covers everything the older one would have. A
+# release tags a commit whose own run finished (`release.yml`). The event
+# keeps the nightly and a dispatch out of the push's group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_BUILD_JOBS: 2
@@ -39,6 +42,7 @@ jobs:
       contents: read
     outputs:
       required: ${{ steps.classify.outputs.required }}
+      core: ${{ steps.classify.outputs.core }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -79,11 +83,12 @@ jobs:
           key: tessdata-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
 
-  # The core's three commands on every pull request, not only on those that
-  # touch `core/`: a required check has to report on each one, and the
-  # binary's own tests read the root `openapi.json`. `core.yml` keeps the
-  # expensive half: the live tests, the Swift FFI crate built for every
-  # system it ships to, and the Node binding and its proof.
+  # The core's three commands, on macOS, for a pull request that touches the
+  # core, the root `openapi.json` its tests read, or the workflows; skipped
+  # otherwise, which satisfies the required check. Every push to `main` and
+  # the nightly run them whatever changed. `core.yml` keeps the expensive
+  # half: the live tests, the Swift FFI crate built for every system it ships
+  # to, and the Node binding and its proof.
   #
   # Every crate but the generated `marfa-client`, which is held to its
   # generator rather than to these: `--no-deps` keeps clippy off it where a
@@ -91,7 +96,7 @@ jobs:
   # since the generator formats what it writes.
   core-checks:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     name: Core checks
     timeout-minutes: 30
     runs-on: macos-26
@@ -105,6 +110,12 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            core/bindings/swift
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check the core workspace
         working-directory: core
         run: |
@@ -157,6 +168,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the device under test
         working-directory: core
         run: |
@@ -260,6 +275,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the binary under test
         working-directory: core
         run: |
