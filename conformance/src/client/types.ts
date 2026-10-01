@@ -314,6 +314,7 @@ export interface ConnectorRow {
 
 export interface ConnectorHoldTaken {
   expires_at: string;
+  ttl_ms: number;
   renewed: boolean;
 }
 

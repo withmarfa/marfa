@@ -139,6 +139,7 @@ describe("the hold", () => {
     await expectMatchesSchema("POST", "/connectors/{id}/hold", 200, taken.data);
     expect(taken.data.expires_at).toMatch(ISO);
     expect(taken.data.renewed).toBe(false);
+    expect(taken.data.ttl_ms).toBe(180_000);
     // The server's clock plus the window, three minutes unless named.
     const window = Date.parse(taken.data.expires_at) - before;
     expect(window).toBeGreaterThanOrEqual(179_000);
@@ -160,6 +161,7 @@ describe("the hold", () => {
     const renewed = await mine.client.holdConnector(mine.id, process);
     expect(renewed.status).toBe(200);
     expect(renewed.data.renewed).toBe(true);
+    expect(renewed.data.ttl_ms).toBe(180_000);
     expect(Date.parse(renewed.data.expires_at)).toBeGreaterThan(
       Date.parse(taken.data.expires_at),
     );
@@ -464,6 +466,7 @@ describe("the hold on an instance that names its window", () => {
     const taken = await own.holdConnector(id, first);
     expect(taken.status).toBe(200);
     expect(taken.data.renewed).toBe(false);
+    expect(taken.data.ttl_ms).toBe(WINDOW_MS);
     // The witness: a renewal while the hold is live says so.
     const unbroken = await own.holdConnector(id, first);
     expect(unbroken.status).toBe(200);
