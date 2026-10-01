@@ -217,7 +217,7 @@ describe("edges.bulk", () => {
       atomic: true,
     });
     expect(res.ok).toBe(false);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     expect(res.error?.error.code).toBe("bulk_atomic_rollback");
     expect(res.error?.error.details?.code).toBe("item_not_found");
 

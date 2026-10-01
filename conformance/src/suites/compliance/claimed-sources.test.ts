@@ -746,7 +746,7 @@ describe("a write naming a source", () => {
     // version, so it is an entry the pages below could be refused for.
     const alone = await writer.client.bulkItems({ items: [stale] });
     expect(alone.status, "a stale entry alone did not roll its page back").toBe(
-      400,
+      409,
     );
     expect(alone.error?.error.code).toBe("bulk_atomic_rollback");
     expect(

@@ -197,14 +197,10 @@ const bulkRoute = createRoute({
       description:
         "Validation error, or an atomic rollback. `atomic` defaults to " +
         "true, so a single refused entry aborts the whole page and the " +
-        "per-entry reason travels in `details.code`. Two of them turn on " +
-        "an entry declaring a `type` that is not the type of the row " +
-        "it resolved: `type_mismatch` where the natural key resolved " +
-        "it, because the entry named no id and the declaration is the " +
-        "mistake, and `id_reused` where the entry's own `id` did, " +
-        "because the id is taken by a row the entry is not describing " +
-        "— the same code the single-item doors answer. Send " +
-        "`atomic: false` to have each entry reported on its own instead.",
+        "per-entry reason travels in `details.code`, at the status that " +
+        "refusal carries on its own: `400` here, `403`, `404` or `409` " +
+        "below. Send `atomic: false` to have each entry reported on its " +
+        "own instead.",
     },
     401: {
       content: {
@@ -226,6 +222,24 @@ const bulkRoute = createRoute({
       },
       description:
         "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an entry naming a row that is not there, such as an inline edge's target, with `item_not_found` in `details.code`.",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an entry whose row moved or is taken, with `version_conflict`, `link_taken`, `type_mismatch` or `id_reused` in `details.code`. The last two turn on an entry declaring a `type` that is not the type of the row it resolved: `type_mismatch` where the natural key resolved it, because the entry named no id and the declaration is the mistake, and `id_reused` where the entry's own `id` did, because the id is taken by a row the entry is not describing, the same code the single-item doors answer.",
     },
   },
 });
