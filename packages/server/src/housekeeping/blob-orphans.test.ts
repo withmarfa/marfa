@@ -3,7 +3,7 @@
  * one run reports, and a later run purges what is still unreferenced once
  * the grace has passed since the report. What counts as a reference is
  * asserted here too: an item in any lifecycle state, a metadata extension,
- * a version snapshot.
+ * a version snapshot, wherever a string in it holds the hash.
  */
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
@@ -258,6 +258,46 @@ describe("what the report counts as a reference", () => {
     expect(await ctx.blobs.disk.has(orphan)).toBeNull();
     expect(await ctx.storage.blobs.get(named)).not.toBeNull();
     expect(await ctx.blobs.disk.has(named)).not.toBeNull();
+  });
+
+  it("keeps a blob a body links to after the file item naming it is purged", async () => {
+    ctx = await createTestContext();
+    const orphan = await upload(ctx, "nothing links to this");
+    const image = await upload(ctx, "an image a note links in its body");
+    const file = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.file",
+        properties: { blob_ref: image, mime_type: "image/png" },
+      },
+    });
+    expect(file.status).toBe(201);
+    const fileId = ((await file.json()) as { item: { id: string } }).item.id;
+    const note = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        properties: { body: `A chart:\n\n![chart](${image})\n` },
+      },
+    });
+    expect(note.status).toBe(201);
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${fileId}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
+    const purge = await request(ctx.app, "DELETE", `/items/${fileId}/purge`, {
+      key: ctx.workingKey,
+    });
+    expect(purge.status, await purge.clone().text()).toBe(200);
+
+    await reportThenPurge(ctx);
+
+    expect(await ctx.blobs.disk.has(orphan)).toBeNull();
+    expect(await ctx.storage.blobs.get(image)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(image)).not.toBeNull();
   });
 
   it("keeps a blob referenced only by a trashed item", async () => {
