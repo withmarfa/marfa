@@ -616,6 +616,31 @@ describe("item versioning", () => {
     expect(stale.data.item.properties.title).toBe("Advanced");
   });
 
+  it("refuses a retype into a type nothing registered, and moves nothing", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Stays", body: "Kept" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const destination = `user.retype-absent-${ctx.runId}`;
+    const refused = await client.updateItem(r.data.item.id, {
+      type: destination,
+      retype: true,
+      version: 1,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("unknown_type");
+    expect(refused.error?.error.details?.type).toBe(destination);
+    const fetched = await client.getItem(r.data.item.id);
+    expect(fetched.ok).toBe(true);
+    expect(fetched.data.item.type).toBe("core.note");
+    expect(fetched.data.item.version).toBe(1);
+  });
+
   it("moves the type with retype alone at a stale version", async () => {
     const r = await client.createItem(
       createNote({

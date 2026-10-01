@@ -25,13 +25,13 @@ The refresh is the direct commands'. `device` and `folders` take the credential 
 
 `marfa device --db PATH <command>` is the working copy: `hydrate`, `catch-up`, `follow`, `changes`, `status`, `items`, `search`, `edges`, `tags`, `metadata`, `extensions`, `blobs`, `queue`, `drain`, `forget`, `release`, `pin` and `unpin`, on the store `--db` (or `MARFA_DB`) names. `hydrate --edge-type` holds every edge of a type the key reads, whichever ends the copy holds, and `pin` holds one row by id whatever the slice says of it, kept current after it leaves the slice (`device.md` 1). A blob's bytes are fetched when asked for and kept beside it, in a folder named for its file with `.blobs` after it. `follow` holds the event stream open and prints a line for each event that changes the copy. `--reader` opens a store another process writes, to read it only: it never takes the writer role, makes a store or writes to one. `changes` always opens that way and prints a line each time the writer saves. It holds every answer to the contract the core was built for as the direct commands do, and a drain that meets another ends there (`device.md` 42). There is no default store. `marfa folders <command>` is a folder, which carries its own store. Both take the server and the credential the same way the direct commands do.
 
-`--json` on any command prints the answer as JSON and a refusal as one JSON object on stderr, `{"error":{"code","message","server":{"status","code","details"}|null,"retry_after_seconds"},"exit":N}`, where `error.code` is from the closed set `marfa --help` lists. The exit code is one of six:
+`--json` on any command prints the answer as JSON and a refusal as one JSON object on stderr, `{"error":{"code","message","server":{"status","code","details"}|null,"retry_after_seconds"},"exit":N}`, where `error.code` is from the closed set `marfa --help` lists. A command line the binary does not take is a refusal like any other: under `--json` it is the envelope with the code `usage` and exit 2, and without it the usage text. The exit code is one of six:
 
 | Exit | Meaning                                                                                                   |
 | ---- | --------------------------------------------------------------------------------------------------------- |
 | 0    | Done.                                                                                                     |
 | 1    | The request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it. |
-| 2    | The command line was wrong, or named no store or server. clap's own refusals print its usage text.        |
+| 2    | The command line was wrong, or named no store or server.                                                  |
 | 3    | The environment failed: unreachable, timed out, a 5xx, a 429. Try again; `retry_after_seconds` says when. |
 | 4    | The working copy or the queue refused under the device rules, or this system has no keychain.             |
 | 5    | No credential, the credential was refused, or the sign-in ended; `marfa login` starts one.               |

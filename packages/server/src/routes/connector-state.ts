@@ -49,6 +49,11 @@ const ProcessSchema = z
     "The process's own name for itself, opaque to the server, such as a UUID it chose at start.",
   );
 
+/**
+ * Zod rebuilds a record without its `__proto__` key, which a vendor's payload
+ * may carry as data, so the doors that write one take it from the body as
+ * parsed once this has passed it.
+ */
 const JsonObject = z.record(z.string(), z.unknown());
 
 const ItemId = z.string().min(1).max(200);
@@ -452,8 +457,10 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const key = requireAuth(c);
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
-    refuseUnknownBodyKeys(await c.req.json(), StateInputSchema);
-    const { process, state } = c.req.valid("json");
+    const sent = await c.req.json<{ state: Record<string, unknown> }>();
+    refuseUnknownBodyKeys(sent, StateInputSchema);
+    const { process } = c.req.valid("json");
+    const { state } = sent;
     if (serializedBytes(state) > MAX_STATE_BYTES) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -491,8 +498,14 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
     const connector = await connectorOrRefuse(storage, c.req.valid("param").id);
     requireOwnKey(connector.key_id, key.id);
     const body = c.req.valid("json");
-    refuseUnknownBodyKeys(await c.req.json(), AgreementsInputSchema);
-    const set = body.set ?? [];
+    const sent = await c.req.json<{
+      set?: { record: Record<string, unknown> }[];
+    }>();
+    refuseUnknownBodyKeys(sent, AgreementsInputSchema);
+    const set = (body.set ?? []).map((entry, index) => ({
+      ...entry,
+      record: sent.set?.[index]?.record ?? entry.record,
+    }));
     const clear = body.clear ?? [];
     const named = [...set.map((entry) => entry.item_id), ...clear];
     if (new Set(named).size !== named.length) {
