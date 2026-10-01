@@ -10,8 +10,6 @@ import {
   validateTypeSchema,
   isValidTypeIdentifier,
   classifyNamespace,
-  diffTypeSchemas,
-  isValidVersionBump,
   TYPE_ROLES,
   FIELD_TYPES,
   FIELD_FORMATS,
@@ -163,10 +161,10 @@ const typeDefinitionBody = {
   version: z
     .number()
     .int()
-    .min(1)
+    .min(0)
     .optional()
     .describe(
-      "Omit it to default to 1. A replacement carries the version it moves to.",
+      "Omit it to default to 0. A replacement keeps the version it is given.",
     ),
   parent: z.string().optional(),
   label: z.string().optional(),
@@ -500,7 +498,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a registered type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`. Naming, changing or withdrawing a `link_field` is a change that needs one, and the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -569,15 +567,6 @@ const updateTypeRoute = createRoute({
       },
       description:
         "The replacement names a `link_field` two of the type's rows, in any state, hold the same value in. Neither row is named: the door does not ask whether the caller may read them.",
-    },
-    422: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["version_bump_mismatch"]),
-        },
-      },
-      description:
-        "The submitted `version` does not move as the change requires: a resubmission that changes nothing still has to name the version it replaces.",
     },
   },
 });
@@ -789,18 +778,6 @@ export function typeRoutes(storage: Storage) {
     updateTypeRoute,
     async (c) => {
       const { id } = c.req.valid("param");
-      const existing = getTypeSchema(id);
-      // The route's middleware refuses every reason the row could be
-      // missing before the body is read, so this is unreachable; it is here
-      // because the registry's lookup cannot say that, and a cast would
-      // hand the handler an undefined the moment it stops being true.
-      if (!existing) {
-        throw new MarfaError(
-          ErrorCode.TYPE_NOT_FOUND,
-          `Type "${id}" not found`,
-        );
-      }
-
       const body = c.req.valid("json");
       const result = validateTypeSchema({ ...body, id });
       if (!result.success) {
@@ -827,31 +804,6 @@ export function typeRoutes(storage: Storage) {
           schema.id,
           schema.parent,
           maxDescendantDepth(schema.id),
-        );
-      }
-
-      // Server-side semver diff via a structural classifier: no-op
-      // submissions are rejected, descriptive-only changes accept the existing
-      // version, additive and breaking changes require an explicit bump. The
-      // classifier returns the diff class for telemetry and error messages.
-      const diff = diffTypeSchemas(existing, schema);
-      if (diff === "noop") {
-        throw new MarfaError(
-          ErrorCode.VERSION_BUMP_MISMATCH,
-          "No structural or descriptive changes — re-submitting an identical schema is rejected",
-          { diff },
-        );
-      }
-      // A major diff (field removal) is permitted; the version-bump check below enforces
-      // that the caller explicitly incremented the version, and the diff class surfaces
-      // in audit.
-      if (!isValidVersionBump(diff, existing.version, schema.version)) {
-        throw new MarfaError(
-          ErrorCode.VERSION_BUMP_MISMATCH,
-          diff === "patch"
-            ? "Descriptive-only change accepts the existing version or higher"
-            : `${diff[0]?.toUpperCase() ?? ""}${diff.slice(1)} change requires version > ${String(existing.version)}`,
-          { diff, existing_version: existing.version },
         );
       }
 
@@ -893,9 +845,7 @@ export function typeRoutes(storage: Storage) {
     // A child that inherits IS its parent: `isSubtypeOf` answers yes and a
     // subtree query finds its items. Flattening the inherited fields down
     // would keep the field names and lose that, changing the child's meaning
-    // as a side effect of a command naming a different type, and it would
-    // have to either bypass or silently satisfy the version bump that
-    // `PUT /types/:id` requires for a parent change.
+    // as a side effect of a command naming a different type.
     const subtypes = directChildrenOf(id);
     if (subtypes.length > 0) {
       throw new MarfaError(

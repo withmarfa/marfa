@@ -246,7 +246,7 @@ async function insertConflictedSibling(
       : Object.fromEntries(
           Object.entries(args.properties).filter(([key]) => key !== linkField),
         );
-  const schemaVersion = getTypeSchema(row.type)?.version ?? 1;
+  const schemaVersion = getTypeSchema(row.type)?.version ?? 0;
   const inserted = await tx
     .insert(items)
     .values({
@@ -439,7 +439,7 @@ export class SqliteItemStore implements ItemStore {
         }
       }
 
-      const schemaVersion = getTypeSchema(input.type)?.version ?? 1;
+      const schemaVersion = getTypeSchema(input.type)?.version ?? 0;
 
       try {
         await tx

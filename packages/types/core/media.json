@@ -2,7 +2,7 @@
   "id": "core.media",
   "label": "Media",
   "description": "Content produced by someone that the user engages with — a film, podcast, book, article, song, show.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "title": {
       "type": "string",

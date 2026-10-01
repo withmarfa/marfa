@@ -2,7 +2,7 @@
   "id": "system.device",
   "label": "Device",
   "description": "A connected device — phone, laptop, watch, sync agent. Surfaces a Devices list in the console; carries a name, kind, and last-active timestamp; revocable. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "name": {
       "type": "string",

@@ -2,7 +2,7 @@
   "id": "core.task",
   "label": "Task",
   "description": "Something to be done.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "title": {
       "type": "string",

@@ -3,7 +3,7 @@
   "parent": "core.file",
   "label": "Video",
   "description": "Video files. Inherits all core.file fields.",
-  "version": 2,
+  "version": 0,
   "fields": {
     "width": {
       "type": "integer",

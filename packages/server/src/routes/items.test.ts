@@ -2159,7 +2159,7 @@ describe("DELETE /items/:id/purge", () => {
 });
 
 describe("schema_version stamping", () => {
-  it("stamps schema_version: 1 on a newly-created core.note", async () => {
+  it("stamps schema_version: 0 on a newly-created core.note", async () => {
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
       body: { type: "core.note", properties: { body: "Schema-version test" } },
@@ -2168,7 +2168,7 @@ describe("schema_version stamping", () => {
     const { item } = (await res.json()) as {
       item: { id: string; schema_version: number };
     };
-    expect(item.schema_version).toBe(1);
+    expect(item.schema_version).toBe(0);
   });
 
   it("preserves schema_version through update", async () => {
@@ -2179,7 +2179,7 @@ describe("schema_version stamping", () => {
     const created = (await createRes.json()) as {
       item: { id: string; schema_version: number };
     };
-    expect(created.item.schema_version).toBe(1);
+    expect(created.item.schema_version).toBe(0);
 
     const updateRes = await request(
       ctx.app,
@@ -2194,7 +2194,7 @@ describe("schema_version stamping", () => {
     const updated = (await updateRes.json()) as {
       item: { schema_version: number };
     };
-    expect(updated.item.schema_version).toBe(1);
+    expect(updated.item.schema_version).toBe(0);
   });
 });
 

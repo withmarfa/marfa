@@ -140,13 +140,6 @@ export enum ErrorCode {
    */
   PROPERTY_SHADOWS_FIELD = "property_shadows_field",
   /**
-   * At type registration, the submitted version does not match the diff
-   * class against the existing schema — e.g. removing a field while
-   * submitting a patch version, or re-submitting an identical schema
-   * (no-op).
-   */
-  VERSION_BUMP_MISMATCH = "version_bump_mismatch",
-  /**
    * A `compatible_with` declaration does not satisfy the structural-superset
    * rule: every required field on the target type must be present with a
    * matching shape.
@@ -355,7 +348,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.OAUTH_GRANT_NOT_FOUND]: 404,
   [ErrorCode.OWNER_EXISTS]: 409,
   [ErrorCode.OWNER_NOT_FOUND]: 404,
-  [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.REQUEST_TOO_LARGE]: 413,
   [ErrorCode.RANGE_NOT_SATISFIABLE]: 416,
