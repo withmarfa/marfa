@@ -401,3 +401,21 @@ describe("planAutoMerge with a cleared key", () => {
     ).toStrictEqual({ title: "T2", body: "b" });
   });
 });
+
+describe("planAutoMerge with a field named like an object's built-in member", () => {
+  it("takes the default for a field the policy does not name", () => {
+    const plan = planAutoMerge({
+      clientProperties: { toString: "mine" },
+      currentProperties: { toString: "theirs" },
+      ancestorProperties: { toString: "base" },
+      conflictingFields: ["toString"],
+      collidingItemFields: [],
+      policy: {
+        fields: { notes: "keep_both_copies" },
+        default: "keep_both_copies",
+      },
+    });
+    expect(plan.strategyByField).toEqual({ toString: "keep_both_copies" });
+    expect(plan.keepBothFields).toEqual(["toString"]);
+  });
+});
