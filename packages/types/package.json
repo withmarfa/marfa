@@ -21,9 +21,9 @@
     "shapes:digest": "tsx scripts/shapes-digest.ts --write"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.3",
     "tsup": "^8.5.1",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   }
 }

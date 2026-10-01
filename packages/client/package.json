@@ -31,10 +31,10 @@
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.3",
     "openapi-typescript": "7.13.0",
     "tsup": "^8.5.1",
-    "tsx": "^4.23.12",
+    "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   }
 }
