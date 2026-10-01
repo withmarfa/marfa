@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use clap::{Args, Subcommand};
 use marfa_core::{
     Attachment, Core, Draft, EdgeDraft, EdgeEdit, Edit, ListFilters, MetadataWrite, SearchFilters,
-    Server, Sort,
+    Sort,
 };
 
 use crate::error::CliError;
 use crate::output;
-use crate::remote::Named;
+use crate::remote::{Named, Session, renewing};
 use crate::values::{ItemState, SortDirection, SortField, Tier, properties};
 
 #[derive(Debug, Args)]
@@ -751,12 +751,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 // Held bytes are answered with no server named at all; only
                 // a fetch needs one, and a store with none says the bytes
                 // are absent rather than that the command was misused.
-                let server = match named.server() {
-                    Ok(server) => Some(server),
-                    Err(CliError::NoServerNamed) => None,
-                    Err(error) => return Err(error),
-                };
-                let path = store.open(server)?.blob(&hash)?;
+                let path = store.open(named.session_if_named()?)?.blob(&hash)?;
                 output::report(
                     &serde_json::json!({ "hash": hash, "path": path }),
                     json,
@@ -999,7 +994,7 @@ impl Store {
     /// can find again. The file is made at the named path on first open, so
     /// the state report is answerable before a hydration (`device.md` 5);
     /// opened to read, it is never made (`device.md` 41).
-    fn open(&self, server: Option<Server>) -> Result<Core, CliError> {
+    fn open(&self, session: Option<Session>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);
         };
@@ -1012,7 +1007,10 @@ impl Store {
         {
             std::fs::create_dir_all(parent)?;
         }
-        Ok(Core::open(path, server)?)
+        let (server, renew) = Session::split(session);
+        let core = Core::open(path, server)?;
+        renewing(&core, renew);
+        Ok(core)
     }
 
     /// For the commands that talk to a server. Opened to read, it resolves
@@ -1022,6 +1020,6 @@ impl Store {
         if self.reader {
             return self.open(None);
         }
-        self.open(Some(named.server()?))
+        self.open(Some(named.session()?))
     }
 }

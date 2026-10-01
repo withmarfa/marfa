@@ -1612,6 +1612,80 @@ mod tests {
         assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
     }
 
+    /// The bearers each request to `path` carried, in order.
+    fn carried(server: &Scripted, path: &str) -> Vec<String> {
+        server
+            .seen(path)
+            .into_iter()
+            .map(|seen| seen.authorization.unwrap_or_default())
+            .collect()
+    }
+
+    /// A renewal that hands out `fresh-1`, `fresh-2` and so on, recording
+    /// the bearer each was asked to replace.
+    fn renewing(core: &Core) -> Arc<Mutex<Vec<String>>> {
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let told = Arc::clone(&asked);
+        core.renew_credential_with(Box::new(move |refused| {
+            let mut told = told.lock().unwrap();
+            told.push(refused.to_string());
+            Ok(format!("fresh-{}", told.len()))
+        }));
+        asked
+    }
+
+    /// A command that outlives its access token goes on: each call the
+    /// server refuses `401` is renewed and sent again once, and every call
+    /// after it carries the renewed bearer.
+    #[test]
+    fn a_catch_up_past_its_token_goes_on_under_a_renewed_one() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![refusal(401, "unauthorized"), types(&[(NOTE, None)])],
+        );
+        server.on(
+            "/events",
+            vec![refusal(401, "unauthorized"), withheld_head(Some("14"))],
+        );
+        let (_dir, core) = hydrated(&server);
+        let asked = renewing(&core);
+        let report = core.catch_up().unwrap();
+        assert_eq!(report.applied, 1);
+        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
+        assert_eq!(*asked.lock().unwrap(), ["k", "fresh-1"]);
+        assert_eq!(carried(&server, "/types"), ["Bearer k", "Bearer fresh-1"]);
+        assert_eq!(
+            carried(&server, "/events"),
+            ["Bearer fresh-1", "Bearer fresh-2"]
+        );
+    }
+
+    /// Once per call: a renewed bearer refused again is the answer. And
+    /// with no renewal set, the first `401` is.
+    #[test]
+    fn a_bearer_refused_after_its_renewal_is_the_answer() {
+        let server = Scripted::start();
+        server.on("/types", vec![refusal(401, "unauthorized")]);
+        let (_dir, core) = hydrated(&server);
+        assert!(matches!(
+            core.catch_up(),
+            Err(CoreError::Unauthorized { .. })
+        ));
+        assert_eq!(carried(&server, "/types"), ["Bearer k"]);
+
+        let asked = renewing(&core);
+        assert!(matches!(
+            core.catch_up(),
+            Err(CoreError::Unauthorized { .. })
+        ));
+        assert_eq!(*asked.lock().unwrap(), ["k"]);
+        assert_eq!(
+            carried(&server, "/types"),
+            ["Bearer k", "Bearer k", "Bearer fresh-1"]
+        );
+    }
+
     #[test]
     fn a_catch_up_without_the_marker_stops_on_silence_at_the_last_row_applied() {
         // The witness for the test above: the same stream without its

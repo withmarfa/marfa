@@ -545,16 +545,33 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
 ///
 /// No idempotency key: the door is idempotent by content, since bytes it
 /// already holds answer the hash they already have, and it reads no key.
+///
+/// The stream is spent by a send, so one refused `401` and renewed is sent
+/// again here, from the start of the file.
 fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answer, CoreError> {
-    let reply = http.call(Call {
-        method: Method::Post,
-        segments: &["blobs"],
-        params: &[],
-        headers: &[("Content-Type", mime_type)],
-        body: CallBody::Reader(Box::new(bytes)),
-        credential: true,
-        stream: false,
-    })?;
+    let again = bytes
+        .try_clone()
+        .map_err(|error| CoreError::Store(format!("the upload's bytes cannot be read: {error}")))?;
+    let send = |bytes: File| {
+        http.call(Call {
+            method: Method::Post,
+            segments: &["blobs"],
+            params: &[],
+            headers: &[("Content-Type", mime_type)],
+            body: CallBody::Reader(Box::new(bytes)),
+            credential: true,
+            stream: false,
+        })
+    };
+    let sent = http.authorization();
+    let mut reply = send(bytes)?;
+    if reply.status == 401 && http.authorization() != sent {
+        let mut again = again;
+        std::io::Seek::rewind(&mut again).map_err(|error| {
+            CoreError::Store(format!("the upload's bytes cannot be read: {error}"))
+        })?;
+        reply = send(again)?;
+    }
     let body = reply.body;
     let code = match serde_json::from_str::<WireErrorEnvelope>(&body) {
         Ok(envelope) => envelope.error.code,
@@ -2456,6 +2473,41 @@ mod tests {
             behind,
             vec![(blocked.id.clone(), Some(3)), (waiting.id.clone(), Some(3))],
             "the edits behind named one queued before the answered one, one already sent, one refused by the drain, or one of another row"
+        );
+    }
+
+    /// An upload's bytes are a stream its first send spends, so the one sent
+    /// again under a renewed bearer is read from the start of the file.
+    #[test]
+    fn an_upload_refused_for_its_token_is_sent_again_whole_under_a_renewed_one() {
+        let server = crate::scripted::Scripted::start();
+        server.on(
+            "/blobs",
+            vec![
+                crate::scripted::refusal(401, "unauthorized"),
+                crate::scripted::json(201, r#"{"hash":"sha256:00","size_bytes":5}"#),
+            ],
+        );
+        let http = Http::new(&server.url(), "k").unwrap();
+        http.renew_with(Box::new(|_| Ok("fresh".into())));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bytes");
+        std::fs::write(&path, b"hello").unwrap();
+
+        let answer = upload(&http, File::open(&path).unwrap(), "text/plain").unwrap();
+
+        assert_eq!(answer.status, 201);
+        let sent: Vec<_> = server
+            .seen("/blobs")
+            .into_iter()
+            .map(|seen| (seen.authorization, seen.body))
+            .collect();
+        assert_eq!(
+            sent,
+            vec![
+                (Some("Bearer k".into()), b"hello".to_vec()),
+                (Some("Bearer fresh".into()), b"hello".to_vec()),
+            ]
         );
     }
 }

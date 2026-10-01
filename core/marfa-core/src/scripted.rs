@@ -8,7 +8,7 @@
 //! its own.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -59,6 +59,8 @@ pub enum Then {
 pub struct Seen {
     pub path: String,
     pub last_event_id: Option<String>,
+    pub authorization: Option<String>,
+    pub body: Vec<u8>,
 }
 
 #[derive(Default)]
@@ -171,6 +173,9 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     let target = request_line.split_whitespace().nth(1).unwrap_or("/");
     let path = target.split('?').next().unwrap_or("/").to_string();
     let mut last_event_id = None;
+    let mut authorization = None;
+    let mut length = None;
+    let mut chunked = false;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -180,17 +185,32 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         if line.is_empty() {
             break;
         }
-        if let Some((name, value)) = line.split_once(':')
-            && name.eq_ignore_ascii_case("last-event-id")
-        {
-            last_event_id = Some(value.trim().to_string());
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("last-event-id") {
+                last_event_id = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("authorization") {
+                authorization = Some(value.trim().to_string());
+            } else if name.eq_ignore_ascii_case("content-length") {
+                length = value.trim().parse::<usize>().ok();
+            } else if name.eq_ignore_ascii_case("transfer-encoding") {
+                chunked = value.trim().eq_ignore_ascii_case("chunked");
+            }
         }
     }
+    let body = if chunked {
+        read_chunked(&mut reader)
+    } else {
+        let mut body = vec![0; length.unwrap_or(0)];
+        let _ = reader.read_exact(&mut body);
+        body
+    };
     let answer = {
         let mut script = script.lock().unwrap();
         script.seen.push(Seen {
             path: path.clone(),
             last_event_id,
+            authorization,
+            body,
         });
         match script.answers.get_mut(&path) {
             Some(answers) if answers.len() > 1 => Some(answers.remove(0)),
@@ -297,6 +317,30 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
 }
 
 /// The comment a real server opens every stream with.
+fn read_chunked(reader: &mut impl BufRead) -> Vec<u8> {
+    let mut body = Vec::new();
+    loop {
+        let mut size = String::new();
+        if reader.read_line(&mut size).unwrap_or(0) == 0 {
+            return body;
+        }
+        let size = size.trim().split(';').next().unwrap_or("");
+        let Ok(size) = usize::from_str_radix(size, 16) else {
+            return body;
+        };
+        if size == 0 {
+            let mut trailer = String::new();
+            let _ = reader.read_line(&mut trailer);
+            return body;
+        }
+        let mut chunk = vec![0; size + 2];
+        if reader.read_exact(&mut chunk).is_err() {
+            return body;
+        }
+        body.extend_from_slice(&chunk[..size]);
+    }
+}
+
 pub fn connected() -> String {
     ": connected\n\n".into()
 }
