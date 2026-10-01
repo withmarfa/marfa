@@ -9,8 +9,8 @@ import { ErrorCode, MarfaError, getTypeSchema } from "@withmarfa/shared";
  * differently:
  *
  * - **A stricter archive cap** rejects partway through a restore, because
- *   the restore writes types one at a time and outside a transaction, so
- *   earlier entries have already landed when a later one is refused.
+ *   the restore writes types one at a time, each in a transaction of its
+ *   own, so earlier entries have already landed when a later one is refused.
  * - **A stricter registration cap** rejects nothing at restore time. The
  *   archive quietly accepts a chain `POST /types` would refuse, and the
  *   disagreement shows up later at a registration, or never.

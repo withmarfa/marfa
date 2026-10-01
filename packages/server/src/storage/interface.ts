@@ -1035,6 +1035,9 @@ export interface TypeStore {
   /** Resolves a type by id: the shipped set, then the instance's own. */
   get(id: string): Promise<TypeSchema | undefined>;
   create(schema: TypeSchema, provenance?: TypeProvenance): Promise<TypeSchema>;
+  /** Replaces a type's row and its registry entry. A row that is not there
+   *  is refused `type_not_found`, and nothing is registered: a type deleted
+   *  since the caller looked stays deleted. */
   update(id: string, schema: TypeSchema): Promise<TypeSchema>;
   delete(id: string): Promise<void>;
   /** The instance's own registrations, without the shipped core and system
