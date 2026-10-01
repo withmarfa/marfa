@@ -9,16 +9,15 @@ import type { EnforcementSettings } from "@withmarfa/shared";
 
 /**
  * The strict-mode lever, as the item write doors ask it: `POST /items`,
- * `POST /items/bulk` on both halves of an upsert, `PATCH /items/{id}` and
- * `POST /admin/restore-archive`.
+ * `POST /items/bulk` on both halves of an upsert, `PATCH /items/{id}`,
+ * `POST /admin/restore-archive`, and the job `POST /items/bulk-actions`
+ * queues for `update_properties`, per row it patches.
  *
  * **One reading, because the lever belongs to the type and not to the
  * door.** The store's own `validateProperties` runs loose whatever the
  * configuration says, so a door that writes through the store has to ask
  * above it or not at all, and two doors asking separately are two doors
- * free to drift. The filter-in door `POST /items/bulk-actions` with
- * `update_properties` still writes through the store without asking, and
- * is recorded as an open question rather than claimed here.
+ * free to drift.
  *
  * **The properties the caller sent, not the merge they land in.** An
  * update measured against the merged result would refuse every write to a
@@ -40,8 +39,9 @@ import type { EnforcementSettings } from "@withmarfa/shared";
  * Returns the refusal rather than throwing it, because the callers answer
  * differently: the create doors throw into the error handler, the restore
  * hands it to its own `refuse`, which clears the request's spool files
- * before answering, and the bulk door's update half returns it as that
- * entry's `errored` outcome.
+ * before answering, the bulk door's update half returns it as that
+ * entry's `errored` outcome, and the bulk-action job records it as that
+ * row's entry in the job's `errors`.
  *
  * A type with no shipped schema is left alone: there is nothing to
  * measure "undeclared" against, and a lever naming such a type would

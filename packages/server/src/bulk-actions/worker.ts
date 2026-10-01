@@ -24,7 +24,11 @@ import type {
   Storage,
 } from "../storage/interface.js";
 import { runChunk, type ChunkOutcome } from "./runner.js";
-import type { BulkActionInput, BulkActionResult } from "./types.js";
+import type {
+  BulkActionErrorEntry,
+  BulkActionInput,
+  BulkActionResult,
+} from "./types.js";
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -247,7 +251,7 @@ export class BulkActionWorker {
     const input = JSON.parse(job.input) as BulkActionInput;
 
     const accSucceeded: string[] = [];
-    const accErrors: { id: string; code: string; message: string }[] = [];
+    const accErrors: BulkActionErrorEntry[] = [];
     const accBlobHashes = new Set<string>();
     const broughtBack = new Set<string>();
     let processed = 0;
@@ -276,6 +280,7 @@ export class BulkActionWorker {
           input,
           ids: slice,
           broughtBack,
+          apiKeyId: job.api_key_id,
         });
       } catch (err) {
         // Whole-chunk failure inside the transaction — a database error,

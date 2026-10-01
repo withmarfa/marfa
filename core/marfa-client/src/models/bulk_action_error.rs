@@ -19,10 +19,17 @@ pub struct BulkActionError {
     pub code: String,
     #[serde(rename = "message")]
     pub message: String,
+    #[serde(rename = "details", skip_serializing_if = "Option::is_none")]
+    pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 impl BulkActionError {
     pub fn new(id: String, code: String, message: String) -> BulkActionError {
-        BulkActionError { id, code, message }
+        BulkActionError {
+            id,
+            code,
+            message,
+            details: None,
+        }
     }
 }

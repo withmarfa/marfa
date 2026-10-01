@@ -591,7 +591,12 @@ export interface BulkActionResponse {
   errored: number;
   dry_run: boolean;
   ids?: string[];
-  errors?: { id: string; code: string; message: string }[];
+  errors?: {
+    id: string;
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+  }[];
   blob_hashes_referenced?: number;
 }
 

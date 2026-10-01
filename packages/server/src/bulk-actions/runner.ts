@@ -24,12 +24,18 @@ import type { CascadeRoot, Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
-import { getTypeSchema, validateProperties } from "@withmarfa/shared";
+import {
+  getTypeSchema,
+  resolveEnforcement,
+  validateProperties,
+} from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
 } from "../storage/merge-properties.js";
 import { log } from "../middleware/logger.js";
+import { readInstanceConfig } from "../storage/instance-config.js";
+import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -53,6 +59,9 @@ export interface RunChunkContext {
    * the job put it.
    */
   broughtBack?: Set<string>;
+  /** The credential that queued the job, whose enforcement override the
+   *  levers are resolved against as they are on the door it called. */
+  apiKeyId?: string | null;
 }
 
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
@@ -399,11 +408,19 @@ async function runUpdatePropertiesChunk({
   storage,
   input,
   ids,
+  apiKeyId,
 }: RunChunkContext): Promise<ChunkOutcome> {
   if (input.action !== "update_properties")
     throw new Error("runUpdatePropertiesChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
+  // Read when the chunk writes rather than when the job was queued, as every
+  // other write door reads the lever when it writes: a lever set while the
+  // job waited holds for the rows it has not yet reached.
+  const enforcement = resolveEnforcement(
+    await readInstanceConfig(storage.settings),
+    apiKeyId ? await storage.keys.get(apiKeyId) : null,
+  );
   // Collected inside the transaction, published after it commits.
   const updated: Item[] = [];
   await storage.runInTransaction(async () => {
@@ -427,6 +444,20 @@ async function runUpdatePropertiesChunk({
         // opinion, so judging unguarded would refuse every row of a type
         // this worker's registry does not carry.
         const before = await storage.items.get(id);
+        // Of the patch the caller sent, per row of a type the lever names,
+        // through the function the other item write doors ask.
+        const undeclared =
+          before &&
+          undeclaredPropertyRefusal(enforcement, before.type, input.patch);
+        if (undeclared) {
+          errors.push({
+            id,
+            code: undeclared.code,
+            message: undeclared.message,
+            ...(undeclared.details && { details: undeclared.details }),
+          });
+          continue;
+        }
         if (before && getTypeSchema(before.type)) {
           const merged = mergeUpdateProperties(
             before.properties,
