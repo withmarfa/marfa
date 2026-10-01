@@ -419,6 +419,13 @@ describe("GET /events — a replay that sends nothing for a while", () => {
    * taking their turns between its reads, as requests arriving on sockets
    * do, and publishing notes this reader may see.
    *
+   * The writes are placed by the replay's reads, a page of notes after
+   * each, until more than the hold holds have been published. Racing a
+   * free-running writer against the replay instead makes the number of
+   * writes, each a committed transaction, a function of how many reads
+   * the replay needs, and the run then costs more than a thousand commits
+   * on a loaded machine to prove what a few hundred prove.
+   *
    * `damaged` puts a row the replay cannot read ahead of the withheld rows:
    * `"stored"` one written straight to the log, which no subscriber was
    * ever sent, and `"published"` a note published to this stream while its
@@ -457,9 +464,10 @@ describe("GET /events — a replay that sends nothing for a while", () => {
     const atRead = new Promise<void>((resolve) => (reached = resolve));
     let release!: () => void;
     const released = new Promise<void>((resolve) => (release = resolve));
+    let read = real;
     if (published) {
       let armed = true;
-      store.getAfter = async (afterId, limit) => {
+      read = async (afterId, limit) => {
         if (armed) {
           armed = false;
           reached();
@@ -469,17 +477,37 @@ describe("GET /events — a replay that sends nothing for a while", () => {
       };
     }
 
-    const writing = { on: true };
-    // Read through a call: the flag is cleared from outside the loop.
-    const stillWriting = () => writing.on;
+    // Past the hold's cap of 500 frames, and done well inside the 60 reads
+    // the seeded rows alone take, so every write lands mid-replay.
+    const WRITES = 520;
+    const WRITES_PER_READ = 20;
     let written = 0;
-    let writer: Promise<void> | undefined;
-    const write = async () => {
-      const res = await request(ctx.app, "POST", "/items", {
+    const write = async (count: number) => {
+      const res = await request(ctx.app, "POST", "/items/bulk", {
         key: ctx.workingKey,
-        body: { type: "core.note", properties: { body: "busy" } },
+        body: {
+          items: Array.from({ length: count }, () => ({
+            type: "core.note",
+            properties: { body: "busy" },
+          })),
+        },
       });
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(200);
+    };
+    // Awaited again after the read: the stream can end inside a write,
+    // while its notes are being published, so the count is read only once
+    // that write has returned, and a refused write is reported as itself
+    // rather than as the failed replay it caused.
+    let writing: Promise<void> = Promise.resolve();
+    store.getAfter = async (afterId, limit) => {
+      const rows = await read(afterId, limit);
+      if (written < WRITES) {
+        writing = write(WRITES_PER_READ).then(() => {
+          written += WRITES_PER_READ;
+        });
+        await writing;
+      }
+      return rows;
     };
     try {
       const res = await request(ctx.app, "GET", "/events?type=core.note", {
@@ -491,7 +519,7 @@ describe("GET /events — a replay that sends nothing for a while", () => {
         // Early, the replay reads the spoiled row before the hold fills;
         // late, behind the withheld rows, after the hold was given up.
         if (damaged === "published-late") await seed();
-        await write();
+        await write(1);
         await run(
           "UPDATE event_log SET payload = 'not json' WHERE id = (SELECT MAX(id) FROM event_log)",
           [],
@@ -499,22 +527,12 @@ describe("GET /events — a replay that sends nothing for a while", () => {
         if (damaged === "published") await seed();
         release();
       }
-      writer = (async () => {
-        while (stillWriting()) {
-          await new Promise((resolve) => setImmediate(resolve));
-          for (let i = 0; i < 20 && stillWriting(); i += 1) {
-            await write();
-            written += 1;
-          }
-        }
-      })();
       const { text } = await readSse(res, {
         until: (seen) =>
           seen.includes("event: stream_live") ||
           seen.includes("event: stream_incomplete"),
       });
-      writing.on = false;
-      await writer;
+      await writing;
       // The damaged note's own live copy is held beside the writes.
       expect(
         written + (published ? 1 : 0),
@@ -539,9 +557,8 @@ describe("GET /events — a replay that sends nothing for a while", () => {
       }
       return text;
     } finally {
-      writing.on = false;
       release();
-      await writer;
+      await writing.catch(() => undefined);
       store.getAfter = real;
       await run("DELETE FROM event_log", []);
     }
@@ -574,12 +591,19 @@ describe("GET /events — a replay that sends nothing for a while", () => {
   });
 
   it("reads again after an empty read while frames it took over are past it", async () => {
-    const note = async () => {
-      const res = await request(ctx.app, "POST", "/items", {
+    // One transaction for the lot: the hold counts frames, not commits,
+    // and five hundred commits in a row is the run's whole cost.
+    const notes = async (count: number) => {
+      const res = await request(ctx.app, "POST", "/items/bulk", {
         key: ctx.workingKey,
-        body: { type: "core.note", properties: { body: "race" } },
+        body: {
+          items: Array.from({ length: count }, () => ({
+            type: "core.note",
+            properties: { body: "race" },
+          })),
+        },
       });
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(200);
     };
     const cursor = await createNote("race-cursor");
     const store = ctx.storage.eventLog;
@@ -591,12 +615,10 @@ describe("GET /events — a replay that sends nothing for a while", () => {
     // what it saw.
     store.getAfter = async (afterId, limit) => {
       reads += 1;
-      if (reads === 1) {
-        for (let i = 0; i < 500; i += 1) await note();
-      }
+      if (reads === 1) await notes(500);
       const rows = await real(afterId, limit);
       if (reads === 2) {
-        await note();
+        await notes(1);
         late = (await store.getMaxId()) ?? undefined;
       }
       return rows;
