@@ -3,7 +3,7 @@
   "parent": "core.entity",
   "label": "Place",
   "description": "A location or venue. Inherits all core.entity fields.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "street_address": {
       "type": "string",

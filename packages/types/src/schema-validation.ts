@@ -664,14 +664,14 @@ export function validateTypeSchema(
     obj.version !== undefined &&
     (typeof obj.version !== "number" ||
       !Number.isInteger(obj.version) ||
-      obj.version < 1)
+      obj.version < 0)
   ) {
     errors.push(
       issue({
         field: "version",
-        expected: "a positive integer",
+        expected: "a non-negative integer",
         actual: describe(obj.version),
-        hint: "Versions are integers starting at 1. Omit the field to default to 1.",
+        hint: "Versions are integers from 0. Omit the field to default to 0.",
       }),
     );
   }
@@ -864,7 +864,7 @@ export function validateTypeSchema(
   const schema: TypeSchema = {
     id: obj.id as string,
     label: typeof obj.label === "string" ? obj.label : undefined,
-    version: typeof obj.version === "number" ? obj.version : 1,
+    version: typeof obj.version === "number" ? obj.version : 0,
     fields: normalizedFields,
   };
   if (typeof obj.description === "string") schema.description = obj.description;

@@ -3,7 +3,7 @@
   "parent": "core.media",
   "label": "Episode",
   "description": "Any member of an ongoing series: a TV episode, a podcast episode, one part of a serial. Inherits all core.media fields. Joins its series through the in-collection edge, so one episode can belong to several series and outlives any of them.",
-  "version": 2,
+  "version": 0,
   "fields": {
     "medium": {
       "type": "enum",

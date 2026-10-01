@@ -12,7 +12,7 @@ import {
   resolveIncomingProperties,
 } from "../storage/merge-properties.js";
 import type { OcrEngine } from "./ocr.js";
-import { EXTRACTOR_VERSION, extractText, isEnrichableMime } from "./extract.js";
+import { extractText, isEnrichableMime } from "./extract.js";
 import {
   DIMENSION_FIELDS,
   deriveDimensions,
@@ -131,7 +131,6 @@ export class TextEnrichmentSweeper {
   }> {
     const { storage } = this.opts;
     const candidates = await storage.enrichment.listCandidates(
-      EXTRACTOR_VERSION,
       this.opts.maxAttempts,
       this.opts.batchSize,
       this.configSignature,
@@ -165,14 +164,11 @@ export class TextEnrichmentSweeper {
   }): Promise<"extracted" | "skipped" | "failed"> {
     const { storage, blobs } = this.opts;
     const prior = await storage.enrichment.get(candidate.item_id);
-    // Attempts count against one generation of content: a new blob or a
-    // bumped extractor is a fresh start, not attempt N+1 of the old one,
-    // or the first attempt on genuinely new content could already be past
-    // the cap.
+    // Attempts count against one blob: a new blob is a fresh start, not
+    // attempt N+1 of the old one, or the first attempt on genuinely new
+    // content could already be past the cap.
     const sameGeneration =
-      prior !== null &&
-      prior.blob_ref === candidate.blob_ref &&
-      prior.extractor_version === EXTRACTOR_VERSION;
+      prior !== null && prior.blob_ref === candidate.blob_ref;
     const attempts = sameGeneration ? prior.attempts + 1 : 1;
 
     const record = async (
@@ -182,7 +178,6 @@ export class TextEnrichmentSweeper {
       await storage.enrichment.upsert({
         item_id: candidate.item_id,
         blob_ref: candidate.blob_ref,
-        extractor_version: EXTRACTOR_VERSION,
         status,
         attempts,
         error,
@@ -190,7 +185,7 @@ export class TextEnrichmentSweeper {
       });
     };
     // Terminal for this content under this configuration: re-offered only
-    // when the blob, the extractor, or the configuration changes.
+    // when the blob or the configuration changes.
     const recordSkip = (error: string) => record("skipped", error);
     // Transient: the world was not in the shape the candidate row claimed
     // (a blob write not yet landed, a flaky store read). Recorded as

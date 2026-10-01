@@ -72,6 +72,35 @@ describe("type inheritance rule", () => {
     expect(cr.error?.error.code).toBe("inheritance_violation");
   });
 
+  // The witness is the registration beside it: the same child under a parent
+  // that resolves is accepted, so the refusal is the parent's and nothing else.
+  it("refuses a parent nothing registered, and accepts the same child under one that is", async () => {
+    const parentId = `user.inherit-absent-parent-${ctx.runId}`;
+    const childId = `${parentId}.child`;
+
+    const refused = await client.registerType({
+      id: childId,
+      parent: parentId,
+      fields: { extra: { type: "string" } },
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect((await client.getType(childId)).status).toBe(404);
+
+    const pr = await client.registerType({
+      id: parentId,
+      fields: { url: { type: "string" } },
+    });
+    expect(pr.ok).toBe(true);
+    const cr = await client.registerType({
+      id: childId,
+      parent: parentId,
+      fields: { extra: { type: "string" } },
+    });
+    expect(cr.ok).toBe(true);
+  });
+
   it("accepts a child that redeclares an inherited field without changing it", async () => {
     const parentId = `user.inherit-same-parent-${ctx.runId}`;
     const childId = `${parentId}.child`;

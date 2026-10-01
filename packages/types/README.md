@@ -21,7 +21,7 @@ Each type is a JSON file with:
 - **`id`** — type identifier (e.g. `core.note`, `core.media.book`)
 - **`parent`** — parent type ID, if a subtype
 - **`description`** — what this type represents
-- **`version`** — schema version, positive integer
+- **`version`** — schema version, a non-negative integer; every shipped type is at 0 until the first public release
 - **`fields`** — field name → definition map
 - **`required`** — array of required field names
 

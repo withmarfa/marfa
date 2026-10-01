@@ -2,7 +2,7 @@
   "id": "core.message",
   "label": "Message",
   "description": "A light, cross-platform message. Threading is edge-based via in-thread; reply trees via parent-of. Tool-specific richness lives in app namespaces.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "body": {
       "type": "string",

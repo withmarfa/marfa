@@ -2,7 +2,7 @@
   "id": "system.webhook",
   "label": "Webhook",
   "description": "A registered webhook subscription. Surfaces a Webhooks list; carries URL, event filter, delivery history; editable. Lifecycle is bounded to active/revoked. Has no tier.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "url": {
       "type": "url",

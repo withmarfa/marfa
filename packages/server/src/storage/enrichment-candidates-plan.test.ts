@@ -31,7 +31,7 @@ async function candidatePlan(): Promise<{ plan: string; params: unknown[] }> {
     const captured: CapturedQuery[] = [];
     const db = drizzleSqlite(client, { logger: capturingLogger(captured) });
     const store = new SqliteEnrichmentStore(db as never);
-    await store.listCandidates(1, 3, 8, SIGNATURE);
+    await store.listCandidates(3, 8, SIGNATURE);
 
     const query = captured.at(-1);
     expect(query).toBeDefined();

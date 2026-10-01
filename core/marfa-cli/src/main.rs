@@ -151,20 +151,73 @@ enum Command {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => match usage(&error, std::env::args_os()) {
+            Some(refusal) => return refused(&refusal, true),
+            None => error.exit(),
+        },
+    };
     let json = cli.json;
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(CliError::ClosedOutput) => ExitCode::SUCCESS,
-        Err(error) => {
-            if json {
-                eprintln!("{}", error.envelope());
-            } else {
-                eprintln!("marfa: {error}");
-            }
-            ExitCode::from(error.exit() as u8)
-        }
+        Err(error) => refused(&error, json),
     }
+}
+
+fn refused(error: &CliError, json: bool) -> ExitCode {
+    if json {
+        eprintln!("{}", error.envelope());
+    } else {
+        eprintln!("marfa: {error}");
+    }
+    ExitCode::from(error.exit() as u8)
+}
+
+/// The parser's refusal as the envelope, where the command line asked for
+/// JSON. `None` leaves it to the parser: help and the version are answers
+/// rather than refusals, and without `--json` the usage text is what a
+/// person reads.
+///
+/// `--json` is looked for in the arguments themselves, since a command line
+/// the parser refused has no parsed flags to read it from.
+fn usage(
+    error: &clap::Error,
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Option<CliError> {
+    use clap::error::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        return None;
+    }
+    let json = args
+        .into_iter()
+        .skip(1)
+        .take_while(|arg| arg != "--")
+        .any(|arg| arg == "--json");
+    if !json {
+        return None;
+    }
+    let message = match error.kind() {
+        ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+            "a subcommand is required; --help lists them".to_string()
+        }
+        // The paragraph before the usage text, which names what was wrong.
+        _ => error
+            .render()
+            .to_string()
+            .lines()
+            .take_while(|line| !line.trim().is_empty())
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim_start_matches("error: ")
+            .to_string(),
+    };
+    Some(CliError::Usage(message))
 }
 
 fn run(cli: Cli) -> Result<(), CliError> {

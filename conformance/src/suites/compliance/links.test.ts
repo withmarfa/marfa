@@ -268,14 +268,6 @@ describe("a type's link", () => {
     const binned = await row({ vendor_id: value }, { type: id });
     expect((await client.deleteItem(binned.id)).ok).toBe(true);
 
-    const unbumped = await client.updateType(id, {
-      ...schema,
-      version: 1,
-      link_field: "vendor_id",
-    });
-    expect(unbumped.status).toBe(422);
-    expect(unbumped.error?.error.code).toBe("version_bump_mismatch");
-
     const shared = await client.updateType(id, {
       ...schema,
       version: 2,

@@ -69,7 +69,7 @@ async function createFileItem(name: string): Promise<string> {
 }
 
 async function queue(): Promise<string[]> {
-  const rows = await ctx.storage.enrichment.listCandidates(1, 3, 50, SIGNATURE);
+  const rows = await ctx.storage.enrichment.listCandidates(3, 50, SIGNATURE);
   return rows.map((r) => r.item_id);
 }
 

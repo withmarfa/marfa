@@ -2,7 +2,7 @@
   "id": "core.bookmark",
   "label": "Bookmark",
   "description": "Content you captured from elsewhere — a saved URL, a highlight, an excerpt, a clipped paragraph.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "url": {
       "type": "string",

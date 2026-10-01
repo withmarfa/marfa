@@ -36,6 +36,10 @@ pub enum CliError {
         /// entry that failed there, and a validation names the field.
         details: Option<Box<serde_json::Value>>,
     },
+    /// A command line the binary does not take, as the argument parser
+    /// read it.
+    #[error("{0}")]
+    Usage(String),
     #[error("no working copy named: pass --db or set MARFA_DB")]
     NoStoreNamed,
     #[error("no server named: pass --url or set MARFA_API_URL")]
@@ -94,8 +98,8 @@ pub enum Exit {
     /// The request was refused: by the server, by the binary before sending,
     /// or for an answer on another contract, and a retry does not change it.
     Refused = 1,
-    /// The command line was wrong. clap's own code, shared by the binary's
-    /// own refusals of an incomplete one.
+    /// The command line was wrong: one the argument parser refused, or one
+    /// the binary refused as incomplete.
     Usage = 2,
     /// The environment failed: unreachable, timed out, a 5xx, a 429. Try
     /// again; `retry_after_seconds` says when, if the server said.
@@ -147,6 +151,7 @@ impl CliError {
                 429 => "rate_limited",
                 _ => "server",
             },
+            CliError::Usage(_) => "usage",
             CliError::NoStoreNamed => "no_store",
             CliError::NoServerNamed => "no_server",
             CliError::NoCredential { .. } => "no_credential",
@@ -195,7 +200,7 @@ impl CliError {
                 500.. => Exit::Environment,
                 _ => Exit::Refused,
             },
-            CliError::NoStoreNamed | CliError::NoServerNamed => Exit::Usage,
+            CliError::Usage(_) | CliError::NoStoreNamed | CliError::NoServerNamed => Exit::Usage,
             CliError::NoCredential { .. } | CliError::SignedOut { .. } => Exit::Credential,
             CliError::NoKeychain(_) => Exit::Local,
         }
@@ -298,14 +303,14 @@ pub const EXIT_CODES_HELP: &str = "\
 Exit codes:
   0  done
   1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
-  2  the command line was wrong, or named no store or server; clap's own refusals print its usage text
+  2  the command line was wrong, or named no store or server
   3  the environment failed (unreachable, timed out, a 5xx, a 429); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
   5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
 
 With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
-where error.code is one of: invalid, not_found, unauthorized, forbidden, validation, conflict,
+where error.code is one of: usage, invalid, not_found, unauthorized, forbidden, validation, conflict,
 too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
 reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
@@ -338,6 +343,7 @@ mod tests {
             .map(str::trim)
             .collect();
         let answered = [
+            CliError::Usage(String::new()).code(),
             CliError::Invalid(String::new()).code(),
             CliError::Core(CoreError::NotFound {
                 code: String::new(),

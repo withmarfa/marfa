@@ -4,7 +4,7 @@
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
  * edges_imported, edges_skipped, blobs_imported}`. Enforces the
- * manifest version 2 contract, blob-hash verification, and a single import
+ * manifest version 0 contract, blob-hash verification, and a single import
  * transaction covering items, metadata, and edges.
  *
  * Item ids are preserved from the archive so restored edges resolve;
@@ -120,7 +120,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Export"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v2.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -443,16 +443,16 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           if (header.name === "manifest.json") {
             try {
               manifest = JSON.parse(buf.toString("utf-8")) as ArchiveManifest;
-              if (manifest.version !== 2) {
+              if (manifest.version !== 0) {
                 reject(
                   new MarfaError(
                     ErrorCode.VALIDATION_ERROR,
-                    // A version 1 archive names its registrations under
-                    // keys this build does not read, and there is no
-                    // fallback key, so the refusal has to be here: parsing
-                    // one would drop every registration it carries and
-                    // answer 200.
-                    `Unsupported archive version: ${String(manifest.version)}. This build reads version 2 only, and nothing converts an older one: a version 1 archive is readable by the build that wrote it and by nothing here.`,
+                    // An archive at another version may name its
+                    // registrations under keys this build does not read,
+                    // with no fallback key, so the refusal has to be here:
+                    // parsing one would drop every registration it carries
+                    // and answer 200.
+                    `Unsupported archive version: ${String(manifest.version)}. This build reads version 0 only, and nothing converts another: export again from a build that writes version 0.`,
                   ),
                 );
                 return;
@@ -625,7 +625,8 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       }
     }
 
-    // Before the transaction, so a rollback cannot strand the registry
+    // Each registration commits in a transaction of its own before the rows'
+    // transaction opens, so a rollback of the rows cannot strand the registry
     // holding types the database no longer has. See registerArchiveTypes.
     let typeResult;
     try {

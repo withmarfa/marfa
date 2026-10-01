@@ -2,7 +2,7 @@
   "id": "core.file",
   "label": "File",
   "description": "A file or binary reference — the generic fallback for non-media files.",
-  "version": 1,
+  "version": 0,
   "fields": {
     "blob_ref": {
       "type": "string",

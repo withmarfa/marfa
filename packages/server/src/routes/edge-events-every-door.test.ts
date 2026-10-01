@@ -230,6 +230,9 @@ describe("edge events on every door", () => {
         key: ctx.workingKey,
         body: { source_id: other, target_id: doomed, edge_type: "references" },
       });
+      await request(ctx.app, "DELETE", `/items/${doomed}`, {
+        key: ctx.workingKey,
+      });
 
       const itemController = new AbortController();
       const edgeController = new AbortController();
@@ -242,7 +245,7 @@ describe("edge events on every door", () => {
         {
           action: "purge",
           confirm: "PURGE",
-          filter: { tags: [tag] },
+          filter: { tags: [tag], state: "trashed" },
           ...(enableFanout ? { enable_fanout: true } : {}),
         },
         ctx.workingKey,

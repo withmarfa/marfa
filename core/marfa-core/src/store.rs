@@ -23,23 +23,17 @@ pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "10";
+pub const SCHEMA_VERSION: &str = "0";
 
-/// Each schema version from 6 and the statements it names, hashed as the
-/// folder mapping hashes bytes. While no store is live the version does not
-/// move: a change to `schema.sql` rewrites the hash in the current version's
-/// row, and the test holds the statements to that row.
+/// The statements `schema.sql` names, hashed as the folder mapping hashes
+/// bytes. The version stays at 0 until the first public release, so a change
+/// to `schema.sql` rewrites this hash rather than moving the version, and the
+/// test holds the statements to it.
 ///
 /// Over the statements SQLite executes, not the file, so a comment moves no
 /// hash.
 #[cfg(test)]
-const SCHEMA_HASHES: &[(&str, &str)] = &[
-    ("6", "f73a05f772245511"),
-    ("7", "b0e4c59d5dbd0471"),
-    ("8", "662310c80f2c6871"),
-    ("9", "23d541400ea60681"),
-    ("10", "26e3a91464d06cd1"),
-];
+const SCHEMA_HASH: &str = "26e3a91464d06cd1";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -1259,6 +1253,35 @@ pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
     }
 }
 
+/// Whether the copy takes an edge of `edge_type` drawn from `source_id`: one
+/// from a row it holds, or of a type in `whole` (`device.md` 1, 43).
+pub fn takes_edge(
+    conn: &Connection,
+    source_id: &str,
+    edge_type: &str,
+    whole: &[String],
+) -> Result<bool, CoreError> {
+    Ok(whole.iter().any(|held| held == edge_type) || item_held(conn, source_id)?)
+}
+
+/// Drops edge `id` from the copy where the copy no longer takes it and no
+/// write of this device's to it waits, which is laid over it until answered.
+pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    let Some(edge) = edge_by_id(conn, id)? else {
+        return Ok(false);
+    };
+    if takes_edge(
+        conn,
+        &edge.source_id,
+        &edge.edge_type,
+        &whole_edge_types(conn)?,
+    )? || edge_write_waits(conn, id)?
+    {
+        return Ok(false);
+    }
+    delete_edge(conn, id)
+}
+
 /// Holds `id` by id from now on. Answers whether it was not pinned already.
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0)
@@ -1621,32 +1644,13 @@ mod tests {
     use super::testing::*;
     use super::*;
 
-    /// The current version's row names this schema's statements and no
-    /// other version's.
+    /// The hash names this schema's statements as they are.
     #[test]
-    fn the_schema_version_names_the_schema_as_it_is() {
-        let versions: Vec<&str> = SCHEMA_HASHES.iter().map(|(version, _)| *version).collect();
-        let hashes: Vec<&str> = SCHEMA_HASHES.iter().map(|(_, hash)| *hash).collect();
-        assert_eq!(
-            versions.last(),
-            Some(&SCHEMA_VERSION),
-            "SCHEMA_VERSION is not the newest row of SCHEMA_HASHES: a version moved back, or a row was added without moving it"
-        );
-        let unique = |list: &[&str]| {
-            list.iter().collect::<std::collections::HashSet<_>>().len() == list.len()
-        };
-        assert!(
-            unique(&versions),
-            "two rows of SCHEMA_HASHES name one version"
-        );
-        assert!(
-            unique(&hashes),
-            "two versions in SCHEMA_HASHES name the same statements"
-        );
+    fn the_schema_hash_names_the_schema_as_it_is() {
         assert_eq!(
             crate::folder::state::hash(schema_statements().as_bytes()),
-            hashes[hashes.len() - 1],
-            "schema.sql's statements changed: write their hash into SCHEMA_HASHES's row for SCHEMA_VERSION"
+            SCHEMA_HASH,
+            "schema.sql's statements changed: write their hash into SCHEMA_HASH"
         );
     }
 
@@ -1745,7 +1749,7 @@ mod tests {
         assert!(SCHEMA.contains("\n  --"), "schema.sql carries no comments");
         assert!(!statements.contains("--"), "a comment survived the strip");
         // The strip reads `--` alone, so a block comment would ride through
-        // it and price prose at a version bump again, silently.
+        // it and let prose move the hash, silently.
         assert!(!SCHEMA.contains("/*"), "schema.sql grew a block comment");
         assert!(statements.contains("CREATE TABLE IF NOT EXISTS queue ("));
         assert!(statements.len() < SCHEMA.len());

@@ -728,3 +728,79 @@ describe("a device refuses to send less than it was given", () => {
     ).toBe("known");
   });
 });
+
+describe("a device holds an edge only from a row it holds", () => {
+  it("refuses a local edge from a row the copy does not hold", async () => {
+    harness = await startHarness("edge-source-unheld");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "1",
+      rows: { "core.note": [{ item: { id: HELD.id, version: HELD.version } }] },
+      edges: { "parent-of": [] },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    // The witness: an edge from a row the copy holds is queued and held, so
+    // the refusal below is about the source and not about edges at all.
+    const outward = await device.createEdge({
+      source: HELD.id,
+      target: "elsewhere",
+      type: "references",
+    });
+    expect(outward.ok, JSON.stringify(outward)).toBe(true);
+    const before = await device.queue();
+    expect(before.ok).toBe(true);
+    if (!before.ok) return;
+
+    const inward = await device.createEdge({
+      source: "elsewhere",
+      target: HELD.id,
+      type: "references",
+    });
+    expect(
+      inward.ok,
+      "the copy took an edge from a row it does not hold, which no catch-up would ever keep current",
+    ).toBe(false);
+    if (!inward.ok) {
+      expect(
+        inward.refusal.code,
+        `the edge was refused for some other reason than its source: ${inward.refusal.raw}`,
+      ).toBe("invalid");
+    }
+    const after = await device.queue();
+    expect(after.ok).toBe(true);
+    expect(
+      after.ok ? after.value.length : -1,
+      "the refused edge was queued anyway, so a drain would send what the caller was told was refused",
+    ).toBe(before.value.length);
+    const to = await device.edgesTo(HELD.id);
+    expect(to.ok, JSON.stringify(to)).toBe(true);
+    expect(
+      to.ok ? to.value : [],
+      "the refused edge is held all the same",
+    ).toEqual([]);
+
+    // A type the slice holds whole is held whatever its source, so the same
+    // edge of that type is taken.
+    expect(
+      (
+        await device.hydrate(["core.note"], "library", {
+          edgeTypes: ["parent-of"],
+        })
+      ).ok,
+    ).toBe(true);
+    const whole = await device.createEdge({
+      source: "elsewhere",
+      target: HELD.id,
+      type: "parent-of",
+    });
+    expect(
+      whole.ok,
+      `an edge of a type the slice holds whole was refused for its source: ${JSON.stringify(whole)}`,
+    ).toBe(true);
+    const held = await device.edgesTo(HELD.id);
+    expect(held.ok ? held.value.map((edge) => edge.edge_type) : []).toEqual([
+      "parent-of",
+    ]);
+  });
+});
