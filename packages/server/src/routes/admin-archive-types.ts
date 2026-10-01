@@ -5,10 +5,9 @@
  * An item can be of a type registered here rather than shipped, and until
  * the archive carried those registrations a restore into an empty database
  * dropped every such item as an unknown type. The registrations therefore
- * land first, each committed in a transaction of its own before the restore
- * transaction opens, because the type registry is process-level in-memory
- * state that a rollback of the rows cannot reach: see the note on
- * `registerArchiveTypes` for why that is acceptable and what it costs.
+ * land first, each committed in a transaction of its own before the rows'
+ * transaction opens: see the note on `registerArchiveTypes` for why, and
+ * what it costs.
  */
 
 import {
@@ -271,14 +270,13 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
 /**
  * Validates and registers the archive's types, then reports what landed.
  *
- * Runs before the restore transaction opens, and deliberately: the type
- * registry is a process-level in-memory map, so registering inside the
- * rows' transaction would leave the registry holding types a rollback
- * removed from the database. Each registration commits in a transaction of
- * its own, which is where its parent is checked. Registering first inverts that into the harmless
- * direction — a failed restore can leave a registration that no item
- * uses, which the next restore skips as identical and an operator can
- * delete. Blobs already land outside the transaction for the same reason.
+ * Runs before the rows' transaction opens. Each type is checked against its
+ * parent and written in a transaction of its own, which puts the registry
+ * back if it does not commit, and edge types are claimed the same way. A
+ * registration that commits stays when the rows' transaction later rolls
+ * back: a failed restore can leave a registration no item uses, which the
+ * next restore skips as identical and an operator can delete. Blobs land
+ * outside the rows' transaction too.
  *
  * Conflicts are decided in a pre-pass over the whole batch so a refusal
  * names every clashing id at once and nothing has been written yet. An
