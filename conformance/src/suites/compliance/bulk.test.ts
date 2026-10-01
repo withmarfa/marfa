@@ -667,11 +667,14 @@ describe("bulk_action", () => {
   it("purge deletes matching items (with confirm)", async () => {
     const tag = `ba-purge-${ctx.runId}`;
     const ids = await seedTagged(3, tag);
+    for (const id of ids) {
+      expect((await client.deleteItem(id)).ok).toBe(true);
+    }
 
     const result = await runToCompletion({
       action: "purge",
       confirm: "PURGE",
-      filter: { tags: [tag] },
+      filter: { tags: [tag], state: "trashed" },
     });
     expect(result.succeeded).toBe(3);
     // Three notes, no blobs: the count is the purge's report of what it
@@ -680,6 +683,27 @@ describe("bulk_action", () => {
 
     const got = await client.getItem(ids[0]!);
     expect(got.status).toBe(404);
+  });
+
+  it("purge leaves a match that is not in the trash, and reports it invalid_transition", async () => {
+    const tag = `ba-purge-active-${ctx.runId}`;
+    const [active] = await seedTagged(1, tag);
+
+    const result = await runToCompletion({
+      action: "purge",
+      confirm: "PURGE",
+      filter: { tags: [tag] },
+    });
+    // The witness: the filter reached the row.
+    expect(result.matched).toBe(1);
+    expect(result.succeeded).toBe(0);
+    expect(result.errored).toBe(1);
+    expect(result.errors).toEqual([
+      expect.objectContaining({ id: active, code: "invalid_transition" }),
+    ]);
+    const got = await client.getItem(active!);
+    expect(got.status).toBe(200);
+    expect(got.data.item.state).toBe("active");
   });
 
   it("purge without confirm returns 400 bulk_confirmation_required", async () => {

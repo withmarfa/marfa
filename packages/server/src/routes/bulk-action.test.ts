@@ -177,13 +177,18 @@ describe("POST /items/bulk-actions (async)", () => {
   it("purge action deletes matching items (with confirm)", async () => {
     const tag = `purge-${Math.random().toString(36).slice(2, 8)}`;
     const ids = await seed("core.note", 3, { tags: [tag] });
+    for (const id of ids) {
+      await request(ctx.app, "DELETE", `/items/${id}`, {
+        key: ctx.workingKey,
+      });
+    }
 
     const { initialStatus, result } = await runBulkActionAsync(
       ctx,
       {
         action: "purge",
         confirm: "PURGE",
-        filter: { tags: [tag] },
+        filter: { tags: [tag], state: "trashed" },
       },
       ctx.workingKey,
     );

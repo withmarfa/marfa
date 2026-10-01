@@ -263,7 +263,7 @@ export class WebhookConsumer {
     if (this.running) return;
     this.running = true;
     this.abortController = new AbortController();
-    void this.consume();
+    void this.consume(this.abortController.signal);
   }
 
   stop(): void {
@@ -272,18 +272,20 @@ export class WebhookConsumer {
     this.abortController = null;
   }
 
-  private async consume(): Promise<void> {
+  private async consume(signal: AbortSignal): Promise<void> {
     const itemLoop = (async () => {
       try {
-        for await (const event of subscribe()) {
-          if (!this.running) break;
+        for await (const event of subscribe({ signal })) {
+          // A restart sets `running` again, so an event this loop had
+          // already taken is judged by its own signal.
+          if (signal.aborted) break;
           // A write whose caller declined fan-out is logged and streamed
           // like any other; what it does not do is call out.
           if (!fansOut(event)) continue;
           void this.dispatch(event);
         }
       } catch (err) {
-        if (this.running) {
+        if (!signal.aborted) {
           log("error", "Webhook item consumer error", {
             error: err instanceof Error ? err.message : String(err),
           });
@@ -293,13 +295,13 @@ export class WebhookConsumer {
 
     const edgeLoop = (async () => {
       try {
-        for await (const event of subscribeEdges()) {
-          if (!this.running) break;
+        for await (const event of subscribeEdges({ signal })) {
+          if (signal.aborted) break;
           if (!fansOut(event)) continue;
           void this.dispatchEdge(event);
         }
       } catch (err) {
-        if (this.running) {
+        if (!signal.aborted) {
           log("error", "Webhook edge consumer error", {
             error: err instanceof Error ? err.message : String(err),
           });

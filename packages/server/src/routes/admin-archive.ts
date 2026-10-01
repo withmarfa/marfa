@@ -477,7 +477,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                     // with no fallback key, so the refusal has to be here:
                     // parsing one would drop every registration it carries
                     // and answer 200.
-                    `Unsupported archive version: ${String(version)}. This build reads version 0 only, and nothing converts another: export again from a build that writes version 0.`,
+                    `Unsupported archive version ${String(version)}. Until the first public release an archive is read only by the build that wrote it, and this build reads version 0 only: restore it into the build that exported it.`,
                   ),
                 );
                 return;
@@ -656,7 +656,8 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       }
     }
 
-    // Before the transaction, so a rollback cannot strand the registry
+    // Each registration commits in a transaction of its own before the rows'
+    // transaction opens, so a rollback of the rows cannot strand the registry
     // holding types the database no longer has. See registerArchiveTypes.
     let typeResult;
     try {
