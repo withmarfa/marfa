@@ -146,7 +146,7 @@ fail() {
   echo "server-up: $1" >&2
   echo "server-up: log follows" >&2
   # The log may hold the bootstrap secret, and CI logs are public.
-  sed -E 's/Bearer [0-9a-f]{64}/Bearer [redacted]/g' "${log}" >&2 || true
+  sed -E 's/on its stdin: [0-9a-f]{64}/on its stdin: [redacted]/g' "${log}" >&2 || true
   "$(dirname "$0")/server-down.sh" "${env_file}" >/dev/null 2>&1 || true
   exit 1
 }
@@ -172,7 +172,7 @@ fi
 
 secret=""
 for _ in $(seq 1 40); do
-  if [[ "$(cat "${log}")" =~ Bearer\ ([0-9a-f]{64}) ]]; then
+  if [[ "$(cat "${log}")" =~ on\ its\ stdin:\ ([0-9a-f]{64}) ]]; then
     secret="${BASH_REMATCH[1]}"
     break
   fi

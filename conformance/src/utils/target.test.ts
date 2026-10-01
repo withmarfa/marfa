@@ -11,7 +11,7 @@ import {
 const SECRET = "a".repeat(64);
 const BOOT_LINE = JSON.stringify({
   level: "warn",
-  message: `This instance holds no credential yet. Mint the first one with: curl -X POST <url>/keys -H "Authorization: Bearer ${SECRET}" -H 'Content-Type: application/json' -d '{"label":"operator","source":"operator"}'. This secret works once and is not shown again after that mint.`,
+  message: `This instance holds no credential yet. Mint the first one with \`marfa --url <url> keys bootstrap\` and write this bootstrap secret on its stdin: ${SECRET}. This secret works once and is not shown again after that mint.`,
 });
 
 describe("readBootstrapSecret", () => {
@@ -28,7 +28,7 @@ describe("readBootstrapSecret", () => {
 
   it("does not mistake a shorter hex run for the secret", () => {
     expect(
-      readBootstrapSecret(`Authorization: Bearer ${"b".repeat(40)}`),
+      readBootstrapSecret(`bootstrap secret on its stdin: ${"b".repeat(40)}`),
     ).toBeUndefined();
   });
 });
@@ -39,7 +39,7 @@ describe("redactBootstrapSecret", () => {
     expect(readBootstrapSecret(log)).toBe(SECRET);
     const redacted = redactBootstrapSecret(log);
     expect(redacted).not.toContain(SECRET);
-    expect(redacted).toContain("Bearer [redacted]");
+    expect(redacted).toContain("on its stdin: [redacted]");
     expect(readBootstrapSecret(redacted)).toBeUndefined();
   });
 });

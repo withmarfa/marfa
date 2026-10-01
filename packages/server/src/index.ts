@@ -142,10 +142,9 @@ async function main() {
     // stand for.
     log(
       "warn",
-      `This instance holds no credential yet. Mint the first one with: ` +
-        `curl -X POST <url>/keys -H "Authorization: Bearer ${secret}" ` +
-        `-H 'Content-Type: application/json' ` +
-        `-d '{"label":"operator","source":"operator"}'. ` +
+      `This instance holds no credential yet. Mint the first one with ` +
+        `\`marfa --url <url> keys bootstrap\` and write this bootstrap ` +
+        `secret on its stdin: ${secret}. ` +
         `This secret works once and is not shown again after that mint.`,
       undefined,
       { localOnly: true },

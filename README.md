@@ -32,6 +32,27 @@ cd packages/server
 pnpm dev    # http://localhost:8600
 ```
 
+Until the instance holds a credential, the server logs a one-time bootstrap secret at every boot. In a second terminal, build `marfa` and use the secret to mint the first key:
+
+```bash
+cargo install --locked --path core/marfa-cli
+export MARFA_API_URL=http://localhost:8600
+marfa keys bootstrap          # paste the secret from the server's log, then press Enter
+```
+
+The command prints the operator key. The operator key mints and revokes keys and is the instance's recovery root, so keep it somewhere safe. It reaches no type, so it is not a working key. Use it to mint a working key, then keep the working key in the keychain:
+
+```bash
+read -rs MARFA_API_KEY && export MARFA_API_KEY    # paste the operator key
+marfa status                  # the server, the instance and its health; the counts need a working key
+marfa keys create --label laptop --source laptop
+unset MARFA_API_KEY
+marfa keys keep               # paste the working key that keys create printed
+marfa status                  # now with the item counts
+```
+
+On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
+
 `.env.example` carries the variables an instance usually sets, not the full list: `packages/server/src/config.ts` is where the list actually lives. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
 
 ## What is authoritative

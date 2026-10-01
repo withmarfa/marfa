@@ -12,12 +12,14 @@ use crate::values::Tier;
 #[derive(Debug, Subcommand)]
 pub enum KeysCommand {
     /// Mint a fresh instance's operator key with the one-time secret it
-    /// printed to its log. The operator key is not a working key: the next
-    /// call is `keys create` with it.
+    /// printed to its log. The secret is read from `--secret` or from stdin.
+    /// The operator key is not a working key: the next call is `keys create`
+    /// with it.
     Bootstrap {
-        /// The bootstrap secret from the server's log.
+        /// The bootstrap secret from the server's log. Left out, it is read
+        /// from stdin, which keeps it out of the shell's history.
         #[arg(long, value_name = "SECRET")]
-        secret: String,
+        secret: Option<String>,
     },
     /// Mint a key. Needs `keys.mint`, or the operator key.
     Create(KeyCreateArgs),
@@ -303,9 +305,15 @@ pub fn revoke_request(id: &str) -> Request {
 pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         KeysCommand::Bootstrap { secret } => {
+            let secret = match secret {
+                Some(secret) => secret.clone(),
+                None => read_line(
+                    "no bootstrap secret: pass --secret, or write the secret from the server's log on stdin",
+                )?,
+            };
             // The secret is the credential for this one call, whatever key
             // the environment holds: a fresh instance has no key yet.
-            let http = Transport::new(remote.url(), Some(secret))?;
+            let http = Transport::new(remote.url(), Some(&secret))?;
             let minted = Remote::with(http).json(&bootstrap_request())?;
             return print_minted(&minted, out);
         }
@@ -348,16 +356,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let key = match key {
         Some(key) => key,
         None => {
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line)?;
-            let line = line.trim().to_string();
-            if line.is_empty() {
-                return Err(CliError::Invalid(
-                    "no key to keep: pass --key, set MARFA_API_KEY, or write the key on stdin"
-                        .into(),
-                ));
-            }
-            line
+            read_line("no key to keep: pass --key, set MARFA_API_KEY, or write the key on stdin")?
         }
     };
     let checked = Remote::with(Transport::new(remote.url(), Some(&key))?);
@@ -369,6 +368,17 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             remote.origin()
         )
     })
+}
+
+/// One line from stdin, trimmed, refused with `empty` when there is none.
+fn read_line(empty: &str) -> Result<String, CliError> {
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    let line = line.trim().to_string();
+    if line.is_empty() {
+        return Err(CliError::Invalid(empty.into()));
+    }
+    Ok(line)
 }
 
 /// A minted key is shown once, so the plaintext is the first thing on the
