@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -6,7 +7,7 @@ use serde_json::{Map, Value, json};
 
 use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object};
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{self, Printer};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 use crate::values::{ItemState, SortDirection, SortField, Tier};
@@ -836,6 +837,11 @@ pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
 // ---------------------------------------------------------------------------
 
 pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let done = match &command {
+        ItemsCommand::Delete { id, .. } => Some(format!("trashed {id}")),
+        ItemsCommand::Purge { id, .. } => Some(format!("purged {id}")),
+        _ => None,
+    };
     let request = match &command {
         ItemsCommand::List(args) => list_request(args),
         ItemsCommand::Get { id, include } => get_request(id, include.as_deref()),
@@ -852,8 +858,8 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Versions { id } => versions_request(id),
         ItemsCommand::Tag { id, tags } => tag_request(id, tags),
         ItemsCommand::Untag { id, tag } => untag_request(id, tag),
-        ItemsCommand::Edges(args) => edges_request(args, false),
-        ItemsCommand::Backrefs(args) => edges_request(args, true),
+        ItemsCommand::Edges(args) => return edges(args, false, remote, out),
+        ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
         ItemsCommand::Attach(args) => return attach(args, remote, out),
         ItemsCommand::Stats { by } => stats_request(*by),
         ItemsCommand::Occurrences { from, to, type_ } => {
@@ -878,8 +884,45 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         } => tombstones_request(type_, links, source.as_deref(), source_ids, settled_at),
         ItemsCommand::BulkAction { command } => bulk_action_request(command)?,
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match done {
+        Some(sentence) => out.report(&answer, || sentence),
+        None => out.value(&answer),
+    }
 }
+
+/// An item's edges, each with the item at the other end. The edge page
+/// carries only that item's id, so the plain listing reads what each one is
+/// called; `--json` prints the page as the server answered it.
+fn edges(
+    args: &ItemEdgesArgs,
+    inbound: bool,
+    remote: &Remote,
+    out: &Printer,
+) -> Result<(), CliError> {
+    let page = remote.json(&edges_request(args, inbound))?;
+    if out.json {
+        return out.value(&page);
+    }
+    let mut ids: Vec<String> = page
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|edge| output::other_end(edge, inbound).to_string())
+        .filter(|id| !id.is_empty())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut titles = HashMap::new();
+    for chunk in ids.chunks(BULK_GET_LIMIT) {
+        titles.extend(output::titles(&remote.json(&bulk_get_request(chunk, &[]))?));
+    }
+    out.line(&output::edges_from(&page, inbound, &titles))
+}
+
+/// The most ids `POST /items/bulk-get` takes in one request.
+const BULK_GET_LIMIT: usize = 100;
 
 /// Upload, then the file item, then the edge: three doors, one command,
 /// because "attach a file" is what a person means and no door does it.

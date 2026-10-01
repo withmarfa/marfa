@@ -330,10 +330,11 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
         }
     };
     let answer = remote.json(&request)?;
-    if matches!(command, KeysCommand::Create(_)) {
-        return print_minted(&answer, out);
+    match &command {
+        KeysCommand::Create(_) => print_minted(&answer, out),
+        KeysCommand::Revoke { id } => out.report(&answer, || format!("revoked key {id}")),
+        _ => out.value(&answer),
     }
-    out.value(&answer)
 }
 
 /// Keeps the key the call resolved, or one read from stdin, for this origin.
