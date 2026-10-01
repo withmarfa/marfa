@@ -128,6 +128,7 @@ export const BulkActionErrorEntrySchema = z
     id: z.string(),
     code: z.string(),
     message: z.string(),
+    details: z.record(z.string(), z.unknown()).optional(),
   })
   .openapi("BulkActionError");
 

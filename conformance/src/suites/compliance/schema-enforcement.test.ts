@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import type { TestContext } from "../../client/types.js";
+import type {
+  BulkActionInput,
+  BulkActionJob,
+  BulkActionResponse,
+  TestContext,
+} from "../../client/types.js";
 import {
   createTestContext,
   getOperatorClient,
@@ -65,6 +70,20 @@ async function clientWithSource(
   expect(keyResp.ok).toBe(true);
   trackKey(ctx, keyResp.data.id);
   return new MarfaClient({ baseUrl: apiUrl, apiKey: keyResp.data.key });
+}
+
+/** Queue a bulk action, poll its job until terminal, and return the result. */
+async function runBulkAction(
+  input: BulkActionInput,
+): Promise<BulkActionResponse> {
+  const res = await client.bulkAction(input);
+  expect(res.status, JSON.stringify(res.error)).toBe(202);
+  const final = await client.pollBulkActionToTerminal(
+    (res.data as BulkActionJob).id,
+  );
+  expect(final.status).toBe("completed");
+  expect(final.result).toBeDefined();
+  return final.result!;
 }
 
 describe("the configuration door", () => {
@@ -410,6 +429,67 @@ describe("strict_mode lever", () => {
     });
     expect(stillRefused.status).toBe(400);
     expect(stillRefused.error?.error.details?.code).toBe("unknown_property");
+  });
+
+  it("strict-on refuses the same unknown property per row of a bulk update_properties job", async () => {
+    // The filter-in door reaches every row a filter matches with one patch,
+    // so it asks the lever per row, of the patch rather than of the merge,
+    // and refuses only the rows of a type the lever names.
+    await setConfig({
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+    const tag = `strict-bulk-action-${ctx.runId}`;
+    const note = await client.createItem({
+      type: "core.note",
+      properties: { body: "before" },
+      tags: [tag],
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    // The witness: a row of a type the lever does not name, matched by the
+    // same filter, takes the same patch, so what refuses the note is the
+    // lever and not the job, the filter or the patch.
+    const bookmark = await client.createItem({
+      type: "core.bookmark",
+      properties: { url: "https://example.com/strict-bulk-action" },
+      tags: [tag],
+    });
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+
+    const refused = await runBulkAction({
+      action: "update_properties",
+      patch: { not_a_real_field: "x" },
+      filter: { tags: [tag] },
+    });
+    expect(refused.succeeded).toBe(1);
+    expect(refused.errors).toHaveLength(1);
+    expect(refused.errors?.[0]?.id).toBe(note.data.item.id);
+    expect(refused.errors?.[0]?.code).toBe("invalid_properties");
+    expect(
+      refused.errors?.[0]?.details?.code,
+      "the job refused the row for some reason of its own rather than the one the create door gives",
+    ).toBe("unknown_property");
+    expect(
+      (await client.getItem(note.data.item.id)).data.item.properties,
+      "the refused row was written anyway",
+    ).toEqual({ body: "before" });
+    expect(
+      (await client.getItem(bookmark.data.item.id)).data.item.properties
+        .not_a_real_field,
+    ).toBe("x");
+
+    // A patch naming only declared properties applies to every row.
+    const accepted = await runBulkAction({
+      action: "update_properties",
+      patch: { title: "declared" },
+      filter: { tags: [tag], type: "core.note" },
+    });
+    expect(accepted.errors ?? []).toEqual([]);
+    expect(accepted.succeeded).toBe(1);
+    expect(
+      (await client.getItem(note.data.item.id)).data.item.properties.title,
+    ).toBe("declared");
   });
 
   it("default-off accepts through the bulk and update doors as it does through the create door", async () => {

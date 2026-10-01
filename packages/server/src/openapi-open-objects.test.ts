@@ -27,9 +27,9 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
     reason: "A refusal's details, which differ by code and by door.",
   },
   {
-    pattern: /^BulkEntryError\.details$/,
+    pattern: /^(BulkEntryError|BulkActionError)\.details$/,
     reason:
-      "The details of the refusal a single write gives, which differ by code.",
+      "The details of the refusal a single write or a bulk-action job row gives, which differ by code.",
   },
   {
     pattern:
