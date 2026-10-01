@@ -2851,24 +2851,24 @@ export interface components {
             label: string;
             source: string;
             /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
-            sources?: string[];
-            permissions?: components["schemas"]["Permission"][];
+            sources: string[];
+            permissions: components["schemas"]["Permission"][];
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"];
             is_operator: boolean;
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            extension_permissions?: {
+            extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            edge_permissions?: {
+            edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            metadata_permissions?: {
+            metadata_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            profile_permissions?: {
+            profile_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
             enforcement_override?: components["schemas"]["EnforcementOverride"];
@@ -2904,9 +2904,9 @@ export interface components {
             label: string;
             source: string;
             /** @description The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing. */
-            sources?: string[];
-            /** @description The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused. */
-            permissions?: components["schemas"]["Permission"][];
+            sources: string[];
+            /** @description The permissions this credential holds, as the literals themselves. Empty on a key that holds none. */
+            permissions: components["schemas"]["Permission"][];
             /** @description The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly. */
             oauth_client_id?: string;
             default_tier: components["schemas"]["Tier"];
@@ -2914,22 +2914,22 @@ export interface components {
             type_permissions: {
                 [key: string]: components["schemas"]["TypePermissionLevel"];
             };
-            extension_permissions?: {
+            extension_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            edge_permissions?: {
+            edge_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            metadata_permissions?: {
+            metadata_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
-            profile_permissions?: {
+            profile_permissions: {
                 [key: string]: components["schemas"]["PermissionLevel"];
             };
             enforcement_override?: components["schemas"]["EnforcementOverride"];
             created_at: string;
             /** @description Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one. */
-            expires_at?: string | null;
+            expires_at: string | null;
             last_used_at: string | null;
         };
         ApiKeyNotFoundRefusal: {

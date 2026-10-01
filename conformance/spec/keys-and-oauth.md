@@ -64,3 +64,7 @@
 ## The calling key
 
 35. **Any key reads itself at `GET /keys/current`**, whatever it holds: its `id`, `source`, `permissions`, its maps, its claimed `sources` and its tier, never its plaintext. A key holding no permission reads itself there while `GET /keys` refuses it `403`, so a process handed a key can check it holds what it should and no more. A request with no credential answers `401`; a signed-in app's token is not a key and is refused `403 forbidden`. `compliance/key-management.test.ts › a key holding no permission reads itself, and no other key`, `compliance/declared-refusals.test.ts › cannot register a connector`.
+
+## The shape of a key
+
+36. **Every key answer carries the key's `permissions`, its claimed `sources` and each of its permission maps, empty where the key holds nothing**, so an empty list is never left for a reader to tell from a missing one. That holds on the mint, the listing, `GET /keys/current` and the update, and the published `KeyResponse` and `ApiKey` declare each of them required. The listing, `GET /keys/current` and the update also carry `expires_at`, null on every key a door mints, which `ApiKey` declares required; the mint declares no expiry. `compliance/key-management.test.ts › every key answer carries its permissions and its maps, empty where it holds nothing`.
