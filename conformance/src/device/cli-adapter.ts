@@ -40,9 +40,10 @@ const run = promisify(execFile);
 /**
  * Under `--json` the binary reports a refusal as one JSON object on stderr,
  * `{"error":{"code":...},"exit":N}`, and the code is what the adapter reads.
- * The one refusal that is not an envelope is clap's own, for a command line
- * the binary does not offer: it exits 2 with its usage text, which is the
- * device refusing an operation rather than the core refusing one it does.
+ * A command line the binary does not offer is refused that way too, with the
+ * code `usage`: the device refusing an operation rather than the core
+ * refusing one it does. Without `--json` that refusal is the usage text and
+ * exit 2, read here as the same `usage`.
  */
 function classify(stderr: string, exitCode: number | null): Refusal {
   const raw = stderr.trim();
