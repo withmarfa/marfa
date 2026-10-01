@@ -24,7 +24,7 @@ pub struct FieldDefinition {
     pub enum_values: Option<Vec<String>>,
     #[serde(rename = "items_type", skip_serializing_if = "Option::is_none")]
     pub items_type: Option<String>,
-    /// Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
+    /// Semantic refinement of a `string` field, or of an array of strings. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`, or into `items_type` on an array of strings.
     #[serde(rename = "format", skip_serializing_if = "Option::is_none")]
     pub format: Option<Format>,
     #[serde(rename = "searchable", skip_serializing_if = "Option::is_none")]
@@ -84,7 +84,7 @@ impl Default for Type {
         Self::String
     }
 }
-/// Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
+/// Semantic refinement of a `string` field, or of an array of strings. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`, or into `items_type` on an array of strings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Format {
     #[serde(rename = "url")]

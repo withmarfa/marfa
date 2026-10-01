@@ -109,8 +109,9 @@ export interface FieldDefinition {
   maxItems?: number;
   /**
    * A refinement of a string: `url`, `email`, `datetime`, `date` and
-   * `thumbnail` are stored as the field type of the same name, while
-   * `bcp47` and `iso3166` annotate the string and are stored as `format`.
+   * `thumbnail` are stored as the field type of the same name, or as the
+   * `items_type` of an array of strings, while `bcp47` and `iso3166`
+   * annotate the string and are stored as `format`.
    */
   format?: string;
 }

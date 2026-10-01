@@ -645,6 +645,48 @@ describe("field attributes survive normalization", () => {
     expect(result.data.fields.seen_at?.type).toBe("datetime");
   });
 
+  it("keeps a declared list of strings a list, of the format's type", () => {
+    const result = validate({
+      id: "acme.link_list",
+      version: 1,
+      fields: {
+        links: { type: "array", items_type: "string", format: "url" },
+        days: { type: "array", items_type: "string", format: "date" },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.fields.links).toEqual({
+      type: "array",
+      items_type: "url",
+    });
+    expect(result.data.fields.days).toEqual({
+      type: "array",
+      items_type: "date",
+    });
+  });
+
+  it("refuses a type-naming format the declared type cannot take", () => {
+    for (const field of [
+      { type: "number", format: "url" },
+      { type: "array", items_type: "object", format: "url" },
+      { type: "array", items_type: "string", format: "thumbnail" },
+      { type: "date", format: "datetime" },
+    ]) {
+      const result = validate({
+        id: "acme.mismatched_format",
+        version: 1,
+        fields: { value: field },
+      });
+      expect(result.success, JSON.stringify(field)).toBe(false);
+      if (result.success) continue;
+      expect(
+        result.errors.some((error) => error.field === "fields.value.format"),
+        JSON.stringify(field),
+      ).toBe(true);
+    }
+  });
+
   it("reads required-ness from either the top-level array or the field", () => {
     const viaArray = validate({
       id: "acme.via_array",

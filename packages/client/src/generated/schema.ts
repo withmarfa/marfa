@@ -2304,7 +2304,7 @@ export interface components {
             enum_values?: string[];
             items_type?: string;
             /**
-             * @description Semantic refinement of a `string` field. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`.
+             * @description Semantic refinement of a `string` field, or of an array of strings. Only the annotation-only formats reach the registry: those with a field type of their own normalize into `type`, or into `items_type` on an array of strings.
              * @enum {string}
              */
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166";

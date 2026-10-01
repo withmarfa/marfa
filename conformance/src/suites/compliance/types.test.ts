@@ -158,6 +158,51 @@ describe("type registration and listing", () => {
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("property_shadows_field");
   });
+
+  it("keeps a list of strings with a type-naming format a list", async () => {
+    const id = `user.link-list-${ctx.runId}`;
+    const r = await client.registerType({
+      id,
+      fields: {
+        links: { type: "array", items_type: "string", format: "url" },
+        href: { type: "string", format: "url" },
+      },
+    });
+    expect(r.status).toBe(201);
+
+    const read = await client.getType(id);
+    expect(read.ok).toBe(true);
+    expect(read.data.fields.links).toMatchObject({
+      type: "array",
+      items_type: "url",
+    });
+    expect(read.data.fields.links?.format).toBeUndefined();
+    expect(read.data.fields.href?.type).toBe("url");
+
+    const item = await client.createItem({
+      type: id,
+      properties: { links: ["https://example.com/a", "https://example.com/b"] },
+      source: ctx.source,
+    });
+    expect(item.status).toBe(201);
+    trackItem(ctx, item.data.item.id);
+    expect(item.data.item.properties.links).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+    ]);
+  });
+
+  it("refuses a type-naming format on a field that is neither a string nor a list of strings", async () => {
+    const r = await client.registerType({
+      id: `user.number-url-${ctx.runId}`,
+      fields: { count: { type: "number", format: "url" } },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_schema");
+    const errors = r.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.some((e) => e.field === "fields.count.format")).toBe(true);
+  });
 });
 
 // Per-type merge policy drives client-side conflict resolution.
