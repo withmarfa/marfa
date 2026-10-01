@@ -39,6 +39,7 @@ import {
   resolveIncomingProperties,
 } from "../storage/merge-properties.js";
 import { log } from "../middleware/logger.js";
+import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
@@ -60,6 +61,7 @@ import {
 } from "../middleware/auth.js";
 import type {
   Storage,
+  ItemFilters,
   ItemSortField,
   ResolvedItem,
 } from "../storage/interface.js";
@@ -72,7 +74,10 @@ import {
   edgeTargetNotFound,
 } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
-import { excludesSystemTypes } from "./_system-type-visibility.js";
+import {
+  excludesSystemTypes,
+  SYSTEM_INCLUDE_TOKEN,
+} from "./_system-type-visibility.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import {
   hydrateEdgesForItem,
@@ -416,13 +421,103 @@ const createItemRoute = createRoute({
   },
 });
 
+/**
+ * The query keys that decide which items a listing answers, apart from how
+ * it orders and pages them. The stats door takes the same keys, so a count
+ * is asked with exactly the filters of the listing it sizes.
+ */
+const listingNarrowingKeys = {
+  type: z
+    .string()
+    .optional()
+    .describe(
+      "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
+    ),
+  state: z
+    .string()
+    .optional()
+    .describe(
+      `Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. \`${ALL_STATES}\` returns every state in one pass, which a resuming client needs in order to see a row leave the active state.`,
+    ),
+  source: z
+    .string()
+    .optional()
+    .describe("Narrow to rows stamped with this `source`."),
+  tier: z
+    .enum(["library", "feed", "all"])
+    .optional()
+    .describe("Tier slice; omit or `all` returns both"),
+  tags: z
+    .string()
+    .optional()
+    .describe("Comma-separated tags; items must carry all of them"),
+  filter: z
+    .string()
+    .optional()
+    .describe(
+      "Filter expression in the query grammar. A term naming an edge " +
+        "type — `edge[<type>]` or `backref[<type>]`, in this " +
+        "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
+        "about a relationship, so it is held to the edge read " +
+        "permission: one naming a type the credential may not read is " +
+        "refused `403 edge_permission_denied`. A `backref` term " +
+        "counts only edges whose source the credential may read, so " +
+        "one anchored on an item it may not read matches as one " +
+        "anchored on an id no row holds; an `edge` term matches every " +
+        "edge it may read, one to an item it may not read included.",
+    ),
+};
+
+const listingBoundKeys = {
+  occurred_after: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+    ),
+  occurred_before: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
+    ),
+  updated_after: z
+    .string()
+    // Non-empty, because the ordering switches on this parameter
+    // rather than on `sort`: an empty value would order by
+    // `(updated_at, id)` ascending and bound nothing, so a client
+    // building the query before it holds a cursor would walk the
+    // whole corpus under the shape of a narrow catch-up.
+    .min(1)
+    .optional()
+    .describe(
+      "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+    ),
+  updated_before: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
+    ),
+};
+
+type ListingFilterQuery = Partial<
+  Record<
+    keyof typeof listingNarrowingKeys | keyof typeof listingBoundKeys,
+    string
+  >
+>;
+
 const getItemStatsRoute = createRoute({
   operationId: "getItemStats",
   method: "get",
   path: "/stats",
   tags: ["Items"],
   summary: "Get item counts",
-  description: `Returns a count of items, grouped on one axis. \`by=state\` (the default) counts per lifecycle state; \`by=type\` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns a count of items, grouped on one axis. \`by=state\` (the default) counts per lifecycle state; \`by=type\` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter \`GET /items\` takes, with the same meaning, and counts the rows that listing would walk: the \`edge[<type>]\` and \`backref[<type>]\` shorthands among them, and \`include=system\` to count \`system.*\` items, which are left out by default as they are from the listing. One default differs: naming no \`state\` counts every state, so the listing's own count for the same filters is the \`active\` bucket of \`by=state\`, or the bucket of the state it names. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -430,6 +525,20 @@ const getItemStatsRoute = createRoute({
         .enum(["state", "type"])
         .optional()
         .describe("Grouping axis. Defaults to `state`."),
+      ...listingNarrowingKeys,
+      state: z
+        .string()
+        .optional()
+        .describe(
+          `Count only this lifecycle state. Omitting the parameter counts every state, as does \`${ALL_STATES}\`.`,
+        ),
+      ...listingBoundKeys,
+      include: z
+        .enum([SYSTEM_INCLUDE_TOKEN])
+        .optional()
+        .describe(
+          "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own.",
+        ),
     }),
   },
   responses: {
@@ -439,16 +548,16 @@ const getItemStatsRoute = createRoute({
           schema: z.record(z.string(), z.number()),
         },
       },
-      description: "Item counts by state",
+      description: "Item counts on the chosen axis",
     },
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema(["validation_error", "unknown_type"]),
         },
       },
       description:
-        "A query parameter the door does not declare, or a grouping it does not have.",
+        "A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest.",
     },
     401: {
       content: {
@@ -461,11 +570,14 @@ const getItemStatsRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_not_permitted"]),
+          schema: makeErrorResponseSchema([
+            "edge_permission_denied",
+            "type_not_permitted",
+          ]),
         },
       },
       description:
-        "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused.",
+        "`type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read.",
     },
   },
 });
@@ -480,45 +592,7 @@ const listItemsRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      type: z
-        .string()
-        .optional()
-        .describe(
-          "Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
-        ),
-      state: z
-        .string()
-        .optional()
-        .describe(
-          `Filter by lifecycle state. Omitting the parameter answers the active state, which is what a reader is working with. \`${ALL_STATES}\` returns every state in one pass, which a resuming client needs in order to see a row leave the active state.`,
-        ),
-      source: z
-        .string()
-        .optional()
-        .describe("Narrow to rows stamped with this `source`."),
-      tier: z
-        .enum(["library", "feed", "all"])
-        .optional()
-        .describe("Tier slice; omit or `all` returns both"),
-      tags: z
-        .string()
-        .optional()
-        .describe("Comma-separated tags; items must carry all of them"),
-      filter: z
-        .string()
-        .optional()
-        .describe(
-          "Filter expression in the query grammar. A term naming an edge " +
-            "type — `edge[<type>]` or `backref[<type>]`, in this " +
-            "parameter or as the `edge[<type>]=<id>` shorthand — asks " +
-            "about a relationship, so it is held to the edge read " +
-            "permission: one naming a type the credential may not read is " +
-            "refused `403 edge_permission_denied`. A `backref` term " +
-            "counts only edges whose source the credential may read, so " +
-            "one anchored on an item it may not read matches as one " +
-            "anchored on an id no row holds; an `edge` term matches every " +
-            "edge it may read, one to an item it may not read included.",
-        ),
+      ...listingNarrowingKeys,
       sort: z
         .string()
         .regex(
@@ -530,39 +604,7 @@ const listItemsRoute = createRoute({
           "Field to sort by: a system column (created_at, updated_at, occurred_at) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
-      occurred_after: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
-        ),
-      occurred_before: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive).",
-        ),
-      updated_after: z
-        .string()
-        // Non-empty, because the ordering switches on this parameter
-        // rather than on `sort`: an empty value would order by
-        // `(updated_at, id)` ascending and bound nothing, so a client
-        // building the query before it holds a cursor would walk the
-        // whole corpus under the shape of a narrow catch-up.
-        .min(1)
-        .optional()
-        .describe(
-          "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
-        ),
-      updated_before: z
-        .string()
-        .min(1)
-        .optional()
-        .describe(
-          "Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort.",
-        ),
+      ...listingBoundKeys,
       limit: z.coerce
         .number()
         .int()
@@ -2014,55 +2056,16 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  router.openapi(getItemStatsRoute, async (c) => {
-    requireAuth(c);
-    refuseUnknownQueryParams(c.req.raw.url, getItemStatsRoute.request.query);
-    const callerKey = c.get("apiKey");
-    const { by } = c.req.valid("query");
-    const typeFilter = getTypeFilter(c);
-    // These counts summarize the listing, so they narrow with it.
-    const instanceConfig = await readInstanceConfig(storage.settings);
-    const enforcement = resolveEnforcement(instanceConfig, callerKey);
-    const stats = await storage.items.stats(
-      typeFilter,
-      enforcement.source_filter,
-      by,
-    );
-    return c.json(stats, 200);
-  });
-
-  router.openapi(listItemsRoute, async (c) => {
-    requireAuth(c);
-
-    // Before anything reads the validated query, because validation has
-    // already dropped an undeclared key by then and a dropped time filter
-    // is indistinguishable from one that was never sent. The edge
-    // shorthands are allowed by pattern: the type is part of the key, so
-    // no schema can enumerate them.
-    refuseUnknownQueryParams(c.req.raw.url, listItemsRoute.request.query, {
-      allow: [EDGE_SHORTHAND_KEY],
-    });
-
-    const query = c.req.valid("query");
-
-    // `updated_after` implies `(updated_at, id)` ascending — it is the
-    // only order a catch-up cursor can advance through. A request that
-    // also names a different sort is contradicting itself, and honoring
-    // one half silently is the same failure as ignoring a renamed
-    // parameter: the caller gets a page that looks right and cannot be
-    // resumed. Refuse instead of picking a winner.
-    if (query.updated_after !== undefined) {
-      const conflicting =
-        (query.sort !== undefined && query.sort !== "updated_at") ||
-        (query.direction !== undefined && query.direction !== "asc");
-      if (conflicting) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          "updated_after orders by (updated_at, id) ascending and cannot be combined with a different sort or direction. Drop sort/direction, or drop updated_after.",
-        );
-      }
-    }
-
+  /**
+   * What a listing's query narrows to, apart from ordering and paging. The
+   * listing and the stats door both read their filters through here, so a
+   * count is taken over exactly the rows the listing walks.
+   */
+  async function listingFilters(
+    c: Context<AppEnv>,
+    query: ListingFilterQuery,
+    includeSet: ReadonlySet<string>,
+  ): Promise<ItemFilters> {
     const type = query.type;
     // Grammar, the global wildcard and an unknown concrete type, decided once
     // for every list surface; the reasoning is at `assertTypeFilter`.
@@ -2116,16 +2119,6 @@ export function itemRoutes(storage: Storage) {
         : rawTier === "feed"
           ? "feed"
           : undefined;
-    const includeSet = new Set(
-      (query.include ?? "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0),
-    );
-    const includeMetadata = includeSet.has("metadata");
-    const includeEdges = includeSet.has("edges");
-    const includeExtensions = includeSet.has("extensions");
-
     // system.* is excluded by default and opted back in by the token or by a
     // type filter that names the namespace. Through the shared rule rather
     // than restated here, so no door matches rows its siblings hide.
@@ -2138,9 +2131,10 @@ export function itemRoutes(storage: Storage) {
       callerKeyForRead,
     );
     const typeFilterForList = getTypeFilter(c);
-    const result = await storage.items.list({
+    return {
       type,
       state,
+      all_states: allStates,
       source: query.source,
       // The lever is decided per row from the row's own type, not from the
       // `?type=` parameter: a bare listing, an ancestor wildcard, a tier
@@ -2154,15 +2148,79 @@ export function itemRoutes(storage: Storage) {
       readable_sources: typeFilterForList,
       allowed_types: typeFilterForList.allowed,
       excluded_types: typeFilterForList.excluded,
-      // The query schema's regex already constrains this to a system column or
-      // `properties.<field>`; the storage layer re-validates via parseSortField.
-      sort: (query.sort as ItemSortField | undefined) ?? undefined,
-      direction: query.direction ?? undefined,
       occurred_after: query.occurred_after,
       occurred_before: query.occurred_before,
       updated_after: query.updated_after,
       updated_before: query.updated_before,
-      all_states: allStates,
+    };
+  }
+
+  router.openapi(getItemStatsRoute, async (c) => {
+    requireAuth(c);
+    refuseUnknownQueryParams(c.req.raw.url, getItemStatsRoute.request.query, {
+      allow: [EDGE_SHORTHAND_KEY],
+    });
+    const query = c.req.valid("query");
+    const filters = await listingFilters(
+      c,
+      query,
+      new Set(query.include === undefined ? [] : [query.include]),
+    );
+    // Every state when none is named, because the default answer is the
+    // breakdown across them.
+    if (query.state === undefined) filters.all_states = true;
+    const stats = await storage.items.stats(filters, query.by);
+    return c.json(stats, 200);
+  });
+
+  router.openapi(listItemsRoute, async (c) => {
+    requireAuth(c);
+
+    // Before anything reads the validated query, because validation has
+    // already dropped an undeclared key by then and a dropped time filter
+    // is indistinguishable from one that was never sent. The edge
+    // shorthands are allowed by pattern: the type is part of the key, so
+    // no schema can enumerate them.
+    refuseUnknownQueryParams(c.req.raw.url, listItemsRoute.request.query, {
+      allow: [EDGE_SHORTHAND_KEY],
+    });
+
+    const query = c.req.valid("query");
+
+    // `updated_after` implies `(updated_at, id)` ascending — it is the
+    // only order a catch-up cursor can advance through. A request that
+    // also names a different sort is contradicting itself, and honoring
+    // one half silently is the same failure as ignoring a renamed
+    // parameter: the caller gets a page that looks right and cannot be
+    // resumed. Refuse instead of picking a winner.
+    if (query.updated_after !== undefined) {
+      const conflicting =
+        (query.sort !== undefined && query.sort !== "updated_at") ||
+        (query.direction !== undefined && query.direction !== "asc");
+      if (conflicting) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          "updated_after orders by (updated_at, id) ascending and cannot be combined with a different sort or direction. Drop sort/direction, or drop updated_after.",
+        );
+      }
+    }
+
+    const includeSet = new Set(
+      (query.include ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0),
+    );
+    const includeMetadata = includeSet.has("metadata");
+    const includeEdges = includeSet.has("edges");
+    const includeExtensions = includeSet.has("extensions");
+
+    const result = await storage.items.list({
+      ...(await listingFilters(c, query, includeSet)),
+      // The query schema's regex already constrains this to a system column or
+      // `properties.<field>`; the storage layer re-validates via parseSortField.
+      sort: (query.sort as ItemSortField | undefined) ?? undefined,
+      direction: query.direction ?? undefined,
       limit: query.limit,
       cursor: query.cursor,
     });

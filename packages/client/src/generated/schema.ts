@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get item counts
-         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Returns a count of items, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter `GET /items` takes, with the same meaning, and counts the rows that listing would walk: the `edge[<type>]` and `backref[<type>]` shorthands among them, and `include=system` to count `system.*` items, which are left out by default as they are from the listing. One default differs: naming no `state` counts every state, so the listing's own count for the same filters is the `active` bucket of `by=state`, or the bucket of the state it names. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
          */
         get: operations["getItemStats"];
         put?: never;
@@ -1771,20 +1771,20 @@ export interface components {
                 };
             };
         };
-        ValidationErrorRefusal: {
+        UnknownTypeOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "validation_error";
+                code: "unknown_type" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
                 };
             };
         };
-        TypeNotPermittedRefusal: {
+        EdgePermissionDeniedOrTypeNotPermittedRefusal: {
             error: {
                 /** @enum {string} */
-                code: "type_not_permitted";
+                code: "edge_permission_denied" | "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -1802,16 +1802,6 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "missing_required_field" | "unknown_type" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        EdgePermissionDeniedOrTypeNotPermittedRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "edge_permission_denied" | "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -1847,6 +1837,16 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "invalid_id";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        TypeNotPermittedRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2107,6 +2107,16 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "invalid_id" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        ValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -3025,16 +3035,6 @@ export interface components {
                 };
             };
         };
-        UnknownTypeOrValidationErrorRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "unknown_type" | "validation_error";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         Webhook: {
             id: string;
             url: string;
@@ -3532,6 +3532,28 @@ export interface operations {
             query?: {
                 /** @description Grouping axis. Defaults to `state`. */
                 by?: "state" | "type";
+                /** @description Type identifier; matches subtypes via inheritance. A concrete identifier this instance does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page. */
+                type?: string;
+                /** @description Count only this lifecycle state. Omitting the parameter counts every state, as does `any`. */
+                state?: string;
+                /** @description Narrow to rows stamped with this `source`. */
+                source?: string;
+                /** @description Tier slice; omit or `all` returns both */
+                tier?: "library" | "feed" | "all";
+                /** @description Comma-separated tags; items must carry all of them */
+                tags?: string;
+                /** @description Filter expression in the query grammar. A term naming an edge type — `edge[<type>]` or `backref[<type>]`, in this parameter or as the `edge[<type>]=<id>` shorthand — asks about a relationship, so it is held to the edge read permission: one naming a type the credential may not read is refused `403 edge_permission_denied`. A `backref` term counts only edges whose source the credential may read, so one anchored on an item it may not read matches as one anchored on an id no row holds; an `edge` term matches every edge it may read, one to an item it may not read included. */
+                filter?: string;
+                /** @description Lower bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). An RFC 3339 instant in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`. */
+                occurred_after?: string;
+                /** @description Upper bound on the item's own time — `occurred_at`, falling back to `created_at` (exclusive). */
+                occurred_before?: string;
+                /** @description Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well. */
+                updated_after?: string;
+                /** @description Upper bound on `updated_at` (exclusive), closing the window its lower twin opens. Exclusive where `updated_after` is inclusive, because this is an end point the caller chooses rather than a resume point that must not drop a tie. It does not change the ordering, so it may be given under any sort. */
+                updated_before?: string;
+                /** @description `system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own. */
+                include?: "system";
             };
             header?: never;
             path?: never;
@@ -3539,7 +3561,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Item counts by state */
+            /** @description Item counts on the chosen axis */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3555,7 +3577,7 @@ export interface operations {
                     };
                 };
             };
-            /** @description A query parameter the door does not declare, or a grouping it does not have. */
+            /** @description A query parameter the door does not declare, a grouping it does not have, or a filter the listing would refuse: `unknown_type` for a concrete type this instance does not know, `validation_error` for the rest. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3567,7 +3589,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -3585,7 +3607,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. */
+            /** @description `type_not_permitted` when the credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential that reaches some types reads this door narrowed to them rather than being refused. `edge_permission_denied` when an `edge` or `backref` term names an edge type the credential may not read. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3597,7 +3619,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
