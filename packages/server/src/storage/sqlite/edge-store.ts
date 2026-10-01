@@ -15,7 +15,7 @@ import {
   ErrorCode,
   MarfaError,
   generateId,
-  getEdgeTypeSchema,
+  isCoreEdgeType,
 } from "@withmarfa/shared";
 import type { Edge, PaginatedResult } from "@withmarfa/shared";
 import type {
@@ -34,7 +34,7 @@ import {
 import type { CursorSortKey } from "../interface.js";
 import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
-import { edges } from "./schema.js";
+import { edges, edgeTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 
@@ -83,10 +83,17 @@ export class SqliteEdgeStore implements EdgeStore {
     // tells a synced client nothing it can act on — and the id it sent is
     // exactly the thing it needs named back.
     await this.db.transaction(async (tx) => {
-      // Asked inside the write lock, because a door's own check can run
-      // before an edge type's delete commits, which takes the type out of
-      // the registry first; an edge written after it would name nothing.
-      if (!getEdgeTypeSchema(input.edge_type)) {
+      // Asked of the table inside the write lock, because a door's own
+      // check can run before an edge type's delete commits, and an edge
+      // written after that commit would name nothing.
+      const registered =
+        isCoreEdgeType(input.edge_type) ||
+        (await tx
+          .select({ id: edgeTypes.id })
+          .from(edgeTypes)
+          .where(eq(edgeTypes.id, input.edge_type))
+          .get()) !== undefined;
+      if (!registered) {
         throw new MarfaError(
           ErrorCode.EDGE_TYPE_NOT_FOUND,
           `Unknown edge type: ${input.edge_type}`,
