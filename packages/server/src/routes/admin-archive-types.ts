@@ -5,10 +5,10 @@
  * An item can be of a type registered here rather than shipped, and until
  * the archive carried those registrations a restore into an empty database
  * dropped every such item as an unknown type. The registrations therefore
- * land first, outside the restore transaction, because the type registry
- * is process-level in-memory state that a rollback cannot reach anyway:
- * see the note on `registerArchiveTypes` for why that is acceptable and
- * what it costs.
+ * land first, each committed in a transaction of its own before the restore
+ * transaction opens, because the type registry is process-level in-memory
+ * state that a rollback of the rows cannot reach: see the note on
+ * `registerArchiveTypes` for why that is acceptable and what it costs.
  */
 
 import {
@@ -26,6 +26,7 @@ import {
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, TypeSchema } from "@withmarfa/shared";
+import { writeTypesInTransaction } from "./_type-write.js";
 import type { Storage, TypeProvenance } from "../storage/interface.js";
 import {
   EdgeTypeRequestSchema,
@@ -272,8 +273,9 @@ function parseTypeEntries(entries: ArchiveTypeEntry[]): {
  *
  * Runs before the restore transaction opens, and deliberately: the type
  * registry is a process-level in-memory map, so registering inside the
- * transaction would leave the registry holding types a rollback removed
- * from the database. Registering first inverts that into the harmless
+ * rows' transaction would leave the registry holding types a rollback
+ * removed from the database. Each registration commits in a transaction of
+ * its own, which is where its parent is checked. Registering first inverts that into the harmless
  * direction — a failed restore can leave a registration that no item
  * uses, which the next restore skips as identical and an operator can
  * delete. Blobs already land outside the transaction for the same reason.
@@ -367,32 +369,36 @@ export async function registerArchiveTypes(
       // The parent is asked in the transaction that writes the type, as
       // `POST /types` asks it, so a parent deleted meanwhile is not inherited
       // from, and a delete waiting on this write finds the child.
-      const wrote = await storage.runInTransaction(async () => {
-        if (schema.parent && !getTypeSchema(schema.parent)) return false;
-        if (schema.parent) {
-          assertParentChainResolves(schema.id, schema.parent);
-          // Checked again now its parent is registered: the first pass ran
-          // before the batch's own parents were, so it could not see what a
-          // child inherits from one of them, a second thumbnail among it.
-          const inherited = validateTypeSchema(schema);
-          if (!inherited.success) {
-            throw new MarfaError(
-              ErrorCode.INVALID_SCHEMA,
-              `Archive carries an invalid type schema for "${schema.id}"`,
-              { errors: inherited.errors },
-            );
+      const wrote = await writeTypesInTransaction(
+        storage,
+        [schema.id],
+        async () => {
+          if (schema.parent && !getTypeSchema(schema.parent)) return false;
+          if (schema.parent) {
+            assertParentChainResolves(schema.id, schema.parent);
+            // Checked again now its parent is registered: the first pass ran
+            // before the batch's own parents were, so it could not see what a
+            // child inherits from one of them, a second thumbnail among it.
+            const inherited = validateTypeSchema(schema);
+            if (!inherited.success) {
+              throw new MarfaError(
+                ErrorCode.INVALID_SCHEMA,
+                `Archive carries an invalid type schema for "${schema.id}"`,
+                { errors: inherited.errors },
+              );
+            }
           }
-        }
-        // `types.create` registers into the registry as part of the write,
-        // so nothing here calls it directly.
-        //
-        // Provenance is passed rather than defaulted: the column defaults to
-        // `user`, the one the consent screen offers a read-and-write wildcard
-        // over, so defaulting would turn a row recorded as `unknown` into the
-        // person's own on a round trip.
-        await storage.types.create(schema, entry.provenance);
-        return true;
-      });
+          // `types.create` registers into the registry as part of the write,
+          // so nothing here calls it directly.
+          //
+          // Provenance is passed rather than defaulted: the column defaults to
+          // `user`, the one the consent screen offers a read-and-write wildcard
+          // over, so defaulting would turn a row recorded as `unknown` into the
+          // person's own on a round trip.
+          await storage.types.create(schema, entry.provenance);
+          return true;
+        },
+      );
       if (!wrote) continue;
       written.push(entry);
       pending.splice(i, 1);

@@ -857,6 +857,22 @@ async function processBulkItem(
     const resultingType =
       retype && raw.type !== existing.type ? raw.type : existing.type;
     const isMove = resultingType !== existing.type;
+    // Refused as `PATCH /items/{id}` and a create refuse it, before the
+    // properties are judged against a schema the destination does not have.
+    if (isMove && getTypeSchema(resultingType) === undefined) {
+      return {
+        result: {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: {
+            code: ErrorCode.UNKNOWN_TYPE,
+            message: `Unknown type: ${resultingType}. Register it via POST /types before moving items into it.`,
+            details: { type: resultingType },
+          },
+        },
+      };
+    }
     if (raw.properties !== undefined) {
       // The same lever the create branch asks a few lines down, asked of
       // the update half for the same reason: this is one door, and a
@@ -919,13 +935,11 @@ async function processBulkItem(
         resolveIncomingProperties(existing.type, raw.properties) ?? {},
         "merge",
       );
-      // The move stays unguarded, which is not an oversight: a destination
-      // with nothing registered is a destination that does not exist, and
-      // `validateProperties` answering `Unknown type` is the right refusal
-      // for a move into it. A same-type update cannot say that about the
-      // row's own type without refusing every write to a type whose schema
-      // this request's registry does not carry, so it asks first — the
-      // same guard the single-item door runs.
+      // A move reaching here has a registered destination. A same-type
+      // update cannot refuse the row's own type for being unregistered
+      // without refusing every write to a type whose schema this request's
+      // registry does not carry, so it asks first, the same guard the
+      // single-item door runs.
       if (isMove || getTypeSchema(resultingType) !== undefined) {
         const validation = validateProperties(resultingType, merged);
         if (!validation.success) {

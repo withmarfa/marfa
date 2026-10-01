@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestContext, request, settle } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { getTypeSchema } from "@withmarfa/shared";
+import { writeTypesInTransaction } from "./_type-write.js";
 
 let ctx: TestContext;
 
@@ -239,5 +241,187 @@ describe("POST /types and PUT /types/{id} — a parent is checked where the type
       .map((r) => r.status)
       .sort();
     expect(statuses).toEqual([200, 400]);
+  });
+});
+
+describe("PUT /types/{id} — what it is judged by is read where it writes", () => {
+  it("refuses a replacement for a type deleted while it waited, and leaves it gone", async () => {
+    const id = `acme.ref_put_gone_${RUN}`;
+    await registerType(id);
+
+    const hold = holdCall(ctx.storage, "runInTransaction", "before");
+    const replacing = request(ctx.app, "PUT", `/types/${id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, fields: { added: { type: "string" } } },
+    });
+    await hold.reached;
+    const deleted = await request(ctx.app, "DELETE", `/types/${id}`, {
+      key: ctx.workingKey,
+    });
+    expect(deleted.status).toBe(200);
+    hold.release();
+
+    const replaced = await replacing;
+    expect(replaced.status).toBe(404);
+    expect(
+      ((await replaced.json()) as { error: { code: string } }).error.code,
+    ).toBe("type_not_found");
+    expect((await readType(id)).status).toBe(404);
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: id, properties: {} },
+    });
+    expect(created.status).toBe(400);
+  });
+
+  it("has the store refuse a replacement for a row that is not there, and register nothing", async () => {
+    const id = `acme.ref_put_absent_${RUN}`;
+    await expect(
+      ctx.storage.types.update(id, { id, version: 1, fields: {} }),
+    ).rejects.toMatchObject({ code: "type_not_found" });
+    expect(getTypeSchema(id)).toBeUndefined();
+  });
+
+  it("refuses a parent's new field that clashes with a subtype registered while it waited", async () => {
+    const parent = `acme.ref_clash_parent_a_${RUN}`;
+    const child = `acme.ref_clash_child_a_${RUN}`;
+    await registerType(parent);
+
+    const hold = holdCall(ctx.storage, "runInTransaction", "before");
+    const replacing = request(ctx.app, "PUT", `/types/${parent}`, {
+      key: ctx.workingKey,
+      body: {
+        version: 1,
+        fields: { name: { type: "string" }, size: { type: "number" } },
+      },
+    });
+    await hold.reached;
+    const registered = await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: {
+        id: child,
+        version: 1,
+        parent,
+        fields: { size: { type: "string" } },
+      },
+    });
+    expect(registered.status).toBe(201);
+    hold.release();
+
+    const replaced = await replacing;
+    expect(replaced.status).toBe(400);
+    expect(
+      ((await replaced.json()) as { error: { code: string } }).error.code,
+    ).toBe("inheritance_violation");
+    expect(getTypeSchema(parent)?.fields.size).toBeUndefined();
+  });
+
+  it("refuses a subtype whose field clashes with one its parent gained while it waited", async () => {
+    const parent = `acme.ref_clash_parent_b_${RUN}`;
+    const child = `acme.ref_clash_child_b_${RUN}`;
+    await registerType(parent);
+
+    const hold = holdCall(ctx.storage, "runInTransaction", "before");
+    const registering = request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: {
+        id: child,
+        version: 1,
+        parent,
+        fields: { size: { type: "string" } },
+      },
+    });
+    await hold.reached;
+    const replaced = await request(ctx.app, "PUT", `/types/${parent}`, {
+      key: ctx.workingKey,
+      body: {
+        version: 1,
+        fields: { name: { type: "string" }, size: { type: "number" } },
+      },
+    });
+    expect(replaced.status).toBe(200);
+    hold.release();
+
+    const registered = await registering;
+    expect(registered.status).toBe(400);
+    expect(
+      ((await registered.json()) as { error: { code: string } }).error.code,
+    ).toBe("inheritance_violation");
+    expect((await readType(child)).status).toBe(404);
+  });
+});
+
+describe("the registry follows a type write that does not commit", () => {
+  it("takes back a registration whose transaction rolls back", async () => {
+    const id = `acme.ref_rollback_create_${RUN}`;
+    await expect(
+      writeTypesInTransaction(ctx.storage, [id], async () => {
+        await ctx.storage.types.create({ id, version: 1, fields: {} });
+        expect(getTypeSchema(id)).toBeDefined();
+        throw new Error("after the write");
+      }),
+    ).rejects.toThrow("after the write");
+    expect(getTypeSchema(id)).toBeUndefined();
+    expect((await readType(id)).status).toBe(404);
+  });
+
+  it("puts back the schema a rolled-back replacement displaced", async () => {
+    const id = `acme.ref_rollback_update_${RUN}`;
+    await registerType(id);
+    const before = getTypeSchema(id);
+    await expect(
+      writeTypesInTransaction(ctx.storage, [id], async () => {
+        await ctx.storage.types.update(id, {
+          id,
+          version: 1,
+          fields: { other: { type: "string" } },
+        });
+        throw new Error("after the write");
+      }),
+    ).rejects.toThrow("after the write");
+    expect(getTypeSchema(id)).toBe(before);
+  });
+});
+
+describe("POST /items/bulk — a retype enters only a registered type", () => {
+  it("answers unknown_type for the entry, as PATCH does, and moves nothing", async () => {
+    const sourceId = `ref-bulk-${RUN}`;
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        properties: { title: "t", body: "b" },
+        source_id: sourceId,
+      },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+
+    const destination = `acme.bulk_absent_${RUN}`;
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        atomic: false,
+        retype: true,
+        items: [
+          {
+            type: destination,
+            properties: { title: "t", body: "b" },
+            source_id: sourceId,
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      results: {
+        outcome: string;
+        error?: { code: string; details?: { type?: string } };
+      }[];
+    };
+    expect(body.results[0]?.outcome).toBe("errored");
+    expect(body.results[0]?.error?.code).toBe("unknown_type");
+    expect(body.results[0]?.error?.details?.type).toBe(destination);
+    expect(await typeOf(item.id)).toBe("core.note");
   });
 });

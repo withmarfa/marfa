@@ -625,7 +625,8 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       }
     }
 
-    // Before the transaction, so a rollback cannot strand the registry
+    // Each registration commits in a transaction of its own before the rows'
+    // transaction opens, so a rollback of the rows cannot strand the registry
     // holding types the database no longer has. See registerArchiveTypes.
     let typeResult;
     try {
