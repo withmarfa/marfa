@@ -1504,19 +1504,23 @@ export class SqliteItemStore implements ItemStore {
     await this.searchStore.remove(id);
   }
 
-  async bulkPurge(ids: string[]): Promise<number> {
-    if (ids.length === 0) return 0;
+  async bulkPurge(ids: string[]): Promise<string[]> {
+    if (ids.length === 0) return [];
     const unique = Array.from(new Set(ids));
     const scopedWhere = inArray(items.id, unique);
 
     return await this.db.transaction(async (tx) => {
       const rows = await tx
-        .select({ id: items.id })
+        .select({ id: items.id, type: items.type, state: items.state })
         .from(items)
         .where(scopedWhere)
         .all();
-      const scopedIds = rows.map((row) => row.id);
-      if (scopedIds.length === 0) return 0;
+      // The single purge's gate, judged here so no caller can purge a row
+      // that is not soft-deleted, whatever it checked beforehand.
+      const scopedIds = rows
+        .filter((row) => row.state === softDeleteState(row.type))
+        .map((row) => row.id);
+      if (scopedIds.length === 0) return [];
 
       for (const id of scopedIds) {
         await this.searchStore.remove(id);
@@ -1524,7 +1528,7 @@ export class SqliteItemStore implements ItemStore {
       await this.rehomeTrashRecords(scopedIds, tx);
       await recordTombstones(tx, scopedIds, new Date().toISOString());
       await tx.delete(items).where(inArray(items.id, scopedIds)).run();
-      return scopedIds.length;
+      return scopedIds;
     });
   }
 

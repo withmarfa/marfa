@@ -194,41 +194,33 @@ async function runPurgeChunk({
     // carries: the door's reserved-namespace narrowing means a
     // `system.connection` never reaches this runner's match set.
     //
-    // The state is judged here, inside the transaction that deletes, rather
-    // than when the job was queued: a row restored since then is a row the
-    // person took back, and the filter may have matched a row that was
-    // never in the trash at all. The gate is the single purge's, the type's
-    // own soft-deleted state.
-    const purgeable: string[] = [];
-    const notTrashed: Item[] = [];
-    for (const item of found.values()) {
-      if (item.state !== softDeleteState(item.type)) {
-        notTrashed.push(item);
-        continue;
-      }
-      purgeable.push(item.id);
-      collectBlobHashes(item.properties, blob_hashes);
-      removed.push(item);
-    }
-    marks = await storage.items.cascadeMarks(purgeable);
-    // One DELETE per direction + one DELETE on items = 3 statements
-    // instead of 3 × ids.length. The two edge deletes return the rows
-    // they removed, which is what the announcement below names.
+    // Read before the purge, which takes each mark with its row.
+    marks = await storage.items.cascadeMarks([...found.keys()]);
     try {
-      if (purgeable.length > 0) {
+      // The store takes only rows in their type's soft-deleted state, judged
+      // inside this transaction rather than when the job was queued: a row
+      // restored since then is one the person took back, and the filter may
+      // have matched a row that was never in the trash at all. Edges go
+      // with the rows taken, in one DELETE per direction.
+      const taken = new Set(await storage.items.bulkPurge([...found.keys()]));
+      if (taken.size > 0) {
         cascaded.push(
-          ...(await storage.edges.deleteBySourceBatch(purgeable)),
-          ...(await storage.edges.deleteByTargetBatch(purgeable)),
+          ...(await storage.edges.deleteBySourceBatch([...taken])),
+          ...(await storage.edges.deleteByTargetBatch([...taken])),
         );
-        await storage.items.bulkPurge(purgeable);
       }
-      succeeded.push(...purgeable);
-      for (const item of notTrashed) {
-        errors.push({
-          id: item.id,
-          code: "invalid_transition",
-          message: `Only ${softDeleteState(item.type)} items can be purged`,
-        });
+      for (const item of found.values()) {
+        if (taken.has(item.id)) {
+          succeeded.push(item.id);
+          collectBlobHashes(item.properties, blob_hashes);
+          removed.push(item);
+        } else {
+          errors.push({
+            id: item.id,
+            code: "invalid_transition",
+            message: `Only ${softDeleteState(item.type)} items can be purged`,
+          });
+        }
       }
       for (const id of ids) {
         if (!found.has(id)) {

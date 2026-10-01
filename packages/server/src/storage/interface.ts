@@ -654,11 +654,10 @@ export interface ItemStore {
    *
    * Trashed rows are excluded by default, because every read surface treats a
    * soft-deleted item as gone. Three callers pass `includeTrashed`. Two are
-   * in `bulk-actions/runner.ts`: purge, whose whole input is trashed rows,
-   * and the tag chunk, which says at its own call site why it is
-   * load-bearing there rather than defensive. Without it the purge runner's
-   * pre-fetch would come back empty, so it would report every id as "not
-   * found" while the delete underneath it succeeded. The third is the edge
+   * in `bulk-actions/runner.ts`: purge, whose input is the rows a job
+   * matched, trashed or not, and which needs the trashed ones to purge them
+   * and the rest to report them, and the tag chunk, which says at its own
+   * call site why it is load-bearing there rather than defensive. The third is the edge
    * read gate in `routes/_edge-visibility.ts`, which resolves an edge's
    * source to ask about its type: a plain read answers null for a trashed
    * source, and a null source has no type to refuse, so trashing the source
@@ -739,15 +738,15 @@ export interface ItemStore {
    *  and `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;
   /**
-   * Hard-delete every id in `ids`. Bypasses the
-   * "must be trashed" gate that single-item `purge` enforces — bulk is an
-   * admin cleanup primitive with explicit confirm. Cascades metadata and
-   * versions via ON DELETE CASCADE; caller must have already wiped edges
-   * (source + target directions). Cleans the search index for each id.
-   * Returns the number of rows actually deleted (unknown ids are
-   * silently skipped).
+   * Hard-delete every row in `ids` that is in its type's soft-deleted
+   * state, the gate single-item `purge` enforces, and return the ids it
+   * took. A row in any other state and an unknown id are skipped, and the
+   * caller reports them. Cascades metadata and versions via ON DELETE
+   * CASCADE; the caller removes the taken rows' edges (source and target
+   * directions) in the same transaction. Cleans the search index for each
+   * row taken.
    */
-  bulkPurge(ids: string[]): Promise<number>;
+  bulkPurge(ids: string[]): Promise<string[]>;
   restore(id: string): Promise<Item>;
   /**
    * Restores the rows a trash took with it through cascading edges that lie

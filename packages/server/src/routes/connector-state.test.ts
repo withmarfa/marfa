@@ -354,7 +354,7 @@ describe("what a connector keeps", () => {
     }
     expect(await agreements()).toHaveLength(2);
 
-    expect(await ctx.storage.items.bulkPurge([bulk.id])).toBe(1);
+    expect(await ctx.storage.items.bulkPurge([bulk.id])).toEqual([bulk.id]);
     expect(await agreements()).toEqual([{ item_id: swept.id }]);
     await ctx.storage.items.purgeTrashedOlderThan(
       new Date(Date.now() + 86_400_000).toISOString(),
