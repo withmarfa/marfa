@@ -77,6 +77,8 @@ describe("the exit codes", () => {
     // The same command answers from a hydrated copy in the folder scenario;
     // here the copy has never been hydrated.
     const store = join(dir, "copy");
+    const made = await c.cli.run(["--json", "device", "--db", store, "status"]);
+    expect(made.code, made.stderr).toBe(0);
     const unhydrated = await c.cli.refused([
       "device",
       "--db",
