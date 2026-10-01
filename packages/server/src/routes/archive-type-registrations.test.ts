@@ -787,39 +787,52 @@ describe("archives carry type registrations", () => {
     expect(result.edge_types_registered).toBe(0);
   });
 
-  it("refuses the archive version that spelled the registrations differently", async () => {
-    // Version 1 named them `custom_type` and `custom_edge_type`, and this
-    // build reads neither. Without the manifest gate the restore would parse
-    // such an archive to nothing and answer 200 with the counters at zero —
-    // the same response as the case directly above, which is the one shape
-    // an operator has no way to tell apart.
+  it("refuses an archive at any version but 0, and reads the same archive at 0", async () => {
+    // An archive at another version may name its registrations under keys
+    // this build does not read. Without the manifest gate the restore would
+    // parse such an archive to nothing and answer 200 with the counters at
+    // zero, a response an operator has no way to tell from an empty one.
     const source = await newContext();
     const destination = await newContext();
     await source.storage.items.create({
       type: "core.note",
-      properties: { body: "written by an older build" },
-      source: "at-v1",
-      source_id: "v1",
+      properties: { body: "carried across" },
+      source: "elsewhere",
+      source_id: "carried",
     });
 
     const entries = await extractArchive(await exportArchive(source));
     const manifest = JSON.parse(
       entries.get("manifest.json")!.toString(),
     ) as Record<string, unknown>;
-    manifest.version = 1;
-    manifest.format = "marfa-archive-v1";
+    expect(manifest.version).toBe(0);
 
-    const res = await restore(
-      destination,
-      await repack(entries, { "manifest.json": JSON.stringify(manifest) }),
-    );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("validation_error");
+    for (const version of [1, 2]) {
+      const res = await restore(
+        destination,
+        await repack(entries, {
+          "manifest.json": JSON.stringify({
+            ...manifest,
+            version,
+            format: `marfa-archive-v${String(version)}`,
+          }),
+        }),
+      );
+      expect(res.status, `version ${String(version)}`).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("validation_error");
+    }
 
-    // And nothing landed, so the refusal is not a report on a partial write.
-    const items = await destination.storage.items.list({ limit: 10 });
-    expect(items.data).toHaveLength(0);
+    // Nothing landed, so the refusal is not a report on a partial write.
+    const before = await destination.storage.items.list({ limit: 10 });
+    expect(before.data).toHaveLength(0);
+
+    // The witness: the same archive, at the version this build writes,
+    // restores.
+    const taken = await restore(destination, await repack(entries, {}));
+    expect(taken.status).toBe(200);
+    const after = await destination.storage.items.list({ limit: 10 });
+    expect(after.data).toHaveLength(1);
   });
 
   it("refuses a types line naming neither member", async () => {

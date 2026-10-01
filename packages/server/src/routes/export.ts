@@ -52,7 +52,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export data",
   description:
-    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v2.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
+    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -107,7 +107,7 @@ const exportRoute = createRoute({
         },
       },
       description:
-        "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v2.tar.gz` that `POST /admin/restore-archive` reads.",
+        "`format=ndjson`: items with their metadata, one JSON object per line, streamed. `format=archive`: the `marfa-archive-v0.tar.gz` that `POST /admin/restore-archive` reads.",
     },
     400: {
       content: {
@@ -493,8 +493,8 @@ async function handleArchiveExport(
   await collect();
 
   const manifest: ArchiveManifest = {
-    version: 2,
-    format: "marfa-archive-v2",
+    version: 0,
+    format: "marfa-archive-v0",
     created_at: new Date().toISOString(),
     instance_id: instanceId,
     item_count: lines.length,

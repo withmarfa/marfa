@@ -239,8 +239,8 @@ describe("GET /export?format=archive", () => {
       blob_count: number;
       blobs: Record<string, { mime_type: string; size_bytes: number }>;
     };
-    expect(manifest.version).toBe(2);
-    expect(manifest.format).toBe("marfa-archive-v2");
+    expect(manifest.version).toBe(0);
+    expect(manifest.format).toBe("marfa-archive-v0");
     expect(manifest.item_count).toBeGreaterThan(0);
     // The instance that wrote it. Nothing on the read side consults this
     // either, for the reason the blob entry below gives, and it is asserted

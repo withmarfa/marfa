@@ -42,16 +42,16 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
 
 /**
  * What an operator can do about a database this build will not open, and it
- * is deliberately not "export it and load it here": an export taken by the
- * build that wrote such a database is a version 1 archive, which
- * `POST /admin/restore-archive` refuses. Naming a recovery that ends in a
- * `400` is worse than naming none, so the sentence says what is true: the
- * file belongs to the build that wrote it, and nothing here reads it.
+ * is deliberately not "export it and load it here": whether the export the
+ * writing build takes restores here depends on that build, which this one
+ * cannot see. Naming a recovery that may end in a `400` is worse than naming
+ * none, so the sentence says what is true: the file belongs to the build
+ * that wrote it.
  */
 const REFUSED_DATABASE_REMEDY =
-  "Nothing is upgraded in place and no export taken from it can be loaded here, so this file is " +
-  "readable only by the build that wrote it. Keep it with that build if you need what is in it, " +
-  "point this server at a fresh file, or discard it.";
+  "Nothing is upgraded in place, so this file is readable only by the build that wrote it. " +
+  "Keep it with that build if you need what is in it, point this server at a fresh file, or " +
+  "discard it.";
 
 /**
  * Columns whose absence means the file predates this build's schema, because
