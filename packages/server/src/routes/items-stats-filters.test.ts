@@ -43,11 +43,11 @@ beforeAll(async () => {
   expect(other.status).toBe(201);
   // The reserved namespace refuses a write to every credential, so the
   // system row goes in through the store.
-  const device = await ctx.storage.items.create({
-    type: "system.device",
-    properties: { name: "stats-device", kind: "laptop" },
+  const folder = await ctx.storage.items.create({
+    type: "system.folder",
+    properties: { title: "stats-folder" },
   });
-  await ctx.storage.metadata.set(device.id, [TAG]);
+  await ctx.storage.metadata.set(folder.id, [TAG]);
 });
 
 afterAll(async () => {
@@ -69,14 +69,14 @@ describe("GET /items/stats with a listing's filters", () => {
   });
 
   it("leaves system rows out unless asked, as the listing does", async () => {
-    // Both halves: the device is counted when asked for, so its absence
+    // Both halves: the folder is counted when asked for, so its absence
     // below is the default and not a row that was never there.
     expect(await stats(`tags=${TAG}&include=system&by=type`)).toEqual({
       "core.note": 3,
-      "system.device": 1,
+      "system.folder": 1,
     });
     expect(await stats(`tags=${TAG}&by=type`)).toEqual({ "core.note": 3 });
-    expect(await stats(`tags=${TAG}&type=system.device`)).toEqual({
+    expect(await stats(`tags=${TAG}&type=system.folder`)).toEqual({
       active: 1,
     });
   });
