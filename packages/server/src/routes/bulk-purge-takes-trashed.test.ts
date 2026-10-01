@@ -137,9 +137,10 @@ describe("a bulk purge takes only trashed rows", () => {
   });
 
   it("judges a type with its own soft-deleted state by that state", async () => {
-    // A `system.*` row ends `revoked`, not `trashed`. No credential may
-    // write a `system.*` row, so no job reaches one, and the chunk is run
-    // directly.
+    // A `system.*` row ends `revoked`, not `trashed`. The bulk door's
+    // match leaves `system.*` rows out (`exclude_system_types`) unless the
+    // operator key names them, so no job a working credential queues
+    // reaches one; the chunk is run directly.
     async function connection(): Promise<string> {
       const item = await ctx.storage.items.create({
         type: "system.connection",

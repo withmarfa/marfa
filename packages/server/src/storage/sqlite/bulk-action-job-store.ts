@@ -154,12 +154,18 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
       .run();
   }
 
-  async fail(id: string, error: string, finishedAt: string): Promise<void> {
+  async fail(
+    id: string,
+    error: string,
+    finishedAt: string,
+    sofar?: { result: string; counts: BulkActionJobProgress },
+  ): Promise<void> {
     await this.db
       .update(bulkActionJobs)
       .set({
         status: "failed",
         error,
+        ...(sofar ? { result: sofar.result, ...sofar.counts } : {}),
         finished_at: finishedAt,
         worker_heartbeat_at: null,
       })

@@ -11,9 +11,11 @@ export interface JobCredential {
 }
 
 /**
- * Resolve the credential that queued a job, or null where it would no
- * longer authenticate: a key revoked, deleted or past its expiry, or a
- * sign-in's token revoked, expired, or gone with its grant.
+ * Resolve the credential that queued a job, or null where it no longer
+ * stands: a key revoked, deleted or past its expiry, or a sign-in whose
+ * token is revoked or gone with its grant. A sign-in's token reaching its
+ * ordinary expiry does not end it, since the app refreshes to a new token
+ * while the grant stands.
  *
  * A job runs after the request that queued it, so what the request was
  * allowed is not what the job is allowed: the worker asks this before

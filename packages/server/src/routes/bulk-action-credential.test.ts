@@ -64,15 +64,28 @@ async function queue(key: string, body: Record<string, unknown>) {
   return ((await res.json()) as BulkActionJob).id;
 }
 
+/** Raw SQL against the test database, for states no door writes. */
+async function sql(statement: string, params: unknown[]): Promise<void> {
+  const run = (
+    ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    }
+  ).__sqliteRun;
+  await run(statement, params);
+}
+
 /** Drain the queue, then read the job as stored. */
-async function runQueued(jobId: string): Promise<{
+async function runQueued(
+  jobId: string,
+  chunkSize = 100,
+): Promise<{
   status: string;
   error: string | null;
   result: BulkActionResult | null;
 }> {
   const worker = new BulkActionWorker({
     storage: ctx.storage,
-    chunkSize: 100,
+    chunkSize,
     pollIntervalMs: 1,
   });
   while (await worker.runOnce()) {
@@ -137,6 +150,93 @@ describe("a bulk-action job asks after its credential when it runs", () => {
     expect(await tierOf(note)).toBe(before);
   });
 
+  it("asks before every chunk, and keeps what earlier chunks wrote", async () => {
+    const tag = marker("bacred-chunks");
+    const notes = [
+      await seed(tag, "core.note", { body: "a" }),
+      await seed(tag, "core.note", { body: "b" }),
+    ];
+    const { id, key } = await mintKey(tag, {
+      type_permissions: { "core.note": "write" },
+    });
+    const before = await tierOf(notes[0]!);
+    const target = before === "library" ? "feed" : "library";
+    const job = await queue(key, {
+      action: "update_tier",
+      tier: target,
+      filter: { tags: [tag] },
+    });
+
+    // The key is revoked once the first chunk has run, so only a worker
+    // that asks again before the second chunk stops.
+    const jobs = ctx.storage.bulkActionJobs;
+    const updateProgress = jobs.updateProgress.bind(jobs);
+    jobs.updateProgress = async (jobId, progress, heartbeatAt) => {
+      await updateProgress(jobId, progress, heartbeatAt);
+      jobs.updateProgress = updateProgress;
+      const revoked = await request(ctx.app, "DELETE", `/keys/${id}`, {
+        key: ctx.workingKey,
+      });
+      expect(revoked.status).toBeLessThan(300);
+    };
+    let done: Awaited<ReturnType<typeof runQueued>>;
+    try {
+      done = await runQueued(job, 1);
+    } finally {
+      jobs.updateProgress = updateProgress;
+    }
+
+    expect(done.status).toBe("failed");
+    const tiers = [await tierOf(notes[0]!), await tierOf(notes[1]!)];
+    expect(tiers.filter((t) => t === target)).toHaveLength(1);
+    const written = notes[tiers.indexOf(target)];
+    expect(done.result?.succeeded).toBe(1);
+    expect(done.result?.ids).toEqual([written]);
+  });
+
+  it("writes nothing once the key that queued it is past its expiry", async () => {
+    const tag = marker("bacred-expired");
+    const note = await seed(tag, "core.note", { body: "n" });
+    const { id, key } = await mintKey(tag, {
+      type_permissions: { "core.note": "write" },
+    });
+    const before = await tierOf(note);
+    const job = await queue(key, {
+      action: "update_tier",
+      tier: before === "library" ? "feed" : "library",
+      filter: { tags: [tag] },
+    });
+    await sql("UPDATE api_keys SET expires_at = ? WHERE id = ?", [
+      new Date(Date.now() - 1000).toISOString(),
+      id,
+    ]);
+
+    const done = await runQueued(job);
+    expect(done.status).toBe("failed");
+    expect(done.error).toMatch(/no longer/i);
+    expect(await tierOf(note)).toBe(before);
+  });
+
+  it("writes nothing once the key that queued it is deleted", async () => {
+    const tag = marker("bacred-deleted");
+    const note = await seed(tag, "core.note", { body: "n" });
+    const { id, key } = await mintKey(tag, {
+      type_permissions: { "core.note": "write" },
+    });
+    const before = await tierOf(note);
+    const job = await queue(key, {
+      action: "update_tier",
+      tier: before === "library" ? "feed" : "library",
+      filter: { tags: [tag] },
+    });
+    await sql("DELETE FROM api_keys WHERE id = ?", [id]);
+
+    const done = await runQueued(job);
+    expect(done.status).toBe("failed");
+    expect(done.error).toMatch(/no longer/i);
+    expect(await tierOf(note)).toBe(before);
+  });
+
   it("refuses the rows of a type the key may no longer write, and writes the rest", async () => {
     const tag = marker("bacred-narrowed");
     const note = await seed(tag, "core.note", { body: "n" });
@@ -166,6 +266,38 @@ describe("a bulk-action job asks after its credential when it runs", () => {
     expect(done.result?.succeeded).toBe(1);
     expect(done.result?.errors).toEqual([
       expect.objectContaining({ id: note, code: "type_not_permitted" }),
+    ]);
+    expect(await tierOf(note)).toBe(noteBefore);
+    expect(await tierOf(bookmark)).toBe(target);
+  });
+
+  it("answers a row of a type the key may no longer read as not found, without naming the type", async () => {
+    const tag = marker("bacred-unreadable");
+    const note = await seed(tag, "core.note", { body: "n" });
+    const bookmark = await seed(tag, "core.bookmark", {
+      url: "https://example.com/unreadable",
+    });
+    const { id, key } = await mintKey(tag, {
+      type_permissions: { "core.note": "write", "core.bookmark": "write" },
+    });
+    const noteBefore = await tierOf(note);
+    const target = noteBefore === "library" ? "feed" : "library";
+    const job = await queue(key, {
+      action: "update_tier",
+      tier: target,
+      filter: { tags: [tag] },
+    });
+    const narrowed = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: ctx.workingKey,
+      body: { type_permissions: { "core.bookmark": "write" } },
+    });
+    expect(narrowed.status).toBe(200);
+
+    const done = await runQueued(job);
+    expect(done.status).toBe("completed");
+    expect(done.result?.succeeded).toBe(1);
+    expect(done.result?.errors).toEqual([
+      { id: note, code: "item_not_found", message: "Item not found" },
     ]);
     expect(await tierOf(note)).toBe(noteBefore);
     expect(await tierOf(bookmark)).toBe(target);
@@ -230,5 +362,32 @@ describe("a bulk-action job asks after its credential when it runs", () => {
     const done = await runQueued(job);
     expect(done.status).toBe("failed");
     expect(await tierOf(note)).toBe(before);
+  });
+
+  it("runs on once a sign-in's token reaches its ordinary expiry while the grant stands", async () => {
+    const signedIn = await seedOauthBearer(ctx.storage, ["core.note:write"]);
+    const tag = marker("bacred-oauth-expired");
+    const note = await seed(tag, "core.note", { body: "n" });
+    const before = await tierOf(note);
+    const target = before === "library" ? "feed" : "library";
+    const job = await queue(signedIn.token, {
+      action: "update_tier",
+      tier: target,
+      filter: { tags: [tag] },
+    });
+    const row = await ctx.storage.bulkActionJobs.getById(job);
+    await sql(
+      "UPDATE auth_oauth_access_token SET expires_at = ? WHERE id = ?",
+      [Math.floor((Date.now() - 60_000) / 1000), row!.api_key_id],
+    );
+    // The token itself no longer authenticates a request.
+    const refused = await request(ctx.app, "GET", "/items", {
+      key: signedIn.token,
+    });
+    expect(refused.status).toBe(401);
+
+    const done = await runQueued(job);
+    expect(done.status).toBe("completed");
+    expect(await tierOf(note)).toBe(target);
   });
 });

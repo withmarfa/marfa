@@ -172,15 +172,19 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async validateAccessToken(
     tokenHash: string,
   ): Promise<OauthAccessTokenRow | null> {
-    return this.liveAccessToken(eq(auth_oauth_access_token.token, tokenHash));
+    return this.unrevokedAccessToken(
+      eq(auth_oauth_access_token.token, tokenHash),
+      true,
+    );
   }
 
   async getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null> {
-    return this.liveAccessToken(eq(auth_oauth_access_token.id, id));
+    return this.unrevokedAccessToken(eq(auth_oauth_access_token.id, id), false);
   }
 
-  private async liveAccessToken(
+  private async unrevokedAccessToken(
     where: SQL,
+    honorExpiry: boolean,
   ): Promise<OauthAccessTokenRow | null> {
     const rows = await this.db
       .select({
@@ -204,7 +208,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     if (row.revoked !== null) return null;
     // Expired tokens return null — fail closed.
     const expMs = row.expiresAt ? row.expiresAt.getTime() : null;
-    if (expMs !== null && expMs < Date.now()) return null;
+    if (honorExpiry && expMs !== null && expMs < Date.now()) return null;
     const parsedScopes = safeJsonParse<unknown>(
       row.scopes,
       [],

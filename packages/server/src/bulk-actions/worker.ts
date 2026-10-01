@@ -16,11 +16,17 @@
  * Restart recovery: on `start()`, jobs whose `worker_heartbeat_at` is
  * older than `staleAfterMs` are reset to `queued`. Default 60s.
  */
-import { generateId, hasPermission, MarfaError } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  generateId,
+  hasPermission,
+  MarfaError,
+} from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
-import { checkTypeAccess } from "../middleware/auth.js";
+import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import type {
+  BulkActionJobProgress,
   BulkActionJobRow,
   BulkActionJobStore,
   Storage,
@@ -32,6 +38,11 @@ import type {
   BulkActionInput,
   BulkActionResult,
 } from "./types.js";
+
+interface JobSummary {
+  result: BulkActionResult;
+  counts: BulkActionJobProgress;
+}
 
 const DEFAULT_CHUNK_SIZE = 100;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -259,6 +270,35 @@ export class BulkActionWorker {
     const broughtBack = new Set<string>();
     let processed = 0;
 
+    // What the job has done so far, as `complete` records it and as a job
+    // stopped for its credential keeps it.
+    const summarize = (): JobSummary => ({
+      result: {
+        action: input.action,
+        matched: matchedIds.length,
+        succeeded: accSucceeded.length,
+        errored: accErrors.length,
+        dry_run: false,
+        ...(accSucceeded.length > 0 && accSucceeded.length <= RESPONSE_IDS_CAP
+          ? { ids: accSucceeded }
+          : {}),
+        // Truncated rather than omitted past the cap: a caller with one bad
+        // patch wants to see what the refusal says, and one entry says it as
+        // well as fifty thousand. `errored` carries the count either way.
+        ...(accErrors.length > 0
+          ? { errors: accErrors.slice(0, RESPONSE_ERRORS_CAP) }
+          : {}),
+        ...(input.action === "purge"
+          ? { blob_hashes_referenced: accBlobHashes.size }
+          : {}),
+      },
+      counts: {
+        processed_count: processed,
+        succeeded_count: accSucceeded.length,
+        errored_count: accErrors.length,
+      },
+    });
+
     for (let i = 0; i < matchedIds.length; i += this.chunkSize) {
       // Cancellation check between chunks. Cheap (single SELECT by id)
       // and only adds at most chunkSize / matchedCount latency to a
@@ -286,6 +326,7 @@ export class BulkActionWorker {
         await this.stopForCredential(
           job.id,
           "The credential that queued this job no longer authenticates, so the job wrote nothing further.",
+          summarize(),
         );
         return;
       }
@@ -296,6 +337,7 @@ export class BulkActionWorker {
         await this.stopForCredential(
           job.id,
           "The credential that queued this job no longer holds items.purge, so the job purged nothing further.",
+          summarize(),
         );
         return;
       }
@@ -348,52 +390,36 @@ export class BulkActionWorker {
       );
     }
 
-    const result: BulkActionResult = {
-      action: input.action,
-      matched: matchedIds.length,
-      succeeded: accSucceeded.length,
-      errored: accErrors.length,
-      dry_run: false,
-      ...(accSucceeded.length > 0 && accSucceeded.length <= RESPONSE_IDS_CAP
-        ? { ids: accSucceeded }
-        : {}),
-      // Truncated rather than omitted past the cap: a caller with one bad
-      // patch wants to see what the refusal says, and one entry says it as
-      // well as fifty thousand. `errored` carries the count either way.
-      ...(accErrors.length > 0
-        ? { errors: accErrors.slice(0, RESPONSE_ERRORS_CAP) }
-        : {}),
-      ...(input.action === "purge"
-        ? { blob_hashes_referenced: accBlobHashes.size }
-        : {}),
-    };
-
+    const { result, counts } = summarize();
     await this.jobs.complete(
       job.id,
       JSON.stringify(result),
-      {
-        processed_count: processed,
-        succeeded_count: accSucceeded.length,
-        errored_count: accErrors.length,
-      },
+      counts,
       this.nowFn().toISOString(),
     );
   }
 
   /** End a job whose credential no longer allows what it was queued for.
-   *  The rows earlier chunks wrote stay written, as a cancel leaves them. */
+   *  The rows earlier chunks wrote stay written, as a cancel leaves them,
+   *  and the job keeps the result it had gathered. */
   private async stopForCredential(
     jobId: string,
     reason: string,
+    sofar: JobSummary,
   ): Promise<void> {
-    await this.jobs.fail(jobId, reason, this.nowFn().toISOString());
+    await this.jobs.fail(jobId, reason, this.nowFn().toISOString(), {
+      result: JSON.stringify(sofar.result),
+      counts: sofar.counts,
+    });
     log("info", "bulk_action_worker.credential_withdrawn", { jobId, reason });
   }
 
   /**
    * Split a chunk into the rows the credential may still write and a
    * per-row refusal for the rest, asked of each row's type as the
-   * single-item write doors ask it. A row no longer found goes through, so
+   * single-item write doors ask it: a row whose type it may no longer read
+   * is not found, without naming the type, and one it may read but not
+   * write is `type_not_permitted`. A row no longer found goes through, so
    * the action reports it missing in its own words.
    */
   private async splitByWriteAccess(
@@ -409,6 +435,14 @@ export class BulkActionWorker {
       const row = rows.get(id);
       if (!row) {
         permitted.push(id);
+        continue;
+      }
+      if (!mayReadType(key, row.type)) {
+        refused.push({
+          id,
+          code: ErrorCode.ITEM_NOT_FOUND,
+          message: "Item not found",
+        });
         continue;
       }
       try {
