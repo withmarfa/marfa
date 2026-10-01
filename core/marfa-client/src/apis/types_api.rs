@@ -185,12 +185,15 @@ pub enum RegisterTypeError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum UpdateTypeError {
-    Status400(models::InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal),
+    Status400(
+        models::InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal,
+    ),
     Status401(models::UnauthorizedRefusal),
     Status403(models::CoreTypeImmutableOrForbiddenRefusal),
     Status404(models::TypeNotFoundRefusal),
     Status409(models::LinkTakenRefusal),
     Status413(models::RequestTooLargeRefusal),
+    Status422(models::CompatibleWithViolationRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
