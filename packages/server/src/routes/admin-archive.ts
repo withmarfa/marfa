@@ -452,7 +452,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                     // with no fallback key, so the refusal has to be here:
                     // parsing one would drop every registration it carries
                     // and answer 200.
-                    `Unsupported archive version: ${String(manifest.version)}. This build reads version 0 only, and nothing converts another: export again from a build that writes version 0.`,
+                    `Unsupported archive version ${String(manifest.version)}. Until the first public release an archive is read only by the build that wrote it, and this build reads version 0 only: restore it into the build that exported it.`,
                   ),
                 );
                 return;
