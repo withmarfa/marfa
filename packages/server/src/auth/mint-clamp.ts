@@ -95,7 +95,7 @@ export function scopeForEntry(
  * A map entry at `none` names no literal, so the projection drops it — and on
  * the requesting side that is correct, because asking for nothing cannot
  * exceed anything. On the *holding* side it is a hole. An exact entry outranks
- * every wildcard, so `{"*":"read","system.device":"none"}` denies that row
+ * every wildcard, so `{"*":"read","system.folder":"none"}` denies that row
  * rather than omitting it, and that map is what an ordinary `content:read`
  * grant projects to. Reduced to `["*:read"]` the denials are gone, and a child
  * asking for `{"*":"read"}` — which reads as a no-op — resolves `read` on rows

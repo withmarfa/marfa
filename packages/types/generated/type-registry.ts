@@ -537,58 +537,19 @@ export const ALL_TYPES: TypeSchema[] = [
   coreMediaSong,
 ];
 
-const systemAccountHolder: TypeSchema = {
-  id: "system.account_holder",
-  label: "Account holder",
-  description: "The graph handle for the person who owns this instance. Exactly one row, created at provisioning, so edges such as authored-by can name the account holder instead of a free-floating stand-in. It carries no profile fields: the profile endpoints remain the source of truth for username, name, bio and avatar, and mirroring them here would give the same facts two writers. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
-  version: 0,
-  fields: {
-  },
-};
-
-const systemApp: TypeSchema = {
-  id: "system.app",
-  label: "App",
-  description: "A registered app identity. Carries the human-readable identity (display name, homepage) for an app whose types live under `app.<name>.<type>`. The wire layer does not require a `system.app` record to exist when a type under `app.<name>.*` registers — these records are advisory metadata for surfacing in connected-apps UIs, not registration prerequisites. Has no tier and no lifecycle status; the row's existence is the activation signal.",
-  version: 0,
-  fields: {
-    name: { type: "string", description: "Stable identifier slug used in app.<name>.<type> registrations", required: true },
-    display_name: { type: "string", description: "Human-readable display name" },
-    homepage_url: { type: "url", description: "App marketing/landing page" },
-    publisher_handle: { type: "string", description: "Optional reference to the publishing entity's handle" },
-  },
-};
-
 const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
-  description: "An approved relationship between this instance and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `connector` (a connector acting on this user's behalf, whatever its upstream). Lifecycle bounded to active | revoked. Has no tier.",
+  description: "An OAuth client this user has authorized, written when the user approves the client's consent or device sign-in. `kind` is `app`. Lifecycle bounded to active | revoked. Has no tier.",
   version: 0,
   fields: {
-    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "connector"] },
-    client_id: { type: "string", description: "OAuth client identifier (for kind: app)" },
+    kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app"] },
+    client_id: { type: "string", description: "OAuth client identifier" },
     scopes: { type: "array", description: "Granted scope strings", items_type: "string" },
-    status: { type: "enum", description: "Lifecycle status (universal across all kinds)", required: true, enum_values: ["active", "revoked"] },
+    status: { type: "enum", description: "Lifecycle status", required: true, enum_values: ["active", "revoked"] },
     granted_at: { type: "datetime", description: "When the grant was approved", required: true },
     last_used_at: { type: "datetime", description: "Most recent successful use of any token issued under this grant" },
     revoked_at: { type: "datetime", description: "When the grant was revoked, if any" },
-    connector_id: { type: "string", description: "For kind: connector — id of the connector this connection belongs to" },
-    credential_id: { type: "string", description: "For kind: connector — id of the credential the connector authenticates its upstream with" },
-    configuration: { type: "object", description: "For kind: connector — the connector's own configuration, shaped by the connector" },
-    direction: { type: "enum", description: "For kind: connector — does this connector read from its upstream, write to it, or both", enum_values: ["read", "write", "both"] },
-    mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Validated as a whole document rather than field by field; shape and semantics live with the shared mapping module, not this schema." },
-  },
-};
-
-const systemDevice: TypeSchema = {
-  id: "system.device",
-  label: "Device",
-  description: "A connected device — phone, laptop, watch, sync agent. Surfaces a Devices list in the console; carries a name, kind, and last-active timestamp; revocable. Lifecycle is bounded to active/revoked. Has no tier — the curated/feed dimension does not apply.",
-  version: 0,
-  fields: {
-    name: { type: "string", description: "Display name (e.g. \"Work laptop\")", required: true },
-    kind: { type: "enum", description: "Device class", required: true, enum_values: ["phone", "tablet", "laptop", "desktop", "watch", "sync-agent", "other"] },
-    last_active_at: { type: "datetime", description: "Most recent activity timestamp" },
   },
 };
 
@@ -609,26 +570,9 @@ const systemFolder: TypeSchema = {
   },
 };
 
-const systemWebhook: TypeSchema = {
-  id: "system.webhook",
-  label: "Webhook",
-  description: "A registered webhook subscription. Surfaces a Webhooks list; carries URL, event filter, delivery history; editable. Lifecycle is bounded to active/revoked. Has no tier.",
-  version: 0,
-  fields: {
-    url: { type: "url", description: "Delivery URL", required: true },
-    events: { type: "array", description: "Subscribed event family names", required: true, items_type: "string" },
-    type_filter: { type: "string", description: "Optional type-id filter narrowing deliveries" },
-    active: { type: "boolean", description: "Subscription enabled" },
-  },
-};
-
 export const ALL_SYSTEM_TYPES: TypeSchema[] = [
-  systemAccountHolder,
-  systemApp,
   systemConnection,
-  systemDevice,
   systemFolder,
-  systemWebhook,
 ];
 
 export const ALL_TYPE_IDS = [
@@ -653,12 +597,8 @@ export const ALL_TYPE_IDS = [
   "core.message",
   "core.note",
   "core.task",
-  "system.account_holder",
-  "system.app",
   "system.connection",
-  "system.device",
   "system.folder",
-  "system.webhook",
 ] as const;
 
 export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];
@@ -1870,49 +1810,10 @@ export const SHIPPED_TYPE_SHAPES = {
     },
     "version": 0
   },
-  "system.account_holder": {
-    "fields": {},
-    "version": 0
-  },
-  "system.app": {
-    "fields": {
-      "display_name": {
-        "type": "string"
-      },
-      "homepage_url": {
-        "type": "url"
-      },
-      "name": {
-        "required": true,
-        "type": "string"
-      },
-      "publisher_handle": {
-        "type": "string"
-      }
-    },
-    "version": 0
-  },
   "system.connection": {
     "fields": {
       "client_id": {
         "type": "string"
-      },
-      "configuration": {
-        "type": "object"
-      },
-      "connector_id": {
-        "type": "string"
-      },
-      "credential_id": {
-        "type": "string"
-      },
-      "direction": {
-        "enum_values": [
-          "read",
-          "write",
-          "both"
-        ],
-        "type": "enum"
       },
       "granted_at": {
         "required": true,
@@ -1920,17 +1821,13 @@ export const SHIPPED_TYPE_SHAPES = {
       },
       "kind": {
         "enum_values": [
-          "app",
-          "connector"
+          "app"
         ],
         "required": true,
         "type": "enum"
       },
       "last_used_at": {
         "type": "datetime"
-      },
-      "mapping": {
-        "type": "object"
       },
       "revoked_at": {
         "type": "datetime"
@@ -1946,31 +1843,6 @@ export const SHIPPED_TYPE_SHAPES = {
         ],
         "required": true,
         "type": "enum"
-      }
-    },
-    "version": 0
-  },
-  "system.device": {
-    "fields": {
-      "kind": {
-        "enum_values": [
-          "phone",
-          "tablet",
-          "laptop",
-          "desktop",
-          "watch",
-          "sync-agent",
-          "other"
-        ],
-        "required": true,
-        "type": "enum"
-      },
-      "last_active_at": {
-        "type": "datetime"
-      },
-      "name": {
-        "required": true,
-        "type": "string"
       }
     },
     "version": 0
@@ -2003,26 +1875,6 @@ export const SHIPPED_TYPE_SHAPES = {
       "title": {
         "required": true,
         "type": "string"
-      }
-    },
-    "version": 0
-  },
-  "system.webhook": {
-    "fields": {
-      "active": {
-        "type": "boolean"
-      },
-      "events": {
-        "items_type": "string",
-        "required": true,
-        "type": "array"
-      },
-      "type_filter": {
-        "type": "string"
-      },
-      "url": {
-        "required": true,
-        "type": "url"
       }
     },
     "version": 0

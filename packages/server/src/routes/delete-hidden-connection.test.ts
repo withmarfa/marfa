@@ -13,9 +13,10 @@ afterAll(async () => {
 });
 
 /** A note that is `parent-of` a live connection, seeded through storage. */
-async function parentOfLiveConnection(
-  kind: "app" | "connector",
-): Promise<{ note: string; connection: string }> {
+async function parentOfLiveConnection(): Promise<{
+  note: string;
+  connection: string;
+}> {
   const note = await ctx.storage.items.create({
     type: "core.note",
     properties: { body: "parent" },
@@ -23,10 +24,10 @@ async function parentOfLiveConnection(
   const connection = await ctx.storage.items.create({
     type: "system.connection",
     properties: {
-      kind,
+      kind: "app",
       status: "active",
       granted_at: new Date().toISOString(),
-      ...(kind === "connector" ? { connector_id: "acme.demo" } : {}),
+      client_id: "acme.demo",
     },
   });
   await ctx.storage.edges.createRaw({
@@ -38,36 +39,34 @@ async function parentOfLiveConnection(
 }
 
 describe("a delete refused for a live connection it would take with it", () => {
-  for (const kind of ["app", "connector"] as const) {
-    it(`names nothing of a ${kind} connection the key cannot read`, async () => {
-      const blind = await mintWorkingKey(ctx, {
-        type_permissions: { "core.note": "write" },
-      });
-      const { note, connection } = await parentOfLiveConnection(kind);
-      const res = await request(ctx.app, "DELETE", `/items/${note}`, {
-        key: blind,
-      });
-      const text = await res.text();
-      expect(res.status, text).toBe(400);
-      expect(JSON.parse(text)).toMatchObject({
-        error: { code: "validation_error" },
-      });
-      expect(text).not.toContain(connection);
-      expect(text).not.toMatch(/Grant|Connection|connection|grants/);
-      expect((await ctx.storage.items.get(note))?.state).toBe("active");
-
-      // The witness: a key that reads the connection is told which one.
-      const reader = await mintWorkingKey(ctx, {
-        type_permissions: {
-          "core.note": "write",
-          "system.connection": "read",
-        },
-      });
-      const named = await request(ctx.app, "DELETE", `/items/${note}`, {
-        key: reader,
-      });
-      expect(named.status).toBe(400);
-      expect(await named.text()).toContain(connection);
+  it("names nothing of a connection the key cannot read", async () => {
+    const blind = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
     });
-  }
+    const { note, connection } = await parentOfLiveConnection();
+    const res = await request(ctx.app, "DELETE", `/items/${note}`, {
+      key: blind,
+    });
+    const text = await res.text();
+    expect(res.status, text).toBe(400);
+    expect(JSON.parse(text)).toMatchObject({
+      error: { code: "validation_error" },
+    });
+    expect(text).not.toContain(connection);
+    expect(text).not.toMatch(/Grant|Connection|connection|grants/);
+    expect((await ctx.storage.items.get(note))?.state).toBe("active");
+
+    // The witness: a key that reads the connection is told which one.
+    const reader = await mintWorkingKey(ctx, {
+      type_permissions: {
+        "core.note": "write",
+        "system.connection": "read",
+      },
+    });
+    const named = await request(ctx.app, "DELETE", `/items/${note}`, {
+      key: reader,
+    });
+    expect(named.status).toBe(400);
+    expect(await named.text()).toContain(connection);
+  });
 });

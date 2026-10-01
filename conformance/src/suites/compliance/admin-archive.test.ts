@@ -274,13 +274,10 @@ describe("admin/restore-archive", () => {
       itemsArchive([
         {
           id: systemId,
-          type: "system.webhook",
+          type: "system.folder",
           source: ctx.source,
           state: "trashed",
-          properties: {
-            url: "https://example.test/recorded-in-a-state-it-cannot-be-in",
-            events: ["item.created"],
-          },
+          properties: { title: "recorded in a state it cannot be in" },
         },
       ]),
     );

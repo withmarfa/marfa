@@ -61,7 +61,7 @@ async function stateOf(id: string): Promise<string | undefined> {
 describe("softDeleteState", () => {
   it("is revoked for system types and trashed for everything else", () => {
     expect(softDeleteState("system.connection")).toBe("revoked");
-    expect(softDeleteState("system.webhook")).toBe("revoked");
+    expect(softDeleteState("system.folder")).toBe("revoked");
     expect(softDeleteState("core.note")).toBe("trashed");
     // A custom type is not a system type, so it follows the ordinary graph.
     expect(softDeleteState("acme.widget")).toBe("trashed");
