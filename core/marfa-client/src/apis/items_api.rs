@@ -809,7 +809,7 @@ pub fn bulk_upsert_items(
     }
 }
 
-/// Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged.
+/// Cancels a bulk-action job. A job still queued or running is set to `canceled` and the answer carries that state; a job already terminal is left as it is and answers its final state unchanged. A canceled job stays canceled, and rows already processed stay processed.
 pub fn cancel_bulk_action_job(
     configuration: &configuration::Configuration,
     params: CancelBulkActionJobParams,
