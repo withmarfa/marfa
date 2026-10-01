@@ -2928,6 +2928,11 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     if !matches!(verdict, Some(Verdict::Blocked | Verdict::Dead)) && !refused_by_dependency {
         return Ok(false);
     }
+    // Released, a row whose dependency was withdrawn would wait for a write
+    // the queue no longer holds, which a drain holds forever.
+    if refused_by_dependency && waits_for_withdrawn(conn, id)? {
+        return Ok(false);
+    }
     let mut keys: Vec<String> = match spent {
         Some(json) => serde_json::from_str(&json)?,
         None => Vec::new(),
@@ -2973,6 +2978,56 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
         .collect())
 }
 
+/// Whether a row names among the writes it waits for one the queue no longer
+/// holds. Clearing keeps every row a row refused unsent waits for, so for
+/// such a row the one way to lose a dependency is a withdraw.
+fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (
+           SELECT 1 FROM queue, json_each(queue.depends_on) AS named
+            WHERE queue.id = ?1 AND named.value NOT IN (SELECT id FROM queue)
+         )",
+        [id],
+        |row| row.get(0),
+    )?)
+}
+
+/// The writes held for `id` that never went out: each names it among the
+/// writes it cannot go without (`queue-and-verdicts.md` 4) and has had no
+/// answer, or is blocked.
+pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE sent = 0 AND (verdict IS NULL OR verdict = ?2)
+           AND EXISTS (SELECT 1 FROM json_each(queue.depends_on) WHERE value = ?1)",
+        [id, Verdict::Blocked.as_str()],
+    )
+}
+
+/// Takes a write out of the queue for good, and refuses unsent each write
+/// held for it (`queue-and-verdicts.md` 46).
+pub fn withdraw(
+    conn: &Connection,
+    row: &QueuedWrite,
+    held: &[QueuedWrite],
+) -> Result<(), CoreError> {
+    let reason = format!("the {} it waits for was withdrawn", row.kind);
+    for dependant in held {
+        record_verdict(
+            conn,
+            &dependant.id,
+            &Answered {
+                verdict: Verdict::Refused,
+                reason: Some(&reason),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+    }
+    conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
+    Ok(())
+}
+
 /// Clears the rows the server has answered.
 ///
 /// Without it the queue grows without bound: every write door reads the
@@ -2997,9 +3052,35 @@ fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, C
 /// caller is told to perform produces a row whose dependency cannot be
 /// found, which `readiness` reads as unanswered and holds forever against a
 /// write that no longer exists.
+///
+/// A row refused unsent because a write it waited for was withdrawn is
+/// cleared too, since it can never be released, and so is everything only it
+/// was keeping, a row refused unsent behind it included: each pass clears
+/// what the one before left nothing to keep.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
-    Ok(conn.execute(
+    let mut cleared = 0;
+    loop {
+        let pass = forget_answered_once(conn)?;
+        if pass == 0 {
+            return Ok(cleared);
+        }
+        cleared += pass;
+    }
+}
+
+fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
+    let unreleasable = conn.execute(
         "DELETE FROM queue
+          WHERE verdict = ?1 AND sent = 0
+            AND EXISTS (
+              SELECT 1 FROM json_each(queue.depends_on) AS named
+               WHERE named.value NOT IN (SELECT id FROM queue)
+            )",
+        [Verdict::Refused.as_str()],
+    )?;
+    Ok(unreleasable
+        + conn.execute(
+            "DELETE FROM queue
           WHERE verdict IN (:accepted, :merged, :conflicted, :refused)
             AND NOT (verdict = :refused AND sent = 0)
             AND NOT EXISTS (
@@ -3009,15 +3090,15 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
                       OR (waiting.verdict = :refused AND waiting.sent = 0))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
             )",
-        named_params! {
-            ":accepted": Verdict::Accepted.as_str(),
-            ":merged": Verdict::Merged.as_str(),
-            ":conflicted": Verdict::Conflicted.as_str(),
-            ":refused": Verdict::Refused.as_str(),
-            ":blocked": Verdict::Blocked.as_str(),
-            ":dead": Verdict::Dead.as_str(),
-        },
-    )?)
+            named_params! {
+                ":accepted": Verdict::Accepted.as_str(),
+                ":merged": Verdict::Merged.as_str(),
+                ":conflicted": Verdict::Conflicted.as_str(),
+                ":refused": Verdict::Refused.as_str(),
+                ":blocked": Verdict::Blocked.as_str(),
+                ":dead": Verdict::Dead.as_str(),
+            },
+        )?)
 }
 
 /// Takes back every write to an edge that has not landed, for a folder giving

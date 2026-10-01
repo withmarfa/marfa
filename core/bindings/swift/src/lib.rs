@@ -1288,6 +1288,14 @@ impl MarfaCore {
         Ok(self.inner.release_reason(reason.into())? as u64)
     }
 
+    /// Takes a write blocked `ancestor_unavailable` or `conflict_unresolved`
+    /// out of the queue, and puts the copy back to what the server holds;
+    /// each write held for it is refused unsent. Answers whether the row was
+    /// one a withdraw takes.
+    pub fn withdraw(&self, id: String) -> Result<bool, MarfaError> {
+        Ok(self.inner.withdraw(&id)?)
+    }
+
     /// Clears the writes the server has answered, and says how many went.
     pub fn forget_answered(&self) -> Result<u64, MarfaError> {
         Ok(self.inner.forget_answered()? as u64)

@@ -138,6 +138,16 @@ pub enum DeviceCommand {
         #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
         reason: Option<marfa_core::BlockedReason>,
     },
+    /// Take a write blocked `ancestor_unavailable` or `conflict_unresolved`
+    /// out of the queue, and put the copy back to what the server holds.
+    ///
+    /// Sent again, such a write is refused the same way under any key. The
+    /// writes held for it are refused unsent.
+    Withdraw {
+        /// The queued write to withdraw.
+        #[arg(value_name = "ID")]
+        id: String,
+    },
     /// What the local copy holds and where it came from.
     Status,
     /// Edges between items, each its own write.
@@ -889,6 +899,18 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                         .into()
                 } else {
                     format!("released {released} write(s), each under a fresh key")
+                }
+            })
+        }
+        DeviceCommand::Withdraw { id } => {
+            let withdrawn = store.open_with_server(named)?.withdraw(&id)?;
+            output::report(&withdrawn, json, || {
+                if withdrawn {
+                    format!("withdrew {id}; the copy holds what the server holds")
+                } else {
+                    format!(
+                        "nothing to withdraw: {id} is not blocked ancestor_unavailable or conflict_unresolved"
+                    )
                 }
             })
         }

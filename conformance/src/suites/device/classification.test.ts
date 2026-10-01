@@ -964,3 +964,384 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(1);
   });
 });
+
+describe("withdrawing a write that can never be sent", () => {
+  /** The row the server holds once another device has moved it on. */
+  function movedOn(): ScriptedWrites["read"] {
+    return [
+      answers.updated(
+        wireItem({
+          id: HELD.id,
+          version: HELD.version + 2,
+          properties: { title: "theirs", body: "theirs" },
+        }),
+      ),
+    ];
+  }
+
+  it("withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the row back as the server holds it", async () => {
+    for (const [reason, refused] of [
+      [
+        "ancestor_unavailable",
+        refusal(409, "ancestor_unavailable", "no snapshot of that version"),
+      ],
+      [
+        "conflict_unresolved",
+        refusal(409, "version_conflict", "the row moved under this"),
+      ],
+    ] as const) {
+      const own = await hydratedHarness(`class-withdraw-${reason}`, {
+        rows: held(),
+      });
+      try {
+        const [first] = await drainAgainst(own, {
+          update: [refused],
+          read: movedOn(),
+        });
+        expect(
+          [first?.verdicts[0]?.verdict, first?.verdicts[0]?.reason],
+          "the write was not blocked, so the withdraw below is about some other row",
+        ).toEqual(["blocked", reason]);
+        const blocked = (await queueOf(own))[0];
+        if (blocked === undefined) throw new Error("the queue lost the row");
+        // The witness: a blocked write is laid over the row (35), so the
+        // copy shows the edit until something takes it away.
+        const before = await own.device.get(HELD.id);
+        expect(before.ok && before.value.properties.title).toBe("edited");
+
+        const withdrawn = await own.device.withdraw(blocked.id);
+        expect(withdrawn.ok, JSON.stringify(withdrawn)).toBe(true);
+        if (!withdrawn.ok) return;
+        expect(
+          withdrawn.value,
+          `a write blocked ${reason} was not withdrawn, so an app shows text the server will never take for as long as it runs`,
+        ).toBe(true);
+        expect(
+          await queueOf(own),
+          "the withdrawn write is still queued, so a release or a reason clearing sends it again to be refused the same way",
+        ).toEqual([]);
+        const after = await own.device.get(HELD.id);
+        expect(after.ok).toBe(true);
+        if (!after.ok) return;
+        expect(
+          [after.value.properties.title, after.value.version],
+          "the copy still shows the withdrawn edit, or the version it was based on, rather than the row the server holds",
+        ).toEqual(["theirs", HELD.version + 2]);
+
+        const sent = own.server.requests.filter(
+          (request) => request.method === "PATCH",
+        ).length;
+        expect((await own.device.drain()).ok).toBe(true);
+        expect(
+          own.server.requests.filter((request) => request.method === "PATCH")
+            .length,
+          "a drain after the withdraw sent the write again",
+        ).toBe(sent);
+      } finally {
+        await own.stop();
+      }
+    }
+  });
+
+  it("lays a write still waiting back over the row a withdraw puts back", async () => {
+    harness = await hydratedHarness("class-withdraw-lays-over", {
+      rows: held(),
+    });
+    const { device, server } = harness;
+    const [first] = await drainAgainst(harness, {
+      update: [
+        refusal(409, "ancestor_unavailable", "no snapshot of that version"),
+        { kind: "drop" },
+      ],
+      read: movedOn(),
+    });
+    expect(first?.verdicts[0]?.reason).toBe("ancestor_unavailable");
+    const blocked = (await queueOf(harness))[0];
+    if (blocked === undefined) throw new Error("the queue lost the row");
+
+    // A second edit, of another property, goes out and has no answer, so
+    // it is still waiting when the first is withdrawn.
+    const body = await device.update(HELD.id, {
+      properties: { body: "mine" },
+      version: HELD.version,
+    });
+    expect(body.ok, JSON.stringify(body)).toBe(true);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      (await queueOf(harness)).find((row) => row.id !== blocked.id)?.verdict,
+      "the second edit was answered, so nothing below is about a write still waiting",
+    ).toBeNull();
+
+    const withdrawn = await device.withdraw(blocked.id);
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
+      true,
+    );
+    const after = await device.get(HELD.id);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(
+      after.value.properties,
+      "the row a withdraw put back dropped the edit still waiting, or kept the withdrawn one",
+    ).toMatchObject({ title: "theirs", body: "mine" });
+    expect(server.unmatchedRequests).toEqual([]);
+  });
+
+  it("will not withdraw a write that may yet land or be released", async () => {
+    harness = await hydratedHarness("class-withdraw-refuses", {
+      rows: held(),
+    });
+    const { device } = harness;
+    const edit = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    expect(edit.ok).toBe(true);
+    if (!edit.ok) return;
+    scriptWrites(harness.server, {
+      update: [
+        refusal(422, "idempotency_key_reused", "answered for another body"),
+        refusal(409, "ancestor_unavailable", "no snapshot of that version"),
+      ],
+      read: movedOn(),
+    });
+
+    const unanswered = await device.withdraw(edit.value.id);
+    expect(unanswered.ok, JSON.stringify(unanswered)).toBe(true);
+    expect(
+      unanswered.ok && unanswered.value,
+      "a write that has not been answered was withdrawn, and it may yet land",
+    ).toBe(false);
+
+    expect((await device.drain()).ok).toBe(true);
+    expect((await queueOf(harness))[0]?.reason).toBe("key_spent");
+    const spent = await device.withdraw(edit.value.id);
+    expect(
+      spent.ok && spent.value,
+      "a write blocked for a spent key was withdrawn, and a release sends it under a fresh one",
+    ).toBe(false);
+    expect((await queueOf(harness))[0]?.reason).toBe("key_spent");
+
+    const unknown = await device.withdraw("not-a-queued-write");
+    expect(unknown.ok).toBe(false);
+    if (!unknown.ok) expect(unknown.refusal.code).toBe("not_found");
+
+    // The witness: the same row, once blocked for a reason no sending
+    // clears, is one a withdraw takes.
+    const released = await device.release({ id: edit.value.id });
+    expect(released.ok && released.value).toBe(1);
+    expect((await device.drain()).ok).toBe(true);
+    expect((await queueOf(harness))[0]?.reason).toBe("ancestor_unavailable");
+    const taken = await device.withdraw(edit.value.id);
+    expect(taken.ok && taken.value, JSON.stringify(taken)).toBe(true);
+  });
+
+  it("changes nothing when it cannot read the row back", async () => {
+    harness = await hydratedHarness("class-withdraw-unread", {
+      rows: held(),
+    });
+    const { device } = harness;
+    const [first] = await drainAgainst(harness, {
+      update: [
+        refusal(409, "ancestor_unavailable", "no snapshot of that version"),
+      ],
+      read: [{ kind: "drop" }, ...(movedOn() ?? [])],
+    });
+    expect(first?.verdicts[0]?.reason).toBe("ancestor_unavailable");
+    const blocked = (await queueOf(harness))[0];
+    if (blocked === undefined) throw new Error("the queue lost the row");
+
+    const failed = await device.withdraw(blocked.id);
+    expect(
+      failed.ok,
+      "a withdraw that could not read the row back answered as though it had",
+    ).toBe(false);
+    expect(
+      (await queueOf(harness)).map((row) => [row.id, row.reason]),
+      "a withdraw that could not read the row back took the write out of the queue anyway",
+    ).toEqual([[blocked.id, "ancestor_unavailable"]]);
+    const kept = await device.get(HELD.id);
+    expect(
+      kept.ok && kept.value.properties.title,
+      "a withdraw that could not read the row back changed the copy",
+    ).toBe("edited");
+
+    // The witness: the same withdraw, once the server answers, goes.
+    const withdrawn = await device.withdraw(blocked.id);
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
+      true,
+    );
+  });
+
+  /**
+   * A create stopped on a row it cannot read (`queue-and-verdicts.md` 39),
+   * with an edit of its row held for it.
+   */
+  async function createHeldFor(label: string): Promise<{
+    harness: Harness;
+    create: QueuedWrite;
+    edit: QueuedWrite;
+    local: string;
+  }> {
+    const own = await hydratedHarness(label, { rows: held() });
+    const GONE = "01a00000-0000-7000-8000-0000000000c9";
+    const created = await own.device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "gone.md",
+      version: 0,
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) throw new Error("unreachable: the assertion above threw");
+    const local = created.value.item_id ?? "";
+    scriptWrites(own.server, {
+      create: [
+        answers.ancestorUnavailable(
+          {
+            id: GONE,
+            version: 2,
+            properties: { title: "gone" },
+            tier: "library",
+            occurred_at: "2026-01-01T00:00:00.000Z",
+            source_id: "gone.md",
+            type: "core.note",
+          },
+          0,
+        ),
+      ],
+      // Neither the row the key resolved nor the one minted here is one
+      // the server holds.
+      read: [refusal(404, "item_not_found", "Item not found")],
+    });
+    expect((await own.device.drain()).ok).toBe(true);
+    const edit = await own.device.update(local, {
+      properties: { title: "mine, edited" },
+      version: 0,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    if (!edit.ok) throw new Error("unreachable: the assertion above threw");
+    expect((await own.device.drain()).ok).toBe(true);
+    const queue = await queueOf(own);
+    const create = queue.find((row) => row.id === created.value.id);
+    const held_ = queue.find((row) => row.id === edit.value.id);
+    expect(
+      [create?.reason, held_?.depends_on],
+      "the create was not blocked with the edit held for it, so nothing below is about a write held for a withdrawn one",
+    ).toEqual(["ancestor_unavailable", [created.value.id]]);
+    if (create === undefined || held_ === undefined)
+      throw new Error("unreachable: the assertion above threw");
+    return { harness: own, create, edit: held_, local };
+  }
+
+  it("refuses unsent the writes held for a withdrawn create, and never releases them", async () => {
+    const setup = await createHeldFor("class-withdraw-held");
+    harness = setup.harness;
+    const { device, server } = harness;
+    // The witness: before the withdraw, the minted row is held.
+    expect((await device.get(setup.local)).ok).toBe(true);
+
+    const withdrawn = await device.withdraw(setup.create.id);
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
+      true,
+    );
+    const queue = await queueOf(harness);
+    expect(
+      queue.map((row) => [row.id, row.verdict]),
+      "the edit held for the withdrawn create was not refused, so it waits forever for a write the queue no longer holds",
+    ).toEqual([[setup.edit.id, "refused"]]);
+    expect(
+      queue[0]?.reason,
+      "the refusal does not name the withdrawn write it waited for",
+    ).toBe("the create_item it waits for was withdrawn");
+    const gone = await device.get(setup.local);
+    expect(
+      gone.ok,
+      "the copy kept the row a withdrawn create minted, which exists nowhere",
+    ).toBe(false);
+
+    const released = await device.release({ id: setup.edit.id });
+    expect(released.ok, JSON.stringify(released)).toBe(true);
+    expect(
+      released.ok && released.value,
+      "a write refused for a withdrawn create was released, and it then waits for a write the queue no longer holds",
+    ).toBe(0);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+      "a write held for a withdrawn create was sent",
+    ).toEqual([]);
+  });
+
+  it("clears with the answered rows those only a withdrawn write was keeping", async () => {
+    const setup = await createHeldFor("class-withdraw-forget-held");
+    harness = setup.harness;
+    const { device } = harness;
+    // The witness: before the withdraw, clearing keeps both, the blocked
+    // create a caller may still release and the edit waiting on it.
+    const kept = await device.forget();
+    expect(kept.ok && kept.value, JSON.stringify(kept)).toBe(0);
+    expect(await queueOf(harness)).toHaveLength(2);
+
+    expect((await device.withdraw(setup.create.id)).ok).toBe(true);
+    const cleared = await device.forget();
+    expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
+    expect(
+      cleared.ok && cleared.value,
+      "clearing kept the write refused for a withdrawn create, which can never be released or sent, so it stays in the queue for good",
+    ).toBe(1);
+    expect(await queueOf(harness)).toEqual([]);
+
+    // And an answered create kept only by an edit of its row that was
+    // blocked: clearing keeps it while the edit may be released, and clears
+    // it once the edit is withdrawn.
+    const answered = await hydratedHarness("class-withdraw-forget-answered", {
+      rows: held(),
+    });
+    try {
+      const created = await answered.device.create({
+        type: "core.note",
+        properties: { title: "parent", body: "parent" },
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+      const id = created.value.item_id ?? "";
+      const edit = await answered.device.update(id, {
+        properties: { title: "child" },
+        version: 0,
+      });
+      expect(edit.ok).toBe(true);
+      if (!edit.ok) return;
+      scriptWrites(answered.server, {
+        create: [answers.created(wireItem({ id, version: 1 }))],
+        update: [
+          refusal(409, "ancestor_unavailable", "no snapshot of that version"),
+        ],
+        read: [
+          answers.updated(
+            wireItem({ id, version: 2, properties: { title: "theirs" } }),
+          ),
+        ],
+      });
+      expect((await answered.device.drain()).ok).toBe(true);
+      expect(
+        (await queueOf(answered)).map((row) => row.verdict),
+        "the create was not answered with the edit of its row blocked behind it",
+      ).toEqual(["accepted", "blocked"]);
+      const before = await answered.device.forget();
+      expect(
+        before.ok && before.value,
+        "clearing took the answered create a blocked edit depends on, so a release of that edit waits for a write that is gone",
+      ).toBe(0);
+
+      expect((await answered.device.withdraw(edit.value.id)).ok).toBe(true);
+      const after = await answered.device.forget();
+      expect(
+        after.ok && after.value,
+        "clearing kept the answered create after the only write keeping it was withdrawn",
+      ).toBe(1);
+      expect(await queueOf(answered)).toEqual([]);
+    } finally {
+      await answered.stop();
+    }
+  });
+});

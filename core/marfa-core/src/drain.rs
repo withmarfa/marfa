@@ -16,7 +16,7 @@ use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
 use crate::model::{BlockedReason, QueuedWrite, Subject, Verdict, WriteKind};
 use crate::store;
-use crate::wire::{WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
+use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
 
 /// What a drain did.
@@ -1645,6 +1645,44 @@ fn moves(payload: &str) -> bool {
 }
 
 fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
+    let read = read_back(core, row);
+    // A refused create's id is the server's only if the read finds it, so
+    // its pin goes even where the read fails.
+    if row.kind == WriteKind::CreateItem
+        && !matches!(read, Ok(ReadBack::Item { held: Some(_), .. }))
+        && let Some(id) = row.item_id.as_deref()
+    {
+        store::unpin(&*core.conn()?, id)?;
+    }
+    let read = read?;
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    apply_read_back(&tx, &read)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// What the server holds of the row or the edge a write names, read back
+/// so the copy can be put to it.
+pub(crate) enum ReadBack {
+    /// The write names nothing a read can put back.
+    Nothing,
+    Item {
+        id: String,
+        held: Option<Box<crate::wire::WireItemWithMetadata>>,
+        /// Whether the write was itself a move, read before anything changes
+        /// the queue.
+        moved: bool,
+    },
+    Edge {
+        id: String,
+        held: Option<Box<WireEdge>>,
+    },
+}
+
+/// Reads back what the server holds of the subject of `row`, changing
+/// nothing.
+pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
     let http = core.http_ref()?;
     // An edge write names the edge, and its endpoints in `item_id` and
     // `target_id`. Reading `item_id` as the subject would re-read the source
@@ -1657,10 +1695,10 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge
     ) {
         let Some(source) = row.item_id.as_deref() else {
-            return Ok(());
+            return Ok(ReadBack::Nothing);
         };
         let Some(edge_id) = row.edge_id.as_deref() else {
-            return Ok(());
+            return Ok(ReadBack::Nothing);
         };
         // The edges the server holds for this source, read by type so the
         // page is the one the edge belongs to.
@@ -1694,7 +1732,13 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
         if let Some(edge_type) = &edge_type {
             let mut cursor: Option<String> = None;
             loop {
-                let page = http.item_edges_page(source, edge_type, cursor.as_deref())?;
+                // A source the server does not hold holds no edges, which is
+                // what an edge drawn from a row whose create never landed
+                // meets.
+                let page = match http.item_edges_page(source, edge_type, cursor.as_deref()) {
+                    Err(CoreError::NotFound { .. }) => break,
+                    page => page?,
+                };
                 found = page.data.into_iter().find(|edge| edge.id == edge_id);
                 if found.is_some() {
                     break;
@@ -1714,61 +1758,67 @@ fn reconcile_inner(core: &Core, row: &QueuedWrite) -> Result<()> {
                 }
             }
         }
-        let conn = core.conn()?;
-        match found {
-            // A later write to the edge is ordered behind this one and not
-            // refused with it (`queue-and-verdicts.md` 42), so what is still
-            // waiting is laid back over the edge the server holds (35).
-            Some(edge) => {
-                store::upsert_edge(&conn, &edge)?;
-                store::lay_waiting_edge_writes_over(&conn, edge_id)?;
-            }
-            // The server holds no such edge, which for a refused create is
-            // the honest answer and for a refused update means it went
-            // elsewhere.
-            None => {
-                store::delete_edge(&conn, edge_id)?;
-            }
-        }
-        return Ok(());
+        return Ok(ReadBack::Edge {
+            id: edge_id.to_string(),
+            held: found.map(Box::new),
+        });
     }
 
     let Some(id) = row.item_id.as_deref() else {
-        return Ok(());
+        return Ok(ReadBack::Nothing);
     };
-    // A refused create's id is the server's only if the read finds it, so
-    // its pin goes even where the read fails.
-    let read = http.item(id);
-    if row.kind == WriteKind::CreateItem && !matches!(read, Ok(Some(_))) {
-        store::unpin(&*core.conn()?, id)?;
-    }
-    match read? {
-        Some(held) => {
-            let mut conn = core.conn()?;
-            let catalog = Catalog::load(&conn)?;
+    let moved =
+        row.kind == WriteKind::UpdateItem && moves(&store::payload_of(&*core.conn()?, &row.id)?);
+    Ok(ReadBack::Item {
+        id: id.to_string(),
+        held: http.item(id)?.map(Box::new),
+        moved,
+    })
+}
+
+/// Puts the copy to what `read_back` read, with every write still waiting
+/// laid back over it (`queue-and-verdicts.md` 35).
+pub(crate) fn apply_read_back(conn: &rusqlite::Connection, read: &ReadBack) -> Result<()> {
+    match read {
+        ReadBack::Nothing => {}
+        // A later write to the edge is ordered behind this one and not
+        // refused with it (`queue-and-verdicts.md` 42), so what is still
+        // waiting is laid back over the edge the server holds (35).
+        ReadBack::Edge {
+            id,
+            held: Some(edge),
+        } => {
+            store::upsert_edge(conn, edge)?;
+            store::lay_waiting_edge_writes_over(conn, id)?;
+        }
+        // The server holds no such edge, which for a refused create is the
+        // honest answer and for a refused update means it went elsewhere.
+        ReadBack::Edge { id, held: None } => {
+            store::delete_edge(conn, id)?;
+        }
+        ReadBack::Item {
+            held: Some(held),
+            moved,
+            ..
+        } => {
+            let catalog = Catalog::load(conn)?;
             let indexing = catalog.indexing(&held.item.r#type);
-            let tx = conn.transaction()?;
             // The server's row outside the slice is not put back where a
             // move answered ahead of this write let it go, and goes where
             // this refused write was itself a move another device's made
             // moot. A row held outside the slice for another reason, an
             // attachment of a row in it, stays.
-            let let_go = !store::slice_holds(&tx, &catalog, &held.item)?
-                && (!store::item_held(&tx, &held.item.id)?
-                    || row.kind == WriteKind::UpdateItem
-                        && moves(&store::payload_of(&tx, &row.id)?));
+            let let_go = !store::slice_holds(conn, &catalog, &held.item)?
+                && (!store::item_held(conn, &held.item.id)? || *moved);
             if let_go {
-                store::evict_item(&tx, &held.item.id, &store::whole_edge_types(&tx)?)?;
-                tx.commit()?;
+                store::evict_item(conn, &held.item.id, &store::whole_edge_types(conn)?)?;
                 return Ok(());
             }
-            store::upsert_item(&tx, &held.item, Some(&held.metadata.tags), &indexing)?;
-            store::lay_waiting_writes_over(&tx, &held.item.id, &|laid| catalog.indexing(laid))?;
-            tx.commit()?;
+            store::upsert_item(conn, &held.item, Some(&held.metadata.tags), &indexing)?;
+            store::lay_waiting_writes_over(conn, &held.item.id, &|laid| catalog.indexing(laid))?;
         }
-        None => {
-            let conn = core.conn()?;
-            store::forget_item(&conn, id)?;
+        ReadBack::Item { id, held: None, .. } => {
+            store::forget_item(conn, id)?;
         }
     }
     Ok(())
