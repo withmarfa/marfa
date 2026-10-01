@@ -134,6 +134,30 @@ describe("DELETE /types/{id} — the check and the delete are one transaction", 
     ).toBe(0);
   });
 
+  it("answers the second of two deletes in flight 404", async () => {
+    const type = `acme.atomic_twice_${RUN}`;
+    await request(ctx.app, "POST", "/types", {
+      key: ctx.workingKey,
+      body: {
+        id: type,
+        version: 1,
+        fields: { name: { type: "string", required: true } },
+      },
+    });
+    const statuses = (
+      await Promise.all(
+        [0, 1].map(() =>
+          request(ctx.app, "DELETE", `/types/${type}`, {
+            key: ctx.workingKey,
+          }),
+        ),
+      )
+    )
+      .map((res) => res.status)
+      .sort();
+    expect(statuses).toEqual([200, 404]);
+  });
+
   it("refuses the delete when the write lands first", async () => {
     const type = `acme.atomic_first_${RUN}`;
     await request(ctx.app, "POST", "/types", {
@@ -251,6 +275,26 @@ describe("DELETE /edge-types/{id} — the check and the delete are one transacti
         edgeType,
       ),
     ).toBe(0);
+  });
+
+  it("answers the second of two deletes in flight 404", async () => {
+    const edgeType = `acme.atomic-twice-${RUN}`;
+    await request(ctx.app, "POST", "/edge-types", {
+      key: ctx.workingKey,
+      body: { id: edgeType, cardinality: "many-to-many" },
+    });
+    const statuses = (
+      await Promise.all(
+        [0, 1].map(() =>
+          request(ctx.app, "DELETE", `/edge-types/${edgeType}`, {
+            key: ctx.workingKey,
+          }),
+        ),
+      )
+    )
+      .map((res) => res.status)
+      .sort();
+    expect(statuses).toEqual([200, 404]);
   });
 
   it("refuses the delete when the write lands first", async () => {

@@ -400,24 +400,29 @@ export async function registerArchiveTypes(
   }
 
   // The names were checked when the archive was read, and much has been
-  // awaited since, so each is checked again where it is claimed, and the
-  // claim made before the row is written, as the route does.
+  // awaited since, so each is checked again where it is claimed: under the
+  // write lock, with the row written before the registry holds the name, as
+  // the route does.
   for (const schema of edgeTypesToWrite) {
-    // An id registered since the rows were read was registered by a request
-    // that is writing its own row now, and registering over it would put
-    // this archive's schema in its place.
-    if (getEdgeTypeSchema(schema.id)) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `Archive carries "${schema.id}", which was registered while the restore ran`,
-      );
-    }
-    assertEdgeNamesFree(schema.id, schema.reverse_name);
-    registerEdgeTypeSchema(schema);
     try {
-      await storage.edgeTypes.create(schema);
+      await storage.runInTransaction(async () => {
+        // An id registered since the rows were read was registered by a
+        // request that wrote its own row, and registering over it would put
+        // this archive's schema in its place.
+        if (getEdgeTypeSchema(schema.id)) {
+          throw new MarfaError(
+            ErrorCode.CONFLICT,
+            `Archive carries "${schema.id}", which was registered while the restore ran`,
+          );
+        }
+        assertEdgeNamesFree(schema.id, schema.reverse_name);
+        await storage.edgeTypes.create(schema);
+        registerEdgeTypeSchema(schema);
+      });
     } catch (err) {
-      unregisterEdgeTypeSchema(schema.id);
+      if (getEdgeTypeSchema(schema.id) === schema) {
+        unregisterEdgeTypeSchema(schema.id);
+      }
       throw err;
     }
   }

@@ -78,11 +78,11 @@ export class SqliteTypeStore implements TypeStore {
     try {
       await this.db.transaction(async (tx) => {
         await tx.run(sql`DELETE FROM types WHERE id = ${id}`);
-        await forgetType(tx, id);
         // Before the commit, so a write that asks the registry inside a
         // transaction of its own, which cannot open until this one ends,
         // never finds the type the commit removed.
         unregisterTypeSchema(id);
+        await forgetType(tx, id);
       });
     } catch (err) {
       if (schema) registerTypeSchema(schema);
