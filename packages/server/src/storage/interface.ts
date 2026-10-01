@@ -1142,6 +1142,26 @@ export interface SearchStore {
  */
 export type KeyRevokeOutcome = "revoked" | "already_revoked" | "not_found";
 
+/**
+ * A key as the store holds it, with every list and map filled and empty
+ * where the key holds nothing. A request's principal cannot promise that:
+ * a signed-in app's projection carries no `permissions`, since its grant
+ * answers them.
+ */
+export type StoredApiKey = ApiKey &
+  Required<
+    Pick<
+      ApiKey,
+      | "sources"
+      | "permissions"
+      | "extension_permissions"
+      | "edge_permissions"
+      | "metadata_permissions"
+      | "profile_permissions"
+      | "expires_at"
+    >
+  >;
+
 export interface KeyStore {
   /**
    * Mint a key.
@@ -1158,13 +1178,15 @@ export interface KeyStore {
   create(
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
-  ): Promise<ApiKey>;
-  list(): Promise<ApiKey[]>;
-  get(id: string): Promise<ApiKey | null>;
+  ): Promise<StoredApiKey>;
+  list(): Promise<StoredApiKey[]>;
+  get(id: string): Promise<StoredApiKey | null>;
   validate(
     keyHash: string,
-  ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
-  update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
+  ): Promise<
+    (StoredApiKey & { key_hash: string; revoked_at: string | null }) | null
+  >;
+  update(id: string, input: UpdateKeyInput): Promise<StoredApiKey>;
   /**
    * Stamp `revoked_at`, and say which of the three things happened. Only
    * `"revoked"` means this call was the one that retired the key, so a

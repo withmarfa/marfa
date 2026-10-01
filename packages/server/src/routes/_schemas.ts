@@ -456,21 +456,20 @@ export const KeyResponseSchema = z
     source: z.string(),
     sources: z
       .array(z.string())
-      .optional()
       .describe(
         "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.",
       ),
-    permissions: z.array(PermissionEnum).optional(),
+    permissions: z.array(PermissionEnum),
     oauth_client_id: z.string().optional(),
     default_tier: TierEnum,
     is_operator: z.boolean(),
     type_permissions: z.record(z.string(), TypePermissionLevelEnum),
-    extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-    edge_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-    metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    extension_permissions: z.record(z.string(), PermissionLevelEnum),
+    edge_permissions: z.record(z.string(), PermissionLevelEnum),
+    metadata_permissions: z.record(z.string(), PermissionLevelEnum),
     // Declared because the handler sends it: a field every mint returns and
     // the published shape omits is one a generated client cannot read.
-    profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    profile_permissions: z.record(z.string(), PermissionLevelEnum),
     enforcement_override: EnforcementOverrideSchema.optional(),
     created_at: z.string(),
     last_used_at: z.string().nullable(),

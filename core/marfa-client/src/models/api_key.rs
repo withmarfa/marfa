@@ -20,11 +20,11 @@ pub struct ApiKey {
     #[serde(rename = "source")]
     pub source: String,
     /// The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.
-    #[serde(rename = "sources", skip_serializing_if = "Option::is_none")]
-    pub sources: Option<Vec<String>>,
-    /// The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused.
-    #[serde(rename = "permissions", skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<Vec<models::Permission>>,
+    #[serde(rename = "sources")]
+    pub sources: Vec<String>,
+    /// The permissions this credential holds, as the literals themselves. Empty on a key that holds none.
+    #[serde(rename = "permissions")]
+    pub permissions: Vec<models::Permission>,
     /// The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.
     #[serde(rename = "oauth_client_id", skip_serializing_if = "Option::is_none")]
     pub oauth_client_id: Option<String>,
@@ -34,23 +34,14 @@ pub struct ApiKey {
     pub is_operator: bool,
     #[serde(rename = "type_permissions")]
     pub type_permissions: std::collections::HashMap<String, models::TypePermissionLevel>,
-    #[serde(
-        rename = "extension_permissions",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub extension_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
-    #[serde(rename = "edge_permissions", skip_serializing_if = "Option::is_none")]
-    pub edge_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
-    #[serde(
-        rename = "metadata_permissions",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub metadata_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
-    #[serde(
-        rename = "profile_permissions",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub profile_permissions: Option<std::collections::HashMap<String, models::PermissionLevel>>,
+    #[serde(rename = "extension_permissions")]
+    pub extension_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+    #[serde(rename = "edge_permissions")]
+    pub edge_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+    #[serde(rename = "metadata_permissions")]
+    pub metadata_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+    #[serde(rename = "profile_permissions")]
+    pub profile_permissions: std::collections::HashMap<String, models::PermissionLevel>,
     #[serde(
         rename = "enforcement_override",
         skip_serializing_if = "Option::is_none"
@@ -59,13 +50,8 @@ pub struct ApiKey {
     #[serde(rename = "created_at")]
     pub created_at: String,
     /// Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.
-    #[serde(
-        rename = "expires_at",
-        default,
-        with = "::serde_with::rust::double_option",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub expires_at: Option<Option<String>>,
+    #[serde(rename = "expires_at", deserialize_with = "Option::deserialize")]
+    pub expires_at: Option<String>,
     #[serde(rename = "last_used_at", deserialize_with = "Option::deserialize")]
     pub last_used_at: Option<String>,
 }
@@ -75,29 +61,36 @@ impl ApiKey {
         id: String,
         label: String,
         source: String,
+        sources: Vec<String>,
+        permissions: Vec<models::Permission>,
         default_tier: models::Tier,
         is_operator: bool,
         type_permissions: std::collections::HashMap<String, models::TypePermissionLevel>,
+        extension_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+        edge_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+        metadata_permissions: std::collections::HashMap<String, models::PermissionLevel>,
+        profile_permissions: std::collections::HashMap<String, models::PermissionLevel>,
         created_at: String,
+        expires_at: Option<String>,
         last_used_at: Option<String>,
     ) -> ApiKey {
         ApiKey {
             id,
             label,
             source,
-            sources: None,
-            permissions: None,
+            sources,
+            permissions,
             oauth_client_id: None,
             default_tier,
             is_operator,
             type_permissions,
-            extension_permissions: None,
-            edge_permissions: None,
-            metadata_permissions: None,
-            profile_permissions: None,
+            extension_permissions,
+            edge_permissions,
+            metadata_permissions,
+            profile_permissions,
             enforcement_override: None,
             created_at,
-            expires_at: None,
+            expires_at,
             last_used_at,
         }
     }

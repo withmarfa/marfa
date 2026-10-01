@@ -4231,9 +4231,15 @@
           "key",
           "label",
           "source",
+          "sources",
+          "permissions",
           "default_tier",
           "is_operator",
           "type_permissions",
+          "extension_permissions",
+          "edge_permissions",
+          "metadata_permissions",
+          "profile_permissions",
           "created_at",
           "last_used_at"
         ]
@@ -4361,7 +4367,7 @@
             "items": {
               "$ref": "#/components/schemas/Permission"
             },
-            "description": "The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused."
+            "description": "The permissions this credential holds, as the literals themselves. Empty on a key that holds none."
           },
           "oauth_client_id": {
             "type": "string",
@@ -4427,10 +4433,17 @@
           "id",
           "label",
           "source",
+          "sources",
+          "permissions",
           "default_tier",
           "is_operator",
           "type_permissions",
+          "extension_permissions",
+          "edge_permissions",
+          "metadata_permissions",
+          "profile_permissions",
           "created_at",
+          "expires_at",
           "last_used_at"
         ]
       },

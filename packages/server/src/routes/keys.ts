@@ -30,7 +30,7 @@ import {
   bootstrapSecretMatches,
   consumeBootstrapSecret,
 } from "../auth/bootstrap-secret.js";
-import type { Storage } from "../storage/interface.js";
+import type { Storage, StoredApiKey } from "../storage/interface.js";
 import {
   EnforcementOverrideSchema,
   KeyResponseSchema,
@@ -105,10 +105,6 @@ const SourcesSchema = z
     "The sources a write by this key may name besides its own `source`, so its rows are keyed by the named source. Two keys may claim one source, which is how two devices present one natural key; a key's own `source` stays unique. Held to the rules the permission maps keep: omitted on a create that names no map either, it takes the creator's claims; named, it is only what it names; a working key may grant only its own `source` and what it claims itself, and the operator key may grant any. A source starting `oauth:` or `connector:` is refused.",
   );
 
-const EdgePermissionsSchema = z
-  .record(z.string(), PermissionLevelEnum)
-  .optional();
-
 /** A stored key as every door that returns one returns it, plaintext aside. */
 const ApiKeySchema = z
   .object({
@@ -117,15 +113,13 @@ const ApiKeySchema = z
     source: z.string(),
     sources: z
       .array(z.string())
-      .optional()
       .describe(
         "The sources a write by this key may name besides its own `source`. Empty on a key that claims nothing.",
       ),
     permissions: z
       .array(PermissionEnum)
-      .optional()
       .describe(
-        "The permissions this credential holds, as the literals themselves. Omitted on a create request that names no map and no claimed source, it takes the creator's whole set; omitted beside a map or a claimed source, the key holds none. Anything named beyond what the creator holds is refused.",
+        "The permissions this credential holds, as the literals themselves. Empty on a key that holds none.",
       ),
     oauth_client_id: z
       .string()
@@ -136,19 +130,18 @@ const ApiKeySchema = z
     default_tier: TierEnum,
     is_operator: z.boolean(),
     type_permissions: z.record(z.string(), TypePermissionLevelEnum),
-    extension_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
-    edge_permissions: EdgePermissionsSchema,
-    metadata_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    extension_permissions: z.record(z.string(), PermissionLevelEnum),
+    edge_permissions: z.record(z.string(), PermissionLevelEnum),
+    metadata_permissions: z.record(z.string(), PermissionLevelEnum),
     // Declared because the handler sends them: a listing returns stored rows
     // whole, so a field a row can carry and the declaration omits is a field
     // a generated client cannot read.
-    profile_permissions: z.record(z.string(), PermissionLevelEnum).optional(),
+    profile_permissions: z.record(z.string(), PermissionLevelEnum),
     enforcement_override: EnforcementOverrideSchema.optional(),
     created_at: z.string(),
     expires_at: z
       .string()
       .nullable()
-      .optional()
       .describe(
         "Hard lifetime bound, and NULL on every key a door mints. A key past this instant is refused at the bearer gate exactly like a revoked one.",
       ),
@@ -818,8 +811,8 @@ async function refuseOwnSourceClaimedElsewhere(
 ): Promise<void> {
   if (caller === undefined || caller.is_operator) return;
   if (firstUngrantableSource(caller, [source]) === null) return;
-  const claimed = (await storage.keys.list()).some(
-    (key) => key.sources?.includes(source) === true,
+  const claimed = (await storage.keys.list()).some((key) =>
+    key.sources.includes(source),
   );
   if (!claimed) return;
   throw new MarfaError(
@@ -1328,8 +1321,10 @@ export function keyRoutes(storage: Storage, salt: string) {
     }
     // The row the bearer check read, which carries no hash and no
     // revocation. It is read before this request's use is stamped, so its
-    // `last_used_at` can trail the listing's by that one stamp.
-    return c.json(key, 200);
+    // `last_used_at` can trail the listing's by that one stamp. With the
+    // signed-in app refused above, the principal is that stored row, which
+    // the context's type cannot say.
+    return c.json(key as StoredApiKey, 200);
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
