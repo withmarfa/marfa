@@ -8,26 +8,15 @@ const row = (properties: Record<string, unknown>) => ({
 });
 
 describe("liveConnectionRefusal", () => {
-  it("names a route for a live app, and no route at all for a live connector", () => {
-    // The app arm names a door that exists; nothing under `/connections`
-    // does, so the connector arm names no route.
+  it("names the grants route for a live app", () => {
     expect(
       liveConnectionRefusal(row({ kind: "app", status: "active" })),
     ).toContain("DELETE /auth/grants/01a0");
-
-    const connector = liveConnectionRefusal(
-      row({ kind: "connector", status: "active" }),
-    );
-    expect(connector).toContain("still live");
-    expect(connector).not.toMatch(/\/connections\//);
   });
 
-  it("lets a revoked connection of either kind go, and anything that is not a connection", () => {
+  it("lets a revoked connection go, and anything that is not a connection", () => {
     expect(
       liveConnectionRefusal(row({ kind: "app", status: "revoked" })),
-    ).toBeUndefined();
-    expect(
-      liveConnectionRefusal(row({ kind: "connector", status: "revoked" })),
     ).toBeUndefined();
     expect(
       liveConnectionRefusal({

@@ -6,17 +6,23 @@
  * POST /admin/restore-archive, which is what proves the manifest contract
  * and blob-hash verification agree.
  *
- * Two cases build their archive with `utils/archive.ts` instead: a row in
- * a state its lifecycle cannot reach, which no export carries because no
- * door writes one, and a blob the instance does not hold yet, which is what
- * makes its restore the thing that puts the bytes there.
+ * The rest build their archive with `utils/archive.ts` instead: a row no
+ * door writes, so no export carries it; a blob the instance does not hold
+ * yet, which is what makes its restore the thing that puts the bytes there;
+ * a format version no build of this contract writes; and a manifest
+ * missing or mistyping a field the restore reads.
  */
 
 import { randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { blobHash, itemsArchive } from "../../utils/archive.js";
+import {
+  blobHash,
+  itemsArchive,
+  readTarGzEntry,
+  tarGz,
+} from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
@@ -138,10 +144,10 @@ describe("admin/restore-archive", () => {
 
   it("refuses an archive recording a source no credential can hold, and writes nothing", async () => {
     // The restore is the one door that copies `source` verbatim, and
-    // `POST /keys` refuses the reserved prefixes precisely so nothing
-    // can stamp one. Without this the restore was the way around that:
-    // a row could be planted carrying `connector:`, and would read ever
-    // after as written by a connector that never existed.
+    // `POST /keys` refuses the reserved prefix precisely so no key can
+    // stamp one. Without this the restore would be the way around that: a
+    // row could be planted carrying `oauth:`, and would read ever after as
+    // written by a grant that never existed.
     //
     // Refused whole, like the state check beside it, so the answer is
     // never half a restore.
@@ -158,8 +164,8 @@ describe("admin/restore-archive", () => {
         {
           id: planted,
           type: "core.note",
-          source: "connector:readwise",
-          properties: { body: "a row claiming a connector wrote it" },
+          source: "oauth:client:person",
+          properties: { body: "a row claiming an app wrote it" },
         },
       ]),
     );
@@ -186,8 +192,8 @@ describe("admin/restore-archive", () => {
           {
             id: uuidv7(),
             type: "core.note",
-            source: "connector:readwise",
-            properties: { body: "a row claiming a connector wrote it" },
+            source: "oauth:client:person",
+            properties: { body: "a row claiming an app wrote it" },
           },
         ],
         [{ data: bytes, mime_type: "text/plain" }],
@@ -216,7 +222,7 @@ describe("admin/restore-archive", () => {
           id: okOther,
           type: "core.note",
           source: ctx.source,
-          properties: { body: "a row claiming a connector wrote it" },
+          properties: { body: "a row claiming an app wrote it" },
         },
       ]),
     );
@@ -269,13 +275,10 @@ describe("admin/restore-archive", () => {
       itemsArchive([
         {
           id: systemId,
-          type: "system.webhook",
+          type: "system.folder",
           source: ctx.source,
           state: "trashed",
-          properties: {
-            url: "https://example.test/recorded-in-a-state-it-cannot-be-in",
-            events: ["item.created"],
-          },
+          properties: { title: "recorded in a state it cannot be in" },
         },
       ]),
     );
@@ -315,6 +318,124 @@ describe("admin/restore-archive", () => {
     expect(restored.data.imported).toBe(2);
     expect((await client.getItem(fine)).data.item.state).toBe("archived");
     expect((await client.getItem(impossible)).data.item.state).toBe("active");
+  });
+
+  it("refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing", async () => {
+    // Each archive carries a blob and a row naming it, so a manifest whose
+    // `blobs` the restore could not read is asked about the one blob entry
+    // that reads it.
+    const data = new Uint8Array(randomBytes(32));
+    const hash = blobHash(data);
+    const id = uuidv7();
+    const archive = (reshape: (m: Record<string, unknown>) => unknown) =>
+      itemsArchive(
+        [
+          {
+            id,
+            type: "core.file",
+            source: ctx.source,
+            source_id: `archive-manifest-${ctx.runId}`,
+            properties: { blob_ref: hash, mime_type: "text/plain" },
+          },
+        ],
+        [{ data, mime_type: "text/plain" }],
+        [],
+        reshape,
+      );
+    const without = (m: Record<string, unknown>, field: string) =>
+      Object.fromEntries(Object.entries(m).filter(([key]) => key !== field));
+    const cases: {
+      reshape: (m: Record<string, unknown>) => unknown;
+      path: string;
+    }[] = [
+      { reshape: (m) => without(m, "blobs"), path: "blobs" },
+      { reshape: (m) => ({ ...m, blobs: [] }), path: "blobs" },
+      {
+        reshape: (m) => ({
+          ...m,
+          blobs: { [hash]: { mime_type: null, size_bytes: data.length } },
+        }),
+        path: `blobs.${hash}.mime_type`,
+      },
+      {
+        reshape: (m) => ({
+          ...m,
+          blobs: { [hash]: { mime_type: "text/plain", size_bytes: "32" } },
+        }),
+        path: `blobs.${hash}.size_bytes`,
+      },
+      { reshape: (m) => without(m, "version"), path: "version" },
+      { reshape: (m) => ({ ...m, version: "0" }), path: "version" },
+    ];
+
+    for (const { reshape, path } of cases) {
+      const refused = await operator.restoreArchive(archive(reshape));
+      expect(refused.status, path).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.message).toContain(path);
+      const errors = refused.error?.error.details?.errors as
+        { path: string }[] | undefined;
+      expect(errors?.map((e) => e.path)).toContain(path);
+      expect((await client.getItem(id)).status).toBe(404);
+      expect((await client.downloadBlob(hash)).status).toBe(404);
+    }
+
+    // The same archive under the manifest as built restores, row and blob.
+    const restored = await operator.restoreArchive(archive((m) => m));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data).toMatchObject({ imported: 1, blobs_imported: 1 });
+    expect((await client.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("refuses an archive at another format version, saying it is read only by the build that wrote it", async () => {
+    // Every version inside Marfa is 0 until the first public release, so
+    // an archive naming any other is one no build of this contract wrote.
+    const witness = uuidv7();
+    const other = uuidv7();
+    const archiveAt = (version: number, id: string): Uint8Array => {
+      const zero = itemsArchive([
+        {
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `an archived row at format ${version}` },
+        },
+      ]);
+      const manifest = readTarGzEntry(zero, "manifest.json");
+      const items = readTarGzEntry(zero, "items.ndjson");
+      if (manifest === null || items === null) {
+        throw new Error("the archive helper wrote no manifest or no items");
+      }
+      return tarGz([
+        {
+          name: "manifest.json",
+          body: JSON.stringify({
+            ...(JSON.parse(manifest) as Record<string, unknown>),
+            version,
+            format: `marfa-archive-v${version}`,
+          }),
+        },
+        { name: "items.ndjson", body: items },
+        { name: "edges.ndjson", body: "" },
+        { name: "types.ndjson", body: "" },
+      ]);
+    };
+
+    // The witness: the same archive at version 0 restores, so what is
+    // refused below is the version and nothing else.
+    const restored = await operator.restoreArchive(archiveAt(0, witness));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, witness);
+    expect(restored.data.imported).toBe(1);
+
+    const refused = await operator.restoreArchive(archiveAt(1, other));
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.message).toContain(
+      "read only by the build that wrote it",
+    );
+    expect((await client.getItem(other)).status).toBe(404);
   });
 
   it("requires the operator key", async () => {

@@ -1397,7 +1397,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const derivedKey = await oauthCtx.storage.keys.get(
       ((await derived.json()) as { id: string }).id,
     );
-    expect(derivedKey?.edge_permissions?.about).toBe("read");
+    expect(derivedKey?.edge_permissions.about).toBe("read");
 
     // Naming one family takes the derive path off for all of them.
     const partial = await request(oauthCtx.app, "POST", "/keys", {

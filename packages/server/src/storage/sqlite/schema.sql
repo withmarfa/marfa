@@ -13,7 +13,6 @@ CREATE TABLE IF NOT EXISTS `api_keys` (
 	`sources` text DEFAULT '[]' NOT NULL,
 	`default_tier` text DEFAULT 'library' NOT NULL,
 	`is_operator` integer DEFAULT false NOT NULL,
-	`connection_id` text,
 	`permissions` text DEFAULT '[]' NOT NULL,
 	`type_permissions` text DEFAULT '{"*":"write"}' NOT NULL,
 	`extension_permissions` text DEFAULT '{}' NOT NULL,

@@ -47,14 +47,7 @@ const CORE_TYPE_IDENTIFIERS = [
   "core.task",
 ];
 
-const SYSTEM_TYPE_IDENTIFIERS = [
-  "system.account_holder",
-  "system.app",
-  "system.connection",
-  "system.device",
-  "system.folder",
-  "system.webhook",
-];
+const SYSTEM_TYPE_IDENTIFIERS = ["system.connection", "system.folder"];
 
 const ALL_SHIPPED_IDENTIFIERS = [
   ...CORE_TYPE_IDENTIFIERS,

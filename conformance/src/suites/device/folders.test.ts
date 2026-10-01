@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   chmodSync,
   copyFileSync,
   existsSync,
@@ -2294,6 +2295,43 @@ describe("files and items", () => {
     ).toBe(0);
   });
 
+  it("reads past a byte-order mark and writes the file back without it", async () => {
+    harness = await folderHarness("folder-byte-order-mark");
+    scriptFolderWrites(harness);
+    const text = "---\ntitle: Marked\ncolor: blue\n---\nThe body.\n";
+    put(harness, "marked.md", `\uFEFF${text}`);
+    expect(
+      readFileSync(join(harness.dir, "marked.md")).subarray(0, 3),
+      "the file was not written with the mark, so what follows proves nothing about one",
+    ).toEqual(Buffer.from([0xef, 0xbb, 0xbf]));
+    expect((await harness.folder.push()).ok).toBe(true);
+
+    const [sent] = sentCreates(harness);
+    const properties = sent?.properties as Record<string, unknown>;
+    expect(
+      [properties.title, properties.color, properties.body],
+      "a byte-order mark hid the frontmatter, so the fields became body text and the title and properties are gone",
+    ).toEqual(["Marked", "blue", "The body.\n"]);
+
+    const written = readFileSync(join(harness.dir, "marked.md"));
+    expect(
+      written.toString("utf8"),
+      "the folder never wrote the file back, so the absence of the mark below would be the fixture's own",
+    ).toMatch(/^marfa_id:/m);
+    expect(
+      written.subarray(0, 3).toString("utf8"),
+      "the folder wrote the mark back, or wrote its fields after it where only it can see them",
+    ).toBe("---");
+
+    const again = await harness.folder.scan();
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(
+      again.value.updated,
+      "the file changed under the folder's own hand, so every pass pushes a change nobody made",
+    ).toBe(0);
+  });
+
   it("takes the edge with a link the body no longer names", async () => {
     harness = await folderHarness("folder-link-removed");
     scriptFolderWrites(harness);
@@ -2662,6 +2700,71 @@ describe("files and items", () => {
       );
       expect(watching.running(), watching.stderr).toBe(true);
     } finally {
+      await watching.stop();
+    }
+  });
+
+  it("keeps syncing both ways while a file changes twice a second", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000c4";
+    harness = await folderHarness("folder-watch-steady", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "remote", body: "as it was" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "remote", body: "changed elsewhere" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    const log = put(harness, "log.md", "a log\n");
+    let lines = 0;
+    // Faster than the watch's debounce lets the folder settle, and for the
+    // whole run, so nothing below can be waiting for it to stop.
+    const writing = setInterval(() => {
+      lines += 1;
+      appendFileSync(log, `line ${lines}\n`);
+    }, 500);
+    const watching = harness.folder.watch();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      put(
+        harness,
+        "other.md",
+        "---\ntitle: Other\n---\nwritten beside the log\n",
+      );
+      await vi.waitFor(
+        () => {
+          expect(
+            read(harness!, "remote.md"),
+            "a change from the server never reached the folder while one file kept changing",
+          ).toContain("changed elsewhere");
+          expect(
+            sentTitles(harness!),
+            "a new file never reached the server while another file kept changing",
+          ).toContain("Other");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      clearInterval(writing);
       await watching.stop();
     }
   });
@@ -13597,15 +13700,7 @@ describe("a file that is not a document", () => {
     expect(scanned.value.created + scanned.value.updated).toBe(0);
 
     // A file the folder already holds the bytes of needs no server at all,
-    // nor the copy of them beside the working copy.
-    rmSync(
-      join(
-        harness.dir,
-        ".marfa",
-        "core.sqlite.blobs",
-        hash.slice("sha256:".length),
-      ),
-    );
+    // nor a copy of them beside the working copy, which the pull let go.
     await harness.server.offline();
     const again = await harness.folder.pull();
     expect(again.ok).toBe(true);
@@ -13615,6 +13710,54 @@ describe("a file that is not a document", () => {
       "a file already on the disk was fetched again, and reported absent with the server away",
     ).toBe(1);
     await harness.server.online();
+  });
+
+  it("keeps no copy beside the store of bytes its file holds, and fetches them again when asked", async () => {
+    const hash = hashOf(photo);
+    harness = await folderHarness("folder-file-let-go", {
+      settings,
+      rows: {
+        "core.file": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-0000000000f6",
+              type: "core.file.image",
+              properties: {
+                title: "photo.png",
+                blob_ref: hash,
+                mime_type: "image/png",
+              },
+            },
+          },
+        ],
+      },
+    });
+    scriptBlob(harness.server, photo);
+    const fetched = (): number =>
+      harness!.server.requests.filter((request) =>
+        request.pathname.startsWith("/links/"),
+      ).length;
+
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    if (!pulled.ok) return;
+    expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(photo);
+    // The witness: the bytes came through the copy beside the store, so its
+    // absence below is the pull letting them go.
+    expect(fetched(), "the pull wrote the file without fetching it").toBe(1);
+    const device = harness.folder.device();
+    const copy = `${device.store}.blobs/${hash.slice("sha256:".length)}`;
+    expect(
+      existsSync(copy),
+      "the folder kept a second copy of bytes its file already holds, so every file it pulls takes twice its size on the disk",
+    ).toBe(false);
+
+    // Named by their content, the bytes let go are fetched again when asked.
+    const asked = await device.blob(hash);
+    expect(asked.ok, JSON.stringify(asked)).toBe(true);
+    if (!asked.ok) return;
+    expect(readFileSync(asked.value.path)).toEqual(photo);
+    expect(fetched(), "bytes let go were answered without a fetch").toBe(2);
   });
 
   it("ends a pull whose credential is refused, rather than counting each file absent", async () => {

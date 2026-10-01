@@ -98,8 +98,13 @@ fn frontmatter(text: &str) -> Front<'_> {
     Front::Fields(fields, body)
 }
 
+/// A UTF-8 byte-order mark, which some editors open every file with. It is
+/// not text: a file is read past it and written without it (`folders.md` 8).
+pub(super) const MARK: char = '\u{feff}';
+
 /// Reads a file that can carry frontmatter.
 pub fn read(text: &str) -> Document {
+    let text = text.strip_prefix(MARK).unwrap_or(text);
     match frontmatter(text) {
         Front::Body => read_body(text),
         Front::Fields(front, body) => Document {
@@ -117,7 +122,7 @@ pub fn read(text: &str) -> Document {
 
 /// The `marfa_id` line of frontmatter that does not parse, read as text.
 pub fn id_line(text: &str) -> Option<String> {
-    let mut lines = text.lines();
+    let mut lines = text.strip_prefix(MARK).unwrap_or(text).lines();
     if lines.next()? != FENCE {
         return None;
     }
@@ -657,6 +662,38 @@ mod tests {
         let empty = read("---\n---\nbody\n");
         assert_eq!(empty.body, "body\n");
         assert!(empty.front.is_empty() && empty.unreadable.is_none());
+    }
+
+    /// Some editors open every file they save with a byte-order mark, which
+    /// is not text and must not hide the fence (`folders.md` 8).
+    #[test]
+    fn a_byte_order_mark_does_not_hide_the_frontmatter() {
+        let plain = "---\ntitle: A note\nmarfa_id: n1\n---\nThe body.\n";
+        let marked = format!("\u{feff}{plain}");
+        assert_eq!(
+            read(&marked),
+            read(plain),
+            "a file that opens with a byte-order mark lost its frontmatter, \
+             so its fields land in the body and its type and title are gone"
+        );
+        assert_eq!(
+            id_line("\u{feff}---\nmarfa_id: n1\n  bad\n---\n").as_deref(),
+            Some("n1")
+        );
+
+        let body = read("\u{feff}No frontmatter.\n");
+        assert_eq!(
+            body.body, "No frontmatter.\n",
+            "the mark reached the body, where it is an invisible character \
+             the server keeps"
+        );
+
+        let document = read(&marked);
+        let written = write(&document.front, &document.body).unwrap();
+        assert_eq!(
+            written, plain,
+            "what the folder writes back carries the mark"
+        );
     }
 
     #[test]

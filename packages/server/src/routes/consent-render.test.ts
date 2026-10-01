@@ -1458,9 +1458,8 @@ describe("a grant that reaches things not yet created says so", () => {
 // The label maps, which exist for one reason.
 //
 // `humanizeType` takes the last dotted segment, so an unnamed
-// `webhooks.manage` renders as "Webhooks" — byte-identical to what
-// `system.webhook:read` gets from the same fallback. One grant is sight of a
-// webhook row and the other is the power to point a new webhook anywhere.
+// `webhooks.manage` renders as "Webhooks", which reads as a kind of content
+// rather than the power to point a new webhook anywhere.
 // ---------------------------------------------------------------------------
 
 describe("permission labels", () => {
@@ -1483,10 +1482,6 @@ describe("permission labels", () => {
     for (const literal of PERMISSIONS) {
       expect(permissionLabel(literal)).not.toBe(humanizeType(literal));
     }
-    // The specific pair that motivated the map.
-    expect(permissionLabel("webhooks.manage")).not.toBe(
-      SCOPE_LABELS["system.webhook"],
-    );
   });
 
   it("keeps the inline forms comma-free, since they are joined into a list", () => {

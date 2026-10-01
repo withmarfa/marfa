@@ -252,6 +252,7 @@ describe("the status checker", () => {
   });
 
   it("reports an undeclared status findings.md records as recorded, and holds the record to a draw", () => {
+    const recorded = { "POST /auth/oauth2/register 500": "an entry" };
     const drawn = reportStatuses(
       parseRequestLines(
         logLine({
@@ -268,6 +269,7 @@ describe("the status checker", () => {
           },
         },
       },
+      recorded,
     );
     expect(drawn.undeclared).toEqual([]);
     expect(drawn.recorded).toEqual(["POST /auth/oauth2/register 500"]);
@@ -275,8 +277,9 @@ describe("the status checker", () => {
     const undrawn = reportStatuses(
       parseRequestLines(OBSERVED_200),
       documentDeclaring([200]),
+      recorded,
     );
-    expect(unreachedDebt(undrawn, {}).stale).toContain(
+    expect(unreachedDebt(undrawn, {}, recorded).stale).toContain(
       "recorded POST /auth/oauth2/register 500",
     );
   });
