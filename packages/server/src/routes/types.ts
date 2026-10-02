@@ -22,6 +22,7 @@ import {
   requireAuth,
   requirePermission,
   requireMetadataPermission,
+  requireTypeAccess,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { resolveRoles, resolveTypeSchema } from "../storage/policy.js";
@@ -421,7 +422,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a type",
   description:
-    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
+    "Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -467,11 +468,11 @@ const registerTypeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
       description:
-        "Missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential",
+        "`forbidden`: missing metadata.types:write permission, or a reserved namespace: `core.*`, `system.*` and `marfa.*` are refused to every credential. `type_not_permitted`: the credential's type map does not grant write on the identifier.",
     },
     409: {
       content: {
@@ -749,6 +750,10 @@ export function typeRoutes(storage: Storage) {
             { namespace: tier },
           );
         }
+        // `metadata.types:write` says the key may register; its type map
+        // says which ids. Without the second, one key could take an id first
+        // and leave the key it was meant for unable to register it.
+        requireTypeAccess(c, body.id, "write");
       }
       // Validated in the transaction that writes the type: the schema is
       // judged against its parent's fields and its parent chain, and a
