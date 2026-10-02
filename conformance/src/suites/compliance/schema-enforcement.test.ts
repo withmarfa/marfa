@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type {
+  ApiKeyRequest,
   BulkActionInput,
   BulkActionJob,
   BulkActionResponse,
@@ -15,6 +16,11 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { itemsArchive } from "../../utils/archive.js";
+import {
+  approvedAppToken,
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -862,4 +868,222 @@ describe("source_filter lever", () => {
     expect(byId.ok).toBe(true);
     expect(byId.data.item.id).toBe(created.data.item.id);
   });
+});
+
+describe("a key's own levers", () => {
+  /** A note carrying a property `core.note` does not declare. */
+  const undeclared = {
+    type: "core.note",
+    properties: { body: "with extras", not_a_real_field: "x" },
+  };
+
+  /** A key the working key mints, writing notes, with the levers named. */
+  async function keyWith(
+    label: string,
+    extra: Partial<ApiKeyRequest> = {},
+  ): Promise<{ client: MarfaClient; id: string }> {
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "core.note": "write" },
+      ...extra,
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    return {
+      client: new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
+      id: minted.data.id,
+    };
+  }
+
+  async function write(writer: MarfaClient): Promise<number> {
+    const r = await writer.createItem(undeclared);
+    if (r.ok) trackItem(ctx, r.data.item.id);
+    return r.status;
+  }
+
+  it("replaces the instance's lever for the key, loosening as well as tightening", async () => {
+    await setConfig({ enforcement: { strict_mode: { types: ["core.note"] } } });
+    const loose = await keyWith("levers-loose", {
+      enforcement_override: { strict_mode: { types: [] } },
+    });
+    // The witness: the instance's lever refuses a key with none of its own.
+    const inheriting = await keyWith("levers-inheriting");
+    expect(
+      await write(inheriting.client),
+      "the instance's strict mode admitted an undeclared property, so the key below loosens nothing",
+    ).toBe(400);
+    expect(
+      await write(loose.client),
+      "a key's own strict mode did not loosen the instance's for it",
+    ).toBe(201);
+
+    await setConfig({});
+    const tight = await keyWith("levers-tight", {
+      enforcement_override: { strict_mode: { types: ["core.note"] } },
+    });
+    expect(
+      await write(inheriting.client),
+      "with no lever on the instance an undeclared property was refused, so the refusal below may be every write",
+    ).toBe(201);
+    expect(
+      await write(tight.client),
+      "a key's own strict mode did not tighten the instance's for it",
+    ).toBe(400);
+  });
+
+  it("leaves a lever it does not set to the instance", async () => {
+    await setConfig({
+      enforcement: {
+        strict_mode: { types: ["core.note"] },
+        source_allowlist: { types: ["core.note"], sources: [ctx.source] },
+      },
+    });
+    const loose = await keyWith("levers-one", {
+      enforcement_override: { strict_mode: { types: [] } },
+    });
+    // The witness: a listed source writes the same note.
+    const listed = await client.createItem({
+      type: "core.note",
+      properties: { body: "listed" },
+    });
+    expect(listed.status).toBe(201);
+    trackItem(ctx, listed.data.item.id);
+    const refused = await loose.client.createItem({
+      type: "core.note",
+      properties: { body: "unlisted" },
+    });
+    if (refused.ok) trackItem(ctx, refused.data.item.id);
+    expect(
+      refused.status,
+      "a key setting only strict mode escaped the instance's source allowlist too",
+    ).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+  });
+
+  it("reads back on the mint, the listing, the key itself and the update, is replaced whole and cleared by null", async () => {
+    await setConfig({});
+    const first = { strict_mode: { types: ["core.note"] } };
+    const second = {
+      source_filter: { types: ["core.note"], sources: [ctx.source] },
+    };
+    const minted = await client.createKey({
+      label: "levers-read",
+      source: `${ctx.source}-levers-read`,
+      type_permissions: { "core.note": "write" },
+      enforcement_override: first,
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    await expectMatchesSchema("POST", "/keys", 201, minted.data);
+    expect(minted.data.enforcement_override).toEqual(first);
+    const own = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+
+    const listed = await client.listKeys();
+    expect(listed.ok, "the key listing failed").toBe(true);
+    expect(
+      listed.data.data.find((k) => k.id === minted.data.id)
+        ?.enforcement_override,
+    ).toEqual(first);
+    const current = await own.getCurrentKey();
+    expect(current.status).toBe(200);
+    await expectMatchesSchema("GET", "/keys/current", 200, current.data);
+    expect(
+      current.data.enforcement_override,
+      "a key reading itself does not see its own levers",
+    ).toEqual(first);
+
+    const replaced = await client.updateKey(minted.data.id, {
+      enforcement_override: second,
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect(
+      replaced.data.enforcement_override,
+      "an update merged the levers rather than replacing them",
+    ).toEqual(second);
+    expect((await own.getCurrentKey()).data.enforcement_override).toEqual(
+      second,
+    );
+
+    const cleared = await client.updateKey(minted.data.id, {
+      enforcement_override: null,
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect("enforcement_override" in cleared.data).toBe(false);
+    expect("enforcement_override" in (await own.getCurrentKey()).data).toBe(
+      false,
+    );
+  });
+
+  it("is not taken from the creator by a mint naming none", async () => {
+    const creator = await keyWith("levers-creator", {
+      permissions: ["keys.mint"],
+      enforcement_override: { strict_mode: { types: ["core.note"] } },
+    });
+    expect(
+      (await creator.client.getCurrentKey()).data.enforcement_override,
+      "the creator holds no levers, so the child below inherits nothing either way",
+    ).toBeDefined();
+    const child = await creator.client.createKey({
+      label: "levers-child",
+      source: `${ctx.source}-levers-child`,
+    });
+    expect(child.status, JSON.stringify(child.error)).toBe(201);
+    trackKey(ctx, child.data.id);
+    expect("enforcement_override" in child.data).toBe(false);
+  });
+
+  it(
+    "an app sets a key's levers looser than the instance's",
+    async () => {
+      const server = await bootFreshServer("key-levers-app");
+      try {
+        const working = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+        const configured = await working.updateConfig({
+          enforcement: { strict_mode: { types: ["core.note"] } },
+        });
+        expect(configured.status, JSON.stringify(configured.error)).toBe(200);
+        const app = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: await approvedAppToken(server),
+        });
+
+        const mint = async (
+          label: string,
+          extra: Partial<ApiKeyRequest> = {},
+        ): Promise<MarfaClient> => {
+          const minted = await app.createKey({
+            label,
+            source: label,
+            type_permissions: { "core.note": "write" },
+            ...extra,
+          });
+          expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+          expect(minted.data.oauth_client_id).toBeDefined();
+          return new MarfaClient({
+            baseUrl: server.apiUrl,
+            apiKey: minted.data.key,
+          });
+        };
+        // The witness: an app's key with no levers of its own is held to
+        // the instance's.
+        const plain = await mint("app-plain");
+        expect((await plain.createItem(undeclared)).status).toBe(400);
+
+        const loose = await mint("app-loose", {
+          enforcement_override: { strict_mode: { types: [] } },
+        });
+        expect(
+          (await loose.createItem(undeclared)).status,
+          "an app could not set a key's levers looser than the instance's",
+        ).toBe(201);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });

@@ -105,6 +105,12 @@ const BulkInputItemSchema = z.object({
   id: z.string().optional(),
   type: z.string(),
   properties: z.record(z.string(), z.unknown()).optional(),
+  properties_mode: z
+    .enum(["merge", "replace"])
+    .optional()
+    .describe(
+      "How `properties` lands on a row this entry resolves, as on `PATCH /items/{id}`: `merge`, the default, lays them over the row's, and `replace` takes them as the row's whole properties, so a field left out is cleared. A stale `replace` clears a field nobody changed since and collides on one the other writer changed. An entry that creates a row writes its properties whole either way.",
+    ),
   /** Every state the platform has, not the three a non-system type can
    *  reach. Naming a state its type's lifecycle does not contain is
    *  refused further down by `validateTransition`, which gives each type
@@ -160,7 +166,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways.\n\nWhere the entry's type names a `link_field`, an entry that would give its row a value another item of the type holds, in any state, is refused `link_taken` with `details.existing_id` naming the holder, on a create and an update alike, and the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`, trashed rows included, as `POST /items` does. An entry whose natural key resolves a trashed row is not written: under `upsert` it is reported `skipped` with `reason` `trashed` and the row's id, and under `create_only` it is a repeated pair like any other. Atomic by default. Each entry's `source` is the credential's own unless the entry names one the credential's key claims, and an entry naming any other source is refused `forbidden` with `details.source`. Where the instance's source allow-list names the entry's type, the source the entry resolves to must be on it, or the entry is refused `forbidden` as `POST /items` refuses it. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`. An entry may also carry the `version` it was based on, which makes its upsert conditional and is refused the same two ways. An entry may carry `properties_mode` as `PATCH /items/{id}` does: `replace` takes its properties as the row's whole, so a field left out is cleared, and a stale one is merged against the version it names as a stale `PATCH` is.\n\nWhere the entry's type names a `link_field`, an entry that would give its row a value another item of the type holds, in any state, is refused `link_taken` with `details.existing_id` naming the holder, on a create and an update alike, and the same two ways.\n\nWhere the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries. It is asked of every entry, on the rows this call creates and the rows it updates alike, and `details.index` names the entry it came from.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -197,14 +203,10 @@ const bulkRoute = createRoute({
       description:
         "Validation error, or an atomic rollback. `atomic` defaults to " +
         "true, so a single refused entry aborts the whole page and the " +
-        "per-entry reason travels in `details.code`. Two of them turn on " +
-        "an entry declaring a `type` that is not the type of the row " +
-        "it resolved: `type_mismatch` where the natural key resolved " +
-        "it, because the entry named no id and the declaration is the " +
-        "mistake, and `id_reused` where the entry's own `id` did, " +
-        "because the id is taken by a row the entry is not describing " +
-        "— the same code the single-item doors answer. Send " +
-        "`atomic: false` to have each entry reported on its own instead.",
+        "per-entry reason travels in `details.code`, at the status that " +
+        "refusal carries on its own: `400` here, `403`, `404` or `409` " +
+        "below. Send `atomic: false` to have each entry reported on its " +
+        "own instead.",
     },
     401: {
       content: {
@@ -226,6 +228,24 @@ const bulkRoute = createRoute({
       },
       description:
         "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an entry naming a row that is not there, such as an inline edge's target, with `item_not_found` in `details.code`.",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an entry whose row moved or is taken, with `version_conflict`, `link_taken`, `type_mismatch` or `id_reused` in `details.code`. The last two turn on an entry declaring a `type` that is not the type of the row it resolved: `type_mismatch` where the natural key resolved it, because the entry named no id and the declaration is the mistake, and `id_reused` where the entry's own `id` did, because the id is taken by a row the entry is not describing, the same code the single-item doors answer.",
     },
   },
 });
@@ -797,9 +817,7 @@ async function processBulkItem(
       // Blast radius differs from the single-item doors and it is worth
       // knowing which mode you are in. `atomic` defaults to true, so one
       // refused entry rolls the page back as `bulk_atomic_rollback`
-      // carrying this refusal in `details.code`, at `400` rather than the
-      // `409` the other doors answer with: a rollback takes `403` for a
-      // permission the caller lacks and `400` for everything else.
+      // carrying this refusal in `details.code`, at its `409`.
       //
       // **Which code depends on which resolution got here.** An entry the
       // natural key resolved named no id, so the declaration is the
@@ -920,7 +938,14 @@ async function processBulkItem(
     // approximating it — and against the type the row ends up as, because
     // judging a move against the type being left would admit one whose
     // result the destination calls invalid.
-    if (isMove || raw.properties !== undefined) {
+    //
+    // At the current version only, as `PATCH /items/{id}` judges it. A stale
+    // entry is merged against its ancestor, and the store judges that
+    // result: laid over the current row instead, a `replace` leaving out a
+    // field the other writer changed since reads as a dropped field, and the
+    // collision the store would answer is refused as invalid properties.
+    const stale = raw.version !== undefined && raw.version !== existing.version;
+    if (!stale && (isMove || raw.properties !== undefined)) {
       const merged = mergeUpdateProperties(
         existing.properties,
         // Through `resolveIncomingProperties` rather than the raw payload,
@@ -933,7 +958,7 @@ async function processBulkItem(
         // write and approximating it. `existing.type` rather than the destination for
         // the same reason: the store resolves against the row's own type.
         resolveIncomingProperties(existing.type, raw.properties) ?? {},
-        "merge",
+        raw.properties_mode ?? "merge",
       );
       // A move reaching here has a registered destination. A same-type
       // update cannot refuse the row's own type for being unregistered
@@ -971,6 +996,9 @@ async function processBulkItem(
     try {
       updated = await storage.items.update(existing.id, {
         properties: raw.properties,
+        ...(raw.properties_mode !== undefined && {
+          properties_mode: raw.properties_mode,
+        }),
         ...(resultingType === existing.type ? {} : { type: resultingType }),
         tier: raw.tier,
         occurred_at: raw.occurred_at,
@@ -1223,8 +1251,8 @@ export function bulkRoutes(storage: Storage) {
     // an item row, so a page carrying an entry its key may not write, or
     // naming a source its key does not claim, is refused for that entry
     // whatever rows the store holds. Left to the per-entry pass, a stale
-    // entry ahead of it would answer first, as a `400`, and the caller would
-    // re-read its body over a refusal whose cause is a permission it lacks
+    // entry ahead of it would answer first, as a `409`, and the caller would
+    // re-read the row over a refusal whose cause is a permission it lacks
     // (`items.md` 31).
     if (atomic) {
       for (const [i, raw] of items.entries()) {
