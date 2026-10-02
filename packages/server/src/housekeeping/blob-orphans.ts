@@ -1,7 +1,7 @@
 import type { Storage } from "../storage/interface.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { log } from "../middleware/logger.js";
-import { purgeBlob, type Stores } from "./blob-delete.js";
+import { finishPurge, purgeBlob, type Stores } from "./blob-delete.js";
 
 // A type alias rather than an interface: an interface carries no index
 // signature, so it cannot satisfy the `HousekeepingReport` the scheduler
@@ -26,7 +26,10 @@ const SCAN_PAGE = 200;
  * the time it was first reported, forgets any that is referenced again, and
  * purges only what an earlier run reported longer ago than the grace. Two
  * runs, never one, stand between an unreferenced blob and its deletion, and
- * the report is readable between them.
+ * the report is readable between them. An upload of the same bytes lifts
+ * the report, and the purge decides again in its own transaction, so bytes
+ * sent or named again while a run is under way are never the ones it
+ * deletes.
  */
 export class BlobOrphanReporter {
   constructor(
@@ -39,10 +42,18 @@ export class BlobOrphanReporter {
   async runOnce(): Promise<OrphanResult> {
     const now = this.nowFn();
     const startedAt = now.toISOString();
+    for (const hash of await this.storage.blobs.listPendingPurges()) {
+      await finishPurge(this.storage, this.stores, hash);
+    }
     const unreferenced = await this.unreferencedHashes();
-    const reported = await this.storage.blobs.retainOrphans(
-      unreferenced,
-      startedAt,
+    // The time is read inside the transaction, so a report is never older
+    // than an upload that committed before it: the grace always counts
+    // from after the last time the bytes were sent.
+    await this.storage.runInTransaction(() =>
+      this.storage.blobs.retainOrphans(
+        unreferenced,
+        this.nowFn().toISOString(),
+      ),
     );
     // Strictly before both bounds: a report exactly the grace old waits for
     // the next run, and a grace of zero means the next run and never this
@@ -51,16 +62,20 @@ export class BlobOrphanReporter {
     const due = await this.storage.blobs.listOrphansToPurge(before, startedAt);
     let purged = 0;
     for (const hash of due) {
-      await purgeBlob(this.storage, this.stores, hash);
-      purged += 1;
+      if (
+        await purgeBlob(this.storage, this.stores, hash, {
+          before,
+          runStartedAt: startedAt,
+        })
+      ) {
+        purged += 1;
+      }
     }
+    const reported = (await this.storage.blobs.listOrphans()).length;
     if (purged > 0) {
-      log("info", "Unreferenced blobs purged", {
-        purged,
-        reported: reported - purged,
-      });
+      log("info", "Unreferenced blobs purged", { purged, reported });
     }
-    return { reported: reported - purged, purged };
+    return { reported, purged };
   }
 
   /**

@@ -22,14 +22,20 @@ import type {
 import {
   blobLocations,
   blobOrphans,
+  blobPurges,
   blobStores,
   blobUploaders,
   blobs,
+  edges,
   item_blob_references,
   items,
+  metadata,
+  versions,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { allowedTypesCondition } from "./item-store.js";
+import type { SqliteTxContext } from "./request-context.js";
+import { collectBlobHashes } from "../blob-utils.js";
 
 export class SqliteBlobRegistry implements BlobRegistry {
   constructor(private db: DrizzleDb) {}
@@ -125,6 +131,8 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .values({ hash, uploader })
       .onConflictDoNothing()
       .run();
+    await this.db.delete(blobOrphans).where(eq(blobOrphans.hash, hash)).run();
+    await this.db.delete(blobPurges).where(eq(blobPurges.hash, hash)).run();
   }
 
   async remove(hash: string): Promise<void> {
@@ -354,10 +362,10 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return held ? "below_minimum" : "absent";
   }
 
-  async retainOrphans(hashes: readonly string[], at: string): Promise<number> {
+  async retainOrphans(hashes: readonly string[], at: string): Promise<void> {
     if (hashes.length === 0) {
       await this.db.delete(blobOrphans).run();
-      return 0;
+      return;
     }
     // The set can be large; the parameter limit is not. Both halves work
     // in slices, which is safe because each is idempotent on its own rows.
@@ -374,16 +382,20 @@ export class SqliteBlobRegistry implements BlobRegistry {
         .where(inArray(blobOrphans.hash, stale.slice(i, i + SLICE)))
         .run();
     }
+    // Only what is still registered: a purge or a refused restore may have
+    // taken a row since the walk listed it.
     for (let i = 0; i < hashes.length; i += SLICE) {
       await this.db
         .insert(blobOrphans)
-        .values(
-          hashes.slice(i, i + SLICE).map((hash) => ({ hash, reported_at: at })),
+        .select(
+          this.db
+            .select({ hash: blobs.hash, reported_at: sql`${at}`.as("at") })
+            .from(blobs)
+            .where(inArray(blobs.hash, hashes.slice(i, i + SLICE))),
         )
         .onConflictDoNothing()
         .run();
     }
-    return hashes.length;
   }
 
   async listOrphans(): Promise<BlobOrphanRow[]> {
@@ -418,6 +430,60 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return rows.map((r) => r.hash);
   }
 
+  async claimOrphanPurge(
+    hash: string,
+    before: string,
+    runStartedAt: string,
+  ): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const report = await tx
+        .select({ reported_at: blobOrphans.reported_at })
+        .from(blobOrphans)
+        .where(eq(blobOrphans.hash, hash))
+        .get();
+      if (
+        !report ||
+        report.reported_at >= before ||
+        report.reported_at >= runStartedAt
+      ) {
+        return false;
+      }
+      if (await referencedIn(tx, hash)) {
+        await tx.delete(blobOrphans).where(eq(blobOrphans.hash, hash)).run();
+        return false;
+      }
+      await tx.delete(blobs).where(eq(blobs.hash, hash)).run();
+      await tx
+        .insert(blobPurges)
+        .values({ hash, purged_at: new Date().toISOString() })
+        .onConflictDoNothing()
+        .run();
+      return true;
+    });
+  }
+
+  async listPendingPurges(): Promise<string[]> {
+    const rows = await this.db
+      .select({ hash: blobPurges.hash })
+      .from(blobPurges)
+      .orderBy(asc(blobPurges.purged_at), asc(blobPurges.hash))
+      .all();
+    return rows.map((r) => r.hash);
+  }
+
+  async purgePending(hash: string): Promise<boolean> {
+    const row = await this.db
+      .select({ hash: blobPurges.hash })
+      .from(blobPurges)
+      .where(eq(blobPurges.hash, hash))
+      .get();
+    return row !== undefined;
+  }
+
+  async settlePurge(hash: string): Promise<void> {
+    await this.db.delete(blobPurges).where(eq(blobPurges.hash, hash)).run();
+  }
+
   async listLocations(hash: string): Promise<BlobLocation[]> {
     const rows = await this.db
       .select({
@@ -442,4 +508,48 @@ export class SqliteBlobRegistry implements BlobRegistry {
       verified_at: row.verified_at,
     }));
   }
+}
+
+/**
+ * Whether anything the orphan sweep counts references `hash`, asked inside
+ * the transaction that would purge it. An item's properties through the
+ * reference index its writes keep in step; extensions, edge properties and
+ * version snapshots through their stored text, where a row holding the hex
+ * at all is a candidate and the walk's own rule decides it, so a run of 65
+ * hex characters is no more a reference here than there.
+ */
+async function referencedIn(
+  tx: SqliteTxContext,
+  hash: string,
+): Promise<boolean> {
+  const item = await tx
+    .select({ one: sql<number>`1` })
+    .from(item_blob_references)
+    .where(eq(item_blob_references.hash, hash))
+    .limit(1)
+    .get();
+  if (item) return true;
+  const hex = hash.slice("sha256:".length);
+  const texts = [
+    tx
+      .select({ text: metadata.extensions })
+      .from(metadata)
+      .where(sql`instr(${metadata.extensions}, ${hex}) > 0`),
+    tx
+      .select({ text: edges.properties })
+      .from(edges)
+      .where(sql`instr(${edges.properties}, ${hex}) > 0`),
+    tx
+      .select({ text: versions.properties })
+      .from(versions)
+      .where(sql`instr(${versions.properties}, ${hex}) > 0`),
+  ];
+  for (const query of texts) {
+    for (const row of await query.all()) {
+      const found = new Set<string>();
+      collectBlobHashes(JSON.parse(row.text) as unknown, found);
+      if (found.has(hash)) return true;
+    }
+  }
+  return false;
 }

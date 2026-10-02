@@ -421,12 +421,6 @@ export const blobLocations = sqliteTable(
   ],
 );
 
-// ---------------------------------------------------------------------------
-// blob_orphans — the report that stands between an unreferenced blob and its
-// deletion. A run of the orphan sweep writes every blob nothing references
-// here with the time it was first reported, drops any referenced again, and
-// purges only what an earlier run reported longer ago than the grace.
-// ---------------------------------------------------------------------------
 // Every credential that has sent a blob's bytes, by the principal
 // `blobPrincipal` names. Sending them is the proof a reference's writer had
 // the bytes rather than only their hash.
@@ -441,11 +435,31 @@ export const blobUploaders = sqliteTable(
   (table) => [primaryKey({ columns: [table.hash, table.uploader] })],
 );
 
+// ---------------------------------------------------------------------------
+// blob_orphans — the report that stands between an unreferenced blob and its
+// deletion. A run of the orphan sweep writes every blob nothing references
+// here with the time it was reported, drops any referenced again, and purges
+// only what an earlier run reported longer ago than the grace. Sending the
+// bytes again removes the row, so the grace counts from after the last
+// upload.
+// ---------------------------------------------------------------------------
 export const blobOrphans = sqliteTable("blob_orphans", {
   hash: text("hash")
     .primaryKey()
     .references(() => blobs.hash, { onDelete: "cascade" }),
   reported_at: text("reported_at").notNull(),
+});
+
+// ---------------------------------------------------------------------------
+// blob_purges — blobs whose registry row a purge has removed and whose bytes
+// it has not yet confirmed gone from every store. Written in the transaction
+// that removes the row and cleared once every store has deleted the bytes,
+// so a purge cut short leaves a row the next sweep finishes rather than
+// bytes nothing names. Sending the bytes again removes it.
+// ---------------------------------------------------------------------------
+export const blobPurges = sqliteTable("blob_purges", {
+  hash: text("hash").primaryKey(),
+  purged_at: text("purged_at").notNull(),
 });
 
 // The instance's type registrations, the shipped set included.

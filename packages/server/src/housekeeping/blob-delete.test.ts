@@ -4,7 +4,7 @@
  */
 import { Readable } from "node:stream";
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, withSecondStore } from "../test-utils.js";
+import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   CopiesBelowMinimum,
@@ -93,6 +93,19 @@ function gateDelete(store: { delete: (hash: string) => Promise<void> }) {
   };
 }
 
+const REPORTED_AT = "2026-01-01T00:00:00.000Z";
+const DUE = {
+  before: "2026-01-02T00:00:00.000Z",
+  runStartedAt: "2026-01-02T00:00:00.000Z",
+};
+
+/** Report `hash` as an orphan long enough ago that `DUE` admits its purge. */
+async function reportOrphan(c: TestContext, hash: string): Promise<void> {
+  await c.storage.runInTransaction(() =>
+    c.storage.blobs.retainOrphans([hash], REPORTED_AT),
+  );
+}
+
 describe("the per-hash lock", () => {
   it("holds an upload of the same bytes behind a drop in flight, so the log and the bytes agree", async () => {
     // The drop removes the disk's row, then deletes its bytes. An upload
@@ -139,17 +152,18 @@ describe("the per-hash lock", () => {
   });
 
   it("holds an upload of the same bytes behind a purge in flight, so the row outlives the purge", async () => {
-    // The purge deletes the bytes, then the registry row. An upload
-    // arriving between the two would find the row still there, record
-    // nothing new, answer 201, and then lose the row to the purge; behind
-    // the lock it runs after the purge and registers the bytes afresh.
+    // The purge removes the registry row, then deletes the bytes. An
+    // upload arriving between the two would find the bytes still there,
+    // register them, answer 201, and then lose them to the purge; behind
+    // the lock it runs after the purge and stores the bytes afresh.
     ctx = await createTestContext();
     const { stores } = await withSecondStore(ctx);
     const content = "raced by a purge";
     const hash = await upload(ctx, content);
+    await reportOrphan(ctx, hash);
     const gate = gateDelete(ctx.blobs.disk);
     try {
-      const purging = purgeBlob(ctx.storage, stores, hash);
+      const purging = purgeBlob(ctx.storage, stores, hash, DUE);
       await gate.started;
       let uploaded = false;
       const uploading = upload(ctx, content).then((h) => {
@@ -187,10 +201,64 @@ describe("purgeBlob", () => {
     expect(await second.has(hash)).not.toBeNull();
     expect(await ctx.storage.blobs.get(hash)).not.toBeNull();
     expect(await ctx.storage.blobs.listLocations(hash)).toHaveLength(1);
-    await purgeBlob(ctx.storage, stores, hash);
+    await reportOrphan(ctx, hash);
+    expect(await purgeBlob(ctx.storage, stores, hash, DUE)).toBe(true);
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
     expect(await second.has(hash)).toBeNull();
     expect(await ctx.storage.blobs.get(hash)).toBeNull();
     expect(await ctx.storage.blobs.listLocations(hash)).toEqual([]);
+    expect(await ctx.storage.blobs.listPendingPurges()).toEqual([]);
+  });
+
+  it("purges nothing the report does not name as due", async () => {
+    ctx = await createTestContext();
+    const unreported = await upload(ctx, "never reported");
+    expect(await purgeBlob(ctx.storage, ctx.blobs, unreported, DUE)).toBe(
+      false,
+    );
+    expect(await ctx.blobs.disk.has(unreported)).not.toBeNull();
+    // Reported, but not before the bounds.
+    const fresh = await upload(ctx, "reported too recently");
+    await ctx.storage.runInTransaction(() =>
+      ctx!.storage.blobs.retainOrphans([fresh], DUE.before),
+    );
+    expect(await purgeBlob(ctx.storage, ctx.blobs, fresh, DUE)).toBe(false);
+    expect(await ctx.blobs.disk.has(fresh)).not.toBeNull();
+    expect(await ctx.storage.blobs.get(fresh)).not.toBeNull();
+  });
+
+  it("counts a version snapshot naming the blob, and not a longer hex run", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "named by history and by a longer run");
+    const hex = hash.slice("sha256:".length);
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: `v1 ${hex}0` } },
+    });
+    expect(res.status).toBe(201);
+    const id = ((await res.json()) as { item: { id: string } }).item.id;
+    // A 65-character run holds the hex and is not a reference to it.
+    await reportOrphan(ctx, hash);
+    expect(await purgeBlob(ctx.storage, ctx.blobs, hash, DUE)).toBe(true);
+    // Stored again, then named only by a snapshot: the item is edited past
+    // the version that named it.
+    expect(await upload(ctx, "named by history and by a longer run")).toBe(
+      hash,
+    );
+    let version = 1;
+    for (const body of [`v2 ${hash}`, "v3"]) {
+      const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+        key: ctx.workingKey,
+        body: { properties: { body }, version },
+      });
+      expect(res.status, await res.clone().text()).toBe(200);
+      version = ((await res.json()) as { item: { version: number } }).item
+        .version;
+    }
+    await reportOrphan(ctx, hash);
+    expect(await purgeBlob(ctx.storage, ctx.blobs, hash, DUE)).toBe(false);
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+    // Kept, and out of the report.
+    expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
   });
 });

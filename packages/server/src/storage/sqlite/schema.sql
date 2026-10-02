@@ -286,6 +286,11 @@ CREATE TABLE IF NOT EXISTS `blob_orphans` (
 	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade
 );
 
+CREATE TABLE IF NOT EXISTS `blob_purges` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`purged_at` text NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS `blob_stores` (
 	`id` text PRIMARY KEY NOT NULL,
 	`kind` text NOT NULL,

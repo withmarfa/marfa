@@ -422,6 +422,40 @@ describe("the rules that keep a blob's bytes", () => {
     expect(working.error?.error.code).toBe("forbidden");
   });
 
+  it("lifts the report on an upload of the same bytes, so the next run keeps them", async () => {
+    const words = "uploaded, reported, uploaded again";
+    const hash = await uploadText(words);
+    await run("blob-orphans");
+    const reported = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    expect(reported).toContain(hash);
+
+    // Sent again: the answer says the bytes are stored, and the report no
+    // longer names them.
+    expect(await uploadText(words)).toBe(hash);
+    const lifted = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    expect(lifted).not.toContain(hash);
+
+    // The run that would have purged the earlier report reports them afresh
+    // and keeps them.
+    await run("blob-orphans");
+    const kept = await operator.downloadBlob(hash);
+    expect(kept.status).toBe(200);
+    expect(new TextDecoder().decode(kept.data)).toBe(text(words));
+    const again = (await operator.listBlobOrphans()).data.data.map(
+      (row) => row.hash,
+    );
+    expect(again).toContain(hash);
+
+    // Still named by nothing once the grace has passed since that report,
+    // they go: the witness that the run above could have purged them.
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
+  });
+
   it("keeps a blob a note links in its body after the file item naming it is purged", async () => {
     // Two images, each named by a file item that is trashed and purged; a
     // note links only the first in its body. The second is the witness
