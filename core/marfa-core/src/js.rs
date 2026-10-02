@@ -1,5 +1,5 @@
-//! Numbers written as JavaScript writes them, which is how the server's
-//! stored text spells them.
+//! Numbers written as JavaScript writes them, because the server's stored
+//! text spells them that way.
 
 use std::io;
 
@@ -75,7 +75,6 @@ mod tests {
             r#"{"list":[100000000000000000000,0.0000015,1e+21,12,-3,1.5],"n":{"m":100000000000000000000}}"#,
         )
         .unwrap();
-        // The witness: serde's own text spells these otherwise.
         assert_eq!(
             value.to_string(),
             r#"{"list":[1e+20,1.5e-6,1e+21,12,-3,1.5],"n":{"m":1e+20}}"#

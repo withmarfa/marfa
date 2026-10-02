@@ -1,6 +1,3 @@
-//! A removal large enough to be a mistake waits to be confirmed
-//! (`folders.md` 46): `confirm` lets it go, `restore` puts it back.
-
 use serde::Serialize;
 
 use std::cell::OnceCell;
@@ -13,35 +10,22 @@ use crate::model::ItemState;
 /// back rather than taking the missing file as in place.
 const PUT_BACK: &str = "put-back";
 
-/// What `folders confirm` let go.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Confirmed {
-    /// Deletes queued for files gone from the disk, sent at the next push.
     pub deleted: usize,
-    /// Files gone from the disk that another folder on the machine now
-    /// holds, so nothing is trashed for them (`folders.md` 43).
     pub moved: usize,
-    /// Files that cannot be told moved or gone yet, left to the next pass.
     pub unsure: Vec<Unsure>,
-    /// Files taken away whose items were trashed or left the search's
-    /// states elsewhere.
     pub removed: usize,
 }
 
-/// What `folders restore` put back.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Restored {
-    /// Files gone from the disk, written back by the pull that follows.
     pub put_back: usize,
-    /// Items trashed elsewhere restored from the bin, or moved back to a state
-    /// the search holds, sent at the next push.
     pub restored: usize,
     pub pull: PullReport,
 }
 
 impl Folder {
-    /// Lets every paused removal go: the deletes of files gone from the disk
-    /// are queued, and the files of items that left elsewhere taken away.
     pub fn confirm(&self) -> Result<Confirmed> {
         self.core.lock.refuse_unless_writer()?;
         let settings = self.settings()?;
@@ -93,8 +77,6 @@ impl Folder {
         Ok(confirmed)
     }
 
-    /// Cancels every paused removal: files gone from the disk are written
-    /// back, and items that left elsewhere are restored.
     pub fn restore(&self) -> Result<Restored> {
         self.core.lock.refuse_unless_writer()?;
         let settings = self.settings()?;
@@ -113,7 +95,7 @@ impl Folder {
                 continue;
             };
             // No pull writes back an item the search's states no longer hold, so
-            // bound it would be journaled again (`folders.md` 46).
+            // bound it would be journaled again.
             let held = crate::store::items_by_ids(&conn, std::slice::from_ref(&bound.item_id))?
                 .pop()
                 .is_some_and(|item| settings.holds_state(item.state));

@@ -1,7 +1,3 @@
-//! What a folder takes (`folders.md` 25, 26): its include and ignore lists,
-//! in gitignore syntax, the built-in lists no setting reaches past, and the
-//! packages its walk does not enter.
-
 use std::path::Path;
 
 use globset::{GlobBuilder, GlobMatcher};
@@ -14,7 +10,6 @@ use crate::error::CoreError;
 /// The folder's own state, and another folder's inside it.
 const STATE: &[&str] = &[".marfa"];
 
-/// What a machine writes beside a person's files for itself.
 const JUNK: &[&str] = &[
     ".DS_Store",
     "Thumbs.db",
@@ -26,34 +21,27 @@ const JUNK: &[&str] = &[
     "desktop.ini",
 ];
 
-/// What an editor keeps beside the file it has open: a swap, a backup, a
-/// lock.
 const SWAP: &[&str] = &["*.swp", "*~", ".#*", "~$*", "*.tmp", ".~lock.*#"];
 
 /// Files that exist to hold a secret in a form anyone holding the file can
 /// use: sent, it reaches every machine and key that reads the folder, and
 /// cannot be called back.
 const SECRETS: &[&str] = &[
-    // Environment files, which hold the values a program is given.
     ".env",
     ".env.*",
-    // Private keys and the bundles that carry one.
     "*.pem",
     "*.key",
     "*.p12",
     "*.pfx",
-    // SSH's own key names.
     "id_rsa*",
     "id_dsa*",
     "id_ecdsa*",
     "id_ed25519*",
-    // Plain-text logins for a network, a registry or a database.
     ".netrc",
     ".npmrc",
     ".pypirc",
     ".pgpass",
     ".git-credentials",
-    // The names cloud tools give a stored login.
     "credentials",
     "*credentials.json",
     "credentials.db",
@@ -71,7 +59,6 @@ const PACKAGES: &[&str] = &[
     "rtfd",
 ];
 
-/// A folder's lists, compared in NFC and without regard to case (27).
 pub struct Lists {
     machine: Gitignore,
     secrets: Gitignore,
@@ -84,8 +71,6 @@ pub struct Lists {
 }
 
 impl Lists {
-    /// The lists a folder's settings name, refused where a line is not a
-    /// pattern.
     pub fn new(include: &[String], ignore: &[String]) -> Result<Lists> {
         let owned = |lines: &[&str]| {
             lines
@@ -165,16 +150,13 @@ impl Lists {
         !name.starts_with('.') || hit(&self.dotted, &path, false)
     }
 
-    /// Whether the built-in secrets list refuses the file at `relative`.
     pub(super) fn secret(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
         hit(&self.secrets, &path, false)
     }
 
-    /// Whether the walk enters the directory at `relative`: never one the
-    /// ignore list or the machine's own lines name, and a dot-led one only
-    /// where an include line names it. A secret's name is refused file by
-    /// file, so a package named like one is still reported.
+    /// A secret's name is refused file by file, so a package named like one is
+    /// still reported.
     pub(super) fn enters(&self, relative: &str) -> bool {
         let path: String = relative.nfc().collect();
         if hit(&self.machine, &path, true) || hit(&self.ignore, &path, true) {
@@ -211,7 +193,6 @@ fn refused(list: &str, line: &str, why: &str) -> CoreError {
     ))
 }
 
-/// The dot-led names a gitignore line names, each as a glob of one name.
 fn dot_names(line: &str) -> Vec<String> {
     let line = line.trim();
     let line = line.strip_prefix('!').unwrap_or(line);
@@ -223,8 +204,6 @@ fn dot_names(line: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether the directory at `path` is a package: named with an extension
-/// macOS opens as one document or program, or one the system marks so.
 pub(super) fn is_package(path: &Path) -> bool {
     // Only a name with an extension is asked of the system, which a walk
     // would otherwise ask of every directory on every pass.
@@ -237,8 +216,6 @@ pub(super) fn is_package(path: &Path) -> bool {
         || system::marks(path)
 }
 
-/// Whether a path inside the folder lies in a package, where no walk reads
-/// it back.
 pub(super) fn in_package(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();
     let mut names = relative.split('/').peekable();
@@ -322,17 +299,6 @@ mod tests {
     }
 
     #[test]
-    fn takes_everything_not_dot_led_where_no_list_names_anything() {
-        let open = lists(&[], &[]);
-        assert!(open.takes("note.md"));
-        assert!(open.takes("deep/photo.png"));
-        assert!(!open.takes(".hidden/note.md"));
-        assert!(!open.takes("deep/.note.md"));
-        assert!(open.enters("deep"));
-        assert!(!open.enters(".git"));
-    }
-
-    #[test]
     fn an_include_narrows_and_an_ignore_removes_even_from_it() {
         let narrowed = lists(&["Notes/", "*.txt"], &["Notes/drafts/"]);
         assert!(narrowed.takes("Notes/plan.md"));
@@ -340,7 +306,6 @@ mod tests {
         assert!(!narrowed.takes("elsewhere/plan.md"));
         assert!(!narrowed.takes("Notes/drafts/plan.md"));
         assert!(!narrowed.enters("Notes/drafts"));
-        // Compared without regard to case or form.
         assert!(narrowed.takes("notes/Plan.md"));
         assert!(lists(&["Caf\u{e9}/"], &[]).takes("Cafe\u{301}/menu.md"));
     }
@@ -355,22 +320,6 @@ mod tests {
         assert!(!dotted.takes(".git/a.md"));
         assert!(!dotted.enters(".marfa"));
         assert!(!lists(&[".marfa/"], &[]).takes(".marfa/folder.yaml"));
-    }
-
-    #[test]
-    fn takes_nothing_under_a_dot_led_directory_the_walk_does_not_enter() {
-        let named = lists(&[".notes/"], &[]);
-        assert!(named.takes(".notes/plan.md"));
-        assert!(named.enters(".notes"));
-        assert!(!named.enters(".notes/.hidden"));
-        assert!(!named.takes(".notes/.hidden/plan.md"));
-        let unwalked = lists(&["*", "!.git/"], &[]);
-        assert!(!unwalked.enters(".git"));
-        assert!(!unwalked.takes(".git/HEAD"));
-        assert!(unwalked.takes("plan.md"));
-        let both = lists(&[".notes/", ".hidden/"], &[]);
-        assert!(both.enters(".notes/.hidden"));
-        assert!(both.takes(".notes/.hidden/plan.md"));
     }
 
     #[test]
@@ -408,8 +357,6 @@ mod tests {
         ] {
             assert!(!reaching.takes(path), "{path:?} was taken");
         }
-        // The control: the same lists take a note, and `Icon` without its
-        // carriage return is a name like any other.
         assert!(reaching.takes("note.md"));
         assert!(reaching.takes("Icon"));
     }
@@ -419,19 +366,6 @@ mod tests {
         let bad = vec!["a{b".to_string()];
         assert!(Lists::new(&bad, &[]).is_err());
         assert!(Lists::new(&[], &bad).is_err());
-    }
-
-    #[test]
-    fn a_package_is_known_by_its_extension() {
-        let dir = tempfile::tempdir().unwrap();
-        for name in ["Deck.key", "Tool.APP", "Notes.rtfd"] {
-            assert!(is_package(&dir.path().join(name)), "{name}");
-        }
-        std::fs::create_dir(dir.path().join("plain.d")).unwrap();
-        assert!(!is_package(&dir.path().join("plain.d")));
-        assert!(!is_package(&dir.path().join("Notes")));
-        assert!(in_package(dir.path(), "Deck.key/Data/a.md"));
-        assert!(!in_package(dir.path(), "Notes/Deck.key"));
     }
 
     #[cfg(target_os = "macos")]

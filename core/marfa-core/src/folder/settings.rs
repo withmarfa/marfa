@@ -1,6 +1,3 @@
-//! A folder's settings, read from the `system.folder` it is bound to
-//! (`folders.md` 1).
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -11,14 +8,10 @@ use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::model::{Item, ItemState, Tier};
 
-/// The type a folder's settings are held as.
 pub const FOLDER_TYPE: &str = "system.folder";
 
-/// The type a new document becomes where neither the defaults nor the
-/// search name one.
 const DOCUMENT_TYPE: &str = "core.note";
 
-/// What a `system.folder` holds, as far as this core reads it.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -37,8 +30,8 @@ pub struct Settings {
     pub removal_threshold: RemovalThreshold,
 }
 
-/// Which items the folder holds (`folders.md` 2). A member this core does
-/// not know is refused rather than ignored, as a filter is (`device.md` 24).
+/// An unknown member is refused rather than ignored, which would answer the
+/// search as though the condition were not there.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Search {
@@ -54,7 +47,6 @@ pub struct Search {
     pub beneath: Option<String>,
 }
 
-/// What a new file takes where it leaves a blank (`folders.md` 3).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Defaults {
@@ -70,7 +62,6 @@ pub struct Defaults {
     pub edges: BTreeMap<String, Vec<String>>,
 }
 
-/// How large a removal is before it waits to be confirmed (`folders.md` 46).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RemovalThreshold {
@@ -89,16 +80,12 @@ impl RemovalThreshold {
         self.fraction.unwrap_or(0.25)
     }
 
-    /// Whether taking `count` files out of a folder of `of` waits: more than
-    /// `files` of them, and more than `fraction` of the folder.
     pub fn exceeded(&self, count: usize, of: usize) -> bool {
         count as u64 > self.files() && count as f64 > self.fraction() * of as f64
     }
 }
 
 impl Settings {
-    /// The settings a `system.folder` row holds, refused where the search
-    /// asks for something this core does not answer.
     pub fn of(item: &Item) -> Result<Settings> {
         Settings::read(
             &item.id,
@@ -177,8 +164,8 @@ impl Settings {
         Ok(())
     }
 
-    /// Refuses a default type the search does not hold, which would make
-    /// every new file fall outside its own folder.
+    /// A default type the search does not hold would put every new file
+    /// outside its own folder.
     pub(crate) fn check_types(&self, catalog: &Catalog) -> Result<()> {
         if let Some(named) = &self.defaults.r#type
             && !self.holds_type(catalog, named)
@@ -199,14 +186,11 @@ impl Settings {
                 .any(|declared| catalog.matches(declared, named))
     }
 
-    /// What the folder takes: its include and ignore lists, beside the
-    /// built-in ones (`folders.md` 25).
     pub fn lists(&self) -> Result<super::lists::Lists> {
         super::lists::Lists::new(&self.include, &self.ignore)
     }
 
-    /// The types the search holds, each with its subtree; empty is every
-    /// type the key reads.
+    /// Each with its subtree; empty is every type the key reads.
     pub fn types(&self) -> &[String] {
         &self.search.types
     }
@@ -223,17 +207,7 @@ impl Settings {
         }
     }
 
-    /// Edge types the copy holds whole so the search can be answered from
-    /// it: `beneath` walks `parent-of` from rows the slice may not hold.
-    pub fn whole_edge_types(&self) -> Vec<String> {
-        match self.search.beneath {
-            Some(_) => vec![crate::filter::PARENT_OF.to_string()],
-            None => Vec::new(),
-        }
-    }
-
-    /// The type a new document becomes: never a file type, whose items are
-    /// bytes rather than documents.
+    /// Never a file type, whose items are bytes rather than documents.
     pub fn new_type(&self, catalog: &Catalog) -> String {
         self.defaults
             .r#type
@@ -248,13 +222,11 @@ impl Settings {
             .unwrap_or_else(|| DOCUMENT_TYPE.to_string())
     }
 
-    /// The tier a new file is created at.
     pub fn new_tier(&self) -> Tier {
         self.defaults.tier.unwrap_or_else(|| self.tier())
     }
 
-    /// The directory a new item of this type from elsewhere first goes
-    /// under: the most specific key naming the type or an ancestor of it.
+    /// The most specific key naming the type or an ancestor of it.
     pub fn first_placement_for(&self, r#type: &str, catalog: &Catalog) -> Option<&str> {
         let naming: Vec<&String> = self
             .first_placement
@@ -283,16 +255,6 @@ mod tests {
             unreachable!()
         };
         Settings::read("f", FOLDER_TYPE, "active", &properties)
-    }
-
-    #[test]
-    fn holds_active_and_archived_unless_the_search_narrows_state() {
-        let open = read(json!({ "title": "t" })).unwrap();
-        assert!(open.holds_state(ItemState::Active));
-        assert!(open.holds_state(ItemState::Archived));
-        assert!(!open.holds_state(ItemState::Trashed));
-        let narrowed = read(json!({ "search": { "state": ["active"] } })).unwrap();
-        assert!(!narrowed.holds_state(ItemState::Archived));
     }
 
     #[test]

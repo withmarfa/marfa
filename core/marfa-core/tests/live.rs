@@ -113,10 +113,6 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let caught = core.catch_up().unwrap();
     assert!(caught.applied >= 2, "{caught:?}");
     assert!(core.get(&fourth).unwrap().is_some(), "the new note arrived");
-    // A read by id answers every state but the bin, which is the server's
-    // rule on the same door (`device.md` 32). So the trashed row is absent
-    // from `get` and present in a widened list, and those two together are
-    // what say the copy holds it rather than having dropped it.
     assert!(
         core.get(&first).unwrap().is_none(),
         "a trashed row is still readable by id, where the server answers 404"
@@ -140,9 +136,6 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
 
     seed(&["purge", &first]);
     core.catch_up().unwrap();
-    // The purge is not the delete: the row is gone from the store, so even
-    // the widened list cannot find it. Without this the assertion above
-    // would be satisfied by a purge that merely hid the row again.
     let after_purge = core
         .list(
             &ListFilters {

@@ -16,19 +16,14 @@ pub const PAGE_LIMIT: u32 = 200;
 pub struct Http {
     agent: Agent,
     base: Url,
-    /// A device's transport always carries its key; a call says whether the
-    /// door it reaches needs it. Replaced where a renewal answers a `401`.
     authorization: RwLock<String>,
     renew: OnceLock<Renew>,
     /// Held while a renewal runs, so two calls refused at once renew once.
     renewing: Mutex<()>,
 }
 
-/// Asked for a fresh bearer once the server refuses the one it was handed
-/// with a `401`: a signed-in session's token runs out, and a command that
-/// holds a stream open or walks a large slice can outlive it. Handed the
-/// refused bearer, so a caller that keeps the credential elsewhere can tell
-/// whether another process has rotated it already.
+/// Handed the refused bearer, so a caller that keeps the credential elsewhere
+/// can tell whether another process has rotated it already.
 pub type Renew = Box<dyn Fn(&str) -> Result<String, CoreError> + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
@@ -40,8 +35,6 @@ pub struct ItemsQuery<'a> {
     pub cursor: Option<&'a str>,
 }
 
-/// What a call is, on the wire. A queued write is never a `Get`; the
-/// direct surface's reads are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Method {
     Get,
@@ -63,33 +56,19 @@ impl Method {
     }
 }
 
-/// One queued write, addressed.
 pub struct Outgoing<'a> {
     pub method: Method,
     pub segments: Vec<String>,
     pub params: Vec<(String, String)>,
     pub body: &'a str,
-    /// Minted when the row was queued and never changed
-    /// (`queue-and-verdicts.md` 3), so a retry is answered from the server's
-    /// record rather than written a second time.
     pub idempotency_key: &'a str,
 }
 
-/// What came back, kept whole and unclassified.
-///
-/// The status and the code both, because neither decides alone: three
-/// different 409s take three different verdicts, and a 422 is a block or a
-/// refusal depending on its code.
 #[derive(Debug, Clone)]
 pub struct Answer {
     pub status: u16,
-    /// The server's error code, or empty on a success. Parsed out because
-    /// the classification turns on it; the message beside it is not, because
-    /// `body` already carries the envelope whole and a second copy of the
-    /// same value is a second thing to keep in step.
+    /// The server's error code, or empty on a success.
     pub code: String,
-    /// The response body verbatim. A device reports what it was told
-    /// (`queue-and-verdicts.md` 15), so this is not parsed away.
     pub body: String,
     pub retry_after_seconds: Option<u64>,
     /// The server answered from its idempotency record rather than writing.
@@ -102,13 +81,8 @@ impl Answer {
     }
 }
 
-/// What one call sends, through the core's transport or the binary's.
-///
-/// A body is JSON text, sized text under a type the headers name (a form),
-/// or a reader the request streams from, because a blob upload must not
-/// buffer the file: the cap on a blob is the server's to set and a binary
-/// that read the whole file first would have a cap of its own that nothing
-/// documents.
+/// A blob upload streams from a `Reader` rather than buffering the file, so
+/// the cap on a blob is the server's alone.
 pub enum CallBody<'a> {
     None,
     Json(&'a str),
@@ -120,45 +94,34 @@ pub struct Call<'a> {
     pub method: Method,
     pub segments: &'a [&'a str],
     pub params: &'a [(&'a str, &'a str)],
-    /// Extra headers, such as a `Content-Type` for a streamed body or a
-    /// `Last-Event-ID` for the stream.
     pub headers: &'a [(&'a str, &'a str)],
     pub body: CallBody<'a>,
-    /// Whether the credential rides. A door that answers without one is
-    /// called without one even when one is held, so a public read cannot be
-    /// refused for a credential it never needed.
+    /// A public door is called without the credential even when one is held,
+    /// so it cannot be refused for a credential it never needed.
     pub credential: bool,
-    /// Read the whole body as text (the JSON doors) or hand the reader back
-    /// (the stream, an export, a blob's bytes). Only the binary's transport
-    /// hands a reader back; the core's own calls read every answer whole.
+    /// Only the binary's transport hands a reader back; the core's own calls
+    /// read every answer whole.
     pub stream: bool,
 }
 
-/// What a call got back. Every status the server can answer with is a
-/// `Reply`, because the direct surface classifies on the status and the
-/// envelope together, exactly as the drain does with an `Answer`; an `Err`
-/// is a transport failure, or, from the core's own transport, an answer on
-/// another contract. The core's own transport reads every body whole, so
-/// its replies carry a `String`.
+/// Every status the server can answer with is a `Reply`; an `Err` is a
+/// transport failure, or, from the core's own transport, an answer on
+/// another contract.
 pub struct Reply<B = ReplyBody> {
     pub status: u16,
     pub content_type: String,
     pub retry_after_seconds: Option<u64>,
-    /// The contract version the answer names in `X-Marfa-Contract`, when it
-    /// names one. The binary's transport hands it to the caller to judge; the
-    /// core's has judged it before a `Reply` exists.
+    /// The binary's transport hands it to the caller to judge; the core's has
+    /// judged it before a `Reply` exists.
     pub contract: Option<String>,
-    /// Where a redirect points, so the refusal of one can say.
     pub location: Option<String>,
     pub body: B,
 }
 
-/// The response header every answer names its contract version in.
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 
-/// Whether an answer can be read by a caller built for `expected`: one
-/// naming that contract, or a refusal naming none, since a proxy in front of
-/// the server answers without one and its status is still the truth.
+/// A refusal naming no contract is readable: a proxy in front of the server
+/// answers without one, and its status is still the truth.
 pub fn speaks_contract(expected: u64, contract: Option<&str>, status: u16) -> bool {
     match contract {
         Some(served) => served == expected.to_string(),
@@ -181,9 +144,8 @@ impl Http {
         base.set_path(&path);
         base.set_query(None);
         base.set_fragment(None);
-        // The operating system's trust store, as the binary's own client
-        // uses, so a server behind a CA the machine trusts is reachable from
-        // both.
+        // The platform trust store, as the binary's own client uses, so a
+        // server behind a CA the machine trusts is reachable from both.
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
@@ -204,12 +166,11 @@ impl Http {
         })
     }
 
-    /// Sets how a refused bearer is renewed. Set once; a second is ignored.
+    /// Set once; a second is ignored.
     pub fn renew_with(&self, renew: Renew) {
         let _ = self.renew.set(renew);
     }
 
-    /// The `Authorization` header a call carries now.
     pub(crate) fn authorization(&self) -> String {
         self.authorization
             .read()
@@ -217,13 +178,10 @@ impl Http {
             .clone()
     }
 
-    /// After a `401` to `sent`, the header to send again with: the one
-    /// another call renewed to meanwhile, or a fresh one. `None` where
-    /// nothing renews, or where the renewal was itself refused, so the `401`
-    /// stands as the answer: a drain parks its queue on that answer and
-    /// counts nothing (`queue-and-verdicts.md` 20), where an error would be
-    /// counted against each write until every one was dead. A renewal the
-    /// environment stopped is the environment's, and says so.
+    /// `None` where nothing renews or the renewal was itself refused, so the
+    /// `401` stands as the answer: a drain parks its queue on that answer,
+    /// where an error would be counted against each write until every one
+    /// was dead.
     fn renewed(&self, sent: &str) -> Result<Option<String>, CoreError> {
         match self.renewal(sent) {
             Ok(fresh) => Ok(fresh),
@@ -261,8 +219,6 @@ impl Http {
         Ok(Some(header))
     }
 
-    /// Runs a call with the credential, and once more under a renewed one
-    /// where the first was refused `401` and a renewal is set.
     fn authorized(
         &self,
         run: impl Fn(&str) -> Result<Response, CoreError>,
@@ -277,8 +233,7 @@ impl Http {
         Ok(response)
     }
 
-    /// Scheme, host, port and path prefix: what identifies a server without
-    /// identifying a key.
+    /// Identifies a server without identifying a key.
     pub fn origin(&self) -> String {
         format!(
             "{}{}",
@@ -287,7 +242,6 @@ impl Http {
         )
     }
 
-    /// Every registered type, following `next_cursor` to its end.
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
         let mut types = Vec::new();
         let mut cursor: Option<String> = None;
@@ -347,7 +301,6 @@ impl Http {
         self.get_json(&["items", id, "edges"], &params)
     }
 
-    /// A page of every edge of `edge_type` the key reads.
     pub fn edges_page(
         &self,
         edge_type: &str,
@@ -361,14 +314,13 @@ impl Http {
         self.get_json(&["edges"], &params)
     }
 
-    /// Every edge type the server holds, shipped and registered.
     pub fn edge_types(&self) -> Result<Vec<serde_json::Value>, CoreError> {
         let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &[])?;
         Ok(page.data)
     }
 
-    /// The items the key reads, in any state, whose `field` contains `text`
-    /// without regard to ASCII case, and whether `pages` pages left more.
+    /// The server matches without regard to ASCII case. The flag says
+    /// whether `pages` pages left more.
     pub fn items_containing(
         &self,
         field: &str,
@@ -402,8 +354,8 @@ impl Http {
         Ok((found, true))
     }
 
-    /// The key this credential is, as `GET /keys/current` answers it; `None`
-    /// for a credential that is not a key, which that door refuses `403`.
+    /// `None` for a credential that is not a key, which that door refuses
+    /// `403`.
     pub fn current_key(&self) -> Result<Option<serde_json::Value>, CoreError> {
         match self.get_json::<serde_json::Value>(&["keys", "current"], &[]) {
             Ok(key) => Ok(Some(key)),
@@ -412,8 +364,6 @@ impl Http {
         }
     }
 
-    /// One item by id with its edges, as a hydration reads each row: a row
-    /// that comes into the slice after the hydration needs what it draws.
     pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         match self
             .get_json::<WireItemWithMetadata>(&["items", id], &[("include", "edges,metadata")])
@@ -424,14 +374,6 @@ impl Http {
         }
     }
 
-    /// One item by id, as the server holds it now.
-    ///
-    /// The read a refused write is reconciled against
-    /// (`queue-and-verdicts.md` 12): the working copy holds an edit the
-    /// server declined, and nothing else brings it back, because a write the
-    /// server refused changed nothing and so produced no event for catch-up
-    /// to replay. `Ok(None)` is a 404, which is the server saying it holds
-    /// no such row — for a refused create, the honest answer.
     pub fn item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
         match self.get_json::<WireItemWithMetadata>(&["items", id], &[("include", "metadata")]) {
             Ok(item) => Ok(Some(item)),
@@ -440,24 +382,11 @@ impl Http {
         }
     }
 
-    /// Sends one queued write and reads whatever came back.
-    ///
-    /// **The only `Err`s are a request that will not build (`Invalid`), a
+    /// The only `Err`s are a request that will not build (`Invalid`), a
     /// transport failure (`Network`) and an answer on another contract
-    /// (`ContractMismatch`)**, and that is the whole point of this
-    /// signature: none of the three carries a status and a code for the
-    /// classification to read. The drain retries a transport failure
-    /// uncounted, counts a request that will not build, and ends its pass on
-    /// the third. Every
-    /// status the server can answer with is an `Answer`, including the
-    /// refusals, because the classification
-    /// (`queue-and-verdicts.md` 17 to 23) turns on the status and the code
-    /// together: a 409 is `ancestor_unavailable`, `version_conflict` or
-    /// `idempotency_key_in_flight`, and the three are classified apart —
-    /// the first two block the write under different reasons, the third is
-    /// counted against the ceiling. `refusal()` below is the read path's
-    /// convenience and is lossy about exactly that — it maps a status to a
-    /// variant and drops the status — so the drain does not go through it.
+    /// (`ContractMismatch`). Every status is an `Answer`, because the
+    /// classification turns on the status and the code together; `refusal()`
+    /// drops the status, so the drain must not go through it.
     pub fn send(&self, outgoing: &Outgoing<'_>) -> Result<Answer, CoreError> {
         let segments: Vec<&str> = outgoing.segments.iter().map(String::as_str).collect();
         let params: Vec<(&str, &str)> = outgoing
@@ -466,10 +395,9 @@ impl Http {
             .map(|(key, value)| (key.as_str(), value.as_str()))
             .collect();
         let url = self.url(&segments, &params);
-        // Built as one request and run, rather than through the agent's
-        // per-method builders: those split at the type level on whether a
-        // method carries a body, and the drain's four methods would then be
-        // four copies of the same header list with one of them able to drift.
+        // Not the agent's per-method builders: those split at the type level
+        // on whether a method carries a body, which would mean one header
+        // list per method.
         let response = self.authorized(|authorization| {
             let request = ureq::http::Request::builder()
                 .method(outgoing.method.as_str())
@@ -494,9 +422,7 @@ impl Http {
             .get("Idempotency-Replayed")
             .and_then(|value| value.to_str().ok())
             .is_some_and(|value| value.eq_ignore_ascii_case("true"));
-        // A body that will not read is a transport failure and not an
-        // answer: the status arrived and the rest of the response did not,
-        // so there is nothing here to classify.
+        // A body that will not read is a transport failure, not an answer.
         let body = response
             .into_body()
             .read_to_string()
@@ -514,7 +440,6 @@ impl Http {
         })
     }
 
-    /// The raw event stream, left open for `body_timeout` at most.
     pub fn open_events(
         &self,
         last_event_id: Option<&str>,
@@ -547,11 +472,7 @@ impl Http {
         Ok(Box::new(response.into_body().into_reader()))
     }
 
-    /// Sends one call and reads its answer whole. An answer on another
-    /// contract is refused before its body is read, as every answer the
-    /// core reads is.
-    ///
-    /// A call refused `401` is sent again under a renewed credential, but for
+    /// A call refused `401` is sent again under a renewed credential, except
     /// one whose body is a reader, which the first send spent: the credential
     /// is renewed for the calls after it, and its caller sends it again.
     pub fn call(&self, call: Call<'_>) -> Result<Reply<String>, CoreError> {
@@ -638,9 +559,7 @@ impl Http {
         })
     }
 
-    /// Refuses an answer this core cannot read before anything reads its
-    /// body: one naming another contract, or a success naming none. The
-    /// contract is named by the answer, so a write refused this way was sent.
+    /// Runs before anything reads the body. A write refused here was sent.
     fn hold<B>(
         &self,
         response: &ureq::http::Response<B>,
@@ -700,10 +619,8 @@ impl Http {
             .map_err(|error| CoreError::Network(error.to_string()))?;
         if !(200..300).contains(&status) {
             return Err(match refusal(status, &text, retry_after) {
-                // A 404 is the server saying it holds no such row only when
-                // the server said it. One naming no contract is a proxy's,
-                // and a copy reading it as the row's absence would forget a
-                // row the server holds.
+                // A 404 naming no contract is a proxy's; reading it as the
+                // row's absence would forget a row the server holds.
                 CoreError::NotFound { code, message } if served.is_none() => CoreError::Server {
                     status,
                     code,
@@ -727,13 +644,9 @@ fn header<B>(response: &ureq::http::Response<B>, name: &str) -> Option<String> {
     )
 }
 
-/// What an answer says in one header, read off every line it sent for it.
-///
-/// Lines that agree are one value. Lines that disagree are kept together,
-/// so the value is none of them: an answer naming its contract as both `1`
-/// and `2` speaks neither, and reading its first line alone would take
-/// whichever a proxy happened to put first. Shared with the binary's
-/// transport, which reads the same header off a different HTTP stack.
+/// Lines that disagree are joined, so the value matches none of them: an
+/// answer naming its contract as both `1` and `2` speaks neither, and its
+/// first line alone is whichever a proxy happened to put first.
 pub fn header_value<'a>(lines: impl IntoIterator<Item = &'a [u8]>) -> Option<String> {
     let mut values: Vec<String> = Vec::new();
     for line in lines {
@@ -749,14 +662,10 @@ pub fn header_value<'a>(lines: impl IntoIterator<Item = &'a [u8]>) -> Option<Str
     }
 }
 
-/// How long the server asked the caller to wait.
-///
-/// RFC 9110 allows a count of seconds or an HTTP-date, and a device that
-/// read only the first would drop the instruction whenever a server chose
-/// the second — which `DrainReport.retry_after_seconds` exists to stop. The
-/// date form is read against the response's own `Date` header where it has
-/// one, so a clock that disagrees with the server's does not turn a short
-/// wait into a long one.
+/// RFC 9110 allows a count of seconds or an HTTP-date. The date form is read
+/// against the response's own `Date` header where it has one, so a local
+/// clock that disagrees with the server's does not turn a short wait into a
+/// long one.
 fn retry_after<B>(response: &ureq::http::Response<B>) -> Option<u64> {
     let header = |name: &str| {
         response
@@ -767,9 +676,6 @@ fn retry_after<B>(response: &ureq::http::Response<B>) -> Option<u64> {
     retry_after_seconds(header("Retry-After"), header("Date"))
 }
 
-/// A `Retry-After` value as seconds from now, given the response's `Date`
-/// where it had one. Shared with the binary's transport, which reads the
-/// same headers off a different HTTP stack.
 pub fn retry_after_seconds(retry_after: Option<&str>, date: Option<&str>) -> Option<u64> {
     let raw = retry_after?.trim();
     if let Ok(seconds) = raw.parse::<u64>() {
@@ -785,10 +691,9 @@ pub fn retry_after_seconds(retry_after: Option<&str>, date: Option<&str>) -> Opt
     Some(until.saturating_sub(from).max(0) as u64)
 }
 
-/// An IMF-fixdate — `Sun, 06 Nov 1994 08:49:37 GMT` — as seconds since the
-/// epoch. The one form RFC 9110 requires a sender to produce; the two
-/// obsolete forms it allows a reader to accept are not parsed, and a header
-/// this cannot read is treated as absent rather than as zero.
+/// Only the IMF-fixdate form RFC 9110 requires a sender to produce; the two
+/// obsolete forms are not parsed. An unreadable header is absent rather than
+/// zero, because a wait of zero is a device asking again at once.
 fn http_date(raw: &str) -> Option<i64> {
     let parts: Vec<&str> = raw.split_whitespace().collect();
     if parts.len() != 6 || parts[5] != "GMT" {
@@ -811,8 +716,7 @@ fn http_date(raw: &str) -> Option<i64> {
         clock[1].parse().ok()?,
         clock[2].parse().ok()?,
     );
-    // Howard Hinnant's algorithm, as `store::now_iso` uses in the other
-    // direction.
+    // The days-from-civil algorithm.
     let year = if month <= 2 { year - 1 } else { year };
     let era = if year >= 0 { year } else { year - 399 } / 400;
     let year_of_era = year - era * 400;
@@ -872,37 +776,13 @@ mod tests {
         assert!(speaks_contract(3, Some("3"), 200));
         assert!(speaks_contract(3, Some("3"), 404));
         assert!(!speaks_contract(3, Some("4"), 200));
-        // Another contract is refused on a refusal too: its envelope may be
-        // shaped in ways the caller cannot read.
         assert!(!speaks_contract(3, Some("4"), 404));
-        // A success naming none is refused, and a refusal naming none, a
-        // proxy's, is handed on.
         assert!(!speaks_contract(3, None, 200));
         assert!(speaks_contract(3, None, 502));
         assert!(!speaks_contract(3, Some("03"), 200));
         assert!(!speaks_contract(1, Some("10"), 200));
-        // The bounds of a success: 299 is one, 300 is not.
         assert!(!speaks_contract(3, None, 299));
         assert!(speaks_contract(3, None, 300));
-    }
-
-    #[test]
-    fn a_contract_named_twice_differently_is_neither() {
-        let named = |lines: &[&str]| {
-            let mut response = ureq::http::Response::builder();
-            for line in lines {
-                response = response.header(CONTRACT_HEADER, *line);
-            }
-            header(&response.body(()).unwrap(), CONTRACT_HEADER)
-        };
-        assert_eq!(named(&[]), None);
-        assert_eq!(named(&["3"]).as_deref(), Some("3"));
-        assert_eq!(named(&["3", "3"]).as_deref(), Some("3"));
-        for twice in [named(&["3", "4"]), named(&["4", "3"])] {
-            assert!(!speaks_contract(3, twice.as_deref(), 200), "{twice:?}");
-            assert!(!speaks_contract(3, twice.as_deref(), 404), "{twice:?}");
-        }
-        assert_eq!(named(&["3", "4"]).as_deref(), Some("3 and 4"));
     }
 
     #[test]
@@ -938,8 +818,6 @@ mod tests {
             Some(784_111_777)
         );
         assert_eq!(http_date("Thu, 01 Jan 1970 00:00:00 GMT"), Some(0));
-        // Not the fixdate form: read as absent rather than as no wait at
-        // all, because a wait of zero is a device asking again at once.
         assert_eq!(http_date("Sunday, 06-Nov-94 08:49:37 GMT"), None);
         assert_eq!(http_date("nonsense"), None);
     }

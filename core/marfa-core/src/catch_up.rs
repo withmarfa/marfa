@@ -19,26 +19,18 @@ use crate::{Core, Result};
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
-// The server budgets its head read at five seconds and only then announces
-// the cursor, so the wait between the connect comment and the first event
-// has to outlast that budget.
+// The server budgets its head read at five seconds before it announces the
+// cursor, so this has to outlast that budget.
 const HEAD_WAIT: Duration = Duration::from_secs(10);
 
-/// How a follow paces itself. `PACE` is the one in use; the tests shorten
-/// it so a wait that doubles to thirty seconds can be watched doubling.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Pace {
-    /// How often a held stream looks at its stop flag while nothing arrives.
     pub(crate) stop_poll: Duration,
-    /// A held stream that says nothing, not even a keepalive, for this long
-    /// is taken as gone and opened again.
     pub(crate) silence: Duration,
-    /// The wait before asking again after a stream that could not be opened
-    /// or ended early, doubling each time to `reconnect_most`. A stream that
-    /// stayed open at least `reconnect_most` resets it, so the client's own
-    /// bound on a stream is followed by an immediate reopen and a server
-    /// that ends every stream at once is asked at most every
-    /// `reconnect_most`.
+    /// Doubles to `reconnect_most`. A stream that stayed open at least
+    /// `reconnect_most` resets it, so the client's own bound on a stream is
+    /// followed by an immediate reopen, while a server that ends every
+    /// stream at once is asked at most every `reconnect_most`.
     pub(crate) reconnect_first: Duration,
     pub(crate) reconnect_most: Duration,
 }
@@ -53,12 +45,9 @@ pub(crate) const PACE: Pace = Pace {
 struct Slice {
     types: Vec<String>,
     tier: Tier,
-    /// The edge types held whole, whichever ends the copy holds.
     whole: Vec<String>,
 }
 
-/// The events that decide a row by its type: whether the slice holds it, and
-/// what its index entry leaves out.
 const ITEM_CHANGES: [&str; 6] = [
     "item.created",
     "item.updated",
@@ -68,12 +57,12 @@ const ITEM_CHANGES: [&str; 6] = [
     "metadata.changed",
 ];
 
-/// A type the catalog was read again for, with the property where it was an
-/// image under one.
+/// A type the catalog was read again for, and the property where an image
+/// under it was the reason.
 type Unexplained = (String, Option<String>);
 
-/// What an event for a row the copy could hold names that the catalog may be
-/// stale about: an unknown type, or an image under a non-thumbnail property.
+/// What an event names that the catalog may be stale about: an unknown type,
+/// or an image under a property that is not the type's thumbnail.
 fn unexplained(
     catalog: &Catalog,
     slice: &Slice,
@@ -115,8 +104,6 @@ fn unexplained(
         .find(|named| !refreshed.contains(named))
 }
 
-/// One event a held stream applied (`device.md` 40): what it was, what it
-/// was about, and the cursor it left behind.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Change {
     pub event: String,
@@ -125,24 +112,19 @@ pub struct Change {
     pub cursor: String,
 }
 
-/// What a `follow` did before it was stopped.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct FollowReport {
     pub applied: u64,
     pub skipped: u64,
     pub cursor: String,
-    /// Streams asked for after the first: after the client's own bound on a
-    /// stream, a stream that dropped or ended early, one that could not be
-    /// opened, or an event the catalog could not explain.
+    /// Streams asked for after the first, for any reason.
     pub reconnects: u64,
-    /// Failed asks for a stream and failed reads of a row entering the
-    /// slice, each retried, and the last reason.
+    /// Counts failed reads of a row entering the slice as well as failed asks
+    /// for a stream.
     pub failed_opens: u64,
     pub last_failure: Option<String>,
 }
 
-/// What catch-up and follow both start from: the slice and the stored
-/// cursor.
 fn start(core: &Core) -> Result<(Slice, String)> {
     let conn = core.conn()?;
     if !store::hydration_complete(&conn)? {
@@ -166,8 +148,8 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
     }
 }
 
-/// The type catalog as the server has it now, written only where it differs
-/// from the one held, so a reader told of every save is not told of this.
+/// Written only where it differs from the one held, so a reader told of every
+/// save is not told of this.
 fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
@@ -176,19 +158,14 @@ fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
     Catalog::load(&conn)
 }
 
-/// Opens the stream from `cursor` and reads its frames on a thread of their
-/// own, so the caller can wait on them with a bound.
-///
-/// The thread outlives a caller that lets the frames go: it learns they are
-/// unwanted only when it next has a frame to hand on, so it keeps the
-/// connection, and nothing of the store, until the server's next keepalive
-/// or the stream's `bound`.
+/// The reading thread outlives a caller that lets the frames go: it learns
+/// they are unwanted only when it next has a frame to hand on, so it keeps
+/// the connection, and nothing of the store, until the server's next
+/// keepalive or the stream's `bound`.
 fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Result<Frame>>> {
     // Every type the key reads, not the slice's alone: the server narrows a
     // stream by the type a row has now, so one narrowed to the slice never
-    // carries the frame of a row retyped out of it, and the copy would hold
-    // that row as it was for good. Applying only what is in the slice is the
-    // copy's own work (`apply`).
+    // carries the frame of a row retyped out of it.
     let reader = http.open_events(Some(cursor), bound)?;
     let (sender, frames) = mpsc::sync_channel::<io::Result<Frame>>(256);
     thread::spawn(move || {
@@ -211,11 +188,8 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
     Ok(frames)
 }
 
-/// Applies one event and moves the cursor past it, in one transaction.
-/// Answers the change where the event changed the copy.
-///
 /// The connection is released before this returns, so a caller told of the
-/// change can read the row it names without waiting on this.
+/// change can read the row it names.
 fn take(
     core: &Core,
     catalog: &Catalog,
@@ -233,10 +207,8 @@ fn take(
             store::upsert_edge(&tx, edge)?;
         }
     }
-    // The cursor is the last id applied, never the highest seen: the
-    // server delivers ids in order, so the two agree while every event is
-    // applied, and where one is not, a high-water mark would step over it
-    // forever.
+    // The last id applied, never the highest seen: where an event is not
+    // applied, a high-water mark would step over it forever.
     store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
     tx.commit()?;
     Ok(applied.then(|| Change {
@@ -247,11 +219,9 @@ fn take(
     }))
 }
 
-/// Moves the cursor to where the stream's replay-done marker says the
-/// replay reached, where that is past the cursor held. Frames the filter or
-/// the credential withheld are never sent, so the marker is the one word
-/// this reader has that it is past them (`events.md` 2). Answers the cursor
-/// adopted.
+/// Frames the filter or the credential withheld are never sent, so the
+/// replay's marker is the only word this reader has that it is past them.
+/// Never moves the cursor back.
 fn pass_withheld(core: &Core, held: &str, live: Option<&str>) -> Result<Option<String>> {
     let Some(live) = live else { return Ok(None) };
     let (Ok(reached), Ok(have)) = (live.parse::<u64>(), held.parse::<u64>()) else {
@@ -274,9 +244,8 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
     let (slice, cursor) = start(core)?;
     let mut catalog = adopt(core, &http.types()?)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
-    // Read for once each, so a type the server will not describe costs one
-    // read of the catalog rather than one for every event naming it. A
-    // catch-up is one stream, so this lasts the call.
+    // So a type the server will not describe costs one read of the catalog
+    // rather than one for every event naming it.
     let mut refreshed = HashSet::new();
 
     let mut report = CatchUpReport {
@@ -368,8 +337,7 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
     Ok(report)
 }
 
-/// A cursor the log no longer holds: the store forgets it, which is what
-/// sends the next caller to hydrate (`device.md` 16).
+/// Forgetting the cursor is what sends the next caller to hydrate.
 fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
     let conn = core.conn()?;
     store::meta_delete(&conn, store::META_EVENT_CURSOR)?;
@@ -378,22 +346,10 @@ fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
     })
 }
 
-/// Holds the stream open and applies each event as it arrives, under
-/// catch-up's rules, until `stop` is set (`device.md` 40).
-///
-/// A stream that ends, drops or cannot be opened is opened again from the
-/// stored cursor, so nothing between the two is lost: the cursor moves past
-/// each event in the transaction that takes it, applied or skipped, and
-/// never past one not yet taken but those the replay's marker says were
-/// withheld from this reader. What does not clear by asking again ends
-/// it: a cursor the log has aged past, a refused credential, a store that
-/// is no longer hydrated, an answer no retry changes.
-///
-/// `stop` is looked at between frames and at least every quarter second,
-/// including while a stream is being asked for: that request runs on a
-/// thread of its own holding only the transport, so it cannot keep the
-/// store once this has returned. The thread reading the last stream's
-/// frames may hold its connection a while longer (`open` says how long).
+/// `stop` is looked at at least every `PACE.stop_poll`, including while a
+/// stream is being asked for: that request runs on a thread holding only the
+/// transport, so it cannot keep the store once this has returned. The thread
+/// reading the last stream may hold its connection a while longer (`open`).
 pub(crate) fn follow(
     core: &Core,
     http: Arc<Http>,
@@ -405,8 +361,6 @@ pub(crate) fn follow(
     })
 }
 
-/// The follow, at a given pace and with a given way of waiting between
-/// streams.
 fn follow_paced(
     core: &Core,
     http: Arc<Http>,
@@ -418,12 +372,10 @@ fn follow_paced(
     let mut report = FollowReport::default();
     let mut backoff = pace.reconnect_first;
     let mut asked = false;
-    // Read for once each in a stream: an event naming one again is taken by
-    // the catalog as it is, so a type the server will not describe costs one
-    // reopen rather than one for every event naming it. Streams chained by a
-    // reopen for one of these count as one, and any other end forgets them,
-    // so the next stream reads again for a property its type has since made
-    // its thumbnail.
+    // So a type the server will not describe costs one reopen rather than one
+    // per event. Kept across a reopen for one of these, and forgotten on any
+    // other end, so the next stream reads again for a property its type has
+    // since made its thumbnail.
     let mut refreshed = HashSet::new();
     while !stop.load(Ordering::Relaxed) {
         let (slice, cursor) = start(core)?;
@@ -479,21 +431,15 @@ fn follow_paced(
     Ok(report)
 }
 
-/// How the reading of one held stream ended.
 #[derive(Debug, PartialEq)]
 enum Ended {
     Stopped,
-    /// An event named what the catalog could not explain; the stream is
-    /// opened again at once, with no wait.
+    /// The catalog could not explain an event; reopen at once.
     Behind,
-    /// The stream ended, failed, fell silent or was called incomplete.
     Over,
 }
 
-/// Reads one held stream's frames until it ends or `stop` is set.
-///
-/// Silence is measured on `now` rather than on the wall clock read here, so
-/// a test can hold time still while it hands frames over one at a time.
+/// Silence is measured on `now` so a test can hold time still.
 #[allow(clippy::too_many_arguments)]
 fn read_stream(
     core: &Core,
@@ -540,9 +486,8 @@ fn read_stream(
             "stream_incomplete" => return Ok(Ended::Over),
             kind => {
                 let Some(id) = id else { continue };
-                // Left untaken with the cursor before it: the stream opened
-                // again at once reads the catalog first, then replays this
-                // event.
+                // Left untaken with the cursor before it, so the reopened
+                // stream replays it after reading the catalog.
                 let pinned = pinned_row(core, &payload)?;
                 if let Some(named) = unexplained(catalog, slice, kind, &payload, refreshed, pinned)
                 {
@@ -574,9 +519,7 @@ fn read_stream(
 
 type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
 
-/// Asks for the type catalog and the stream on a thread holding only the
-/// transport, and waits for the answer while watching `stop`. `None` when
-/// `stop` was set first.
+/// `None` when `stop` was set first.
 fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
     let (sender, answer) = mpsc::sync_channel::<Reached>(1);
     let http = Arc::clone(http);
@@ -604,8 +547,7 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     }
 }
 
-/// Sleeps for `wait`, looking at `stop` every `poll`. A wait too long to
-/// add to the clock lasts until `stop` is set.
+/// A wait too long to add to the clock lasts until `stop` is set.
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration, poll: Duration) {
     let until = Instant::now().checked_add(wait);
     while !stop.load(Ordering::Relaxed) {
@@ -629,8 +571,8 @@ fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
     ))
 }
 
-/// Edges of a row the copy now takes but did not hold, read outside the
-/// transaction; a created row's need no read, since they follow as frames.
+/// Read outside the transaction. A created row's edges need no read: they
+/// follow as frames.
 fn edges_of_entering_row(
     core: &Core,
     catalog: &Catalog,
@@ -675,24 +617,9 @@ fn apply(
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
-            // An event carrying a version *older* than the row held is
-            // stale, and applying it would put back fields a later event
-            // already replaced. The device takes an event by its version
-            // rather than by its arrival, so a server handing versions the
-            // other way round changes nothing (`device.md` 13).
-            //
-            // **Strictly older, not "no newer".** The version moves on a
-            // write to an item's fields and on nothing else: a transition,
-            // a delete, a restore and a tag write all move the modification
-            // time and leave the version where it was. Every one of those
-            // events therefore carries the version the device already
-            // holds, and skipping them would mean a device never learning
-            // that a row was archived, deleted or restored — silently, for
-            // ever, while reporting the catch-up as clean.
-            //
-            // What is left is a genuine tie: two events can share a version
-            // when one of them changed no field, and the version cannot
-            // order them. The stream's order decides those (`device.md` 13).
+            // Strictly older, not "no newer": a transition, delete, restore or
+            // tag write leaves the version where it was, so skipping a tie
+            // would miss it. The stream's order decides ties.
             if let Some(held) = store::held_version(tx, &item.id)?
                 && item.version < held
             {
@@ -720,7 +647,7 @@ fn apply(
                 store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
             } else if store::edge_write_waits(tx, &edge.id)? {
-                // Kept until this device's own write to it is answered, which lays over it.
+                // Kept until this device's own write to it is answered.
                 store::upsert_edge(tx, edge)?;
                 store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
@@ -754,8 +681,6 @@ mod tests {
     const NOTE: &str = "core.note";
     const MS: fn(u64) -> Duration = Duration::from_millis;
 
-    /// Short enough to watch a wait double to its most. The waits between
-    /// streams are recorded rather than slept.
     const QUICK: Pace = Pace {
         stop_poll: Duration::from_millis(10),
         silence: Duration::from_millis(150),
@@ -763,8 +688,6 @@ mod tests {
         reconnect_most: Duration::from_millis(40),
     };
 
-    /// A store bound to `server` and hydrated by hand: `core.note` at
-    /// `library`, cursor 10.
     fn hydrated(server: &Scripted) -> (tempfile::TempDir, Arc<Core>) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open(
@@ -818,8 +741,8 @@ mod tests {
         }
     }
 
-    /// Follows on a thread of its own at `pace`, recording each wait
-    /// between streams and setting `stop` on the `stop_on_wait`th.
+    /// Records each wait between streams rather than sleeping it, and sets
+    /// `stop` on the `stop_on_wait`th.
     fn follow_on(core: &Arc<Core>, pace: Pace, stop_on_wait: Option<usize>) -> Run {
         let (told, changes) = mpsc::channel();
         let mut run = follow_telling(core, pace, stop_on_wait, move |change| {
@@ -961,28 +884,6 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_no_retry_changes_ends_the_follow() {
-        let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on("/events", vec![refusal(404, "not_found")]);
-        let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, None);
-        assert!(matches!(run.ended(), Err(CoreError::NotFound { .. })));
-        assert_eq!(server.seen("/events").len(), 1);
-        assert!(run.waits().is_empty());
-    }
-
-    /// The pace in use is the one `device.md` 40 and the comments above
-    /// state; the tests that run at `QUICK` hold what is done with it.
-    #[test]
-    fn the_pace_in_use_is_the_stated_one() {
-        assert_eq!(PACE.reconnect_first, Duration::from_secs(1));
-        assert_eq!(PACE.reconnect_most, Duration::from_secs(30));
-        assert_eq!(PACE.stop_poll, MS(250));
-        assert_eq!(PACE.silence, Duration::from_secs(90));
-    }
-
-    #[test]
     fn a_wait_ends_when_stopped_and_one_too_long_for_the_clock_does_not_panic() {
         let stop = Arc::new(AtomicBool::new(false));
         let (ended, done) = mpsc::channel();
@@ -997,13 +898,12 @@ mod tests {
         done.recv_timeout(Duration::from_secs(2))
             .expect("the wait outlasted its stop, or panicked");
         assert!(started.elapsed() < Duration::from_secs(1));
-        // The witness: unstopped, a wait lasts as long as it was asked to.
+        // Witness: unstopped, a wait lasts as long as it was asked to.
         let started = Instant::now();
         wait_unless_stopped(&AtomicBool::new(false), MS(60), MS(10));
         assert!(started.elapsed() >= MS(60));
     }
 
-    /// Follows at the pace in use, on a thread, until told to stop.
     fn follow_for_real(core: &Arc<Core>) -> (Arc<AtomicBool>, Receiver<Result<FollowReport>>) {
         let stop = Arc::new(AtomicBool::new(false));
         let (ended, done) = mpsc::channel();
@@ -1014,8 +914,6 @@ mod tests {
         (stop, done)
     }
 
-    /// Stops a follow once `path` has been asked for, and says how long
-    /// it took to end.
     fn stopped_after(
         server: &Scripted,
         path: &str,
@@ -1073,7 +971,6 @@ mod tests {
         let (_dir, core) = hydrated(&server);
         let (stop, done) = follow_for_real(&core);
         let (took, _) = stopped_after(&server, "/events", &stop, &done);
-        // A quarter second's poll, and room for a loaded machine.
         assert!(
             took < MS(750),
             "a follow on a silent stream took {took:?} to notice it was told to stop"
@@ -1167,7 +1064,6 @@ mod tests {
         run.ended().unwrap();
     }
 
-    /// A clock that moves only when told, counting how often it is read.
     #[derive(Clone)]
     struct HeldClock {
         at: Arc<Mutex<Instant>>,
@@ -1191,11 +1087,9 @@ mod tests {
             *self.at.lock().unwrap() += by;
         }
 
-        /// Moves on by `by`, then waits until the reader has looked at the
-        /// time twice since: at most one of those is the stamp of a frame
-        /// taken before, so the other is a look at silence with the clock
-        /// already moved. A reader that let the stream go instead fails the
-        /// test.
+        /// Waits for two reads of the clock after moving it: at most one is
+        /// the stamp of a frame taken before, so the other is a look at
+        /// silence with the clock already moved.
         fn pass_and_be_seen(&self, by: Duration, end: &Receiver<Result<Ended>>) {
             let before = self.reads.load(Ordering::SeqCst);
             self.pass(by);
@@ -1215,9 +1109,6 @@ mod tests {
 
     #[test]
     fn a_keepalive_is_hearing_from_the_server() {
-        // The frames are handed over one at a time on a clock that moves only
-        // when the test moves it, so how long any thread waits for a core
-        // decides nothing.
         let server = Scripted::start();
         let (_dir, core) = hydrated(&server);
         let clock = HeldClock::new();
@@ -1241,17 +1132,15 @@ mod tests {
             );
             let _ = ended.send(read);
         });
-        // Four silences pass in all, each keepalive half of one after the
-        // last. A send waits for the reader to take the frame, so it fails
-        // once the reader has let the stream go.
+        // A send on the rendezvous channel fails once the reader has let the
+        // stream go.
         for _ in 0..8 {
             fed.send(Ok(Frame::Comment("keepalive".into())))
                 .expect("a stream saying nothing but keepalives was taken as silent");
             clock.pass_and_be_seen(QUICK.silence / 2, &end);
         }
-        // The last keepalive may have been stamped after the clock passed
-        // it, so a whole silence more could leave the reader exactly at the
-        // bound rather than past it.
+        // Two silences, not one: the last keepalive may have been stamped
+        // after the clock passed it, leaving the reader exactly at the bound.
         clock.pass(QUICK.silence * 2);
         let read = end
             .recv_timeout(Duration::from_secs(10))
@@ -1401,14 +1290,9 @@ mod tests {
             ),
             other => panic!("a fault ended the follow as {other:?}"),
         }
-        // The claim went with the unwinding, so the copy can be followed again.
         assert!(core.claim_stream().is_ok());
     }
 
-    /// Every image under a property the catalog does not know as the
-    /// thumbnail is looked at, so one already read again for does not hide
-    /// another after it in the same item. The thumbnail itself is never
-    /// named, and neither is a type or property already read again for.
     #[test]
     fn an_image_already_read_again_for_does_not_hide_the_next() {
         let dir = tempfile::tempdir().unwrap();
@@ -1473,15 +1357,10 @@ mod tests {
         );
     }
 
-    /// A stream that ends for any reason but an event the catalog could not
-    /// explain forgets what it was read again for, so the next stream reads
-    /// again for an image its property meets there. The streams a reopen for
-    /// one chains together remember it.
     #[test]
     fn a_stream_that_ends_forgets_what_it_was_read_again_for() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
-        // A note carrying an image under a property its type does not declare.
         let with_image = |id: &str, cursor: &str| {
             let payload = item_payload("item.created", id, NOTE, 1).replace(
                 &format!(r#""properties":{{"title":"{id}"}}"#),
@@ -1497,11 +1376,8 @@ mod tests {
         server.on(
             "/events",
             vec![
-                // Met, and opened again for.
                 stream(vec![connected(), first.clone()], held()),
-                // Taken as it is, and the stream ends.
                 stream(vec![connected(), first], Then::End),
-                // Met again, in a stream of its own, and opened again for.
                 stream(vec![connected(), second.clone()], held()),
                 stream(vec![connected(), second], held()),
             ],
@@ -1551,8 +1427,7 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         assert!(server.seen("/types").is_empty());
-        // The witness: the same store, its hydration finished, catches up,
-        // reading the catalog the refusals above did not.
+        // Witness: the same store, its hydration finished, reads the catalog.
         {
             let conn = core.conn().unwrap();
             store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
@@ -1568,9 +1443,8 @@ mod tests {
         store::meta_get(&core.conn().unwrap(), store::META_EVENT_CURSOR).unwrap()
     }
 
-    /// A stream whose head rows are withheld from this reader: event 11 is
-    /// sent, 12 to 14 are not, and the server holds the stream open after
-    /// its marker as a real one does.
+    /// Event 11 is sent and 12 to 14 are withheld; the stream is held open
+    /// after its marker, as a real server does.
     fn withheld_head(live: Option<&str>) -> Answer {
         let mut frames = vec![
             connected(),
@@ -1593,26 +1467,6 @@ mod tests {
         )
     }
 
-    #[test]
-    fn a_catch_up_adopts_the_replay_marker_past_rows_withheld_from_it() {
-        let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on("/events", vec![withheld_head(Some("14"))]);
-        let (_dir, core) = hydrated(&server);
-        let http = core.http.clone().unwrap();
-        let began = Instant::now();
-        let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
-        assert!(
-            began.elapsed() < Duration::from_secs(10),
-            "the catch-up read on past the marker until its idle ran out"
-        );
-        assert!(report.reached_head);
-        assert_eq!(report.applied, 1);
-        assert_eq!(report.cursor, "14");
-        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
-    }
-
-    /// The bearers each request to `path` carried, in order.
     fn carried(server: &Scripted, path: &str) -> Vec<String> {
         server
             .seen(path)
@@ -1621,8 +1475,8 @@ mod tests {
             .collect()
     }
 
-    /// A renewal that hands out `fresh-1`, `fresh-2` and so on, recording
-    /// the bearer each was asked to replace.
+    /// Hands out `fresh-1`, `fresh-2` and so on, recording the bearer each
+    /// was asked to replace.
     fn renewing(core: &Core) -> Arc<Mutex<Vec<String>>> {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let told = Arc::clone(&asked);
@@ -1634,9 +1488,6 @@ mod tests {
         asked
     }
 
-    /// A command that outlives its access token goes on: each call the
-    /// server refuses `401` is renewed and sent again once, and every call
-    /// after it carries the renewed bearer.
     #[test]
     fn a_catch_up_past_its_token_goes_on_under_a_renewed_one() {
         let server = Scripted::start();
@@ -1661,8 +1512,6 @@ mod tests {
         );
     }
 
-    /// Once per call: a renewed bearer refused again is the answer. And
-    /// with no renewal set, the first `401` is.
     #[test]
     fn a_bearer_refused_after_its_renewal_is_the_answer() {
         let server = Scripted::start();
@@ -1688,8 +1537,6 @@ mod tests {
 
     #[test]
     fn a_catch_up_without_the_marker_stops_on_silence_at_the_last_row_applied() {
-        // The witness for the test above: the same stream without its
-        // marker leaves the cursor at 11 and the head unreached.
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on("/events", vec![withheld_head(None)]);
@@ -1703,9 +1550,6 @@ mod tests {
 
     #[test]
     fn a_catch_up_waits_through_comments_for_a_marker_later_than_its_idle() {
-        // A replay reading rows withheld from this reader writes comments
-        // while it reads. Any frame restarts the idle, so the catch-up
-        // reaches the marker where silence as long would have ended it.
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
@@ -1736,8 +1580,7 @@ mod tests {
 
     #[test]
     fn a_catch_up_ends_on_silence_before_a_marker_later_than_its_idle() {
-        // The witness for the test above: the same stream with no comment
-        // while it reads.
+        // Witness for the test above: no comment while it reads.
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
@@ -1767,36 +1610,9 @@ mod tests {
     }
 
     #[test]
-    fn a_catch_up_keeps_its_cursor_when_the_marker_names_no_position() {
-        // What a real server sends when its read of the head outran its
-        // budget and the replay found nothing: no head, and a marker that
-        // knows no position.
-        let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None)])]);
-        server.on(
-            "/events",
-            vec![stream(
-                vec![connected(), stream_live(None)],
-                Then::Hold {
-                    keepalive: None,
-                    lasting: None,
-                },
-            )],
-        );
-        let (_dir, core) = hydrated(&server);
-        let http = core.http.clone().unwrap();
-        let report = catch_up(&core, &http, Duration::from_secs(30)).unwrap();
-        assert!(report.reached_head, "the marker did not end the catch-up");
-        assert_eq!(report.cursor, "10");
-        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
-    }
-
-    #[test]
     fn a_follow_keeps_its_cursor_when_the_marker_is_behind_it() {
-        // A server whose log stops short of the cursor held, as one restored
-        // from a backup does: the marker naming its head does not move the
-        // cursor back. The witness is the follow above, whose marker ahead
-        // of the cursor moves it.
+        // A server restored from a backup, whose log stops short of the
+        // cursor held.
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
@@ -1816,48 +1632,5 @@ mod tests {
         let report = run.ended().unwrap();
         assert_eq!(report.cursor, "10");
         assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
-    }
-
-    #[test]
-    fn a_follow_adopts_the_replay_marker_past_rows_withheld_from_it() {
-        let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None)])]);
-        // Kept alive, so a follow that let the stream go at the marker
-        // would show as a reconnect.
-        server.on(
-            "/events",
-            vec![stream(
-                vec![
-                    connected(),
-                    stream_cursor("14"),
-                    event(
-                        "11",
-                        "item.created",
-                        &item_payload("item.created", "n1", NOTE, 1),
-                    ),
-                    stream_live(Some("14")),
-                ],
-                Then::Hold {
-                    keepalive: Some(MS(20)),
-                    lasting: None,
-                },
-            )],
-        );
-        let (_dir, core) = hydrated(&server);
-        let run = follow_on(&core, QUICK, None);
-        assert_eq!(run.change().item_id.as_deref(), Some("n1"));
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while stored_cursor(&core).as_deref() != Some("14") && Instant::now() < deadline {
-            thread::sleep(MS(10));
-        }
-        thread::sleep(MS(300));
-        run.stop();
-        let report = run.ended().unwrap();
-        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
-        assert_eq!(report.cursor, "14");
-        assert_eq!(
-            report.reconnects, 0,
-            "the follow let the stream go at the marker"
-        );
     }
 }

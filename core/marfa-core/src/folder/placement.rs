@@ -1,6 +1,3 @@
-//! Where a file sits: its item's `in-folder` edge to the folder's
-//! `system.folder` (`folders.md` 19).
-
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -38,7 +35,7 @@ pub(super) struct Held {
 }
 
 /// How long a key's answer stands before it is asked again: a running watch
-/// meets a restored grant within it (`folders.md` 19).
+/// meets a restored grant within it.
 const KEY_REREAD: Duration = Duration::from_secs(60);
 
 /// The key as last asked, and when; `None` where the asking failed.
@@ -103,7 +100,7 @@ impl Folder {
         properties.insert(PATH_PROPERTY.into(), Value::String(path.into()));
         match self.placement(item_id)? {
             // A path differing only in case or form is the same place, so each
-            // machine keeps its file's own name (`folders.md` 27).
+            // machine keeps its file's own name.
             Some(edge) if path_of(&edge).is_some_and(|held| super::names::same(held, path)) => {
                 return Ok(false);
             }
@@ -150,8 +147,7 @@ impl Folder {
         Ok(refused.placements)
     }
 
-    /// The item's placement in this folder, by id and version. A create not
-    /// yet answered, at version 0, has landed nowhere.
+    /// A create not yet answered, at version 0, has landed nowhere.
     fn placement_at(&self, item_id: &str) -> Result<Option<(String, i64)>> {
         Ok(self
             .core
@@ -371,7 +367,6 @@ pub(super) fn rank_of(edge: &Edge) -> Rank {
     (false, false, edge.created_at.clone(), edge.id.clone())
 }
 
-/// The rank of an item with no placement, after every one with.
 pub(super) fn unplaced_rank(settled: bool) -> Rank {
     (true, !settled, String::new(), String::new())
 }
@@ -384,14 +379,12 @@ fn is_duplicate(answer: &str) -> bool {
     })
 }
 
-/// Whether a key writes `in-folder` edges.
 pub(super) fn places(key: &Value) -> bool {
     matches!(grant(key).as_deref(), Some("write" | OPERATOR))
 }
 
 const OPERATOR: &str = "operator";
 
-/// Whether a key reads items of `item_type`.
 pub(crate) fn reads(key: &Value, item_type: &str) -> bool {
     matches!(
         resolved(key, "type_permissions", item_type).as_deref(),
@@ -399,7 +392,6 @@ pub(crate) fn reads(key: &Value, item_type: &str) -> bool {
     )
 }
 
-/// A key's grant on `in-folder`.
 fn grant(key: &Value) -> Option<String> {
     if key.get("is_operator").and_then(Value::as_bool) == Some(true) {
         return Some(OPERATOR.into());
@@ -426,13 +418,12 @@ fn resolved(key: &Value, map: &str, name: &str) -> Option<String> {
     resolved.and_then(Value::as_str).map(str::to_string)
 }
 
-/// The path a placement names.
 pub(super) fn path_of(edge: &Edge) -> Option<&str> {
     edge.properties.get(PATH_PROPERTY).and_then(Value::as_str)
 }
 
 /// A path with empty and `.` names taken out, or `None` where a name climbs
-/// out; whether the folder takes it is its lists' to say (`folders.md` 25).
+/// out; whether the folder takes it is its lists' to say.
 pub(super) fn cleaned(path: &str) -> Option<String> {
     let names: Vec<&str> = path
         .split('/')

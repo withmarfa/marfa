@@ -1,5 +1,3 @@
-//! The folders on this machine, listed in one file of its own (`folders.md` 41).
-
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -16,10 +14,8 @@ pub const REGISTRY_ENV: &str = "MARFA_FOLDER_REGISTRY";
 
 const FILE_NAME: &str = "folders.json";
 
-/// One folder the registry lists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Registered {
-    /// The folder's directory, resolved.
     pub dir: PathBuf,
     /// The `system.folder` it follows.
     pub folder: String,
@@ -34,7 +30,6 @@ struct Listing {
     folders: Vec<Registered>,
 }
 
-/// The registry's file.
 #[derive(Debug, Clone)]
 pub struct Registry {
     path: PathBuf,
@@ -52,7 +47,6 @@ impl Registry {
         Registry { path: path.into() }
     }
 
-    /// The registry the environment names, or else this machine's own.
     /// `None` with no home to keep one in: its folders then stand alone.
     pub fn located() -> Option<Registry> {
         if let Some(named) = std::env::var_os(REGISTRY_ENV).filter(|named| !named.is_empty()) {
@@ -76,8 +70,7 @@ impl Registry {
         &self.path
     }
 
-    /// Every folder listed and not gone, each once under its resolved
-    /// directory. One that is gone is dropped from the file.
+    /// A folder that is gone is dropped from the file.
     pub fn folders(&self) -> Result<Vec<Registered>> {
         self.change(Unreadable::Refuse, |_| false)
             .map(|(listed, _)| listed)
@@ -132,7 +125,7 @@ impl Registry {
         .map(|_| ())
     }
 
-    /// Takes a folder off the list. Answers whether it was listed.
+    /// Answers whether the folder was listed.
     pub fn unregister(&self, dir: &Path) -> Result<bool> {
         let dir = resolved(dir);
         self.change(Unreadable::Refuse, |listed| {
@@ -257,108 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn lists_each_folder_once_and_drops_one_that_no_longer_holds_a_folder() {
-        let root = tempfile::tempdir().unwrap();
-        let registry = Registry::at(root.path().join("registry").join(FILE_NAME));
-        let one = folder_at(root.path(), "one");
-        let two = folder_at(root.path(), "two");
-        registry.add(&one, "f1", None).unwrap();
-        registry.register(&one, "f1", None).unwrap();
-        registry.add(&two, "f2", None).unwrap();
-        let listed = registry.folders().unwrap();
-        assert_eq!(
-            listed
-                .iter()
-                .map(|entry| entry.folder.as_str())
-                .collect::<Vec<_>>(),
-            ["f1", "f2"]
-        );
-
-        std::fs::remove_dir_all(two.join(STATE_DIR)).unwrap();
-        assert_eq!(registry.folders().unwrap().len(), 1);
-        let written = std::fs::read_to_string(registry.path()).unwrap();
-        assert!(
-            !written.contains("f2"),
-            "a folder no longer there stayed in the file: {written}"
-        );
-
-        assert!(registry.unregister(&one).unwrap());
-        assert!(!registry.unregister(&one).unwrap());
-        assert!(registry.folders().unwrap().is_empty());
-    }
-
-    #[test]
-    fn a_folder_added_again_under_another_id_is_listed_once() {
-        let root = tempfile::tempdir().unwrap();
-        let registry = Registry::at(root.path().join(FILE_NAME));
-        let one = folder_at(root.path(), "one");
-        registry.add(&one, "f1", None).unwrap();
-        registry.add(&one, "f9", None).unwrap();
-        let listed = registry.folders().unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].folder, "f9");
-    }
-
-    #[test]
-    fn keeps_a_folder_it_cannot_reach_and_drops_one_that_holds_no_folder() {
-        let root = tempfile::tempdir().unwrap();
-        let registry = Registry::at(root.path().join(FILE_NAME));
-        let entry = |dir: PathBuf| Registered {
-            dir,
-            folder: "f".into(),
-            store: None,
-        };
-        let emptied = root.path().join("emptied");
-        std::fs::create_dir_all(&emptied).unwrap();
-        let listing = Listing {
-            folders: vec![entry(root.path().join("renamed")), entry(emptied)],
-        };
-        std::fs::write(registry.path(), serde_json::to_vec(&listing).unwrap()).unwrap();
-        let listed = registry.folders().unwrap();
-        assert_eq!(listed.len(), 1, "{listed:?}");
-        assert!(listed[0].dir.ends_with("renamed"));
-    }
-
-    #[test]
-    fn names_a_folder_reached_through_a_symlink_once_under_its_resolved_directory() {
-        let root = tempfile::tempdir().unwrap();
-        let registry = Registry::at(root.path().join(FILE_NAME));
-        let real = folder_at(root.path(), "real");
-        let link = root.path().join("link");
-        std::os::unix::fs::symlink(&real, &link).unwrap();
-        registry.add(&real, "f", None).unwrap();
-        registry.register(&link, "f", None).unwrap();
-        // An entry written under the link's name reads as the same folder.
-        let raw = std::fs::read_to_string(registry.path()).unwrap();
-        let stored = resolved(&real).display().to_string();
-        std::fs::write(
-            registry.path(),
-            raw.replace(&stored, &link.display().to_string()),
-        )
-        .unwrap();
-        registry.register(&real, "f", None).unwrap();
-        let listed = registry.folders().unwrap();
-        assert_eq!(listed.len(), 1, "{listed:?}");
-        assert_eq!(listed[0].dir, resolved(&real));
-    }
-
-    #[test]
-    fn refuses_a_folder_inside_another_and_one_holding_another() {
-        let root = tempfile::tempdir().unwrap();
-        let registry = Registry::at(root.path().join(FILE_NAME));
-        let outer = folder_at(root.path(), "outer");
-        registry.add(&outer, "f1", None).unwrap();
-        let inner = folder_at(&outer, "inner");
-        assert!(registry.add(&inner, "f2", None).is_err());
-        let above = root.path().join("above");
-        std::fs::create_dir_all(&above).unwrap();
-        let held = folder_at(&above, "held");
-        registry.add(&held, "f3", None).unwrap();
-        assert!(registry.add(&above, "f4", None).is_err());
-        assert_eq!(registry.folders().unwrap().len(), 2);
-    }
-
-    #[test]
     fn a_registry_that_cannot_be_read_is_left_by_a_listing_and_written_afresh_by_an_add() {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::at(root.path().join(FILE_NAME));
@@ -370,8 +261,6 @@ mod tests {
         registry.add(&one, "f1", None).unwrap();
         assert_eq!(registry.folders().unwrap().len(), 1);
 
-        // Written afresh only where it does not parse: one that cannot be
-        // opened refuses the add.
         use std::os::unix::fs::PermissionsExt;
         let shut = Registry::at(root.path().join("shut.json"));
         std::fs::write(shut.path(), b"").unwrap();

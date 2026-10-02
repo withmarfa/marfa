@@ -1,6 +1,3 @@
-//! The other folders on this machine, read as they stand and never waited
-//! on (`folders.md` 41 to 45).
-
 use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader};
@@ -11,9 +8,7 @@ use super::registry::{Registered, Registry, gone, resolved};
 use super::{Folder, STATE_DIR, carries_frontmatter, identity, plainly_inside, state};
 use crate::{Core, Result, store};
 
-/// The folder's own store, as the registry names it.
 const META_STORE: &str = "folder_store";
-/// The registry the folder last listed itself in.
 const META_LISTED_IN: &str = "folder_listed_in";
 /// The other folders it last found, kept for a registry that loses them.
 const META_OTHERS: &str = "folder_others";
@@ -29,7 +24,6 @@ pub(super) fn store_id(core: &Core) -> Result<String> {
     Ok(id)
 }
 
-/// Records the registry this folder is listed in.
 pub(super) fn listed_in(core: &Core, registry: &Registry) {
     if let Ok(conn) = core.conn() {
         let _ = store::meta_set(
@@ -40,7 +34,6 @@ pub(super) fn listed_in(core: &Core, registry: &Registry) {
     }
 }
 
-/// Whether the registry this folder listed itself in is gone.
 pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
     !registry.path().exists()
         && core
@@ -50,7 +43,6 @@ pub(super) fn lost(core: &Core, registry: &Registry) -> bool {
             == Some(registry.path().display().to_string())
 }
 
-/// Another folder on this machine.
 pub(super) struct Peer {
     root: PathBuf,
     /// Its store, read only; `None` where it cannot be opened.
@@ -64,16 +56,13 @@ pub(super) struct Peer {
 /// Another folder's directory, walked once a pass.
 struct Walked {
     files: Vec<OnDisk>,
-    /// Why part of it could not be read, where part could not.
     partial: Option<String>,
 }
 
-/// A file in another folder's directory.
 struct OnDisk {
     key: String,
     path: PathBuf,
     mark: Option<String>,
-    /// The `marfa_id` a Markdown file carries.
     id: Option<String>,
     hash: OnceCell<Option<String>>,
 }
@@ -128,7 +117,7 @@ impl Peer {
     }
 
     /// Whether the item left this folder by its state or the bin, whose file
-    /// that folder takes away, or pauses, rather than lets go (`folders.md` 35).
+    /// that folder takes away, or pauses, rather than lets go.
     fn left_by_state(&self, item_id: &str) -> bool {
         let Some(folder) = &self.folder else {
             return true;
@@ -240,11 +229,9 @@ fn id_of(path: &Path) -> Option<String> {
     None
 }
 
-/// What the look for a missing file found (`folders.md` 43).
 pub(super) enum Look {
     Moved,
     Nowhere,
-    /// The other folders could not all be read, and why.
     Unsure(String),
 }
 
@@ -313,12 +300,10 @@ impl<'a> Peers<'a> {
         &self.loaded().0
     }
 
-    /// Why the other folders cannot be asked after, where they cannot.
     pub(super) fn unreadable(&self) -> Option<&str> {
         self.loaded().1.as_deref()
     }
 
-    /// Whether a file in another folder carries the id (`folders.md` 42).
     pub(super) fn carry(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.files()
@@ -328,7 +313,7 @@ impl<'a> Peers<'a> {
     }
 
     /// Whether another folder holds, unbound, a file carrying the id: a move
-    /// its next scan takes (`folders.md` 43).
+    /// its next scan takes.
     pub(super) fn arriving(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.folder.is_some()
@@ -357,7 +342,7 @@ impl<'a> Peers<'a> {
     }
 
     /// Another folder's binding of an id-less file gone from it, by identity
-    /// or unique bytes (`folders.md` 43), its path given whole.
+    /// or unique bytes, its path given whole.
     pub(super) fn left_behind(&self, mark: Option<&str>, hash: &str) -> Option<state::Bound> {
         let mut same_bytes = Vec::new();
         for peer in self.all() {
@@ -392,8 +377,6 @@ impl<'a> Peers<'a> {
         (same_bytes.len() == 1).then(|| same_bytes.remove(0))
     }
 
-    /// Whether a file this folder lost sits in another folder
-    /// (`folders.md` 43, 45).
     pub(super) fn moved_to(&self, lost: &state::Bound, held_here: bool) -> Look {
         if let Some(why) = self.doubt.as_deref().or(self.unreadable()) {
             return Look::Unsure(why.to_string());
@@ -412,7 +395,7 @@ impl<'a> Peers<'a> {
             return Look::Moved;
         }
         // Where both folders hold the item, the other's file of it is its
-        // own, not this one moved (`folders.md` 45).
+        // own, not this one moved.
         let theirs = |peer: &Peer, file: &OnDisk| {
             held_here
                 && peer.holds(item) == Some(true)
@@ -460,8 +443,7 @@ impl<'a> Peers<'a> {
         }
     }
 
-    /// Whether another folder holds the item with a file of it already
-    /// (`folders.md` 44).
+    /// Whether another folder holds the item with a file of it already.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
         self.all().iter().any(|peer| {
             peer.holds(item_id) == Some(true)
@@ -471,8 +453,7 @@ impl<'a> Peers<'a> {
         })
     }
 
-    /// A file another folder let go of, holding the bytes it wrote, to take
-    /// in (`folders.md` 44).
+    /// A file another folder let go of, holding the bytes it wrote, to take in.
     pub(super) fn let_go(&self, item_id: &str) -> Option<(PathBuf, state::Bound)> {
         for peer in self.all() {
             let Some(bound) = peer.bound_to(item_id) else {
@@ -500,8 +481,6 @@ impl<'a> Peers<'a> {
 mod tests {
     use super::*;
 
-    /// A file that opens with a byte-order mark names its item as the same
-    /// file without one does, so a move of it is found (`folders.md` 8, 43).
     #[test]
     fn a_byte_order_mark_does_not_hide_the_id() {
         let dir = tempfile::tempdir().unwrap();

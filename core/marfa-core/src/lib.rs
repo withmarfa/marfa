@@ -1,7 +1,3 @@
-//! A local working copy of a declared slice of one Marfa server: hydrated
-//! over HTTP, kept current from the event log, read locally, and written to
-//! through a queue that holds every write until the server answers it.
-
 mod blob;
 mod catalog;
 mod catch_up;
@@ -10,8 +6,7 @@ mod drain;
 mod error;
 mod filter;
 pub mod folder;
-/// The working copy's transport, public for the call shapes it shares with
-/// the binary's own transport.
+/// Public for the call shapes it shares with the binary's own transport.
 pub mod http;
 mod hydrate;
 mod js;
@@ -61,7 +56,7 @@ impl Drop for StreamClaim<'_> {
     }
 }
 
-/// Where the slice comes from. The key is held in memory and never written.
+/// The key is held in memory and never written.
 #[derive(Debug, Clone)]
 pub struct Server {
     pub url: String,
@@ -70,40 +65,31 @@ pub struct Server {
 
 pub struct Core {
     conn: Mutex<Connection>,
-    /// Shared so a held stream can ask for its next stream on a thread that
-    /// holds the transport and nothing of the store.
     http: Option<Arc<http::Http>>,
-    /// Where blobs' bytes are held: beside the working copy's file, and nowhere for a
-    /// store held in memory.
     cache: Option<blob::Cache>,
     catch_up_idle: Duration,
-    /// Held for as long as the `Core` lives, which is what makes it the
-    /// claim rather than a record of one (`device.md` 3).
+    /// Held for as long as the `Core` lives: holding it is the claim.
     lock: lock::WriterLock,
-    /// Set while a hydration, a catch-up or a follow runs. Each moves the
-    /// one cursor, so two at once could move it backwards, apply an event
-    /// twice, or apply one to a copy a hydration has replaced.
+    /// Hydration, catch-up and follow each move the one cursor, so two at
+    /// once could move it backwards, apply an event twice, or apply one to a
+    /// copy a hydration has replaced.
     streaming: AtomicBool,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 
-/// How old a half-written copy of a blob's bytes must be before the writer
-/// takes it away on open: well past any fetch or copy still running.
+/// Well past any fetch or copy of a blob's bytes still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
 
-/// How many times a withdraw reads the server's rows again because the copy
-/// caught up while they were out, before it gives up and says so.
 const WITHDRAW_READS: usize = 3;
 
 impl Core {
-    /// Opens the file at `path`, creating it and its schema when absent. A
-    /// file bound to a different server than `server` is refused.
+    /// Creates the file when absent. A file bound to a different server is
+    /// refused.
     pub fn open(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
-        // Claimed before the store is opened. A second opener that read the
-        // store first would have done so as a writer for as long as it took
-        // to find out it was not one.
+        // Claimed before the store is opened: a second opener that read the
+        // store first would act as a writer until it found out it was not.
         let lock = lock::WriterLock::claim(Some(path))?;
         let cache = blob::Cache::beside(path);
         if lock.handle() == Handle::Writer {
@@ -112,13 +98,10 @@ impl Core {
         Self::from_connection(store::open(path)?, server, lock, Some(cache))
     }
 
-    /// Opens a store another process writes, to read it and nothing else
-    /// (`device.md` 41).
-    ///
-    /// It never claims the writer role, so a helper started before the app
-    /// cannot lock the app out of its own store, and it never writes, so it
-    /// refuses a path where no store has been made rather than making one.
-    /// `data_version` is how it learns the writer saved.
+    /// Never claims the writer role, so a helper started before the app
+    /// cannot lock the app out of its own store, and refuses a path where no
+    /// store has been made rather than making one. `data_version` is how it
+    /// learns the writer saved.
     pub fn open_reader(path: impl AsRef<Path>) -> Result<Core> {
         let path = path.as_ref();
         Ok(Core {
@@ -136,25 +119,18 @@ impl Core {
         Self::from_connection(store::open_in_memory()?, server, lock, None)
     }
 
-    /// Which handle this process holds: the one that may write, or a second
-    /// opener that reads and refuses every write.
     pub fn handle(&self) -> Handle {
         self.lock.handle()
     }
 
-    /// Sets how the server's credential is renewed when the server refuses
-    /// it with a `401`, so a hydration, a catch-up, a held stream or a drain
-    /// that outlives a signed-in session's token goes on under a fresh one.
-    /// Each refused call is sent again once. A copy opened with no server
-    /// has nothing to renew.
+    /// Used when the server refuses the credential with a `401`; each
+    /// refused call is sent again once.
     pub fn renew_credential_with(&self, renew: http::Renew) {
         if let Some(http) = &self.http {
             http.renew_with(renew);
         }
     }
 
-    /// How long a silent event stream is read before catch-up decides it has
-    /// nothing more to replay.
     pub fn with_catch_up_idle(mut self, idle: Duration) -> Core {
         self.catch_up_idle = idle;
         self
@@ -189,36 +165,27 @@ impl Core {
         })
     }
 
-    /// Replaces the local copy with every item of the declared `types` at
-    /// `tier`, with their tags and outbound edges, and stores the event
-    /// cursor to catch up from. The pinned rows are read again; no edge type
-    /// is held whole.
-    ///
-    /// Refused while a catch-up or a follow runs on this handle, as they are
-    /// while it runs: a follow left running across a hydration would apply
-    /// events read against the old slice to the new copy and move the cursor
-    /// the hydration stored. A caller stops its follow first.
+    /// Refused while a catch-up or a follow runs on this handle: a follow
+    /// left running across a hydration would apply events read against the
+    /// old slice to the new copy. A caller stops its follow first.
     pub fn hydrate(&self, types: &[String], tier: Tier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])
     }
 
-    /// A hydration that also holds every edge of `edge_types` the key reads,
-    /// whichever ends the copy holds (`device.md` 1, 14).
+    /// Holds every edge of `edge_types` the key reads, whichever ends the
+    /// copy holds.
     pub fn hydrate_with(
         &self,
         types: &[String],
         tier: Tier,
         edge_types: &[String],
     ) -> Result<HydrateReport> {
-        // A hydration replaces the copy, which is a write to the store like
-        // any other (`device.md` 26).
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
         hydrate::hydrate(self, self.http()?, types, tier, edge_types, false)
     }
 
-    /// A folder's hydration, where no types is every type the key reads
-    /// (`folders.md` 2), held as `store::EVERY_TYPE`.
+    /// No types is every type the key reads, held as `store::EVERY_TYPE`.
     pub(crate) fn hydrate_every_type_or(
         &self,
         types: &[String],
@@ -230,9 +197,8 @@ impl Core {
         hydrate::hydrate(self, self.http()?, types, tier, edge_types, true)
     }
 
-    /// Holds `id` whatever the slice says of it (`device.md` 1), read now; one
-    /// neither the server nor the copy holds is refused. Answers whether it
-    /// was pinned already.
+    /// Refused where neither the server nor the copy holds `id`. Answers
+    /// whether it was pinned already.
     pub fn pin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let http = self.http()?;
@@ -268,8 +234,8 @@ impl Core {
         }
     }
 
-    /// Stops holding `id` by id; a row the slice does not take goes, unless
-    /// writes to it still wait. Answers whether it was pinned.
+    /// A row the slice does not take leaves the copy, unless writes to it
+    /// still wait. Answers whether it was pinned.
     pub fn unpin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -289,17 +255,12 @@ impl Core {
         Ok(pinned)
     }
 
-    /// Applies every event since the stored cursor and advances it.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
         self.lock.refuse_unless_writer()?;
         let _streaming = self.claim_stream()?;
         catch_up::catch_up(self, self.http()?, self.catch_up_idle)
     }
 
-    /// Holds the event stream open and applies each event as it arrives,
-    /// telling `on_change` of each one that changed the copy, until `stop` is
-    /// set (`device.md` 40).
-    ///
     /// `on_change` is called with no lock on the store held, so it may read
     /// the row it is told about.
     pub fn follow(
@@ -310,18 +271,16 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         let http = self.http.clone().ok_or(CoreError::NoServer)?;
         let _streaming = self.claim_stream()?;
-        // A follow runs on a thread of its own, and a binding says it ended
-        // when this returns: a fault that unwound past here would end the
-        // thread with nothing said, and a caller waiting to be told would
-        // wait for good.
+        // A binding says the follow ended when this returns: a fault that
+        // unwound past here would end the thread silently, and a caller
+        // waiting to be told would wait for good.
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             catch_up::follow(self, http, stop, &mut on_change)
         }))
         .unwrap_or_else(|fault| Err(CoreError::Invalid(fault_message(fault.as_ref()))))
     }
 
-    /// A number that moves each time another process saves to this store:
-    /// a reader polls it and reads again when it moves (`device.md` 41).
+    /// Moves each time another process saves to this store.
     pub fn data_version(&self) -> Result<i64> {
         store::data_version(&*self.conn()?)
     }
@@ -339,12 +298,9 @@ impl Core {
         store::item_by_id(&conn, id)
     }
 
-    /// The thumbnail an item carries, from the held row with no request.
-    /// `None` when its type declares no thumbnail or it carries none, which
-    /// is no value or null; an item the copy does not hold is refused, so the
-    /// two are never confused. A held value that is not a thumbnail's (one
-    /// written before its type declared the property, text or not) is
-    /// refused `Decoding`, naming the item.
+    /// An item the copy does not hold is refused `NotFound`, never answered
+    /// `None`. A held value that is not a data URI (one written before its
+    /// type declared the property) is refused `Decoding`, naming the item.
     pub fn thumbnail(&self, id: &str) -> Result<Option<Thumbnail>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
@@ -390,25 +346,20 @@ impl Core {
         store::edges_from(&conn, id)
     }
 
-    /// The edges the copy holds that point at `id`: the replies in a thread,
-    /// the files attached to an item.
     pub fn edges_to(&self, id: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         store::edges_to(&conn, id)
     }
 
-    /// Every edge of `edge_type` the copy holds, answered or still queued,
-    /// oldest first: the threads or the attachments of every held item in
-    /// one read rather than one for each item.
+    /// Answered or still queued, oldest first.
     pub fn edges_of_type(&self, edge_type: &str) -> Result<Vec<Edge>> {
         let conn = self.conn()?;
         store::refuse_unless_hydrated(&conn)?;
         store::edges_of_type(&conn, edge_type)
     }
 
-    /// Full-text search over titles, bodies and tags, best match first,
-    /// narrowed as `SearchFilters` says.
+    /// Best match first.
     pub fn search(
         &self,
         query: &str,
@@ -421,56 +372,29 @@ impl Core {
         search::search(&conn, &catalog, query, filters, limit)
     }
 
-    /// Every queued write and what became of it.
-    ///
-    /// Answerable without a hydration: a queue is a record of what a caller
-    /// asked for, and a caller who has to hydrate before they can be told
-    /// what is outstanding has been told nothing at the moment they most
-    /// need it (`queue-and-verdicts.md` 6).
-    ///
-    /// A store this build cannot read is a different matter and refuses at
-    /// open, queue and all: the file's shape is what is in question there,
-    /// not whether a slice has been pulled into it.
+    /// Answerable without a hydration, unlike the reads: a caller must be
+    /// able to learn what is outstanding before it can hydrate.
     pub fn queue(&self) -> Result<Vec<QueuedWrite>> {
         let conn = self.conn()?;
         store::queued_writes(&conn)
     }
 
-    /// Sends what the queue holds and records the verdict of each write.
-    ///
-    /// One pass. Every sendable row is attempted once and the drain returns;
-    /// a row that met an environmental failure is left unanswered and
-    /// uncounted for the next pass (`queue-and-verdicts.md` 17). An answer on
-    /// another contract ends the pass with `ContractMismatch` instead, and
-    /// the rows answered before it hold their verdicts in the queue
-    /// (`device.md` 42).
+    /// One pass: every sendable row is attempted once.
     pub fn drain(&self) -> Result<DrainReport> {
-        // The handle before the server. A second opener with no server
-        // configured is still a second opener, and refusing it for the
-        // missing server would tell it the wrong thing about why it may
-        // not write.
+        // The handle before the server, so a second opener with no server
+        // is told the real reason it may not write.
         self.lock.refuse_unless_writer()?;
         drain::drain(self, self.http()?)
     }
 
-    /// Sends a blocked or dead row again, under a fresh idempotency key
-    /// (`queue-and-verdicts.md` 27).
-    ///
-    /// Answers `false` where the row is not one a release applies to: an
-    /// unanswered row is already going out, and an accepted one has been
-    /// written. Re-sending either would be this door writing twice.
+    /// Under a fresh idempotency key. Answers `false` for a row that is not
+    /// blocked or dead.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
         store::release(&conn, id)
     }
 
-    /// Releases every row blocked for one reason.
-    ///
-    /// The other half of statement 27: a caller releases "one row or one
-    /// reason at a time", and a single refused credential parks a whole
-    /// queue, so releasing them one id at a time would be the caller doing
-    /// the queue's bookkeeping by hand.
     pub fn release_reason(&self, reason: BlockedReason) -> Result<usize> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
@@ -488,24 +412,16 @@ impl Core {
                 released += 1;
             }
         }
-        // One transaction, because a release part-way through is a queue
-        // where some rows carry a fresh key and some still carry a spent
-        // one, and the count that came back described neither.
+        // One transaction: a release part-way through would leave some rows
+        // on a fresh key and some on a spent one.
         tx.commit()?;
         Ok(released)
     }
 
-    /// Takes a write that can never be sent out of the queue, and puts the
-    /// copy back to what the server holds (`queue-and-verdicts.md` 46).
-    ///
-    /// Only a write blocked `ancestor_unavailable` or `conflict_unresolved`:
-    /// sent again, under any key, it is refused the same way. Answers `false`
-    /// for any other row, which may yet land or be released. Each write held
-    /// for it is refused unsent, since what it waits for will never be sent.
-    ///
-    /// Everything it puts back is read from the server before anything
-    /// changes, so a withdraw that cannot read leaves the queue and the copy
-    /// as they were.
+    /// Answers `false` for any row not blocked `ancestor_unavailable` or
+    /// `conflict_unresolved`. Everything it puts back is read from the server
+    /// before anything changes, so a withdraw that cannot read leaves the
+    /// queue and the copy as they were.
     pub fn withdraw(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         for _ in 0..WITHDRAW_READS {
@@ -519,10 +435,8 @@ impl Core {
                 return Ok(false);
             }
             let held = store::held_for(&*self.conn()?, id)?;
-            // A catch-up that lands while the reads are out would be rolled back
-            // by the older read, with its event already behind the cursor, so the
-            // versions the copy held when they went out are checked again before
-            // anything is put back.
+            // A catch-up landing while the reads are out would be rolled back
+            // by the older read, with its event already behind the cursor.
             let versions = |conn: &Connection| -> Result<Vec<Option<i64>>> {
                 std::iter::once(&row)
                     .chain(&held)
@@ -562,8 +476,6 @@ impl Core {
         )))
     }
 
-    /// Moves an edit blocked `ancestor_unavailable` onto the version the copy
-    /// holds, to go again under a fresh key (`queue-and-verdicts.md` 22).
     pub(crate) fn rebase_on_held(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -597,8 +509,6 @@ impl Core {
         Ok(true)
     }
 
-    /// Queues a create, and holds the row locally until it is answered
-    /// (`queue_create` says how).
     pub fn create_item(&self, draft: &Draft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -610,8 +520,6 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues an update, and applies it to the working copy
-    /// (`queue_update` says what it requires).
     pub fn update_item(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -623,11 +531,9 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues an update based on a version the copy read before the one it
-    /// holds now, which the server merges against what was read
-    /// (`queue-and-verdicts.md` 43). An editor holding a row while the copy
-    /// catches up bases its save on what its person read, not on what came
-    /// in since, so another device's write is merged rather than overwritten.
+    /// The base may be a version earlier than the one held, which the server
+    /// merges against, so another device's write that came in since is kept
+    /// rather than overwritten.
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -639,25 +545,16 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues a delete, and moves the row to the bin locally.
-    ///
-    /// Not a purge (`device.md` 25). The row stays in the copy under the
-    /// state the server would give it, so a caller reading it sees what the
-    /// server will hold rather than a row that has already vanished.
+    /// Not a purge: the row stays in the copy, trashed.
     pub fn delete_item(&self, id: &str) -> Result<QueuedWrite> {
         self.transition_locally(id, WriteKind::DeleteItem, ItemState::Trashed, "{}")
     }
 
-    /// Queues a restore, and takes the row out of the bin locally.
     pub fn restore_item(&self, id: &str) -> Result<QueuedWrite> {
         self.transition_locally(id, WriteKind::RestoreItem, ItemState::Active, "{}")
     }
 
-    /// Queues a move to another lifecycle state.
-    ///
-    /// `revoked` is refused: it is reachable only on a reserved type and on
-    /// the server's own authority, so a device asking for it is asking for
-    /// something no key of its can be granted.
+    /// `revoked` is refused: only the server can reach it.
     pub fn transition_item(&self, id: &str, state: ItemState) -> Result<QueuedWrite> {
         if state == ItemState::Revoked {
             return Err(CoreError::Invalid(format!(
@@ -668,8 +565,6 @@ impl Core {
         self.transition_locally(id, WriteKind::TransitionItem, state, &payload)
     }
 
-    /// The three item writes that move a row's state and leave its fields
-    /// and its version alone.
     fn transition_locally(
         &self,
         id: &str,
@@ -686,7 +581,7 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         }
-        // The create and nothing else, for the reason `update_item` gives.
+        // Only the create, for the reason `queue_update` gives.
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         store::set_item_state(&tx, id, state)?;
@@ -709,8 +604,6 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues an edge, and holds it locally until it is answered
-    /// (`queue_edge` says what it waits for).
     pub fn create_edge(&self, draft: &EdgeDraft) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -721,8 +614,8 @@ impl Core {
         Ok(queued)
     }
 
-    /// A move of an end goes in the same write as the properties, so the edge is
-    /// never absent between two; the version is required, as an item's is.
+    /// A move of an end goes in the same write as the properties, so the
+    /// edge is never absent between two writes.
     pub fn update_edge(&self, id: &str, edit: &EdgeEdit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -786,7 +679,6 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues an edge delete, and drops it from the copy.
     pub fn delete_edge(&self, id: &str) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -798,7 +690,6 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues one tag onto a row, as its own write.
     pub fn add_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
         let payload = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
         self.tag_write(id, WriteKind::AddTag, Some(tag), &payload, |tx| {
@@ -806,15 +697,12 @@ impl Core {
         })
     }
 
-    /// Queues the removal of one tag, as its own write.
     pub fn remove_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
         self.tag_write(id, WriteKind::RemoveTag, Some(tag), "{}", |tx| {
             store::remove_tag(tx, id, tag)
         })
     }
 
-    /// The writes that change what a row is tagged with: one tag at a time,
-    /// or the set whole.
     fn tag_write(
         &self,
         id: &str,
@@ -854,10 +742,8 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues a metadata write: the tags whole, or merged into what is there.
-    ///
-    /// The tags are the half a working copy holds, so they land locally. An
-    /// extension namespace is not part of the copy and is its own write.
+    /// Only the tags land locally; an extension namespace is not part of the
+    /// copy and is its own write.
     pub fn write_metadata(
         &self,
         id: &str,
@@ -870,8 +756,6 @@ impl Core {
         } else {
             WriteKind::MergeMetadata
         };
-        // No tag named: the column says which tag a write is about, and a
-        // metadata write is about all of them at once.
         self.tag_write(id, kind, None, &payload, |tx| {
             if replace {
                 store::replace_tags(tx, id, &write.tags)
@@ -881,16 +765,11 @@ impl Core {
         })
     }
 
-    /// Queues a write to one extension namespace.
-    ///
-    /// Queued and not applied: a working copy holds items, edges and tags,
-    /// and an extension namespace is none of those. The write is answered
-    /// like any other and the copy has nothing to change.
+    /// Queued and not applied: the copy holds no extension namespaces.
     pub fn write_extension(&self, id: &str, namespace: &str, body: &str) -> Result<QueuedWrite> {
         self.extension_write(id, namespace, WriteKind::WriteExtension, body)
     }
 
-    /// Queues the removal of one extension namespace.
     pub fn delete_extension(&self, id: &str, namespace: &str) -> Result<QueuedWrite> {
         self.extension_write(id, namespace, WriteKind::DeleteExtension, "{}")
     }
@@ -937,11 +816,9 @@ impl Core {
         Ok(queued)
     }
 
-    /// Queues an upload (`device.md` 38).
-    ///
     /// The bytes are copied beside the working copy under their hash, and
-    /// the queue holds that name and never the bytes: a queue is read whole
-    /// by every write that looks for what it depends on.
+    /// the queue holds only the hash: every write reads the queue whole to
+    /// find what it depends on.
     pub fn put_blob(&self, path: &Path, mime_type: Option<&str>) -> Result<QueuedWrite> {
         self.with_upload(
             path,
@@ -950,8 +827,6 @@ impl Core {
         )
     }
 
-    /// Queues a file item for a file: its upload, and the create waiting on
-    /// it, naming the bytes and their MIME type.
     pub(crate) fn create_file_item(&self, path: &Path, draft: &Draft) -> Result<QueuedWrite> {
         self.refuse_unknown_type(&draft.r#type)?;
         let mime_type = blob::mime_type_for(path, None);
@@ -962,8 +837,6 @@ impl Core {
         })
     }
 
-    /// Queues new bytes for a file item: their upload, and the update waiting
-    /// on it that names them.
     pub(crate) fn update_file_item(
         &self,
         id: &str,
@@ -986,9 +859,8 @@ impl Core {
         })
     }
 
-    /// Refuses a type the copy does not hold before any bytes are taken in,
-    /// so a create the type would refuse leaves no bytes behind that nothing
-    /// names.
+    /// Checked before any bytes are taken in, so a refused create leaves no
+    /// bytes behind that nothing names.
     fn refuse_unknown_type(&self, r#type: &str) -> Result<()> {
         let conn = self.conn()?;
         if catalog::Catalog::load(&conn)?.known(r#type) {
@@ -999,10 +871,8 @@ impl Core {
         })
     }
 
-    /// Takes a file's bytes in beside the working copy, then queues their
-    /// upload and whatever waits on it in one transaction: a write queued
-    /// without the upload it names would name bytes the server is never
-    /// sent.
+    /// One transaction: a write queued without the upload it names would
+    /// name bytes the server is never sent.
     fn with_upload<T>(
         &self,
         path: &Path,
@@ -1029,20 +899,16 @@ impl Core {
         Ok(queued)
     }
 
-    /// Attaches a file to an item (`device.md` 38): its upload, a file item
-    /// naming the bytes, and an `attached-to` edge from the file to the item.
-    ///
     /// Three writes, each with its own verdict, each waiting on the one
-    /// before it, queued in one transaction: a file item queued without its
-    /// upload names bytes the server never receives, and an edge queued
-    /// without its file item links nothing.
+    /// before it: the upload, a file item naming the bytes, and an
+    /// `attached-to` edge from the file to the item.
     pub fn attach(&self, target: &str, path: &Path, attachment: &Attachment) -> Result<Attached> {
         self.lock.refuse_unless_writer()?;
         {
             let conn = self.conn()?;
             store::refuse_unless_hydrated(&conn)?;
-            // A row in the bin reads as absent (`device.md` 32), and a file
-            // attached to it would be linked to something nobody can open.
+            // A row in the bin reads as absent, and a file attached to it
+            // would be linked to something nobody can open.
             if store::item_by_id(&conn, target)?.is_none() {
                 return Err(CoreError::NotFound {
                     code: "item_not_found".into(),
@@ -1072,10 +938,6 @@ impl Core {
         })
     }
 
-    /// Adds a file as an item of its own (`device.md` 46): its upload, and a
-    /// file item naming the bytes, which waits on it, typed and titled as an
-    /// attachment is. Each tag is a write of its own, waiting on the file
-    /// item, as a create's tags are.
     pub fn add_file(&self, path: &Path, attachment: &Attachment, tags: &[String]) -> Result<Added> {
         self.lock.refuse_unless_writer()?;
         store::refuse_unless_hydrated(&*self.conn()?)?;
@@ -1091,14 +953,8 @@ impl Core {
         })
     }
 
-    /// A blob's bytes, as a file beside the working copy (`device.md` 30,
-    /// 37).
-    ///
-    /// Answered from what is held there when the bytes are held, and
-    /// otherwise fetched through the link the server gives and held for
-    /// next time. Where there are no bytes and no way to fetch them, the
-    /// refusal is `bytes_absent` naming the hash: the item that names them
-    /// is whole.
+    /// Fetched and held when not held already. With no way to fetch, the
+    /// refusal is `BytesAbsent`.
     pub fn blob(&self, hash: &str) -> Result<PathBuf> {
         let hash = blob::named(hash)?;
         let cache = self.cache()?;
@@ -1123,10 +979,9 @@ impl Core {
         Ok(path)
     }
 
-    /// Keeps what is held beside the working copy to `most` bytes, taking
-    /// the bytes read longest ago first (`device.md` 37). Bytes an upload
-    /// still names are never taken, nor `fetched`, which a caller is about
-    /// to read. A trim that cannot read the queue takes nothing.
+    /// Bytes an upload still names are never taken, nor `fetched`, which a
+    /// caller is about to read. A trim that cannot read the queue takes
+    /// nothing.
     fn trim_blobs(&self, fetched: Option<&str>, most: u64) {
         if self.handle() != Handle::Writer {
             return;
@@ -1141,8 +996,6 @@ impl Core {
         }
     }
 
-    /// Takes away the copy of bytes a folder holds as a file, since the file
-    /// is them (`folders.md` 37), unless an upload still names them.
     pub(crate) fn let_go_blob(&self, hash: &str) {
         if self.handle() != Handle::Writer {
             return;
@@ -1159,7 +1012,6 @@ impl Core {
         }
     }
 
-    /// The hex of every blob an upload the server has not taken names.
     fn unsent_blobs(&self) -> Option<HashSet<String>> {
         let conn = self.conn().ok()?;
         let hashes = store::unsent_uploads(&conn).ok()?;
@@ -1171,18 +1023,12 @@ impl Core {
         )
     }
 
-    /// Whether a blob's bytes are held beside the working copy, with no
-    /// request.
     pub fn blob_held(&self, hash: &str) -> Result<bool> {
         Ok(self.cache()?.held(&blob::named(hash)?)?.is_some())
     }
 
-    /// Clears the rows the server has answered, and says how many went.
-    ///
-    /// A queue nobody empties makes every later write slower, because each
-    /// one reads the whole queue to find what it depends on. Only the
-    /// terminal verdicts go: a `blocked` or a `dead` row is one a caller may
-    /// still release.
+    /// Only terminal verdicts go: a `blocked` or a `dead` row is one a
+    /// caller may still release.
     pub fn forget_answered(&self) -> Result<usize> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
@@ -1205,8 +1051,7 @@ impl Core {
         } else if store::hydrated(&conn)? {
             Hydration::Complete
         } else if store::holds_slice(&conn)? {
-            // A slice and no cursor: hydrated once, and the log has moved
-            // past where it left off.
+            // A slice and no cursor: the log aged past the cursor.
             Hydration::Expired
         } else {
             Hydration::Never
@@ -1247,14 +1092,6 @@ impl Core {
         })
     }
 
-    pub(crate) fn http_ref(&self) -> Result<&http::Http> {
-        self.http()
-    }
-
-    pub(crate) fn lock_ref(&self) -> &lock::WriterLock {
-        &self.lock
-    }
-
     pub(crate) fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
         self.conn
             .lock()
@@ -1262,24 +1099,8 @@ impl Core {
     }
 }
 
-/// A create, held locally and queued in the caller's transaction, waiting
-/// on `after` as well as on anything the row itself waits for.
-///
-/// The row lands locally and the write is queued together. Either would be
-/// wrong alone: a queued write with no local row is a change a caller cannot
-/// see, and a local row with no queued write is a change the server will
-/// never hear about.
-///
-/// The id is minted here rather than left to the server, because a row a
-/// caller has been told was queued has to be readable locally before anyone
-/// has answered for it (`queue-and-verdicts.md` 31), and a row with no id
-/// cannot be read by one. It is sent only on a create carrying no natural
-/// key: one carrying a `source_id` goes without it and the server names the
-/// row, and the copy moves onto that name when the answer comes (38).
-///
-/// The version is optional on a create and carried when given
-/// (`queue-and-verdicts.md` 2): where the natural key resolves a live row the
-/// server answers it exactly as it answers an update.
+/// An id is minted here, where the draft names none, so a queued row is
+/// readable locally before the server answers.
 fn queue_create(
     tx: &Connection,
     catalog: &catalog::Catalog,
@@ -1320,11 +1141,7 @@ fn queue_create(
     if let (Some(source), Some(source_id)) = (&draft.source, &draft.source_id) {
         store::follow_row_under_key(tx, &queued, source, source_id)?;
     }
-    // One write per tag, each waiting on the create
-    // (`queue-and-verdicts.md` 33, `device.md` 22), queued with it: a create
-    // that landed with its tags queued separately and then failed to queue
-    // them would be a create that dropped what it was asked for, which is
-    // exactly what 22 forbids.
+    // Queued in the same transaction, so a create never drops its tags.
     for tag in &draft.tags {
         let body = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
         store::enqueue(
@@ -1346,28 +1163,13 @@ fn queue_create(
     Ok(queued)
 }
 
-/// Which version an update may be based on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Based {
-    /// The version the copy holds now.
     OnHeld,
-    /// That version or an earlier one the caller read, which the server
-    /// merges the write against.
+    /// The held version or an earlier one, which the server merges against.
     AsRead,
 }
 
-/// An update, applied to the copy and queued in the caller's transaction,
-/// waiting on `after` as well as on the row's own create while the server has
-/// not taken it.
-///
-/// **The version is required** (`queue-and-verdicts.md` 2). An update with
-/// none is refused here rather than sent, because a version-less update is a
-/// write that overwrites whatever it finds, which is the defect the folder
-/// rules were written against.
-///
-/// The fields are the caller's, whole (`queue-and-verdicts.md` 34). A device
-/// does not merge inside a field and does not assume the server will, so
-/// what it sends is what it was handed.
 fn queue_update(
     tx: &Connection,
     catalog: &catalog::Catalog,
@@ -1387,9 +1189,9 @@ fn queue_update(
             "an update to {id} carries no version; a write that names no version overwrites whatever it finds"
         )));
     };
-    // A type or tier naming the one the row shows already moves nothing, and
-    // is not sent: the drain reads a type or tier in a sent edit as a move,
-    // and lets the row go where its answer is outside the slice.
+    // An unchanged type or tier is not sent: the drain reads one in a sent
+    // edit as a move, and lets the row go where its answer is outside the
+    // slice.
     let edit = &Edit {
         r#type: edit.r#type.clone().filter(|r#type| *r#type != held.r#type),
         tier: edit.tier.filter(|tier| Some(*tier) != held.tier),
@@ -1400,12 +1202,6 @@ fn queue_update(
             message: format!("{type} is not a type this copy holds, so {id} cannot move to it"),
         });
     }
-    // The version the caller read, against the row as it stands. A caller
-    // editing a row the copy has since replaced is editing something they
-    // have not seen, and sending it would be a write based on a version that
-    // was never theirs. A caller saying which earlier version it read is the
-    // exception: the server merges its write against that version, so what
-    // came in since is kept rather than overwritten.
     let read_earlier = based == Based::AsRead && base > 0 && base <= held.version;
     if base != held.version && !read_earlier {
         return Err(CoreError::Invalid(format!(
@@ -1414,11 +1210,9 @@ fn queue_update(
         )));
     }
     let payload = edit.payload(base)?;
-    // What this edit is made against, before it is laid over the copy: the
-    // copy's row, where the edit is based on the version the copy holds. One
-    // based on a version it read earlier was made against that version, not
-    // against what the copy has taken in since, and nothing records it.
-    // A whole-properties edit also changes every property it leaves out.
+    // Recorded only where based on the held version: an edit based on an
+    // earlier one was not made against the copy's row. A whole-properties
+    // edit also changes every property it leaves out.
     let read = (base == held.version).then(|| {
         let cleared = held.properties.keys().filter(|_| edit.replace_properties);
         serde_json::json!({
@@ -1431,8 +1225,7 @@ fn queue_update(
         })
     });
     let mut next = held.clone();
-    // As the lay-over does: only an edit that read the copy knows which
-    // properties it cleared.
+    // Only an edit that read the copy knows which properties it cleared.
     if edit.replace_properties && read.is_some() {
         next.properties = edit.properties.clone();
     } else {
@@ -1440,14 +1233,10 @@ fn queue_update(
             next.properties.insert(key.clone(), value.clone());
         }
     }
-    // **The natural key moves on the copy too, not only on the wire.**
-    //
-    // The copy is what the folder reads to answer "who holds this name".
-    // Leaving the old key on it means an item that has asked to be renamed
-    // still answers to the name it is leaving, and the next file to take that
-    // name bases its create on this row, which the server resolves as an
-    // upsert onto it. The name is applied for the same reason the properties
-    // are: a refusal reconciles the row back.
+    // The natural key moves on the copy too: the folder reads the copy to
+    // answer "who holds this name", and the next file to take the old name
+    // would otherwise base its create on this row, which the server resolves
+    // as an upsert onto it.
     if let Some(source_id) = &edit.source_id {
         next.source_id = Some(source_id.clone());
     }
@@ -1459,13 +1248,10 @@ fn queue_update(
     }
     next.updated_at = store::now_iso();
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;
-    // The create and nothing else (`queue-and-verdicts.md` 4), besides what
-    // the caller names. A write held for every unanswered row is a write a
-    // refused tag can refuse, and statement 16 is about a row the server
-    // never accepted, not about a sibling write that failed for its own
-    // reasons. Ordering is a different thing and is recorded apart from
-    // this: the queue notes the write ahead of this one to the same row,
-    // which holds it without refusing it (`queue-and-verdicts.md` 42).
+    // Only the row's untaken create, besides what the caller names: a write
+    // held on every unanswered row would be refused with a sibling that
+    // failed for its own reasons. Ordering behind earlier writes to the row
+    // is recorded apart, by the queue.
     let mut depends_on = store::untaken_creates_for_item(tx, id)?;
     for waited in after {
         if !depends_on.contains(waited) {
@@ -1493,15 +1279,8 @@ fn queue_update(
     Ok(queued)
 }
 
-/// An edge, held locally and queued in the caller's transaction.
-///
-/// It waits for both of its endpoints' creates (`queue-and-verdicts.md` 4):
-/// an edge naming a row whose create has not landed is an edge the server
-/// has nowhere to put, and either end can be the one that has not.
-///
-/// An edge from a row the copy does not hold, of a type its slice does not
-/// hold whole, is refused (`device.md` 44): no event about it would reach
-/// the copy, so it would sit there as it was written for good.
+/// An edge the copy could not take is refused: no event about it would
+/// reach the copy, so it would sit there as written for good.
 fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
     if !store::takes_edge(
         tx,
@@ -1546,7 +1325,6 @@ fn queue_edge(tx: &Connection, draft: &EdgeDraft) -> Result<QueuedWrite> {
     )
 }
 
-/// The edge the copy holds under `id`, or the refusal naming it.
 fn held_edge(conn: &Connection, id: &str) -> Result<model::Edge> {
     store::edge_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
         code: "edge_not_found".into(),
@@ -1554,8 +1332,6 @@ fn held_edge(conn: &Connection, id: &str) -> Result<model::Edge> {
     })
 }
 
-/// An edge's delete, queued in the caller's transaction and dropped from the
-/// copy.
 fn queue_edge_delete(tx: &Connection, held: &model::Edge) -> Result<QueuedWrite> {
     let depends_on = store::untaken_create_for_edge(tx, &held.id)?;
     // A refused delete is reconciled by reading edges by type, and the row
@@ -1579,9 +1355,6 @@ fn queue_edge_delete(tx: &Connection, held: &model::Edge) -> Result<QueuedWrite>
     )
 }
 
-/// The MIME type a file is sent under, and the file item that names it,
-/// before the bytes are named: the type, title and tier `attachment` gives,
-/// else the defaults it states.
 fn file_draft(path: &Path, attachment: &Attachment, tags: &[String]) -> (String, Draft) {
     let mime_type = blob::mime_type_for(path, attachment.mime_type.as_deref());
     let title = attachment.title.clone().unwrap_or_else(|| {
@@ -1601,16 +1374,11 @@ fn file_draft(path: &Path, attachment: &Attachment, tags: &[String]) -> (String,
     (mime_type, draft)
 }
 
-/// A file item's two properties that name its bytes: their hash, and the
-/// MIME type they are sent under.
 fn name_bytes(properties: &mut serde_json::Map<String, Value>, hash: &str, mime_type: &str) {
     properties.insert("blob_ref".into(), hash.into());
     properties.insert("mime_type".into(), mime_type.into());
 }
 
-/// An upload, queued under the hash of bytes already held beside the working
-/// copy. The hash rides in the payload beside its own column, as a tag's
-/// does, and the MIME type is what the drain sends the bytes under.
 fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
     let payload = serde_json::json!({ "hash": hash, "mime_type": mime_type }).to_string();
     store::enqueue(
@@ -1630,7 +1398,6 @@ fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<Queued
     )
 }
 
-/// What a fault on a follow's thread said, as the refusal it ends with.
 fn fault_message(fault: &(dyn std::any::Any + Send)) -> String {
     let said = fault
         .downcast_ref::<&str>()
@@ -1651,10 +1418,6 @@ mod tests {
         })
     }
 
-    /// An edit records what it was made against only where it is based on
-    /// the version the copy holds, since only then is the copy's row what it
-    /// was made against; one based on a version read earlier records nothing
-    /// and is never moved over a merge (`queue-and-verdicts.md` 42).
     #[test]
     fn an_edit_records_what_it_read_only_on_the_version_held() {
         let conn = store::open_in_memory().unwrap();
@@ -1680,71 +1443,6 @@ mod tests {
         );
         let earlier = queue_update(&conn, &catalog, "row", &edit(3), &[], Based::AsRead).unwrap();
         assert_eq!(store::read_of(&conn, &earlier.id).unwrap(), None);
-    }
-
-    #[test]
-    fn reads_refuse_while_a_hydration_is_in_progress() {
-        let core = Core::open_in_memory(None).unwrap();
-        // A store that has never hydrated refuses rather than answering an
-        // empty page, because the two read the same and only one of them is
-        // a copy of anything.
-        assert_eq!(
-            core.list(&ListFilters::default(), Sort::default()),
-            Err(CoreError::HydrationIncomplete)
-        );
-        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
-        {
-            let conn = core.conn().unwrap();
-            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
-            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
-            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
-        }
-        assert!(
-            core.list(&ListFilters::default(), Sort::default())
-                .unwrap()
-                .is_empty()
-        );
-        {
-            let conn = core.conn().unwrap();
-            store::meta_set(&conn, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS).unwrap();
-        }
-        assert_eq!(
-            core.list(&ListFilters::default(), Sort::default()),
-            Err(CoreError::HydrationIncomplete)
-        );
-        assert_eq!(
-            core.search("x", &SearchFilters::default(), 5),
-            Err(CoreError::HydrationIncomplete)
-        );
-        assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
-        {
-            let conn = core.conn().unwrap();
-            store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
-        }
-        assert_eq!(core.status().unwrap().hydration, Hydration::Complete);
-        // And the fourth value: catch-up deletes the cursor when the log has
-        // aged past it, leaving the slice and the rows in place. A store in
-        // that state has its reads refused, exactly as a store that never
-        // hydrated does, and says a different thing about itself, because it
-        // holds a copy and the other does not.
-        {
-            let conn = core.conn().unwrap();
-            store::meta_delete(&conn, store::META_EVENT_CURSOR).unwrap();
-        }
-        assert_eq!(core.status().unwrap().hydration, Hydration::Expired);
-        assert_eq!(
-            core.list(&ListFilters::default(), Sort::default()),
-            Err(CoreError::HydrationIncomplete)
-        );
-        // The witness for the word rather than for the refusal: with the
-        // slice gone too, the same store is back to never having hydrated,
-        // so `Expired` is a reading of what is there and not a flag the
-        // aging set.
-        {
-            let conn = core.conn().unwrap();
-            store::meta_delete(&conn, store::META_SLICE_TYPES).unwrap();
-        }
-        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
     }
 
     #[test]
@@ -1823,12 +1521,6 @@ mod tests {
         ));
     }
 
-    /// A thumbnail is read from the held row with no request, through the
-    /// type that declares it or a parent that does, and the local index
-    /// leaves its base64 out as the server's own index does.
-    ///
-    /// The copy is bound to a server that records every request, so "no
-    /// request" is asserted against a transport the core could have used.
     #[test]
     fn a_thumbnail_is_read_from_the_held_row_and_never_searched() {
         use base64::Engine;
@@ -1915,8 +1607,6 @@ mod tests {
             matches!(core.thumbnail("not-held"), Err(CoreError::NotFound { code, .. }) if code == "not_held"),
             "an item the copy does not hold read as one that carries no thumbnail"
         );
-        // A photo that carries none, and one whose image does not decode:
-        // each is answered from the row, as the others are.
         let bare = create("acme.photo", serde_json::json!({ "title": "Bare" }));
         assert_eq!(core.thumbnail(&bare).unwrap(), None);
         let broken = create(
@@ -1940,7 +1630,6 @@ mod tests {
                 .map(|hit| hit.item.id)
                 .collect::<Vec<_>>()
         };
-        // The witness: the same token in a body is found.
         let witness = create(
             "core.note",
             serde_json::json!({ "title": "Beside", "body": "unicornsXYZ" }),
@@ -1953,8 +1642,6 @@ mod tests {
             0,
             "a read or a search asked the server rather than the copy"
         );
-        // The witness: this copy does reach the server over that transport,
-        // and the server records it.
         let _ = core.drain();
         assert!(
             server.asked() > 0,
@@ -1962,9 +1649,6 @@ mod tests {
         );
     }
 
-    /// What the local index holds follows the catalog: a thumbnail the
-    /// catalog learns after its rows were written leaves the index when it
-    /// does, and a title field naming the thumbnail indexes nothing.
     #[test]
     fn a_thumbnail_leaves_the_index_when_the_catalog_learns_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -2008,8 +1692,6 @@ mod tests {
                 .map(|hit| hit.item.id)
                 .collect::<Vec<_>>()
         };
-        // The witness: before the catalog knows the field, the base64 is a
-        // string property like any other, and found.
         assert_eq!(found("unicornsXYZ"), vec![id.clone()]);
         let adopt = |wire| {
             let conn = core.conn().unwrap();
@@ -2021,8 +1703,6 @@ mod tests {
             "the catalog learned the thumbnail and the row's index entry still holds its base64"
         );
         assert_eq!(found("Holiday"), vec![id.clone()]);
-        // The witness: a title field naming a property no thumbnail is
-        // declared under indexes its base64 as the title it then is.
         adopt(photo(false, "thumbnail"));
         assert_eq!(found("unicornsXYZ"), vec![id.clone()]);
         adopt(photo(true, "thumbnail"));
@@ -2032,8 +1712,6 @@ mod tests {
         );
     }
 
-    /// A value held under a property before its type declared it a thumbnail
-    /// is not one, and reading it says which item it came from.
     #[test]
     fn an_unreadable_thumbnail_is_refused_naming_its_item() {
         let dir = tempfile::tempdir().unwrap();
@@ -2068,9 +1746,6 @@ mod tests {
         }
     }
 
-    /// A value under the thumbnail property that is not text is not a
-    /// thumbnail either, and is refused as one rather than read as an item
-    /// carrying none. Null is the one value that is none.
     #[test]
     fn a_thumbnail_that_is_not_text_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -2100,7 +1775,6 @@ mod tests {
             .item_id
             .unwrap()
         };
-        // The witness: null reads as no thumbnail.
         assert_eq!(core.thumbnail(&holding(Value::Null)).unwrap(), None);
         for value in [
             serde_json::json!(42),
@@ -2116,18 +1790,8 @@ mod tests {
         }
     }
 
-    /// A second opener is refused at the doors, not merely by the predicate.
-    ///
-    /// `lock.rs` asserts that `refuse_unless_writer` returns the refusal,
-    /// which is the guard's configuration. This asserts its effect, in two
-    /// halves. Every door listed refuses a reading handle with
-    /// `ReadingHandle`, so deleting the call from any of them reddens it.
-    /// And every function in the crate's sources that calls the guard is
-    /// either listed or one of the helpers whose callers are, so a door that
-    /// calls the guard itself and is left off the list reddens it too. The
-    /// queue and the items are compared before and after, so a door whose
-    /// guard comes after its write reddens it as well. A new door reaching
-    /// the guard only through a helper is the one case none of it sees.
+    /// A new door reaching the guard only through a helper is the one case
+    /// this does not see.
     #[test]
     fn a_reading_handle_is_refused_at_every_write_door() {
         let dir = tempfile::tempdir().unwrap();
@@ -2135,8 +1799,7 @@ mod tests {
 
         let writer = Core::open(&path, None).unwrap();
         {
-            // Hydrated by hand, because the refusal must be the handle rather
-            // than the slice: an unhydrated store refuses every write anyway,
+            // Hydrated by hand: an unhydrated store refuses every write anyway,
             // and a case that leaned on that would pass with no lock at all.
             let conn = writer.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
@@ -2149,9 +1812,6 @@ mod tests {
             .unwrap();
         }
 
-        // Something for a door that ran before its guard to change: a row
-        // answered, one blocked and one dead, which forgetting and the
-        // releases would clear, and the queue and the items as they stand.
         {
             let conn = writer.conn().unwrap();
             for (id, verdict, reason) in [
@@ -2203,10 +1863,6 @@ mod tests {
             base_version: Some(1),
             ..Default::default()
         };
-        // **Every door, not the two that are easy to reach.** The comment
-        // above claims the guard is consulted by all of them, and a test
-        // covering two of them proves it for two: the call could go missing
-        // from any of the others with nothing red.
         let refusals: Vec<(&str, CoreError)> = vec![
             ("create_item", reader.create_item(&draft).unwrap_err()),
             ("update_item", reader.update_item("x", &edit).unwrap_err()),
@@ -2257,15 +1913,9 @@ mod tests {
                 reader.rebase_on_held("blocked").unwrap_err(),
             ),
             ("withdraw", reader.withdraw("blocked").unwrap_err()),
-            // A drain writes verdicts and adopts rows, so it is a write door
-            // like the rest. It refuses at the handle before it reaches the
-            // missing server, which is why this is a `ReadingHandle` and not
-            // a `NoServer`.
+            // Refused at the handle before the missing server, so not `NoServer`.
             ("drain", reader.drain().unwrap_err()),
-            // Clearing answered rows is a write to the queue like any
-            // other.
             ("forget_answered", reader.forget_answered().unwrap_err()),
-            // Refused before the file is read, so a reader copies nothing in.
             (
                 "put_blob",
                 reader
@@ -2284,7 +1934,6 @@ mod tests {
                     .add_file(Path::new("no-such-file.png"), &Attachment::default(), &[])
                     .unwrap_err(),
             ),
-            // The two a folder queues a file through.
             (
                 "create_file_item",
                 reader
@@ -2297,8 +1946,6 @@ mod tests {
                     .update_file_item("x", Path::new("no-such-file.png"), &edit, Based::OnHeld)
                     .unwrap_err(),
             ),
-            // The four that write the copy from the server's side. Each is
-            // refused at the handle before it reaches the missing server.
             (
                 "hydrate",
                 reader
@@ -2318,7 +1965,6 @@ mod tests {
                     .unwrap_err(),
             ),
             ("catch_up", reader.catch_up().unwrap_err()),
-            // A pin reads a row into the copy and an unpin can take one out.
             ("pin", reader.pin("x").unwrap_err()),
             ("unpin", reader.unpin("x").unwrap_err()),
             (
@@ -2348,9 +1994,6 @@ mod tests {
              it is a door nothing here covers"
         );
 
-        // The functions that call the guard themselves, read from the
-        // source. A helper is covered by the doors that reach it, which are
-        // listed above.
         let listed: Vec<&str> = refusals.iter().map(|(door, _)| *door).collect();
         let mut guarded = Vec::new();
         let others: &[&str] = &[];
@@ -2383,7 +2026,6 @@ mod tests {
                     "with_upload",
                 ][..],
             ),
-            // `drain::drain`, which `Core::drain` reaches.
             (include_str!("drain.rs"), &["drain"][..]),
         ] {
             let mut current: Option<&str> = None;
@@ -2416,7 +2058,6 @@ mod tests {
                 }
             }
         }
-        // The witness that the scan reads the doors at all.
         assert!(
             guarded.iter().any(|(name, _)| *name == "create_item"),
             "the scan did not find `create_item`, so it is reading the wrong \
@@ -2430,13 +2071,9 @@ mod tests {
             );
         }
 
-        // The control: the writer is not refused, so the refusals above are
-        // the handle rather than a store that refuses everybody.
         let queued = writer.create_item(&draft).unwrap();
         assert_eq!(queued.kind, WriteKind::CreateItem);
 
-        // And a reading handle still reads, which is the whole point of it
-        // being a handle rather than a refusal to open.
         assert!(
             reader
                 .list(&ListFilters::default(), Sort::default())
@@ -2480,7 +2117,6 @@ mod tests {
             Some(Verdict::Dead),
             "a release by reason released a dead write, which is released one id at a time"
         );
-        // The witness: the dead row is one a release takes, by its id.
         assert!(core.release("dead").unwrap());
         assert_eq!(
             core.queue()
@@ -2520,8 +2156,6 @@ mod tests {
         );
     }
 
-    /// Bytes held beside the working copy are answered with no server at
-    /// all, and bytes not held are absent rather than a missing server.
     #[test]
     fn with_no_server_held_bytes_are_answered_and_the_rest_are_absent() {
         let dir = tempfile::tempdir().unwrap();
@@ -2539,8 +2173,6 @@ mod tests {
         ));
     }
 
-    /// The cap never takes bytes an upload the server has not taken still
-    /// names, since the queue names them and only the cache holds them.
     #[test]
     fn a_trim_keeps_the_bytes_an_upload_still_names() {
         let dir = tempfile::tempdir().unwrap();
@@ -2579,9 +2211,6 @@ mod tests {
         );
     }
 
-    /// The type catalog a follow asks for on every stream is written only
-    /// where it changed, so a reader told of each save is not told of a
-    /// catalog nobody changed.
     #[test]
     fn an_unchanged_type_catalog_is_not_written_again() {
         let dir = tempfile::tempdir().unwrap();
@@ -2603,8 +2232,7 @@ mod tests {
             before,
             "the same catalog was written again, and a reader was told of a save that changed nothing"
         );
-        // The server's order is not the store's, and the same catalog in
-        // another order is the same catalog.
+        // The same catalog in another order is the same catalog.
         let two = [
             store::testing::wire_type("core.note", None, Some("title")),
             store::testing::wire_type("user.recipe", None, Some("title")),
@@ -2617,12 +2245,10 @@ mod tests {
             before,
             "the same catalog in another order was written again"
         );
-        // The witness: a catalog that differs is written.
         replace(&[store::testing::wire_type("core.note", None, Some("body"))]);
         assert_ne!(reader.data_version().unwrap(), before);
     }
 
-    /// Two streams on one handle would each move the one cursor.
     #[test]
     fn one_stream_at_a_time_moves_the_cursor() {
         let dir = tempfile::tempdir().unwrap();
@@ -2657,15 +2283,11 @@ mod tests {
                 matches!(&hydrating, Err(CoreError::Invalid(message)) if message.contains("already")),
                 "a hydration ran under a follow, which goes on applying events to the copy it replaces: {hydrating:?}"
             );
-            // The witness: the follow was running, asking for a stream.
             assert!(report.failed_opens >= 1, "{report:?}");
         });
-        // And once it ended, the handle takes the next one.
         assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
     }
 
-    /// A hydration holds the claim for as long as it runs, so no follow or
-    /// catch-up moves the cursor under it.
     #[test]
     fn no_stream_runs_across_a_hydration() {
         let server = scripted::Scripted::start();
@@ -2688,7 +2310,6 @@ mod tests {
         }
         std::thread::scope(|scope| {
             let hydrating = scope.spawn(|| core.hydrate(&["core.note".into()], Tier::Library));
-            // The witness: the hydration is under way.
             server.wait_for("/events", 1, Duration::from_secs(5));
             let caught = core.catch_up();
             let followed = core.follow(&AtomicBool::new(false), |_| {});
@@ -2701,7 +2322,6 @@ mod tests {
             drop(server);
             assert!(hydrating.join().unwrap().is_err());
         });
-        // And once it ended, the handle takes the next one.
         assert!(!matches!(core.catch_up(), Err(CoreError::Invalid(_))));
     }
 
@@ -2717,7 +2337,6 @@ mod tests {
             !path.exists(),
             "a reading open made a store it was only meant to read"
         );
-        // The witness: the same open once a writer has made the store.
         drop(Core::open(&path, None).unwrap());
         let reader = Core::open_reader(&path).unwrap();
         assert_eq!(reader.handle(), Handle::Reader);
@@ -2745,8 +2364,6 @@ mod tests {
         );
     }
 
-    /// A reading open says what is wrong with a file it cannot read, and
-    /// hands on what it cannot name.
     #[test]
     fn a_reading_open_names_what_is_wrong_with_the_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -2774,14 +2391,12 @@ mod tests {
         std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
         assert!(not_a_store(&words).contains("has no schema to read"));
 
-        // An error it has no name for is handed on as the store's own.
         let odd = made("odd.sqlite", "CREATE TABLE meta (key TEXT);");
         assert!(
             matches!(refusal(&odd), CoreError::Store(message) if message.contains("no such column")),
             "an error the reading open cannot name was called something it is not"
         );
 
-        // A store another build made, or one that never said which it is.
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
         let older = made(
             "older.sqlite",
@@ -2798,13 +2413,10 @@ mod tests {
                 }
             );
         }
-        // The witness: a store this build made opens.
         drop(Core::open(at("store.sqlite"), None).unwrap());
         assert!(Core::open_reader(at("store.sqlite")).is_ok());
     }
 
-    /// A reading open answers bytes held beside the store and fetches none,
-    /// and says that is why.
     #[test]
     fn a_reading_open_answers_held_bytes_and_says_why_it_fetches_no_others() {
         let dir = tempfile::tempdir().unwrap();
@@ -2823,12 +2435,9 @@ mod tests {
             answer => panic!("{answer:?}"),
         };
         assert!(reason(&reader).contains("reading handle"));
-        // The witness: the writer, with no server either, says otherwise.
         assert!(!reason(&writer).contains("reading handle"));
     }
 
-    /// Claims made at the same instant: one wins, and the rest are refused
-    /// until it lets go.
     #[test]
     fn claims_made_at_once_never_both_win() {
         use std::sync::atomic::AtomicUsize;
@@ -2857,7 +2466,6 @@ mod tests {
                 go.store(true, Ordering::Release);
             });
         }
-        // The witness: claims were won.
         assert!(won.load(Ordering::SeqCst) >= 300);
         assert!(
             !overlapped.load(Ordering::SeqCst),

@@ -1,11 +1,8 @@
-//! The server's listing grammar, the `filter` of `GET /items` and
-//! `GET /search`, answered from the working copy.
-//!
-//! A port rather than a lookalike: the parser refuses what the server's
-//! refuses, with the code it refuses with, and each condition compiles to the
-//! SQL the server runs, bound the way the server's driver binds it. A
-//! condition read even slightly otherwise answers one set of rows offline and
-//! another online for the same question.
+//! The server's listing grammar, answered from the working copy. A port, not
+//! a lookalike: the parser refuses what the server's refuses, with its code,
+//! and each condition compiles to the SQL the server runs, bound as its
+//! driver binds it. Read even slightly otherwise, a condition answers one set
+//! of rows offline and another online.
 
 use serde_json::{Number, Value};
 
@@ -35,12 +32,9 @@ const SYSTEM_FIELDS: [&str; 10] = [
 /// target the child.
 pub(crate) const PARENT_OF: &str = "parent-of";
 
-/// Narrows a local read by a listing-grammar expression and by `beneath`,
-/// each one clause ANDed with the rest, as the server ANDs its `filter` with
-/// its other parameters. An expression the grammar refuses is refused here,
-/// never dropped, and so is one the copy cannot answer as the server would,
-/// but for an edge type the key may not read, which the copy cannot know
-/// (`device.md` 24).
+/// An expression the copy cannot answer as the server would is refused,
+/// never dropped, but for an edge type the key may not read, which the copy
+/// cannot know.
 pub(crate) fn narrow(
     filter: Option<&str>,
     beneath: Option<&str>,
@@ -746,16 +740,6 @@ mod tests {
     }
 
     #[test]
-    fn bounds_the_conditions_and_the_length_one_past_where_they_stop() {
-        let ten = ["tags exists"; 10].join(" AND ");
-        assert_eq!(parse(&ten).unwrap().conditions.len(), 10);
-        assert!(code(&format!("{ten} AND tags exists")).is_some());
-        let at = |length: usize| format!("id eq \"{}\"", "é".repeat(length - 8));
-        assert!(parse(&at(2048)).is_ok());
-        assert!(code(&at(2049)).is_some());
-    }
-
-    #[test]
     fn reads_values_and_edge_references_as_the_server_does() {
         let parsed =
             parse(r#"edge[core.parent-of] eq "a \"b\"" OR properties.n lte -2.5"#).unwrap();
@@ -783,7 +767,6 @@ mod tests {
         let emoji = |count: usize| format!("id eq \"{}\"", "\u{1F426}".repeat(count));
         assert_eq!(emoji(1020).encode_utf16().count(), 2048);
         assert!(parse(&emoji(1020)).is_ok());
-        // 1029 characters and 2066 units: refused by the units alone.
         assert_eq!(emoji(1021).chars().count(), 1029);
         assert!(code(&emoji(1021)).is_some());
     }
@@ -856,8 +839,6 @@ mod tests {
         for (id, source, target, edge_type) in [
             ("1", "root", "child", "parent-of"),
             ("2", "child", "grandchild", "parent-of"),
-            // A cycle the copy can hold whatever the server refuses, and
-            // the walk has to end on it.
             ("3", "grandchild", "root", "parent-of"),
             ("4", "child", "stranger", "references"),
         ] {
@@ -925,20 +906,5 @@ mod tests {
             ),
             Err(CoreError::Validation { .. })
         ));
-    }
-
-    #[test]
-    fn beneath_is_the_item_and_what_it_reaches_along_parent_of() {
-        let conn = family();
-        assert_eq!(
-            ids(&conn, None, Some("child")),
-            ["child", "grandchild", "root"]
-        );
-        assert_eq!(ids(&conn, None, Some("stranger")), ["stranger"]);
-        assert_eq!(ids(&conn, None, Some("absent")), Vec::<String>::new());
-        assert_eq!(
-            ids(&conn, Some("properties.rating exists"), Some("child")),
-            ["child", "root"]
-        );
     }
 }

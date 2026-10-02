@@ -1,7 +1,3 @@
-//! A folder's settings as one editable file, `.marfa/folder.yaml`
-//! (`folders.md` 1): written from the `system.folder` the copy pins, and an
-//! edit of it sent through the folder door at that file's version.
-
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
@@ -11,32 +7,22 @@ use crate::error::CoreError;
 use crate::http::{Method, Outgoing};
 use crate::{Core, Result, store};
 
-/// The store's record of which `system.folder` this directory follows.
 const META_FOLDER: &str = "folder_id";
-/// The text last written to the settings file, and the version it was
-/// written from: an edit is what differs from it, based on that version.
 const META_WRITTEN: &str = "folder_file";
 const META_WRITTEN_VERSION: &str = "folder_file_version";
-/// The file text the door or the folder refused, and why, so the same
-/// refused text is flagged rather than sent again.
+/// Kept so the same refused text is flagged rather than sent again.
 const META_REFUSED: &str = "folder_file_refused";
 
-/// Keys the file carries beside the settings, naming what it was written
-/// from; never sent.
+/// Keys the file carries beside the settings; never sent.
 const FOLDER_KEY: &str = "folder";
 const VERSION_KEY: &str = "version";
 
 const HEADER: &str = "# This folder's settings, the system.folder it follows. An edit here is\n# sent through the folder door by `folders push`, or while watching.\n";
 
-/// What became of the settings file in a pass.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct SettingsFileReport {
-    /// An edit of the file went through the folder door and landed.
     pub sent: bool,
-    /// The file was written from the settings the copy holds.
     pub written: bool,
-    /// Why the file's edit is not in force, where it is not: the settings
-    /// the copy holds stay in force meanwhile.
     pub flagged: Option<String>,
 }
 
@@ -53,8 +39,8 @@ impl Folder {
         self.root.join(STATE_DIR).join(SETTINGS_FILE)
     }
 
-    /// Writes the settings out, recording the text before the bytes land so
-    /// a watch never reads the write back as an edit (`folders.md` 20).
+    /// Records the text before the bytes land, so a watch never reads the
+    /// write back as an edit.
     pub(super) fn write_settings_file(
         &self,
         properties: &Map<String, Value>,
@@ -80,7 +66,6 @@ impl Folder {
             .map_err(|error| CoreError::Store(format!("cannot write {}: {error}", path.display())))
     }
 
-    /// The file's text where the person changed it since it was written.
     fn edited_settings(&self) -> Result<Option<String>> {
         let Ok(found) = std::fs::read_to_string(self.settings_path()) else {
             return Ok(None);
@@ -110,9 +95,8 @@ impl Folder {
         })
     }
 
-    /// Rewrites the file where the settings the copy holds moved on since it
-    /// was written, unless the person changed it: that is their edit, and it
-    /// is sent first.
+    /// Leaves a file the person changed alone: that is their edit, and it is
+    /// sent first.
     pub fn write_settings_if_moved(&self) -> Result<SettingsFileReport> {
         if let Some(edited) = self.edited_settings()? {
             return Ok(SettingsFileReport {
@@ -136,10 +120,8 @@ impl Folder {
         })
     }
 
-    /// Sends the person's edit of the settings file through the folder door,
-    /// based on the version the file was written from, so the door merges it
-    /// (`items.md` 51). A refused edit, or a file that does not parse, keeps
-    /// the settings in force and is flagged with the reason.
+    /// A refused edit, or a file that does not parse, is flagged in the report
+    /// rather than returned as an error, and the settings in force stay.
     pub fn send_settings_edit(&self) -> Result<SettingsFileReport> {
         let Some(text) = self.edited_settings()? else {
             return Ok(SettingsFileReport::default());
@@ -175,9 +157,8 @@ impl Folder {
                     .unwrap_or(0),
             )
         };
-        // Based on the file's own line, as a Markdown file's edit is
-        // (`folders.md` 23): an editor saving text older than the last write
-        // is merged against what it was written from.
+        // Based on the file's own line: an editor saving text older than the
+        // last write is merged against what it was written from.
         let version = edited
             .get(VERSION_KEY)
             .and_then(super::version_named)

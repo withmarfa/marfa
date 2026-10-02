@@ -2,8 +2,6 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-/// Every way the core can refuse or fail. Server refusals keep the server's
-/// own `code`.
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum CoreError {
     #[error("not found ({code}): {message}")]
@@ -60,21 +58,16 @@ pub enum CoreError {
     StreamIncomplete { reason: String },
     #[error("this file belongs to {expected}, not {got}")]
     WrongServer { expected: String, got: String },
-    /// The item is whole and its bytes are not here (`device.md` 30).
     #[error("the bytes of {hash} are not held here and cannot be fetched: {reason}")]
     BytesAbsent { hash: String, reason: String },
-    /// The server speaks a contract this core was not built for, so its
-    /// answer may be shaped in ways the core cannot read, and was not read.
     #[error("{}", contract_mismatch(origin, served.as_deref(), *expected, *status, *write_sent))]
     ContractMismatch {
         origin: String,
-        /// The contract the answer named, or `None` where a success named
-        /// none.
         served: Option<String>,
         expected: u64,
         status: u16,
-        /// Whether the answer was to a write, which the server acted on
-        /// before the answer could say it speaks another contract.
+        /// The server acted on a write before its answer could say it speaks
+        /// another contract.
         write_sent: bool,
     },
     #[error("{0}")]
@@ -82,8 +75,8 @@ pub enum CoreError {
 }
 
 impl CoreError {
-    /// Whether asking again can clear it: the network, a server busy or
-    /// failing. A 404 or a 405 from a server that is not Marfa's does not.
+    /// Whether asking again can clear it. A 404 or a 405 cannot: it may come
+    /// from a server that is not Marfa's.
     pub fn is_environmental(&self) -> bool {
         match self {
             CoreError::Network(_) | CoreError::RateLimited { .. } => true,
@@ -92,7 +85,6 @@ impl CoreError {
         }
     }
 
-    /// The wait a rate limit's `Retry-After` names, held to `RETRY_AFTER_MOST`.
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             CoreError::RateLimited {
@@ -104,9 +96,8 @@ impl CoreError {
     }
 }
 
-/// The longest `Retry-After` a client waits out: one past it would park the
-/// client for as long as a server said. The server's webhook delivery honors
-/// the same bound.
+/// Past this a server could park the client indefinitely. The server's webhook
+/// delivery honors the same bound.
 pub(crate) const RETRY_AFTER_MOST: Duration = Duration::from_secs(300);
 
 fn contract_mismatch(
