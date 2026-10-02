@@ -1614,7 +1614,7 @@ describe("what a folder is", () => {
     expect(pushed.ok).toBe(true);
     if (!pushed.ok) return;
     expect(
-      pushed.value.drain.sent,
+      pushed.value.drain.answered,
       "the folder queued the work and sent none of it, so discarding the container would lose it",
     ).toBeGreaterThan(0);
 
@@ -2938,6 +2938,7 @@ describe("files and items", () => {
       harness = await behind("folder-watch-hydration-fails", [
         agedOut,
         answers.serverFault(),
+        answers.serverFault(),
         headRead("900"),
         liveReplay("900", []),
       ]);
@@ -2956,6 +2957,10 @@ describe("files and items", () => {
       } finally {
         await watching.stop();
       }
+      expect(
+        watching.stderr.split("could not hydrate").length - 1,
+        `a watch said it could not hydrate at every attempt rather than once: ${watching.stderr}`,
+      ).toBe(1);
     });
 
     it("waits out a rate limit's Retry-After before hydrating again while watching", async () => {
@@ -9123,7 +9128,7 @@ describe("identity", () => {
     ).toHaveLength(1);
     // Sent 2: the later file's create and its placement.
     expect(later[0]).toMatch(
-      /^1 created, 0 updated, 0 renamed, 0 deleted; sent 2; \d+ file\(s\) written, 1 bound to an item that is gone$/,
+      /^1 created, 0 updated, 0 renamed, 0 deleted; answered 2; \d+ file\(s\) written, 1 bound to an item that is gone$/,
     );
   });
 });
@@ -10051,7 +10056,7 @@ describe("where a file sits", () => {
     expect(existsSync(join(harness.dir, "moving.md"))).toBe(false);
     // And the next pass goes on, sending nothing for them.
     const again = await harness.folder.push();
-    expect(again.ok && again.value.drain.sent).toBe(0);
+    expect(again.ok && again.value.drain.answered).toBe(0);
   });
 
   it("reads no other edge to the folder as a placement", async () => {
@@ -11322,7 +11327,7 @@ describe("writing", () => {
       ["blocked", "ancestor_unavailable"],
       ["blocked", "ancestor_unavailable"],
     ]);
-    expect([pushed.value.drain.sent, pushed.value.drain.rebased]).toEqual([
+    expect([pushed.value.drain.answered, pushed.value.drain.rebased]).toEqual([
       2, 1,
     ]);
     expect(rows.get(id)?.properties.title).toBe("Again");
@@ -17688,5 +17693,152 @@ describe("what a folder never does to a person's text", () => {
     expect(read(harness, "Going.md")).toContain("saved meanwhile");
     expect(read(harness, "Kept.md")).toContain("saved meanwhile");
     expect(read(harness, "Kept.md")).not.toContain("changed elsewhere");
+  });
+});
+
+describe("a folder that cannot reach the server", () => {
+  it("says once that a watch cannot reach the server, and once that it can again", async () => {
+    // Every stream ends as it opens, so the follow asks again while the
+    // server is away, as the watch's passes do.
+    harness = await folderHarness("folder-watch-reach", {
+      events: [headRead("1")],
+    });
+    scriptFolderWrites(harness);
+    const watching = harness.folder.watchText();
+    const said = (text: string) => watching.stdout.split(text).length - 1;
+    try {
+      await vi.waitFor(() => expect(watching.stderr).toContain("watching"), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      await harness.server.offline();
+      put(harness, "away.md", "---\ntitle: Away\n---\nwritten offline\n");
+      await vi.waitFor(() => expect(said("cannot reach the server")).toBe(1), {
+        timeout: 20_000,
+        interval: 100,
+      });
+      put(harness, "later.md", "---\ntitle: Later\n---\nstill offline\n");
+      // Passes enough for a line repeated each pass to show.
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      await harness.server.online();
+      await vi.waitFor(
+        () => {
+          expect(said("answers again")).toBe(1);
+          expect(sentTitles(harness!).sort()).toEqual(["Away", "Later"]);
+        },
+        { timeout: 40_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      said("cannot reach the server"),
+      `a watch said it could not reach the server more than once while it stayed away: ${watching.stdout}`,
+    ).toBe(1);
+    expect(watching.stdout).toContain(harness.server.url);
+    expect(
+      said("answers again"),
+      `a watch did not say once that the server was back: ${watching.stdout}`,
+    ).toBe(1);
+    const offlineLines = watching.stdout
+      .split("\n")
+      .filter((line) => line.includes("; answered 0"));
+    expect(
+      offlineLines.length,
+      `a watch printed its line at every pass while nothing went: ${watching.stdout}`,
+    ).toBeLessThanOrEqual(2);
+    expect(
+      offlineLines.every((line) => /waiting/.test(line)),
+      `a pass line did not say what waits: ${offlineLines.join("\n")}`,
+    ).toBe(true);
+  });
+
+  it("waits out a gateway refusing its key, naming no contract, without stopping", async () => {
+    const unnamed: Answer = {
+      kind: "json",
+      status: 401,
+      body: { error: { code: "access_denied", message: "at the edge" } },
+      contract: null,
+    };
+    // The stream and the first create both meet the gateway, then the server.
+    harness = await folderHarness("folder-watch-gateway", {
+      events: [unnamed, unnamed, headRead("1")],
+    });
+    harness.server.answer("POST", "/items", unnamed);
+    scriptFolderWrites(harness);
+    put(harness, "gated.md", "---\ntitle: Gated\n---\nbehind a gateway\n");
+    const watching = harness.folder.watchText();
+    const said = (text: string) => watching.stdout.split(text).length - 1;
+    try {
+      await vi.waitFor(
+        () => {
+          expect(said("cannot reach the server")).toBe(1);
+          expect(said("answers again")).toBe(1);
+          expect(
+            harness!.server.requests.filter(
+              (request) =>
+                request.method === "POST" && request.pathname === "/items",
+            ).length,
+          ).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 40_000, interval: 100 },
+      );
+      expect(
+        watching.running(),
+        `a watch stopped on a gateway's 401 as though its key were refused: ${watching.stderr}`,
+      ).toBe(true);
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.stdout).toMatch(/naming no contract/);
+  });
+
+  it("says why a push's drain stopped", async () => {
+    harness = await folderHarness("folder-push-stopped");
+    harness.server.answer("POST", "/items", answers.unauthorized());
+    scriptFolderWrites(harness);
+    put(harness, "stopped.md", "---\ntitle: Stopped\n---\nthe key is gone\n");
+    const pushed = await harness.folder.pushText();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value,
+      `a push whose drain stopped did not say why: ${pushed.value}`,
+    ).toMatch(/refused the credential.*drain stopped/);
+    // The witness: the create met the refusal.
+    expect(sentTitles(harness)).toEqual(["Stopped"]);
+  });
+
+  it("stops a watch whose credential is refused, with the credential's exit", async () => {
+    harness = await folderHarness("folder-watch-refused");
+    // Before the folder's own doors, so the first create meets it.
+    harness.server.answer("POST", "/items", answers.unauthorized());
+    scriptFolderWrites(harness);
+    put(harness, "refused.md", "---\ntitle: Refused\n---\nthe key is gone\n");
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(
+            watching.running(),
+            `a watch went on with a refused credential: ${watching.stdout}`,
+          ).toBe(false),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(
+      watching.exitCode(),
+      `a watch stopped on a refused credential with another exit than a one-off command's: ${watching.stderr}`,
+    ).toBe(5);
+    expect(watching.stderr).toMatch(/refused this watch's credential/);
+    expect(
+      watching.stdout,
+      `the watch did not say in its own lines why its drain stopped: ${watching.stdout}`,
+    ).toMatch(/the drain stopped: .*refused the credential/);
+    // The witness: it was the create that met the refusal.
+    expect(sentTitles(harness)).toEqual(["Refused"]);
   });
 });

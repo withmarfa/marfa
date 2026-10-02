@@ -359,11 +359,17 @@ impl Folder {
             Err(error) => return Err(error),
         };
         if !answer.is_success() {
-            let refused =
-                crate::http::refusal(answer.status, &answer.body, answer.retry_after_seconds);
+            let http = self.core.http()?;
+            let refused = http.refused(
+                answer.status,
+                answer.contract_named,
+                &answer.body,
+                answer.retry_after_seconds,
+            );
             // Only the door's own answers about this edit are a refusal; a
-            // failing server, a rate limit or a spent key is tried again.
-            if !matches!(answer.status, 400 | 403 | 404 | 409 | 422) {
+            // failing server, a rate limit, a spent key or anything in front
+            // of the server is tried again.
+            if answer.is_environmental() || !matches!(answer.status, 400 | 403 | 404 | 409 | 422) {
                 return Ok(SettingsFileReport {
                     flagged: Some(format!("not sent yet: {refused}")),
                     ..Default::default()

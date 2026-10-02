@@ -71,7 +71,10 @@ export type Answer =
    * enough for a second one to meet it, which is what `device.md` 3 is
    * about.
    */
-  | { kind: "stall" };
+  | { kind: "stall" }
+  /** `then`, once `until` settles: an answer the fixture lets through when
+   *  it chooses, so a second command can meet the first still running. */
+  | { kind: "gated"; until: Promise<void>; then: Answer };
 
 export interface RecordedRequest {
   method: string;
@@ -296,6 +299,12 @@ export class ScriptedServer {
   private send(answer: Answer, response: ServerResponse): void {
     if (answer.kind === "drop") {
       response.socket?.destroy();
+      return;
+    }
+    if (answer.kind === "gated") {
+      void answer.until.then(() => {
+        this.send(answer.then, response);
+      });
       return;
     }
     if (answer.kind === "stall") {

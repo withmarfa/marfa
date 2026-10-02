@@ -685,7 +685,7 @@ describe("the server did not take the write", () => {
       "a blocked write was sent again, and the same request is refused identically however often anyone sends it",
     ).toBe(before);
     expect(
-      again.value.sent,
+      again.value.answered,
       "the drain counted a blocked row as sent, so its own report disagrees with what went out",
     ).toBe(0);
 

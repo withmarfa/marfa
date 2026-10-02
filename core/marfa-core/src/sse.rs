@@ -1,4 +1,9 @@
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Read};
+
+/// Far past any event the server sends, which carries one row: a line
+/// longer than this is not an event, and holding it would take memory
+/// without end.
+pub const LINE_MOST: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
@@ -30,10 +35,19 @@ impl<R: BufRead> Frames<R> {
         let mut comment: Option<String> = None;
         loop {
             self.line.clear();
-            let read = self.reader.read_line(&mut self.line)?;
+            let read = (&mut self.reader)
+                .take(LINE_MOST + 1)
+                .read_line(&mut self.line)?;
+            if read as u64 > LINE_MOST {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("the event stream sent a line longer than {LINE_MOST} bytes"),
+                ));
+            }
             let line = self.line.trim_end_matches(['\n', '\r']);
             if read == 0 || line.is_empty() {
-                if !data.is_empty() || name.is_some() || id.is_some() {
+                // A frame with no data is no event, whatever else it names.
+                if !data.is_empty() {
                     return Ok(Some(Frame::Event {
                         id,
                         name,
@@ -59,7 +73,17 @@ impl<R: BufRead> Frames<R> {
             match field {
                 "event" => name = Some(value.to_string()),
                 "data" => data.push(value.to_string()),
-                "id" if !value.contains('\0') => id = Some(value.to_string()),
+                // Stored as the cursor, which a catch-up starts from: one
+                // that is not an event id would be refused by every start.
+                "id" if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "the event stream named {value:?} as an event id, which is not one"
+                        ),
+                    ));
+                }
+                "id" => id = Some(value.to_string()),
                 _ => {}
             }
         }
@@ -135,6 +159,39 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_frame_with_no_data_is_no_event() {
+        assert_eq!(
+            frames("id: 5\n\nevent: item.created\n\n: ping\n\n"),
+            vec![Frame::Comment("ping".into())]
+        );
+    }
+
+    #[test]
+    fn refuses_an_event_id_that_is_not_one() {
+        for id in ["abc", "", "4 2", "-1"] {
+            let refused = Frames::new(format!("id: {id}\ndata: {{}}\n\n").as_bytes())
+                .next_frame()
+                .unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::InvalidData, "{id:?}");
+        }
+    }
+
+    #[test]
+    fn refuses_a_line_past_the_bound_without_holding_it_whole() {
+        struct Endless;
+        impl Read for Endless {
+            fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
+                into.fill(b'a');
+                Ok(into.len())
+            }
+        }
+        let mut frames = Frames::new(io::BufReader::new(Endless));
+        let refused = frames.next_frame().unwrap_err();
+        assert_eq!(refused.kind(), io::ErrorKind::InvalidData);
+        assert!(frames.line.len() as u64 <= LINE_MOST + 1);
     }
 
     #[test]

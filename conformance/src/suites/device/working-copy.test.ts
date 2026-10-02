@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -1494,6 +1495,108 @@ describe("the working copy belongs to one server", () => {
         writer.running(),
         "the process holding the writer handle exited while this ran, so the refusal above was a store with no writer rather than one with another",
       ).toBe(true);
+    } finally {
+      await writer.stop();
+    }
+  });
+});
+
+describe("who may read a store", () => {
+  it("gives two stores sharing a stem a writer each", async () => {
+    harness = await hydratedHarness("two-stems");
+    const { device, server } = harness;
+    // One store held open by a drain whose write the server never answers.
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "held" },
+        })
+      ).ok,
+    ).toBe(true);
+    server.answer("POST", "/items", { kind: "stall" });
+    const writer = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(writer.running(), writer.stderr).toBe(true);
+          expect(
+            server.requests.some((request) => request.method === "POST"),
+          ).toBe(true);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      // Its neighbour: the same stem, another extension.
+      const neighbour = device.reopen({
+        store: join(dirname(device.store), "core.db"),
+      });
+      scriptHydration(server, { head: "10" });
+      const hydrated = await neighbour.hydrate(["core.note"], "library");
+      expect(
+        hydrated.ok,
+        `a store was made a reader by the lock of another store sharing its stem: ${JSON.stringify(hydrated)}`,
+      ).toBe(true);
+      // The witness: the store itself, opened again, is still a reader.
+      const second = await device.reopen().drain();
+      expect(second.ok).toBe(false);
+      if (!second.ok) expect(second.refusal.code).toBe("reading_handle");
+    } finally {
+      await writer.stop();
+    }
+  });
+
+  it("makes a store, its lock and its bytes readable by their owner alone", async () => {
+    harness = await hydratedHarness("owner-only");
+    const { device, server } = harness;
+    const hash = scriptBlob(
+      server,
+      Buffer.from("bytes kept beside the store\n"),
+    );
+    expect((await device.blob(hash)).ok).toBe(true);
+    // Held open by a drain whose write the server never answers, so the
+    // journals SQLite keeps beside an open store are there to read.
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "held" },
+        })
+      ).ok,
+    ).toBe(true);
+    server.answer("POST", "/items", { kind: "stall" });
+    const writer = device.hold(["drain"]);
+    const mode = (path: string) => statSync(path).mode & 0o777;
+    try {
+      await vi.waitFor(
+        () => {
+          expect(writer.running(), writer.stderr).toBe(true);
+          expect(
+            server.requests.some((request) => request.method === "POST"),
+          ).toBe(true);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const journals = [`${device.store}-wal`, `${device.store}-shm`];
+      expect(
+        journals.map((journal) => existsSync(journal)),
+        "the store held open has no journals, so their modes below are about nothing",
+      ).toEqual([true, true]);
+      expect(
+        {
+          store: mode(device.store),
+          wal: mode(journals[0] ?? ""),
+          shm: mode(journals[1] ?? ""),
+          lock: mode(`${device.store}.writer-lock`),
+          bytes: mode(`${device.store}.blobs`),
+        },
+        "a store holding what a key reads was made readable by other accounts on the machine",
+      ).toEqual({
+        store: 0o600,
+        wal: 0o600,
+        shm: 0o600,
+        lock: 0o600,
+        bytes: 0o700,
+      });
     } finally {
       await writer.stop();
     }

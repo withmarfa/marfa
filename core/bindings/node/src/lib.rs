@@ -521,10 +521,26 @@ pub struct DrainVerdict {
 /// What a drain did.
 #[napi(object)]
 pub struct DrainReport {
-    pub sent: i64,
+    /// Writes the server answered this drain, whatever it answered.
+    pub answered: i64,
     pub held: i64,
+    /// Writes it could not deliver, each still waiting, uncounted, for the
+    /// next drain.
+    pub undelivered: i64,
+    /// Writes it gave a verdict without sending them: refused for a write
+    /// they waited on or for bytes no longer held, or settled by another
+    /// write's answer.
+    pub unsent: i64,
+    /// Writes whose request could not be made: each is counted against its
+    /// write and waits for the next drain, or is dead at the ceiling. The
+    /// writes a refused credential parks are counted in `stopped`.
+    pub unmade: i64,
+    /// Why the drain ended before the queue was through: the server could
+    /// not be reached, failed, or asked to be left alone for a while.
+    pub unavailable: Option<String>,
     pub verdicts: Vec<DrainVerdict>,
-    /// Why the drain stopped before the queue was empty, where it did.
+    /// Why the drain stopped: the server refused the credential, and every
+    /// write waits until it is replaced.
     pub stopped: Option<String>,
     /// The sources the server said this credential's key does not claim,
     /// where a create naming one was refused for it: every create naming
@@ -736,8 +752,12 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport> {
         });
     }
     Ok(DrainReport {
-        sent: count(report.sent as u64),
+        answered: count(report.answered as u64),
         held: count(report.held as u64),
+        undelivered: count(report.undelivered as u64),
+        unsent: count(report.unsent as u64),
+        unmade: count(report.unmade as u64),
+        unavailable: report.unavailable,
         verdicts,
         stopped: report.stopped,
         unclaimed_sources: report.unclaimed_sources,
@@ -839,6 +859,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::RateLimited { .. } => ("rate_limited", error.to_string()),
         E::Server { .. } => ("server", error.to_string()),
         E::Network(message) => ("network", message.clone()),
+        E::Unnamed { .. } => ("unnamed_answer", error.to_string()),
         E::Decoding(message) => ("decoding", message.clone()),
         E::Store(message) => ("store", message.clone()),
         E::NoServer => ("no_server", error.to_string()),
@@ -867,13 +888,17 @@ pub struct Thumbnail {
 /// What a held stream changed in the copy: an event it applied, named by the
 /// event's type with the item or edge it was about, or `catalog.changed`,
 /// naming neither, where a stream it opened read a catalog that differs from
-/// the one held. `cursor` is the cursor held after it.
+/// the one held. Or what became of the server: `server.unreachable`, with
+/// `reason`, once when a stream cannot be had, and `server.reachable` once
+/// when one is had again, which is when to drain what waited. `cursor` is
+/// the cursor held after it.
 #[napi(object)]
 pub struct Change {
     pub event: String,
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
+    pub reason: Option<String>,
 }
 
 enum Told {
@@ -1150,6 +1175,7 @@ impl MarfaCore {
                         item_id: change.item_id.clone(),
                         edge_id: change.edge_id.clone(),
                         cursor: change.cursor.clone(),
+                        reason: change.reason.clone(),
                     }),
                     ThreadsafeFunctionCallMode::NonBlocking,
                 );

@@ -28,6 +28,14 @@ pub enum CoreError {
     },
     #[error("network: {0}")]
     Network(String),
+    /// The server names its contract on every answer, so one naming none is
+    /// taken as from something in front of it. Environmental, whatever its
+    /// status: a gateway's `401` is not the server's word on the key, nor a
+    /// proxy's `404` on a row.
+    #[error(
+        "{origin} answered {status} naming no contract, taken as from something in front of the server; if it repeats while the server otherwise answers, its refusals are losing the contract header on the way"
+    )]
+    Unnamed { origin: String, status: u16 },
     #[error("decoding: {0}")]
     Decoding(String),
     #[error("store: {0}")]
@@ -81,7 +89,9 @@ impl CoreError {
     /// from a server that is not Marfa's.
     pub fn is_environmental(&self) -> bool {
         match self {
-            CoreError::Network(_) | CoreError::RateLimited { .. } => true,
+            CoreError::Network(_) | CoreError::RateLimited { .. } | CoreError::Unnamed { .. } => {
+                true
+            }
             CoreError::Server { status, .. } => *status >= 500 || *status == 408,
             _ => false,
         }

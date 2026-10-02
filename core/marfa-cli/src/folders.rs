@@ -250,10 +250,12 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                             .iter()
                             .chain(pulled.iter().flat_map(|pulled| &pulled.embeds)),
                     ));
-                    lines.push(format!(
-                        "sent {}, held {}",
-                        drained.report.sent, drained.report.held
-                    ));
+                    lines.push(output::counts(&drained.report));
+                    lines.extend(output::undelivered(&drained.report));
+                    if let Some(stopped) = &drained.report.stopped {
+                        lines.push(stopped.clone());
+                    }
+                    lines.extend(output::unclaimed(&drained.report));
                     if drained.rebased > 0 {
                         lines.push(rebased_line(drained.rebased));
                     }

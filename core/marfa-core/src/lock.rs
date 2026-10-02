@@ -32,7 +32,8 @@ impl WriterLock {
                 handle: Handle::Writer,
             });
         };
-        let path = store.with_extension("writer-lock");
+        let path = lock_path(store);
+        crate::owner_only(&path)?;
         let claim = Connection::open(&path)?;
         // Zero: waiting would make a second opener hang instead of being told
         // it may only read.
@@ -71,6 +72,14 @@ impl WriterLock {
     }
 }
 
+/// Appended, not put in place of the extension: `notes.sqlite` and `notes.db`
+/// in one folder are two stores, and one lock would make the second a reader.
+fn lock_path(store: &Path) -> std::path::PathBuf {
+    let mut name = store.as_os_str().to_owned();
+    name.push(".writer-lock");
+    std::path::PathBuf::from(name)
+}
+
 fn is_busy(error: &rusqlite::Error) -> bool {
     matches!(
         error.sqlite_error_code(),
@@ -99,5 +108,17 @@ mod tests {
         drop(second);
         let third = WriterLock::claim(Some(&store)).unwrap();
         assert_eq!(third.handle(), Handle::Writer);
+    }
+
+    #[test]
+    fn two_stores_sharing_a_stem_each_have_a_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = WriterLock::claim(Some(&dir.path().join("notes.sqlite"))).unwrap();
+        let second = WriterLock::claim(Some(&dir.path().join("notes.db"))).unwrap();
+        assert_eq!(
+            (first.handle(), second.handle()),
+            (Handle::Writer, Handle::Writer),
+            "a store was made a reader by another store's lock"
+        );
     }
 }

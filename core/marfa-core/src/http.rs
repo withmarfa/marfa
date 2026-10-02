@@ -76,11 +76,21 @@ pub struct Answer {
     pub retry_after_seconds: Option<u64>,
     /// The server answered from its idempotency record rather than writing.
     pub replayed: bool,
+    /// The server names its contract on every answer, so a refusal naming
+    /// none came from something in front of it, a proxy or a tunnel.
+    pub contract_named: bool,
 }
 
 impl Answer {
     pub fn is_success(&self) -> bool {
         (200..300).contains(&self.status)
+    }
+
+    /// A refusal that says nothing of the write: the network's, a rate
+    /// limit, a failing server, or one naming no contract (`Http::refused`).
+    pub fn is_environmental(&self) -> bool {
+        !self.is_success()
+            && (!self.contract_named || matches!(self.status, 408 | 425 | 429 | 500..=599))
     }
 }
 
@@ -234,6 +244,26 @@ impl Http {
             return run(&fresh);
         }
         Ok(response)
+    }
+
+    /// Every refusal the core reads becomes an error here, and the one rule
+    /// is that a refusal naming no contract is not the server's: a gateway's
+    /// `401` is no word on the key, nor a proxy's `404` on a row.
+    pub(crate) fn refused(
+        &self,
+        status: u16,
+        named: bool,
+        text: &str,
+        retry_after_seconds: Option<u64>,
+    ) -> CoreError {
+        if named {
+            refusal(status, text, retry_after_seconds)
+        } else {
+            CoreError::Unnamed {
+                origin: self.origin(),
+                status,
+            }
+        }
     }
 
     /// Identifies a server without identifying a key.
@@ -449,6 +479,7 @@ impl Http {
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, true)?;
+        let contract_named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after_seconds = retry_after(&response);
         let replayed = response
             .headers()
@@ -470,6 +501,7 @@ impl Http {
             body,
             retry_after_seconds,
             replayed,
+            contract_named,
         })
     }
 
@@ -498,9 +530,10 @@ impl Http {
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
         if !(200..300).contains(&status) {
+            let named = header(&response, CONTRACT_HEADER).is_some();
             let retry_after = retry_after(&response);
             let text = response.into_body().read_to_string().unwrap_or_default();
-            return Err(refusal(status, &text, retry_after));
+            return Err(self.refused(status, named, &text, retry_after));
         }
         Ok(Box::new(response.into_body().into_reader()))
     }
@@ -651,16 +684,7 @@ impl Http {
             .read_to_string()
             .map_err(|error| CoreError::Network(error.to_string()))?;
         if !(200..300).contains(&status) {
-            return Err(match refusal(status, &text, retry_after) {
-                // A 404 naming no contract is a proxy's; reading it as the
-                // row's absence would forget a row the server holds.
-                CoreError::NotFound { code, message } if served.is_none() => CoreError::Server {
-                    status,
-                    code,
-                    message,
-                },
-                refused => refused,
-            });
+            return Err(self.refused(status, served.is_some(), &text, retry_after));
         }
         serde_json::from_str(&text)
             .map_err(|error| CoreError::Decoding(format!("{}: {error}", url.path())))
@@ -759,7 +783,8 @@ fn http_date(raw: &str) -> Option<i64> {
     Some(days * 86_400 + hour * 3_600 + minute * 60 + second)
 }
 
-pub(crate) fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
+/// Only for an answer naming the server's contract; `Http::refused` decides.
+fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
     let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
             envelope.error.code,
@@ -789,6 +814,51 @@ pub(crate) fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_naming_no_contract_is_the_network_on_every_read() {
+        let server = crate::scripted::Scripted::start();
+        let http = Http::new(&server.url(), "k").unwrap();
+        for (status, code) in [
+            (401, "access_denied"),
+            (404, "not_found"),
+            (403, "forbidden"),
+        ] {
+            for path in ["/items/x", "/types", "/events"] {
+                server.on(path, vec![crate::scripted::unnamed(status, code)]);
+            }
+            let read = match http.item("x") {
+                Ok(found) => panic!("an unnamed {status} read as an answer: {found:?}"),
+                Err(error) => error,
+            };
+            let catalog = http.types().unwrap_err();
+            let stream = match http.open_events(Some("1"), std::time::Duration::from_secs(5)) {
+                Ok(_) => panic!("an unnamed {status} opened a stream"),
+                Err(error) => error,
+            };
+            for refused in [read, catalog, stream] {
+                assert!(
+                    matches!(refused, CoreError::Unnamed { status: said, .. } if said == status),
+                    "an unnamed {status} was read as the server's word: {refused:?}"
+                );
+                assert!(refused.is_environmental());
+            }
+        }
+        // The witness: the same refusals naming the contract are the server's.
+        server.on(
+            "/items/x",
+            vec![crate::scripted::refusal(401, "unauthorized")],
+        );
+        assert!(matches!(
+            http.item("x"),
+            Err(CoreError::Unauthorized { .. })
+        ));
+        server.on(
+            "/items/x",
+            vec![crate::scripted::refusal(404, "item_not_found")],
+        );
+        assert!(matches!(http.item("x"), Ok(None)));
+    }
 
     #[test]
     fn origin_drops_the_key_the_query_and_a_trailing_slash() {

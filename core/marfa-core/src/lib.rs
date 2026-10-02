@@ -31,7 +31,7 @@ use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
 pub use catalog::{EdgeType, End, ItemType, TypeField};
-pub use catch_up::{Change, FollowReport};
+pub use catch_up::{Change, FollowReport, SERVER_REACHABLE, SERVER_UNREACHABLE};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
 pub use folder::{
@@ -48,6 +48,34 @@ pub use model::{
 pub use store::CEILING;
 
 pub type Result<T> = std::result::Result<T, CoreError>;
+
+/// Made readable by its owner alone where it is absent: a store holds what a
+/// key reads, and the process umask would let every account on the machine
+/// read it. SQLite gives its journal files the store's own mode.
+pub(crate) fn owner_only(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(CoreError::Store(format!(
+                    "{} cannot be made: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
 
 struct StreamClaim<'a>(&'a AtomicBool);
 
@@ -75,6 +103,9 @@ pub struct Core {
     /// once could move it backwards, apply an event twice, or apply one to a
     /// copy a hydration has replaced.
     streaming: AtomicBool,
+    /// Two drains at once would each send every unanswered write, so a
+    /// second waits for the one under way.
+    draining: Mutex<()>,
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -93,6 +124,7 @@ impl Core {
         let cache = blob::Cache::beside(path);
         if lock.handle() == Handle::Writer {
             cache.sweep_incoming(INCOMING_GRACE);
+            owner_only(path)?;
         }
         Self::from_connection(store::open(path)?, server, lock, Some(cache))
     }
@@ -110,6 +142,7 @@ impl Core {
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock: lock::WriterLock::reader(),
             streaming: AtomicBool::new(false),
+            draining: Mutex::new(()),
         })
     }
 
@@ -161,6 +194,7 @@ impl Core {
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
             lock,
             streaming: AtomicBool::new(false),
+            draining: Mutex::new(()),
         })
     }
 
@@ -378,12 +412,24 @@ impl Core {
         store::queued_writes(&conn)
     }
 
-    /// One pass: every sendable row is attempted once.
+    /// One pass: every sendable row is attempted once, until the server
+    /// cannot be reached. A drain called while another runs on this store
+    /// waits for it to end, then sends only what is still unanswered.
     pub fn drain(&self) -> Result<DrainReport> {
-        // The handle before the server, so a second opener with no server
-        // is told the real reason it may not write.
-        self.lock.refuse_unless_writer()?;
-        drain::drain(self, self.http()?)
+        let one = self.one_drain();
+        self.drain_held(&one)
+    }
+
+    pub(crate) fn one_drain(&self) -> MutexGuard<'_, ()> {
+        // Holds nothing a panic could leave half-written: the queue is in the
+        // store.
+        self.draining
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub(crate) fn drain_held(&self, _one: &MutexGuard<'_, ()>) -> Result<DrainReport> {
+        drain::drain(self)
     }
 
     /// Under a fresh idempotency key. Answers `false` for a row that is not
@@ -1124,17 +1170,33 @@ fn queue_create(
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
+    // Sent with the slice's tier: left out, the server takes the key's
+    // default, and a row shown at one tier would come back at another.
+    let mut draft = draft.clone();
+    if draft.tier.is_none() {
+        let Some((_, tier)) = store::slice(tx)? else {
+            return Err(CoreError::HydrationIncomplete);
+        };
+        draft.tier = Some(tier);
+    }
+    let draft = &draft;
     let id = draft
         .id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
     let payload = draft.payload(&id)?;
+    let row = draft.wire(&id);
     store::upsert_item(
         tx,
-        &draft.wire(&id),
+        &row,
         Some(&draft.tags),
         &catalog.indexing(&draft.r#type),
     )?;
+    // The answer's echo would otherwise let go of a row the slice does not
+    // hold, and a create shown as saved would vanish with nothing said.
+    if !store::slice_holds(tx, catalog, &row)? {
+        store::pin(tx, &id)?;
+    }
     let queued = store::enqueue(
         tx,
         &store::NewWrite {

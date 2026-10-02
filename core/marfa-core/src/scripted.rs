@@ -28,6 +28,11 @@ pub enum Answer {
         then: Then,
     },
     Stall,
+    /// `answer`, once `after` has passed, so callers can overlap.
+    Slow {
+        after: Duration,
+        answer: Box<Answer>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -216,11 +221,19 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         }
     };
     let mut stream = stream;
-    let answer = answer.unwrap_or_else(|| Answer::Json {
+    let mut answer = answer.unwrap_or_else(|| Answer::Json {
         status: 404,
         body: format!(r#"{{"error":{{"code":"not_found","message":"no answer for {path}"}}}}"#),
         headers: Vec::new(),
     });
+    while let Answer::Slow {
+        after,
+        answer: then,
+    } = answer
+    {
+        thread::sleep(after);
+        answer = *then;
+    }
     match answer {
         Answer::Json {
             status,
@@ -237,7 +250,9 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
             {
                 head.push_str(&format!("{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\n"));
             }
-            for (name, value) in headers {
+            // An empty value names a header to leave out: the contract,
+            // where an answer stands for something in front of the server.
+            for (name, value) in headers.iter().filter(|(_, value)| !value.is_empty()) {
                 head.push_str(&format!("{name}: {value}\r\n"));
             }
             let _ = write!(stream, "{head}\r\n{body}");
@@ -309,6 +324,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
+        Answer::Slow { .. } => unreachable!("taken apart above"),
     }
     let _ = stream.shutdown(Shutdown::Both);
 }
@@ -407,6 +423,16 @@ pub fn json(status: u16, body: &str) -> Answer {
         status,
         body: body.into(),
         headers: Vec::new(),
+    }
+}
+
+/// A refusal naming no contract, as something in front of the server
+/// answers.
+pub fn unnamed(status: u16, code: &str) -> Answer {
+    Answer::Json {
+        status,
+        body: format!(r#"{{"error":{{"code":"{code}","message":"scripted"}}}}"#),
+        headers: vec![(CONTRACT_HEADER.to_string(), String::new())],
     }
 }
 

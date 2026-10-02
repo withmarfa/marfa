@@ -1,9 +1,10 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { FolderDoor, type DoorCreate } from "../../device/folder-door.js";
 import {
   SERVED_SOURCE,
   answers,
   edgeEvent,
+  headRead,
   itemEvent,
   refusal,
   replay,
@@ -1310,8 +1311,8 @@ describe("what a drain sends and reports", () => {
       "the drain sent writes it did not report, so a caller running one cannot find out what became of them",
     ).toEqual([created.value.id, edited.value.id]);
     expect(
-      drained.value.sent,
-      "the count of what was sent disagrees with the verdicts reported beside it",
+      drained.value.answered,
+      "the count of what was answered disagrees with the verdicts reported beside it",
     ).toBe(2);
     for (const verdict of drained.value.verdicts) {
       expect(
@@ -1706,7 +1707,7 @@ describe("a write that is not about an item's fields", () => {
     // The control: every kind actually went. Without it the absence above
     // is satisfied by a drain that sent nothing.
     expect(
-      drained.value.sent,
+      drained.value.answered,
       "the drain did not send every queued write, so the verdicts above are about a subset",
     ).toBe(queued.length + 2);
     // And none of them counted a refusal, which is what the wrong shape did.
@@ -4378,8 +4379,9 @@ describe("an edit behind an edit of the same row", () => {
     harness = await hydratedHarness("edit-behind-failure", { rows: rows() });
     const { device, server } = harness;
     // The first drain meets a refused credential, which blocks the whole
-    // queue. The next fails the first edit of the row and of the edge, and
-    // the one after takes whatever it is sent, as the server decides.
+    // queue. The next fails the first edit of the row, which ends the pass
+    // before the edge's goes out (`queue-and-verdicts.md` 17), and the one
+    // after takes whatever it is sent, as the server decides.
     const door = newDoor();
     let itemEdits = 0;
     server.answer(
@@ -4403,10 +4405,7 @@ describe("an edit behind an edit of the same row", () => {
       version: 1,
       properties: { weight: 1 } as Record<string, unknown>,
     };
-    let edgeEdits = 0;
     server.answer("PATCH", /^\/edges\/[^/]+$/, (request) => {
-      edgeEdits += 1;
-      if (edgeEdits === 1) return answers.serverFault();
       const sent = JSON.parse(request.body) as {
         properties: Record<string, unknown>;
         version: number;
@@ -4463,7 +4462,7 @@ describe("an edit behind an edit of the same row", () => {
       "accepted",
     ]);
     expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
-    expect(sentOn(harness, `/edges/${EDGE}`)).toEqual([1, 1, 2]);
+    expect(sentOn(harness, `/edges/${EDGE}`)).toEqual([1, 2]);
     expect(verdictsOf(report, "update_edge", HELD.id)).toEqual([
       "accepted",
       "accepted",
@@ -5613,7 +5612,8 @@ describe("an edit behind an edit of the same row", () => {
       expect(queued.ok, JSON.stringify(queued)).toBe(true);
     }
     if (!first.ok || !deleted.ok) return;
-    // The first write of each row goes out and its answer is lost.
+    // The first write goes out and its answer is lost, which ends the pass
+    // before the delete goes (`queue-and-verdicts.md` 17).
     scriptWrites(server, { tags: [answers.dropped()] });
     server.answer("DELETE", /^\/items\/[^/]+$/, answers.dropped());
     expect((await device.drain()).ok).toBe(true);
@@ -5629,15 +5629,10 @@ describe("an edit behind an edit of the same row", () => {
       [behind("restore_item")?.verdict, behind("restore_item")?.follows],
       "the restore went out beside the delete, which had no answer",
     ).toEqual(["blocked", deleted.value.id]);
-    // The witness: each first write went out.
+    // The witness: the first write went out.
     expect(
       server.requests.map((request) => `${request.method} ${request.pathname}`),
-    ).toEqual(
-      expect.arrayContaining([
-        `PUT /items/${HELD.id}/metadata`,
-        `DELETE /items/${QUIET.id}`,
-      ]),
-    );
+    ).toEqual(expect.arrayContaining([`PUT /items/${HELD.id}/metadata`]));
     expect(
       server.requests.filter(
         (request) =>
@@ -6303,5 +6298,161 @@ describe("an edit behind an edit of the same row", () => {
       ]);
       expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
     });
+  });
+});
+
+/** Answers a create with the row it sent, at version 1. */
+function taking(request: { body: string }): Answer {
+  const sent = JSON.parse(request.body) as {
+    id: string;
+    type: string;
+    tier?: string;
+    properties: Record<string, unknown>;
+  };
+  return answers.created(
+    wireItem({
+      id: sent.id,
+      type: sent.type,
+      tier: sent.tier,
+      properties: sent.properties,
+    }),
+  );
+}
+
+describe("drains that overlap", () => {
+  it("refuses a drain from a second process while one runs, and sends each write once", async () => {
+    harness = await hydratedHarness("queue-one-drain", { rows: held() });
+    const { device, server } = harness;
+    for (const title of ["first", "second", "third"]) {
+      expect(
+        (await device.create({ type: "core.note", properties: { title } })).ok,
+      ).toBe(true);
+    }
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    scriptWrites(server, {
+      create: [
+        (request) => ({ kind: "gated", until, then: taking(request) }),
+        taking,
+      ],
+    });
+    const creates = () =>
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ).length;
+    const first = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(creates(), first.stderr).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const second = await device.drain();
+      expect(
+        second.ok,
+        "a second drain ran beside the first, so both send every write still unanswered",
+      ).toBe(false);
+      if (!second.ok) expect(second.refusal.code).toBe("reading_handle");
+      expect(creates(), "the second drain sent a write").toBe(1);
+      release();
+      await first.exited();
+      expect(first.exitCode(), first.stderr).toBe(0);
+    } finally {
+      release();
+      await first.stop();
+    }
+    expect(creates(), "a write was sent more than once").toBe(3);
+    const queue = await device.queue();
+    expect(
+      queue.ok && queue.value.map((row) => row.verdict),
+      "the first drain did not answer every write",
+    ).toEqual(["accepted", "accepted", "accepted"]);
+  });
+});
+
+describe("a create the slice does not hold", () => {
+  const FEED = "01a00000-0000-7000-8000-0000000000f1";
+  /** What the next catch-up's stream answers. */
+  let stream: Answer = headRead("10");
+
+  async function feedSlice(label: string): Promise<Harness> {
+    const started = await startHarness(label);
+    scriptHydration(started.server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: FEED, tier: "feed" } }] },
+    });
+    const hydrated = await started.device.hydrate(["core.note"], "feed");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+    // The hydration's head read answers once more, then `stream` does.
+    stream = headRead("10");
+    started.server.answer("GET", "/events", () => stream);
+    expect((await started.device.catchUp()).ok).toBe(true);
+    return started;
+  }
+
+  it("sends a create naming no tier with the tier the slice holds", async () => {
+    harness = await feedSlice("queue-create-slice-tier");
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "no tier named" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const shown = await device.get(created.value.item_id ?? "");
+    expect(
+      shown.ok && shown.value.tier,
+      "a create naming no tier was shown at a tier the slice does not hold",
+    ).toBe("feed");
+    scriptWrites(server, { create: [taking] });
+    expect((await device.drain()).ok).toBe(true);
+    const sent = server.requests.find(
+      (request) => request.method === "POST" && request.pathname === "/items",
+    );
+    expect(
+      (JSON.parse(sent?.body ?? "{}") as { tier?: string }).tier,
+      "a create naming no tier went without one, so the server gave it the key's default tier and the copy let it go at its echo",
+    ).toBe("feed");
+  });
+
+  it("holds a create the slice does not hold through its answer and its event", async () => {
+    harness = await feedSlice("queue-create-outside-slice");
+    const { device, server } = harness;
+    const created = await device.create({
+      type: "core.note",
+      tier: "library",
+      properties: { title: "another tier" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const id = created.value.item_id ?? "";
+    scriptWrites(server, { create: [taking] });
+    const drained = await device.drain();
+    expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("accepted");
+    const { edges: _edges, ...row } = wireItem({
+      id,
+      tier: "library",
+      properties: { title: "another tier" },
+    });
+    stream = replay("11", [itemEvent("11", "item.created", row)]);
+    expect((await device.catchUp()).ok).toBe(true);
+    const held = await device.get(id);
+    expect(
+      held.ok && held.value.tier,
+      "a create the copy showed as saved was let go at its own event, with nothing saying so",
+    ).toBe("library");
+    const status = await device.status();
+    expect(status.ok && status.value.pinned).toContain(id);
+
+    // The witness: a row of that tier another device made is not held.
+    const other = "01a00000-0000-7000-8000-0000000000f2";
+    const { edges: _theirs, ...theirs } = wireItem({
+      id: other,
+      tier: "library",
+    });
+    stream = replay("12", [itemEvent("12", "item.created", theirs)]);
+    expect((await device.catchUp()).ok).toBe(true);
+    expect((await device.get(other)).ok).toBe(false);
   });
 });
