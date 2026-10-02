@@ -11,6 +11,7 @@ import {
   trackItem,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { uploadReferenced } from "../../utils/blobs.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -115,6 +116,18 @@ async function uploadText(words: string) {
   return upload.data.hash;
 }
 
+/** This run's own bytes, named by a note so the suite's key reads them. */
+async function uploadReferencedText(words: string) {
+  const upload = await uploadReferenced(
+    client,
+    ctx,
+    new TextEncoder().encode(text(words)),
+    "text/plain",
+  );
+  expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
+  return upload.data.hash;
+}
+
 beforeAll(async () => {
   ({ ctx, client } = await createTestContext("compliance", "blob-rules"));
   operator = getOperatorClient();
@@ -128,7 +141,7 @@ describe("the rules that keep a blob's bytes", () => {
   it("replicates every blob to the object store and records the copies, and the link becomes the store's own", async () => {
     const hashes = [];
     for (const word of ["one", "two", "three"]) {
-      hashes.push(await uploadText(`replicated ${word}`));
+      hashes.push(await uploadReferencedText(`replicated ${word}`));
     }
     // A run answers what it did, and the last one has nothing left.
     let result = { copied: -1, bytes: -1, remaining: -1 };
@@ -195,7 +208,7 @@ describe("the rules that keep a blob's bytes", () => {
     // `correctness/blob-correctness.test.ts` the replication scheduler
     // decides which signer answered, within a second of the upload, so
     // which status that case measures is a race.
-    const hash = await uploadText("a link that dies");
+    const hash = await uploadReferencedText("a link that dies");
     await replicateToZero();
     const link = await client.getBlobUrl(hash);
     expect(link.status).toBe(200);
@@ -229,7 +242,7 @@ describe("the rules that keep a blob's bytes", () => {
   });
 
   it("drops a copy while the minimum holds and refuses the drop that would break it", async () => {
-    const hash = await uploadText("two copies, then one");
+    const hash = await uploadReferencedText("two copies, then one");
     await replicateToZero();
     const stores = await operator.listBlobStores();
     await expectMatchesSchema("GET", "/blobs/stores", 200, stores.data);
@@ -291,8 +304,8 @@ describe("the rules that keep a blob's bytes", () => {
 
   it("stamps a good copy and strikes a corrupt one, which replication then restores", async () => {
     const content = text("checked, corrupted, restored");
-    const hash = await uploadText("checked, corrupted, restored");
-    const missing = await uploadText("checked, removed, restored");
+    const hash = await uploadReferencedText("checked, corrupted, restored");
+    const missing = await uploadReferencedText("checked, removed, restored");
     await replicateToZero();
     // A check over sound pairs stamps every copy and strikes none.
     for (const each of [hash, missing]) {
@@ -381,8 +394,10 @@ describe("the rules that keep a blob's bytes", () => {
       mime_type: "text/plain",
       size_bytes: text("nothing names me").length,
     });
+    // Through the operator key, which reads every blob, so each status says
+    // whether the bytes are held rather than whether a key may read them.
     // Reported is not deleted: the bytes still answer.
-    expect((await client.downloadBlob(orphan)).status).toBe(200);
+    expect((await operator.downloadBlob(orphan)).status).toBe(200);
 
     // A reported blob an item names before the next run leaves the report
     // and stays; the one still unreferenced goes.
@@ -394,9 +409,9 @@ describe("the rules that keep a blob's bytes", () => {
     expect(lateItem.ok, JSON.stringify(lateItem.error)).toBe(true);
     trackItem(ctx, lateItem.data.item.id);
     await run("blob-orphans");
-    expect((await client.downloadBlob(orphan)).status).toBe(404);
-    expect((await client.downloadBlob(kept)).status).toBe(200);
-    expect((await client.downloadBlob(late)).status).toBe(200);
+    expect((await operator.downloadBlob(orphan)).status).toBe(404);
+    expect((await operator.downloadBlob(kept)).status).toBe(200);
+    expect((await operator.downloadBlob(late)).status).toBe(200);
     const after = (await operator.listBlobOrphans()).data.data.map(
       (row) => row.hash,
     );
@@ -436,8 +451,8 @@ describe("the rules that keep a blob's bytes", () => {
     await run("blob-orphans");
     await run("blob-orphans");
 
-    expect((await client.downloadBlob(unlinked)).status).toBe(404);
-    const download = await client.downloadBlob(linked);
+    expect((await operator.downloadBlob(unlinked)).status).toBe(404);
+    const download = await operator.downloadBlob(linked);
     expect(download.status).toBe(200);
     expect(new TextDecoder().decode(download.data)).toBe(
       text("an image a note links in its body"),
@@ -470,8 +485,8 @@ describe("the rules that keep a blob's bytes", () => {
     await run("blob-orphans");
     await run("blob-orphans");
 
-    expect((await client.downloadBlob(unreferenced)).status).toBe(404);
-    expect((await client.downloadBlob(whole)).status).toBe(200);
-    expect((await client.downloadBlob(linked)).status).toBe(200);
+    expect((await operator.downloadBlob(unreferenced)).status).toBe(404);
+    expect((await operator.downloadBlob(whole)).status).toBe(200);
+    expect((await operator.downloadBlob(linked)).status).toBe(200);
   });
 });

@@ -7,6 +7,7 @@ import {
   getOperatorClient,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { uploadReferenced } from "../../utils/blobs.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -71,7 +72,7 @@ describe("the stores an instance keeps bytes in", () => {
 
   it("records a new blob's location as the disk store", async () => {
     const content = new TextEncoder().encode("located on the disk first");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
 
     const locations = await client.listBlobLocations(upload.data.hash);
@@ -97,7 +98,7 @@ describe("the stores an instance keeps bytes in", () => {
 
   it("answers 404 for the locations of an unknown hash and 400 for a malformed one", async () => {
     const content = new TextEncoder().encode("a hash with locations");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
     expect((await client.listBlobLocations(upload.data.hash)).status).toBe(200);
     const unknown = await client.listBlobLocations(`sha256:${"0".repeat(64)}`);

@@ -16,6 +16,7 @@ import {
   getFixtureByName,
   type BlobFixture,
 } from "../../generators/blob-fixtures.js";
+import { uploadReferenced } from "../../utils/blobs.js";
 
 /**
  * Blob upload and download latency at three payload sizes, from a few
@@ -86,7 +87,7 @@ beforeAll(async () => {
     // Synthesized once — generating a multi-megabyte fixture is pure CPU work
     // and would otherwise be timed as part of every upload sample.
     const bytes = fixture.generate();
-    const upload = await client.uploadBlob(bytes, fixture.mimeType);
+    const upload = await uploadReferenced(client, ctx, bytes, fixture.mimeType);
     if (!upload.ok) {
       throw new Error(
         `Failed to seed ${name} blob: ${String(upload.status)} ${JSON.stringify(upload.error)}`,
