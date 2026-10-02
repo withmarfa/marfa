@@ -89,16 +89,16 @@ Fixture paths are under `src/suites/`.
 
 ## Blobs
 
-| Operation                                | Status      | Fixture                                                           | Notes                                                                                          |
-| ---------------------------------------- | ----------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `POST /blobs`                            | covered     | `correctness/blob-correctness.test.ts`                            | Hash, dedupe, no cap, empty and multipart bodies refused.                                      |
-| `GET /blobs/stores`                      | covered     | `compliance/blob-stores.test.ts`, `compliance/blob-rules.test.ts` | Operator key only; the disk store and the object store the referee attaches, and `min_copies`. |
-| `GET /blobs/{hash}`                      | covered     | `correctness/blob-correctness.test.ts`                            | Byte for byte, content type, one range, HEAD, 404, 416, malformed hash.                        |
-| `GET /blobs/{hash}/url`                  | covered     | `correctness/blob-correctness.test.ts`                            | A link that fetches without a credential; the cap on its lifetime; expiry and tampering.       |
-| `GET /blobs/{hash}/locations`            | covered     | `compliance/blob-stores.test.ts`                                  | The location log for one blob.                                                                 |
-| `DELETE /blobs/{hash}/locations/{store}` | covered     | `compliance/blob-rules.test.ts`                                   | Operator key only; a drop the minimum allows, and the one it refuses.                          |
-| `GET /blobs/orphans`                     | covered     | `compliance/blob-rules.test.ts`                                   | Operator key only; the report the orphan sweep writes before it purges.                        |
-| `GET /blobs/{hash}/fetch`                | unpublished | `correctness/blob-correctness.test.ts`                            | The instance-served link's target; the signature in its query is the credential.               |
+| Operation                                | Status      | Fixture                                                                 | Notes                                                                                                                |
+| ---------------------------------------- | ----------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `POST /blobs`                            | covered     | `correctness/blob-correctness.test.ts`, `compliance/blob-reach.test.ts` | Hash, dedupe, no cap, empty and multipart bodies refused; write on some type.                                        |
+| `GET /blobs/stores`                      | covered     | `compliance/blob-stores.test.ts`, `compliance/blob-rules.test.ts`       | Operator key only; the disk store and the object store the referee attaches, and `min_copies`.                       |
+| `GET /blobs/{hash}`                      | covered     | `correctness/blob-correctness.test.ts`, `compliance/blob-reach.test.ts` | Byte for byte, content type, one range, HEAD, 404, 416, malformed hash; read on a referencing item.                  |
+| `GET /blobs/{hash}/url`                  | covered     | `correctness/blob-correctness.test.ts`, `compliance/blob-reach.test.ts` | A link that fetches without a credential; the cap on its lifetime; expiry and tampering; read on a referencing item. |
+| `GET /blobs/{hash}/locations`            | covered     | `compliance/blob-stores.test.ts`, `compliance/blob-reach.test.ts`       | The location log for one blob; read on a referencing item.                                                           |
+| `DELETE /blobs/{hash}/locations/{store}` | covered     | `compliance/blob-rules.test.ts`                                         | Operator key only; a drop the minimum allows, and the one it refuses.                                                |
+| `GET /blobs/orphans`                     | covered     | `compliance/blob-rules.test.ts`                                         | Operator key only; the report the orphan sweep writes before it purges.                                              |
+| `GET /blobs/{hash}/fetch`                | unpublished | `correctness/blob-correctness.test.ts`                                  | The instance-served link's target; the signature in its query is the credential.                                     |
 
 ## Keys and OAuth
 

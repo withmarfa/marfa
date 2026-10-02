@@ -10,8 +10,9 @@
  * no delete, so the bytes this suite writes are not removable the way items
  * are. That is deliberate rather than a leak: fixture bytes are generated from
  * fixed seeds, so every run converges on the same handful of hashes instead of
- * accumulating new ones. The key this suite mints is still revoked by
- * `cleanup(ctx)` in `afterAll`, and no items are created.
+ * accumulating new ones. Each upload is named by a note, untimed, because a
+ * key reads only bytes an item it may read references (`blobs.md` 15); the
+ * notes and the key this suite mints go in `cleanup(ctx)` in `afterAll`.
  */
 
 import { Buffer } from "node:buffer";
@@ -23,7 +24,7 @@ import {
   type BlobFixture,
 } from "../../generators/blob-fixtures.js";
 import { benchmarkConcurrent } from "../../utils/pool.js";
-import { cleanup, createTestContext } from "../../utils/setup.js";
+import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
 import { measure } from "../../utils/timing.js";
 import { record, warmTarget } from "./bench.js";
 import { getLoadProfile } from "./profiles.js";
@@ -51,6 +52,18 @@ const PLAN: { fixture: BlobFixture; seed: number }[] = Array.from(
 
 describe("blob storage at scale", () => {
   let ctx: TestContext;
+
+  async function nameInANote(hash: string): Promise<void> {
+    const note = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `![bytes](${hash})` },
+    });
+    if (!note.ok) {
+      throw new Error(`could not name ${hash}: ${JSON.stringify(note.error)}`);
+    }
+    trackItem(ctx, note.data.item.id);
+  }
   let client: MarfaClient;
   const uploaded: { hash: string; bytes: number }[] = [];
 
@@ -85,6 +98,7 @@ describe("blob storage at scale", () => {
         continue;
       }
       const hash = upload.result.data.hash;
+      await nameInANote(hash);
       uploaded.push({ hash, bytes: bytes.byteLength });
       uploadDurations.push(upload.durationMs);
       totalBytes += bytes.byteLength;

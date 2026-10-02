@@ -5,6 +5,7 @@ import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { uploadReferenced } from "../../utils/blobs.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -67,7 +68,12 @@ describe("blob correctness", () => {
     const content = new Uint8Array(64 * 1_048_576 + 3);
     for (let i = 0; i < content.length; i += 4093) content[i] = i & 0xff;
 
-    const upload = await client.uploadBlob(content, "application/octet-stream");
+    const upload = await uploadReferenced(
+      client,
+      ctx,
+      content,
+      "application/octet-stream",
+    );
     expect(upload.status, JSON.stringify(upload.error)).toBe(201);
     expect(upload.data.hash).toBe(hashOf(content));
     expect(upload.data.size_bytes).toBe(content.byteLength);
@@ -83,7 +89,12 @@ describe("blob correctness", () => {
   it("download returns byte-for-byte identical content", async () => {
     const content = new TextEncoder().encode("roundtrip blob content");
 
-    const upload = await client.uploadBlob(content, "application/octet-stream");
+    const upload = await uploadReferenced(
+      client,
+      ctx,
+      content,
+      "application/octet-stream",
+    );
     expect(upload.ok).toBe(true);
 
     const download = await client.downloadBlob(upload.data.hash);
@@ -94,7 +105,7 @@ describe("blob correctness", () => {
   it("content-type is preserved on download", async () => {
     const content = new TextEncoder().encode("fake png data");
 
-    const upload = await client.uploadBlob(content, "image/png");
+    const upload = await uploadReferenced(client, ctx, content, "image/png");
     expect(upload.ok).toBe(true);
 
     const download = await client.downloadBlob(upload.data.hash);
@@ -106,7 +117,7 @@ describe("blob correctness", () => {
 
   it("serves one byte range with 206, and 416 outside the blob", async () => {
     const content = new TextEncoder().encode("0123456789");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
 
     const ranged = await client.downloadBlob(upload.data.hash, {
@@ -127,7 +138,7 @@ describe("blob correctness", () => {
 
   it("answers HEAD with the headers of the bytes", async () => {
     const content = new TextEncoder().encode("headers only");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
 
     const head = await client.headBlob(upload.data.hash);
@@ -196,7 +207,7 @@ describe("blob correctness", () => {
 
   it("mints a link that fetches the bytes without a credential", async () => {
     const content = new TextEncoder().encode("bytes behind a link");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
 
     const link = await client.getBlobUrl(upload.data.hash, 90);
@@ -216,7 +227,7 @@ describe("blob correctness", () => {
 
   it("caps a link's lifetime at seven days", async () => {
     const content = new TextEncoder().encode("a week at most");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
     const link = await client.getBlobUrl(upload.data.hash, 10_000_000);
     expect(link.status).toBe(200);
@@ -225,7 +236,7 @@ describe("blob correctness", () => {
 
   it("refuses a link that has expired or was altered", async () => {
     const content = new TextEncoder().encode("a link that stops working");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
 
     // The altered link's witness: the link as minted fetches the bytes.
@@ -267,7 +278,7 @@ describe("blob correctness", () => {
 
   it("answers 404 for a link to an unknown hash and 400 for a malformed one", async () => {
     const content = new TextEncoder().encode("a hash the instance knows");
-    const upload = await client.uploadBlob(content, "text/plain");
+    const upload = await uploadReferenced(client, ctx, content, "text/plain");
     expect(upload.ok).toBe(true);
     expect((await client.getBlobUrl(upload.data.hash)).status).toBe(200);
     const unknown = await client.getBlobUrl(`sha256:${"0".repeat(64)}`);
@@ -279,7 +290,12 @@ describe("blob correctness", () => {
   });
 
   it("refuses a malformed hash and an empty upload", async () => {
-    const one = await client.uploadBlob(new Uint8Array([1]), "text/plain");
+    const one = await uploadReferenced(
+      client,
+      ctx,
+      new Uint8Array([1]),
+      "text/plain",
+    );
     expect(one.status).toBe(201);
     expect((await client.downloadBlob(one.data.hash)).status).toBe(200);
     const malformed = await client.downloadBlob("not-a-hash");

@@ -46,13 +46,25 @@ async function register(
   expect(res.status, await res.text()).toBe(method === "POST" ? 201 : 200);
 }
 
+/** A file item naming bytes the working key uploaded, so its reference
+ *  lends and the sweep may offer it. */
 async function file(type: string): Promise<string> {
+  const upload = await ctx.app.request("/blobs", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.workingKey}`,
+      "Content-Type": "image/png",
+    },
+    body: new TextEncoder().encode("candidate bytes"),
+  });
+  expect(upload.status).toBe(201);
+  const { hash } = (await upload.json()) as { hash: string };
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.workingKey,
     body: {
       type,
       properties: {
-        blob_ref: `sha256:${"0".repeat(64)}`,
+        blob_ref: hash,
         mime_type: "image/png",
       },
     },

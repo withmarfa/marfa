@@ -22,7 +22,7 @@
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { CascadeRoot, Storage } from "../storage/interface.js";
-import type { ApiKey, Edge, Item, Metadata } from "@withmarfa/shared";
+import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
 import {
@@ -38,6 +38,8 @@ import {
 import { log } from "../middleware/logger.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
+import { blobProof } from "../routes/_blob-reach.js";
+import type { JobCredential } from "./credential.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -64,7 +66,7 @@ export interface RunChunkContext {
   /** The credential that queued the job, as the worker resolved it for this
    *  chunk; its enforcement override is resolved against the levers as it
    *  is on the door it called. */
-  credential?: ApiKey;
+  credential: JobCredential;
 }
 
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
@@ -429,7 +431,7 @@ async function runUpdatePropertiesChunk({
   // job waited holds for the rows it has not yet reached.
   const enforcement = resolveEnforcement(
     await readInstanceConfig(storage.settings),
-    credential,
+    credential.key,
   );
   // Collected inside the transaction, published after it commits.
   const updated: Item[] = [];
@@ -492,6 +494,7 @@ async function runUpdatePropertiesChunk({
         }
         const result = await storage.items.update(id, {
           properties: input.patch,
+          blob_proof: blobProof(storage, credential.key, credential.kind),
         });
         if ("error" in result) {
           errors.push({

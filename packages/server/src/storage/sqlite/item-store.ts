@@ -108,6 +108,12 @@ import {
   settleNaturalKeyTombstones,
   syncLink,
 } from "./item-links.js";
+import {
+  blobLending,
+  digestsIn,
+  syncBlobReferences,
+  type BlobProof,
+} from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
@@ -172,7 +178,7 @@ function typePatternClause(pattern: string): SQL {
   return sql`(${items.type} = ${exact} OR ${items.type} LIKE ${descendantPattern} ESCAPE '\\')`;
 }
 
-function allowedTypesCondition(
+export function allowedTypesCondition(
   patterns: string[] | undefined,
   excluded: string[] = [],
 ): SQL | undefined {
@@ -230,6 +236,9 @@ async function insertConflictedSibling(
     row: { id: string; type: string; source: string | null; tier: string };
     now: string;
     properties: Record<string, unknown>;
+    proof: BlobProof;
+    /** The digests the losing write sent that its base version lacked. */
+    carried: ReadonlySet<string>;
     mayCopyEdge?: (
       edgeType: string,
       sourceType: string,
@@ -268,6 +277,13 @@ async function insertConflictedSibling(
   // indexing and the announcing, and doing either again would report a
   // create that did not happen.
   if (inserted.length === 0) return null;
+  // The sibling starts from the row's own properties, so a digest it copies
+  // lends as it lent there; only one new to it is the losing writer's.
+  const inherited = await blobLending(tx, row.id);
+  await syncBlobReferences(tx, { id: siblingId, properties }, args.proof, {
+    carried: args.carried,
+    inherited,
+  });
 
   const [held] = await tx
     .select({ tags: metadata.tags })
@@ -664,6 +680,11 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       await syncLink(tx, { id, type: input.type, properties });
+      await syncBlobReferences(
+        tx,
+        { id, properties },
+        input.blob_proof ?? null,
+      );
       if (input.source && input.source_id) {
         await forgetNaturalKey(tx, input.source, input.source_id);
       }
@@ -823,8 +844,11 @@ export class SqliteItemStore implements ItemStore {
     after: { id: string; type: string; properties: Record<string, unknown> },
     before: { type: string; source: string | null; source_id: string | null },
     sourceId: string | undefined,
+    proof: BlobProof,
+    carried: ReadonlySet<string>,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
+    await syncBlobReferences(tx, after, proof, { carried });
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }
@@ -1145,6 +1169,8 @@ export class SqliteItemStore implements ItemStore {
           { id, type: input.type ?? row.type, properties: merged },
           row,
           input.source_id,
+          input.blob_proof ?? null,
+          digestsIn(incomingProps ?? {}),
         );
 
         await this.searchStore.remove(id);
@@ -1192,6 +1218,16 @@ export class SqliteItemStore implements ItemStore {
           snapshotFields,
         );
       }
+
+      // A stale write is credited only for digests its own base version
+      // lacked: one the base already held came from whoever wrote it there,
+      // and may since have been removed, so echoing it back is not sending it.
+      const baseDigests = digestsIn(ancestor.properties);
+      const staleCarried = new Set(
+        [...digestsIn(incomingProps ?? {})].filter(
+          (hash) => !baseDigests.has(hash),
+        ),
+      );
 
       // Only the item fields this write names. A field it is silent about
       // is not a change and cannot collide, so a write that touches
@@ -1329,6 +1365,8 @@ export class SqliteItemStore implements ItemStore {
             mayCopyEdge: input.may_copy_edge,
             row,
             now,
+            proof: input.blob_proof ?? null,
+            carried: staleCarried,
             properties: conflictedSiblingProperties({
               clientProperties: clientProps,
               currentProperties: currentProps,
@@ -1420,6 +1458,8 @@ export class SqliteItemStore implements ItemStore {
         { id, type: input.type ?? row.type, properties: resolvedProperties },
         row,
         resolvedFields.source_id ?? undefined,
+        input.blob_proof ?? null,
+        staleCarried,
       );
 
       await this.searchStore.remove(id);

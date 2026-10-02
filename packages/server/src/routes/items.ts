@@ -124,6 +124,7 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
+import { requestBlobProof } from "./_blob-reach.js";
 
 /**
  * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
@@ -1747,6 +1748,7 @@ export function itemRoutes(storage: Storage) {
 
         const upsertResult = await storage.runInTransaction(async () => {
           const updated = await storage.items.update(existing.id, {
+            blob_proof: requestBlobProof(c, storage),
             ...(body.properties !== undefined && { properties }),
             ...(tierValue !== undefined && { tier: tierValue }),
             ...(body.occurred_at !== undefined && {
@@ -1938,6 +1940,7 @@ export function itemRoutes(storage: Storage) {
         const created = await storage.items.create({
           type,
           properties,
+          blob_proof: requestBlobProof(c, storage),
           id: body.id,
           state: body.state as ItemState | undefined,
           tier: tierValue,
@@ -2732,6 +2735,7 @@ export function itemRoutes(storage: Storage) {
         ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
         hasProperties || hasTier || hasOccurredAt || hasSourceId || retyping
           ? await storage.items.update(id, {
+              blob_proof: requestBlobProof(c, storage),
               properties: body.properties,
               ...(body.properties_mode !== undefined && {
                 properties_mode: body.properties_mode,

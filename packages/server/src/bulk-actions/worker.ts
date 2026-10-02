@@ -356,7 +356,7 @@ export class BulkActionWorker {
             input,
             ids: permitted,
             broughtBack,
-            credential: credential.key,
+            credential,
           });
       } catch (err) {
         // Whole-chunk failure inside the transaction — a database error,

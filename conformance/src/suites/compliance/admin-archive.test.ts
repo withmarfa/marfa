@@ -125,7 +125,7 @@ describe("admin/restore-archive", () => {
     );
     expect(archive.byteLength).toBeGreaterThan(1024 * 1024);
 
-    expect((await client.downloadBlob(hash)).status).toBe(404);
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
     const restored = await operator.restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, id);
@@ -135,8 +135,8 @@ describe("admin/restore-archive", () => {
     expect(read.status).toBe(200);
     expect(read.headers.get("content-type")).toBe("application/x-drill");
     expect(Buffer.from(read.data).equals(Buffer.from(data))).toBe(true);
-    expect((await client.downloadBlob(claimed)).status).toBe(404);
-    expect((await client.downloadBlob(blobHash(impostor))).status).toBe(404);
+    expect((await operator.downloadBlob(claimed)).status).toBe(404);
+    expect((await operator.downloadBlob(blobHash(impostor))).status).toBe(404);
     const item = await client.getItem(id);
     expect(item.ok).toBe(true);
     expect(item.data.item.properties.blob_ref).toBe(hash);
@@ -184,7 +184,7 @@ describe("admin/restore-archive", () => {
       `a blob no refused archive should land ${ctx.runId}`,
     );
     const hash = blobHash(bytes);
-    expect((await client.downloadBlob(hash)).status).toBe(404);
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
 
     const withBlob = await operator.restoreArchive(
       itemsArchive(
@@ -202,7 +202,7 @@ describe("admin/restore-archive", () => {
     expect(withBlob.status).toBe(400);
     expect(withBlob.error?.error.code).toBe("validation_error");
     expect(
-      (await client.downloadBlob(hash)).status,
+      (await operator.downloadBlob(hash)).status,
       "a refused archive left its blob bytes in the store",
     ).toBe(404);
 
@@ -377,7 +377,7 @@ describe("admin/restore-archive", () => {
         { path: string }[] | undefined;
       expect(errors?.map((e) => e.path)).toContain(path);
       expect((await client.getItem(id)).status).toBe(404);
-      expect((await client.downloadBlob(hash)).status).toBe(404);
+      expect((await operator.downloadBlob(hash)).status).toBe(404);
     }
 
     // The same archive under the manifest as built restores, row and blob.

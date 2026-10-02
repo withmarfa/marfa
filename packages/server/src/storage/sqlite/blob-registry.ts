@@ -19,8 +19,17 @@ import type {
   BlobStoreKind,
   BlobStoreRow,
 } from "../interface.js";
-import { blobLocations, blobOrphans, blobStores, blobs } from "./schema.js";
+import {
+  blobLocations,
+  blobOrphans,
+  blobStores,
+  blobUploaders,
+  blobs,
+  item_blob_references,
+  items,
+} from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { allowedTypesCondition } from "./item-store.js";
 
 export class SqliteBlobRegistry implements BlobRegistry {
   constructor(private db: DrizzleDb) {}
@@ -57,6 +66,65 @@ export class SqliteBlobRegistry implements BlobRegistry {
   async listAll(): Promise<string[]> {
     const rows = await this.db.select({ hash: blobs.hash }).from(blobs).all();
     return rows.map((r) => r.hash);
+  }
+
+  async readableThrough(
+    hash: string,
+    allowedTypes: readonly string[],
+    excludedTypes: readonly string[],
+  ): Promise<boolean> {
+    const admitted = allowedTypesCondition(
+      [...allowedTypes],
+      [...excludedTypes],
+    );
+    const row = await this.db
+      .select({ one: sql<number>`1` })
+      .from(item_blob_references)
+      .innerJoin(items, eq(items.id, item_blob_references.item_id))
+      .where(
+        and(
+          eq(item_blob_references.hash, hash),
+          eq(item_blob_references.lends, true),
+          admitted,
+        ),
+      )
+      .limit(1)
+      .get();
+    return row !== undefined;
+  }
+
+  async lendingHashesOf(itemId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ hash: item_blob_references.hash })
+      .from(item_blob_references)
+      .where(
+        and(
+          eq(item_blob_references.item_id, itemId),
+          eq(item_blob_references.lends, true),
+        ),
+      )
+      .orderBy(item_blob_references.hash)
+      .all();
+    return rows.map((r) => r.hash);
+  }
+
+  async uploadedBy(hash: string, uploader: string): Promise<boolean> {
+    const row = await this.db
+      .select({ one: sql<number>`1` })
+      .from(blobUploaders)
+      .where(
+        and(eq(blobUploaders.hash, hash), eq(blobUploaders.uploader, uploader)),
+      )
+      .get();
+    return row !== undefined;
+  }
+
+  async recordUploader(hash: string, uploader: string): Promise<void> {
+    await this.db
+      .insert(blobUploaders)
+      .values({ hash, uploader })
+      .onConflictDoNothing()
+      .run();
   }
 
   async remove(hash: string): Promise<void> {

@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import type { AppConfig } from "../config.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { requireAuth, requireOperatorKey } from "../middleware/auth.js";
+import { requireOperatorKey } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -38,6 +38,7 @@ import {
   OkResponseSchema,
 } from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
+import { requireBlobUpload, requireReadableBlob } from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -134,6 +135,38 @@ const UNSATISFIABLE_HEADERS = {
  */
 const BINARY_BODY = { type: "string" as const, format: "binary" as const };
 
+/**
+ * The refusal of a credential whose type map reaches nothing a blob door could
+ * answer it for: no type to read a referencing item of, or none to write one.
+ */
+const TYPE_NOT_PERMITTED_RESPONSE = {
+  content: {
+    "application/json": {
+      schema: makeErrorResponseSchema(["type_not_permitted"]),
+    },
+  },
+  description:
+    "The credential's type permissions reach no type, or, on an upload, grant write on none",
+};
+
+/** What a reading door answers for a blob the credential may not read. */
+const UNREADABLE_BLOB_RESPONSE = {
+  content: {
+    "application/json": {
+      schema: makeErrorResponseSchema(["blob_not_found"]),
+    },
+  },
+  description:
+    "No blob with this hash that an item the credential may read references",
+};
+
+/**
+ * The rule every reading door states, written once so the descriptions
+ * cannot drift apart.
+ */
+const READ_RULE =
+  "A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.";
+
 const bytesResponses = {
   200: {
     content: { "application/octet-stream": { schema: BINARY_BODY } },
@@ -175,7 +208,7 @@ const uploadBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Upload a blob",
   description:
-    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves.",
+    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -212,6 +245,7 @@ const uploadBlobRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: TYPE_NOT_PERMITTED_RESPONSE,
   },
 });
 
@@ -264,8 +298,7 @@ const getBlobRoute = createRoute({
   path: "/{hash}",
   tags: ["Blobs"],
   summary: "Download blob binary",
-  description:
-    "Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`.",
+  description: `Streams the bytes of a blob as \`application/octet-stream\` from whichever store holds them, honoring one \`Range\`. \`HEAD\` answers the same headers with no body. A hash this instance does not hold answers \`404\`. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: HashParam,
@@ -288,6 +321,11 @@ const getBlobRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: TYPE_NOT_PERMITTED_RESPONSE,
+    404: {
+      ...UNREADABLE_BLOB_RESPONSE,
+      description: `${UNREADABLE_BLOB_RESPONSE.description}, or no store holding its bytes`,
+    },
   },
 });
 
@@ -297,8 +335,7 @@ const getBlobUrlRoute = createRoute({
   path: "/{hash}/url",
   tags: ["Blobs"],
   summary: "Get a time-limited link to a blob's bytes",
-  description:
-    "Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days.",
+  description: `Answers a URL a client fetches the bytes from without a credential, and \`expires_in\`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. \`ttl\` is capped at seven days. ${READ_RULE} The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.`,
   security: [{ bearerAuth: [] }],
   request: {
     params: HashParam,
@@ -339,14 +376,8 @@ const getBlobUrlRoute = createRoute({
       },
       description: "Unauthorized",
     },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["blob_not_found"]),
-        },
-      },
-      description: "Blob not found",
-    },
+    403: TYPE_NOT_PERMITTED_RESPONSE,
+    404: UNREADABLE_BLOB_RESPONSE,
   },
 });
 
@@ -401,8 +432,7 @@ const listBlobLocationsRoute = createRoute({
   path: "/{hash}/locations",
   tags: ["Blobs"],
   summary: "List the stores holding a blob",
-  description:
-    "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy.",
+  description: `The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (\`verified_at\`, \`null\` until one has). A store the configuration no longer names is shown \`detached\` and does not count as a copy. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: HashParam,
@@ -432,14 +462,8 @@ const listBlobLocationsRoute = createRoute({
       },
       description: "Unauthorized",
     },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["blob_not_found"]),
-        },
-      },
-      description: "Blob not found",
-    },
+    403: TYPE_NOT_PERMITTED_RESPONSE,
+    404: UNREADABLE_BLOB_RESPONSE,
   },
 });
 
@@ -574,18 +598,15 @@ export function blobRoutes(
   /**
    * The bytes of a registered blob, from the first attached store that has
    * them, as a response. Shared by the bearer door and the link door, which
-   * differ only in the credential they took.
+   * differ only in the credential they took and so in how they came by the
+   * record.
    */
   async function serveBytes(
     c: Context<AppEnv>,
     hash: string,
+    record: { mime_type: string; size_bytes: number },
     headOnly: boolean,
   ): Promise<Response> {
-    const record = await storage.blobs.get(hash);
-    if (!record) {
-      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
-    }
-
     const range = resolveRange(c.req.header("Range"), record.size_bytes);
     if (range === null) {
       // The size, so the caller can ask again within it. A header set
@@ -649,7 +670,7 @@ export function blobRoutes(
 
   // POST /blobs — stream the body to the disk store, then register it
   router.openapi(uploadBlobRoute, async (c) => {
-    requireAuth(c);
+    const uploader = requireBlobUpload(c);
 
     const contentType =
       c.req.header("Content-Type") ?? "application/octet-stream";
@@ -704,6 +725,7 @@ export function blobRoutes(
         await storage.runInTransaction(async () => {
           await storage.blobs.register(hash, mimeType, sizeBytes);
           await storage.blobs.recordLocation(hash, disk.id);
+          await storage.blobs.recordUploader(hash, uploader);
         });
       } catch (err) {
         // A file no row names is unreachable and nothing sweeps it. A failure
@@ -762,21 +784,16 @@ export function blobRoutes(
 
   // GET /blobs/:hash — the bytes; HEAD — the headers
   router.openapi(getBlobRoute, async (c) => {
-    requireAuth(c);
     const hash = normalizeHash(c.req.valid("param").hash);
-    return serveBytes(c, hash, c.req.method === "HEAD");
+    const record = await requireReadableBlob(c, storage, hash);
+    return serveBytes(c, hash, record, c.req.method === "HEAD");
   });
 
   // GET /blobs/:hash/url — a link the bytes can be fetched from
   router.openapi(getBlobUrlRoute, async (c) => {
-    requireAuth(c);
     refuseUnknownQueryParams(c.req.raw.url, getBlobUrlRoute.request.query);
     const hash = normalizeHash(c.req.valid("param").hash);
-
-    const record = await storage.blobs.get(hash);
-    if (!record) {
-      throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
-    }
+    await requireReadableBlob(c, storage, hash);
 
     const ttl = Math.min(c.req.valid("query").ttl, MAX_BLOB_LINK_TTL_SECONDS);
 
@@ -816,17 +833,17 @@ export function blobRoutes(
         "The link has expired or was not minted for this blob",
       );
     }
-    return serveBytes(c, hash, c.req.method === "HEAD");
-  });
-
-  // GET /blobs/:hash/locations — the location log for one blob
-  router.openapi(listBlobLocationsRoute, async (c) => {
-    requireAuth(c);
-    const hash = normalizeHash(c.req.valid("param").hash);
     const record = await storage.blobs.get(hash);
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
+    return serveBytes(c, hash, record, c.req.method === "HEAD");
+  });
+
+  // GET /blobs/:hash/locations — the location log for one blob
+  router.openapi(listBlobLocationsRoute, async (c) => {
+    const hash = normalizeHash(c.req.valid("param").hash);
+    await requireReadableBlob(c, storage, hash);
     const data = await storage.blobs.listLocations(hash);
     return c.json({ data, next_cursor: null }, 200);
   });

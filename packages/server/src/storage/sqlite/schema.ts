@@ -137,6 +137,25 @@ export const item_links = sqliteTable(
   ],
 );
 
+// The blobs an item's properties name, by the digest rule `collectBlobHashes`
+// applies, so a blob door finds the items that lend it their reach without
+// reading every row. `lends` is fixed when the digest enters the row and
+// leaves only with it.
+export const item_blob_references = sqliteTable(
+  "item_blob_references",
+  {
+    hash: text("hash").notNull(),
+    item_id: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+    lends: integer("lends", { mode: "boolean" }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.hash, table.item_id] }),
+    index("idx_item_blob_references_item").on(table.item_id),
+  ],
+);
+
 // What a purge leaves of a row's link, until re-claimed or the type's link
 // changes or is dropped. Never swept: a vendor may still hold the item.
 export const link_tombstones = sqliteTable(
@@ -403,6 +422,20 @@ export const blobLocations = sqliteTable(
 // here with the time it was first reported, drops any referenced again, and
 // purges only what an earlier run reported longer ago than the grace.
 // ---------------------------------------------------------------------------
+// Every credential that has sent a blob's bytes, by the principal
+// `blobPrincipal` names. Sending them is the proof a reference's writer had
+// the bytes rather than only their hash.
+export const blobUploaders = sqliteTable(
+  "blob_uploaders",
+  {
+    hash: text("hash")
+      .notNull()
+      .references(() => blobs.hash, { onDelete: "cascade" }),
+    uploader: text("uploader").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.hash, table.uploader] })],
+);
+
 export const blobOrphans = sqliteTable("blob_orphans", {
   hash: text("hash")
     .primaryKey()

@@ -52,13 +52,25 @@ async function forceTimes(
   );
 }
 
+/** A file item naming bytes the working key uploaded, which the queue
+ *  offers because the reference lends. */
 async function createFileItem(name: string): Promise<string> {
+  const upload = await ctx.app.request("/blobs", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.workingKey}`,
+      "Content-Type": "text/plain",
+    },
+    body: new TextEncoder().encode(name),
+  });
+  expect(upload.status).toBe(201);
+  const { hash } = (await upload.json()) as { hash: string };
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.workingKey,
     body: {
       type: "core.file",
       properties: {
-        blob_ref: `sha256:${name.padEnd(64, "0")}`,
+        blob_ref: hash,
         mime_type: "text/plain",
         title: name,
       },

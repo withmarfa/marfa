@@ -721,7 +721,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a blob
-         * @description Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves.
+         * @description Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.
          */
         post: operations["uploadBlob"];
         delete?: never;
@@ -779,7 +779,7 @@ export interface paths {
         };
         /**
          * Download blob binary
-         * @description Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`.
+         * @description Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
          */
         get: operations["downloadBlob"];
         put?: never;
@@ -799,7 +799,7 @@ export interface paths {
         };
         /**
          * Get a time-limited link to a blob's bytes
-         * @description Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days.
+         * @description Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.
          */
         get: operations["getBlobUrl"];
         put?: never;
@@ -819,7 +819,7 @@ export interface paths {
         };
         /**
          * List the stores holding a blob
-         * @description The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy.
+         * @description The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, with a reference that lends: one a write sent for a credential that had uploaded the bytes or could read the blob as it wrote; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
          */
         get: operations["listBlobLocations"];
         put?: never;
@@ -1432,7 +1432,7 @@ export interface paths {
         };
         /**
          * Export data
-         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
+         * @description Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
          */
         get: operations["exportData"];
         put?: never;
@@ -9508,6 +9508,21 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -9793,7 +9808,22 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description No blob with this hash, or no store holding its bytes. */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description No blob with this hash that an item the credential may read references, or no store holding its bytes */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9920,7 +9950,22 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Blob not found */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description No blob with this hash that an item the credential may read references */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10024,7 +10069,22 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Blob not found */
+            /** @description The credential's type permissions reach no type, or, on an upload, grant write on none */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeNotPermittedRefusal"];
+                };
+            };
+            /** @description No blob with this hash that an item the credential may read references */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

@@ -128,6 +128,9 @@ describe("global request-body size cap", () => {
           source: "body-limit",
           source_id: "large-archive",
         },
+        // As an export writes a row whose reference lent its reach, so the
+        // restored row lends the working key the bytes read back below.
+        lending_blobs: [hash],
       }) + "\n",
     );
     pack.entry({ name: "items.ndjson", size: items.length }, items);

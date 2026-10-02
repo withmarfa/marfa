@@ -15,6 +15,7 @@ import {
   pageDoors,
   servedDocument,
 } from "../../utils/openapi.js";
+import { uploadReferenced } from "../../utils/blobs.js";
 
 /**
  * Every list and every search answers one envelope: the rows under `data`
@@ -68,7 +69,9 @@ beforeAll(async () => {
   const connector = await client.registerConnector({ name: title });
   expect(connector.ok).toBe(true);
   connectorId = connector.data.id;
-  const blob = await client.uploadBlob(
+  const blob = await uploadReferenced(
+    client,
+    ctx,
     new TextEncoder().encode(title),
     "text/plain",
   );

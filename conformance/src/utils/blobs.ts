@@ -1,0 +1,35 @@
+import type { MarfaClient } from "../client/api.js";
+import type {
+  ApiResponse,
+  BlobUploadResponse,
+  TestContext,
+} from "../client/types.js";
+import { trackItem } from "./setup.js";
+
+/**
+ * Uploads bytes and writes a note whose body links them, so the uploading
+ * key may read them back: a blob is read through an item that references it
+ * (`blobs.md` 15, 16). A note rather than a file, so no enrichment is asked
+ * to read the bytes.
+ */
+export async function uploadReferenced(
+  client: MarfaClient,
+  ctx: TestContext,
+  data: Uint8Array,
+  mimeType: string,
+): Promise<ApiResponse<BlobUploadResponse>> {
+  const upload = await client.uploadBlob(data, mimeType);
+  if (!upload.ok) return upload;
+  const note = await client.createItem({
+    type: "core.note",
+    source: ctx.source,
+    properties: { body: `![bytes](${upload.data.hash})` },
+  });
+  if (!note.ok) {
+    throw new Error(
+      `could not reference ${upload.data.hash}: ${JSON.stringify(note.error)}`,
+    );
+  }
+  trackItem(ctx, note.data.item.id);
+  return upload;
+}

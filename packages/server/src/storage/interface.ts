@@ -607,7 +607,20 @@ export interface RestoredRowInput {
   version?: number;
 }
 
-export type StoredCreateItemInput = CreateItemInput & RestoredRowInput;
+/**
+ * Whether the credential a write is made for has proved it holds the bytes
+ * a digest names, by having uploaded them or being able to read the blob as
+ * the write is made. A digest entering the row lends its reach only where
+ * this answers true. Absent for a write the server makes for no credential,
+ * whose digests never lend.
+ */
+export interface BlobProofInput {
+  blob_proof?: (hash: string) => Promise<boolean>;
+}
+
+export type StoredCreateItemInput = CreateItemInput &
+  RestoredRowInput &
+  BlobProofInput;
 
 export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
 /**
@@ -622,7 +635,8 @@ export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
  * `update` still branches on an absent `version` to serve them.
  */
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
-  ConflictResolutionInput & { version?: number };
+  ConflictResolutionInput &
+  BlobProofInput & { version?: number };
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */
@@ -1251,6 +1265,22 @@ export interface BlobRegistry {
   } | null>;
   /** Every registered hash. */
   listAll(): Promise<string[]>;
+  /**
+   * Whether an item, in any lifecycle state and of a type the filter admits,
+   * references `hash` in its properties with a reference that lends. Asked
+   * as one indexed existence test that stops at the first match.
+   */
+  readableThrough(
+    hash: string,
+    allowedTypes: readonly string[],
+    excludedTypes: readonly string[],
+  ): Promise<boolean>;
+  /** The digests in this item's properties that lend its reach. */
+  lendingHashesOf(itemId: string): Promise<string[]>;
+  /** Whether `uploader` has sent this blob's bytes. */
+  uploadedBy(hash: string, uploader: string): Promise<boolean>;
+  /** Record that `uploader` sent this blob's bytes. Idempotent. */
+  recordUploader(hash: string, uploader: string): Promise<void>;
   remove(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 

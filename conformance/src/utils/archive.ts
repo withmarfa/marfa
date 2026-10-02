@@ -179,9 +179,18 @@ export function itemsArchive(
       ]),
     ),
   };
+  // Each row lends what it names among the blobs carried, as an export
+  // writes a row whose writer sent the bytes.
+  const carried = blobs.map((blob) => blob.named ?? blobHash(blob.data));
   const lines = items
     .map((item) =>
-      JSON.stringify({ item, metadata: { tags: [], extensions: {} } }),
+      JSON.stringify({
+        item,
+        metadata: { tags: [], extensions: {} },
+        lending_blobs: carried.filter((hash) =>
+          JSON.stringify(item).includes(hash.slice("sha256:".length)),
+        ),
+      }),
     )
     .join("\n");
   return tarGz([

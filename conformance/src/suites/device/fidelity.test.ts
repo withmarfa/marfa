@@ -1584,6 +1584,16 @@ describe("the scripted answers match the server's", () => {
       { same: ["hash", "mime_type", "size_bytes"] },
     );
 
+    // A link is answered for bytes an item names (`blobs.md` 15), as a
+    // device asks for one only for an item it holds.
+    const naming = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      properties: { body: `![bytes](${uploaded.hash})` },
+    });
+    expect(naming.ok, JSON.stringify(naming.error)).toBe(true);
+    trackItem(ctx, naming.data.item.id);
+
     const linked = await client.rawRequest(`/blobs/${uploaded.hash}/url`, {
       method: "GET",
     });

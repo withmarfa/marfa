@@ -448,21 +448,29 @@ describe("an archive's blobs", () => {
 
     const bytes = Buffer.from("the file's exact contents, and not a stand-in");
     const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    await source.blobs.disk.put(hash, {
-      stream: Readable.from(bytes),
-      size_bytes: bytes.length,
-    });
-    await source.storage.blobs.register(hash, "text/plain", bytes.length);
-    await source.storage.blobs.recordLocation(hash, source.blobs.disk.id);
-    await source.storage.items.create({
-      type: "core.file",
-      properties: {
-        title: "attachment",
-        blob_ref: hash,
-        mime_type: "text/plain",
+    // Through the doors, so the key exporting both sent the bytes and named
+    // them, which is what lets the archive carry them (`blobs.md` 21).
+    const uploaded = await source.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${source.workingKey}`,
+        "Content-Type": "text/plain",
       },
-      source: "blob-seed",
+      body: bytes,
     });
+    expect(uploaded.status).toBe(201);
+    const named = await request(source.app, "POST", "/items", {
+      key: source.workingKey,
+      body: {
+        type: "core.file",
+        properties: {
+          title: "attachment",
+          blob_ref: hash,
+          mime_type: "text/plain",
+        },
+      },
+    });
+    expect(named.status).toBe(201);
 
     const exportRes = await request(
       source.app,

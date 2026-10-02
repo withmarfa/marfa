@@ -24,6 +24,7 @@ import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
+import { mayReadBlob } from "./_blob-reach.js";
 
 /**
  * What an export answers when the caller names no state.
@@ -52,7 +53,7 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export data",
   description:
-    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
+    "Streams the instance's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v0.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the type and edge-type registrations, so a restore into an empty database can write the items that use them), and the bytes of each blob the selection references that `GET /blobs/{hash}` would serve the caller, which `POST /admin/restore-archive` can ingest. Each archive item line carries `lending_blobs`, the digests in that row's properties that lend its reach, and a restore lends through those alone. Exports only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry, and only edges of a type the credential may read, so an export never carries a kind of relationship the edge doors would refuse. " +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
@@ -442,10 +443,14 @@ async function handleArchiveExport(
       )) {
         const metadata = await storage.metadata.get(item.id);
         exportedIds.add(item.id);
+        // Which of the row's digests lend its reach, so a restore credits
+        // those and no others.
+        const lendingBlobs = await storage.blobs.lendingHashesOf(item.id);
         lines.push(
           JSON.stringify({
             item,
             metadata,
+            lending_blobs: lendingBlobs,
           }),
         );
         collectBlobHashes(item.properties, blobHashes);
@@ -505,7 +510,11 @@ async function handleArchiveExport(
       edgeTypeCount += 1;
     }
 
+    // An archive carries only bytes the blob doors would serve this
+    // credential: naming a digest in a row it may read lends nothing the
+    // door would not, wherever in the row the digest sits.
     for (const hash of blobHashes) {
+      if (!(await mayReadBlob(callerKey, storage, hash))) continue;
       const record = await storage.blobs.get(hash);
       if (record) {
         blobMeta[hash] = {
