@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::Http;
-use crate::model::{CatchUpReport, Tier};
+use crate::model::{CatchUpReport, Subject, Tier};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{EventPayload, WireCatalog, WireEdge, WireItem};
@@ -210,7 +210,7 @@ fn take(
     let applied = apply(&tx, catalog, slice, kind, payload)?;
     if applied {
         for edge in &brought {
-            store::upsert_edge(&tx, edge)?;
+            store::put_server_edge(&tx, edge)?;
         }
     }
     // The last id applied, never the highest seen: where an event is not
@@ -631,12 +631,9 @@ fn apply(
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
-            // Strictly older, not "no newer": a transition, delete, restore or
-            // tag write leaves the version where it was, so skipping a tie
-            // would miss it. The stream's order decides ties.
-            if let Some(held) = store::held_version(tx, &item.id)?
-                && item.version < held
-            {
+            // Strictly older, not "no newer": the stream's order decides a
+            // tie, and the copy can hold a row read ahead of the stream.
+            if store::holds_later(tx, Subject::Item, &item.id, item.version, &item.updated_at)? {
                 return Ok(false);
             }
             if in_slice(catalog, slice, item)? || store::pinned(tx, &item.id)? {
@@ -645,7 +642,7 @@ fn apply(
                     .as_ref()
                     .map(|metadata| metadata.tags.as_slice());
                 let indexing = catalog.indexing(&item.r#type);
-                store::upsert_item(tx, item, tags, &indexing)?;
+                store::put_server_item(tx, item, tags, &indexing)?;
                 store::lay_waiting_writes_over(tx, &item.id, &|laid| catalog.indexing(laid))?;
                 Ok(true)
             } else {
@@ -656,25 +653,28 @@ fn apply(
             let Some(edge) = &payload.edge else {
                 return Ok(false);
             };
-            if store::item_held(tx, &edge.source_id)? || slice.whole.contains(&edge.edge_type) {
-                store::upsert_edge(tx, edge)?;
-                store::lay_waiting_edge_writes_over(tx, &edge.id)?;
-                Ok(true)
-            } else if store::edge_write_waits(tx, &edge.id)? {
-                // Kept until this device's own write to it is answered.
-                store::upsert_edge(tx, edge)?;
+            if store::holds_later(tx, Subject::Edge, &edge.id, edge.version, &edge.updated_at)? {
+                return Ok(false);
+            }
+            // Kept where it waits on this device's own write, until that is
+            // answered.
+            if store::item_held(tx, &edge.source_id)?
+                || slice.whole.contains(&edge.edge_type)
+                || store::edge_write_waits(tx, &edge.id)?
+            {
+                store::put_server_edge(tx, edge)?;
                 store::lay_waiting_edge_writes_over(tx, &edge.id)?;
                 Ok(true)
             } else {
                 // An edge moved to a source the copy does not hold leaves it.
-                store::delete_edge(tx, &edge.id)
+                store::forget_edge(tx, &edge.id)
             }
         }
         "edge.deleted" => {
             let Some(edge) = &payload.edge else {
                 return Ok(false);
             };
-            store::delete_edge(tx, &edge.id)
+            store::forget_edge(tx, &edge.id)
         }
         _ => Ok(false),
     }

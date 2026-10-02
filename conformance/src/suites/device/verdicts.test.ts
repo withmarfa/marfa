@@ -475,6 +475,194 @@ describe("the server did not take the write", () => {
     ).toBe("held");
   });
 
+  it("refused: shows the row as the write read it while the read-back fails, and reads it back at the next drain", async () => {
+    harness = await hydratedHarness("verdicts-refused-unread", {
+      rows: held(),
+    });
+    const report = await updateAndDrain(
+      harness,
+      [refusal(403, "type_forbidden", "this key may not write core.note")],
+      // The first read meets a server that cannot answer; the next is the
+      // row as another device has since left it.
+      [
+        refusal(503, "write_contention", "the write lock is busy"),
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version + 1,
+            properties: { title: "theirs", body: "held" },
+          }),
+        ),
+      ],
+    );
+    expect(report.verdicts[0]?.verdict).toBe("refused");
+
+    const unread = await harness.device.get(HELD.id);
+    expect(unread.ok).toBe(true);
+    if (!unread.ok) return;
+    expect(
+      unread.value.properties.title,
+      "the copy went on showing the edit the server refused because the read that puts it back failed, so a person reads a change that was never saved",
+    ).toBe("held");
+
+    const again = await harness.device.drain();
+    expect(again.ok).toBe(true);
+    const read = await harness.device.get(HELD.id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(
+      read.value.properties.title,
+      "the read-back that failed was never tried again, so the copy stays on a row the server moved past until something else touches it",
+    ).toBe("theirs");
+    expect(read.value.version).toBe(HELD.version + 1);
+    expect(
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${HELD.id}`,
+      ).length,
+      "the owed read-back went out more than once after it was answered",
+    ).toBe(2);
+  });
+
+  it("refused: keeps the row the copy holds where the read-back answers an older one", async () => {
+    // The copy holds the row as a later write stamped it, which a follow on
+    // the same core can bring between the read-back and its write. The
+    // version alone cannot order the two: a transition, a delete, a restore
+    // and a tag write leave it where it was.
+    harness = await hydratedHarness("verdicts-refused-older", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: HELD.id,
+              version: HELD.version,
+              updated_at: "2026-03-02T00:00:00.000Z",
+              properties: { title: "held", body: "held" },
+            },
+          },
+        ],
+      },
+    });
+    const report = await updateAndDrain(
+      harness,
+      [refusal(403, "type_forbidden", "this key may not write core.note")],
+      [
+        answers.updated(
+          wireItem({
+            id: HELD.id,
+            version: HELD.version,
+            updated_at: "2026-03-01T00:00:00.000Z",
+            properties: { title: "stale", body: "stale" },
+          }),
+        ),
+      ],
+    );
+    expect(report.verdicts[0]?.verdict).toBe("refused");
+    const read = await harness.device.get(HELD.id);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(
+      read.value.properties.title,
+      "a read-back stamped before the row the copy holds was written over it, which rolls the copy back under a change whose event is already behind the cursor",
+    ).toBe("held");
+    expect(read.value.updated_at).toBe("2026-03-02T00:00:00.000Z");
+  });
+
+  it("refused: reads the server's code, message, fields and missing grant into the refusal", async () => {
+    harness = await hydratedHarness("verdicts-refused-typed", {
+      rows: {
+        "core.note": [
+          { item: { id: "a", version: 1 } },
+          { item: { id: "b", version: 1 } },
+        ],
+      },
+    });
+    for (const id of ["a", "b"]) {
+      const edit = await harness.device.update(id, {
+        properties: { title: `edited ${id}` },
+        version: 1,
+      });
+      expect(edit.ok).toBe(true);
+    }
+    scriptWrites(harness.server, {
+      update: [
+        refusal(400, "invalid_properties", "Invalid properties", {
+          errors: [{ field: "title", message: "Too long" }],
+        }),
+        refusal(403, "type_not_permitted", "this key may not write core.note", {
+          grant: { kind: "type", name: "core.note", level: "write" },
+        }),
+      ],
+      read: [
+        answers.updated(wireItem({ id: "a", version: 1 })),
+        answers.updated(wireItem({ id: "b", version: 1 })),
+      ],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    const [fields, grant] = drained.value.verdicts;
+    expect(
+      fields?.refusal,
+      "the drain reported a refusal as a code alone, so an app has to decode the server's text to say which field was wrong",
+    ).toEqual({
+      reason: "invalid_properties",
+      code: "invalid_properties",
+      message: "Invalid properties",
+      fields: [{ field: "title", message: "Too long" }],
+      trashed: false,
+      grant: null,
+    });
+    expect(grant?.item_id).toBe("b");
+    expect(
+      grant?.refusal?.grant,
+      "a refusal naming the grant the key lacks did not say which",
+    ).toEqual({ kind: "type", name: "core.note", level: "write" });
+
+    const queue = await harness.device.queue();
+    expect(queue.ok).toBe(true);
+    if (!queue.ok) return;
+    expect(
+      queue.value.map((row) => row.refusal?.code),
+      "the queue does not read the refusal it holds the way the drain reported it",
+    ).toEqual(["invalid_properties", "type_not_permitted"]);
+  });
+
+  it("refused: says when the row a write named is in the bin", async () => {
+    harness = await hydratedHarness("verdicts-refused-trashed", {
+      rows: {
+        "core.note": [
+          { item: { id: "binned", version: 1 } },
+          { item: { id: "gone", version: 1 } },
+        ],
+      },
+    });
+    for (const id of ["binned", "gone"]) {
+      const edit = await harness.device.update(id, {
+        properties: { title: `edited ${id}` },
+        version: 1,
+      });
+      expect(edit.ok).toBe(true);
+    }
+    scriptWrites(harness.server, {
+      update: [
+        refusal(404, "item_not_found", "Item binned not found", {
+          trashed: true,
+        }),
+        // The witness: the same refusal naming no bin is not one.
+        refusal(404, "item_not_found", "Item gone not found"),
+      ],
+      read: [refusal(404, "item_not_found", "not found")],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.map((verdict) => verdict.refusal?.trashed),
+      "a refusal saying the row is in the bin read the same as one for a row that is gone, so nothing offers to restore it with the edit",
+    ).toEqual([true, false]);
+  });
+
   it("blocked: is passed over by a drain and reported with its reason", async () => {
     harness = await hydratedHarness("verdicts-blocked", { rows: held() });
     const report = await updateAndDrain(harness, [

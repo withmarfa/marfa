@@ -1272,7 +1272,7 @@ describe("withdrawing a write that can never be sent", () => {
     ).toEqual([]);
   });
 
-  it("clears with the answered rows those only a withdrawn write was keeping", async () => {
+  it("clears with the answered rows those only a withdrawn write was keeping, but for one carrying content", async () => {
     const setup = await createHeldFor("class-withdraw-forget-held");
     harness = setup.harness;
     const { device } = harness;
@@ -1283,12 +1283,21 @@ describe("withdrawing a write that can never be sent", () => {
     expect(await queueOf(harness)).toHaveLength(2);
 
     expect((await device.withdraw(setup.create.id)).ok).toBe(true);
+    // The edit held for the create carries what a person wrote, so it stays
+    // refused until it is discarded (`queue-and-verdicts.md` 47).
     const cleared = await device.forget();
     expect(cleared.ok, JSON.stringify(cleared)).toBe(true);
     expect(
       cleared.ok && cleared.value,
-      "clearing kept the write refused for a withdrawn create, which can never be released or sent, so it stays in the queue for good",
-    ).toBe(1);
+      "clearing took the edit refused for a withdrawn create, and the words it carried with it",
+    ).toBe(0);
+    expect(
+      (await queueOf(harness)).map((row) => [row.id, row.verdict]),
+    ).toEqual([[setup.edit.id, "refused"]]);
+    const discarded = await device.discard(setup.edit.id);
+    expect(discarded.ok && discarded.value, JSON.stringify(discarded)).toBe(
+      true,
+    );
     expect(await queueOf(harness)).toEqual([]);
 
     // And an answered create kept only by an edit of its row that was

@@ -18,7 +18,7 @@ function describe(verdict) {
     case "conflicted":
       return `conflicted, sibling ${verdict.siblingId}`;
     case "refused":
-      return `refused: ${verdict.reason}`;
+      return `refused: ${verdict.refusal.reason}`;
     case "blocked":
       return `blocked: ${verdict.reason}`;
     default:
@@ -160,10 +160,20 @@ if (phase === "hydrate") {
     "the bytes fetched are not the bytes attached",
   );
   const cleared = core.forgetAnswered();
-  console.log(
-    `cleared ${cleared} answered write(s); ${core.queue().length} left`,
+  const left = core.queue();
+  console.log(`cleared ${cleared} answered write(s); ${left.length} left`);
+  // The refused create carried content, so it stays until it is discarded.
+  expect(
+    left.length === 1 &&
+      left[0]?.verdict?.verdict === "refused" &&
+      left[0].kind === "create_item",
+    "the queue holds other than the refused create after clearing",
   );
-  expect(core.queue().length === 0, "answered writes were left in the queue");
+  const kept = left[0];
+  if (kept === undefined) throw new Error("unreachable");
+  console.log(`kept the refused create's body: ${JSON.stringify(kept.body)}`);
+  expect(core.discard(kept.id), "the refused create was not discarded");
+  expect(core.queue().length === 0, "a discarded write was left in the queue");
 } else if (phase === "follow") {
   // binding-proof.sh makes the note with the binary while this is held.
   const reader = MarfaCore.openReader(path);

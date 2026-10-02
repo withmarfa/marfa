@@ -30,7 +30,7 @@ pub const SCHEMA_VERSION: &str = "0";
 
 /// Hashed over `schema.sql` without its comments, so a comment moves no hash.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "3f3fd4d4f3093ab8";
+const SCHEMA_HASH: &str = "1a44b6d4c252ba0e";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -246,17 +246,399 @@ pub fn refuse_unless_hydrated(conn: &Connection) -> Result<(), CoreError> {
     }
 }
 
-pub fn holds_newer(
+/// Where a row or an edge stands in the order the server writes it: the
+/// version, then the modification time. The version moves only on a write to
+/// the fields, so a transition, a delete, a restore and a tag write share it
+/// with the row before them; the time the server stamps on every write, and
+/// never moves back, orders those.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stamp {
+    pub version: i64,
+    pub updated_at: String,
+}
+
+impl Stamp {
+    /// A time either side cannot read leaves the version alone to order
+    /// them, so an equal version is never later.
+    pub fn later_than(&self, other: &Stamp) -> bool {
+        if self.version != other.version {
+            return self.version > other.version;
+        }
+        match (instant_of(&self.updated_at), instant_of(&other.updated_at)) {
+            (Some(held), Some(other)) => held > other,
+            _ => false,
+        }
+    }
+}
+
+pub fn stamp(conn: &Connection, subject: Subject, id: &str) -> Result<Option<Stamp>, CoreError> {
+    let table = match subject {
+        Subject::Item => "items",
+        Subject::Edge => "edges",
+    };
+    Ok(conn
+        .query_row(
+            &format!("SELECT version, updated_at FROM {table} WHERE id = ?1"),
+            [id],
+            |row| {
+                Ok(Stamp {
+                    version: row.get(0)?,
+                    updated_at: row.get(1)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// Whether the copy holds `id` at a stamp later than the one given.
+pub fn holds_later(
     conn: &Connection,
     subject: Subject,
     id: &str,
     version: i64,
+    updated_at: &str,
 ) -> Result<bool, CoreError> {
-    let held = match subject {
-        Subject::Item => held_version(conn, id)?,
-        Subject::Edge => edge_by_id(conn, id)?.map(|edge| edge.version),
+    let other = Stamp {
+        version,
+        updated_at: updated_at.to_string(),
     };
-    Ok(held.is_some_and(|held| held > version))
+    Ok(stamp(conn, subject, id)?.is_some_and(|held| held.later_than(&other)))
+}
+
+/// Nanoseconds since the epoch, from an RFC 3339 time with any fraction of a
+/// second and a `Z` or numeric offset. `None` for anything else.
+pub fn instant_of(stamp: &str) -> Option<i128> {
+    let bytes = stamp.as_bytes();
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !matches!(bytes[10], b'T' | b't')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let number = |from: usize, to: usize| -> Option<i64> {
+        let digits = stamp.get(from..to)?;
+        if !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        digits.parse().ok()
+    };
+    let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
+    let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let mut at = 19;
+    let mut nanos: i128 = 0;
+    if bytes.get(at) == Some(&b'.') {
+        at += 1;
+        let start = at;
+        while bytes.get(at).is_some_and(u8::is_ascii_digit) {
+            at += 1;
+        }
+        let digits = stamp.get(start..at)?;
+        if digits.is_empty() {
+            return None;
+        }
+        let kept = &digits[..digits.len().min(9)];
+        nanos = kept.parse::<i128>().ok()? * 10_i128.pow(9 - kept.len() as u32);
+    }
+    let offset: i64 = match stamp.get(at..)? {
+        "Z" | "z" => 0,
+        zone if zone.len() == 6
+            && matches!(zone.as_bytes()[0], b'+' | b'-')
+            && zone.as_bytes()[3] == b':' =>
+        {
+            let hours = number(at + 1, at + 3)?;
+            let minutes = number(at + 4, at + 6)?;
+            let sign = if zone.starts_with('-') { -1 } else { 1 };
+            sign * (hours * 3_600 + minutes * 60)
+        }
+        _ => return None,
+    };
+    // Days since the epoch, by the days-from-civil algorithm.
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second - offset;
+    Some(i128::from(seconds) * 1_000_000_000 + nanos)
+}
+
+/// The one way a server's row comes into the copy, whatever brought it: a
+/// write's answer, a read-back, a landed create, a pin, an event or a
+/// hydration. Refused where the copy holds the row at a later stamp, which a
+/// follow on the same core can have brought while the row was being read;
+/// answers whether it wrote. Either way the copy now holds a row the server
+/// wrote, so a read-back owed for it is settled.
+pub fn put_server_item(
+    conn: &Connection,
+    item: &WireItem,
+    tags: Option<&[String]>,
+    indexing: &Indexing,
+) -> Result<bool, CoreError> {
+    settle_read_back(conn, Subject::Item, &item.id)?;
+    if holds_later(
+        conn,
+        Subject::Item,
+        &item.id,
+        item.version,
+        &item.updated_at,
+    )? {
+        return Ok(false);
+    }
+    let beneath_tags = match tags {
+        Some(tags) => Some(tags.to_vec()),
+        None => beneath_item(conn, &item.id)?.map(|held| held.tags),
+    };
+    upsert_item(conn, item, tags, indexing)?;
+    keep_beneath_item(conn, &item.id, beneath_tags)?;
+    Ok(true)
+}
+
+/// `put_server_item` for an edge.
+pub fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool, CoreError> {
+    settle_read_back(conn, Subject::Edge, &edge.id)?;
+    if holds_later(
+        conn,
+        Subject::Edge,
+        &edge.id,
+        edge.version,
+        &edge.updated_at,
+    )? {
+        return Ok(false);
+    }
+    upsert_edge(conn, edge)?;
+    if edge_write_waits(conn, &edge.id)?
+        && let Some(held) = edge_by_id(conn, &edge.id)?
+    {
+        set_beneath(
+            conn,
+            Subject::Edge,
+            &edge.id,
+            &serde_json::to_string(&held)?,
+        )?;
+    } else {
+        drop_beneath(conn, Subject::Edge, &edge.id)?;
+    }
+    Ok(true)
+}
+
+fn subject_name(subject: Subject) -> &'static str {
+    match subject {
+        Subject::Item => "item",
+        Subject::Edge => "edge",
+    }
+}
+
+fn set_beneath(conn: &Connection, subject: Subject, id: &str, row: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO beneath (subject, id, row) VALUES (?1, ?2, ?3)
+         ON CONFLICT (subject, id) DO UPDATE SET row = excluded.row",
+        params![subject_name(subject), id, row],
+    )?;
+    Ok(())
+}
+
+fn drop_beneath(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "DELETE FROM beneath WHERE subject = ?1 AND id = ?2",
+        params![subject_name(subject), id],
+    )?;
+    Ok(())
+}
+
+fn beneath_row(conn: &Connection, subject: Subject, id: &str) -> Result<Option<String>, CoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT row FROM beneath WHERE subject = ?1 AND id = ?2",
+            params![subject_name(subject), id],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+pub fn beneath_item(conn: &Connection, id: &str) -> Result<Option<Item>, CoreError> {
+    match beneath_row(conn, Subject::Item, id)? {
+        Some(row) => Ok(Some(serde_json::from_str(&row)?)),
+        None => Ok(None),
+    }
+}
+
+pub fn beneath_edge(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
+    match beneath_row(conn, Subject::Edge, id)? {
+        Some(row) => Ok(Some(serde_json::from_str::<Edge>(&row)?)),
+        None => Ok(None),
+    }
+}
+
+/// Keeps the row the copy holds as the one beneath its waiting writes, with
+/// `tags` where the copy's own may carry a waiting tag write, or lets it go
+/// where none waits. Call only while the copy holds the server's row as
+/// written, before anything is laid over it.
+fn keep_beneath_item(
+    conn: &Connection,
+    id: &str,
+    tags: Option<Vec<String>>,
+) -> Result<(), CoreError> {
+    if !row_writes_wait(conn, id)? {
+        return drop_beneath(conn, Subject::Item, id);
+    }
+    let Some(mut held) = items_by_ids(conn, std::slice::from_ref(&id.to_string()))?.pop() else {
+        return drop_beneath(conn, Subject::Item, id);
+    };
+    if let Some(tags) = tags {
+        held.tags = tags;
+    }
+    set_beneath(conn, Subject::Item, id, &serde_json::to_string(&held)?)
+}
+
+/// Before a local write changes a row: the row as the copy holds it is what
+/// the server holds, unless writes already wait on it, which have kept what
+/// is beneath them, or it is this device's own create the server has not
+/// taken, which has nothing beneath it.
+pub fn hold_beneath_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    if beneath_row(conn, Subject::Item, id)?.is_some()
+        || !untaken_creates_for_item(conn, id)?.is_empty()
+    {
+        return Ok(());
+    }
+    if let Some(held) = items_by_ids(conn, std::slice::from_ref(&id.to_string()))?.pop() {
+        set_beneath(conn, Subject::Item, id, &serde_json::to_string(&held)?)?;
+    }
+    Ok(())
+}
+
+/// `hold_beneath_item` for an edge.
+pub fn hold_beneath_edge(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    if beneath_row(conn, Subject::Edge, id)?.is_some()
+        || !untaken_create_for_edge(conn, id)?.is_empty()
+    {
+        return Ok(());
+    }
+    if let Some(held) = edge_by_id(conn, id)? {
+        set_beneath(conn, Subject::Edge, id, &serde_json::to_string(&held)?)?;
+    }
+    Ok(())
+}
+
+/// A refused write's subject the copy owes a read of the server's row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Owed {
+    pub subject: Subject,
+    pub id: String,
+    /// An edge's source, whose listing of the edge's type it is read from.
+    pub source_id: Option<String>,
+    pub edge_type: Option<String>,
+    /// The refused write moved the row, so a read outside the slice lets it go.
+    pub moved: bool,
+}
+
+/// What a read-back of `row` reads, or `None` where it names nothing the
+/// copy holds a row for.
+pub fn owed_of(conn: &Connection, row: &QueuedWrite) -> Result<Option<Owed>, CoreError> {
+    match row.kind.subject() {
+        Some(Subject::Item) => Ok(row.item_id.as_ref().map(|id| Owed {
+            subject: Subject::Item,
+            id: id.clone(),
+            source_id: None,
+            edge_type: None,
+            moved: row.kind == WriteKind::UpdateItem && moves(&row.body),
+        })),
+        Some(Subject::Edge) => {
+            let (Some(source), Some(id)) = (row.item_id.as_ref(), row.edge_id.as_ref()) else {
+                return Ok(None);
+            };
+            // A delete emptied the copy at queue time, so the type can come
+            // only from the payload.
+            let edge_type = match edge_by_id(conn, id)? {
+                Some(edge) => Some(edge.edge_type),
+                None => row
+                    .body
+                    .get("edge_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            };
+            Ok(Some(Owed {
+                subject: Subject::Edge,
+                id: id.clone(),
+                source_id: Some(source.clone()),
+                edge_type,
+                moved: false,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
+/// An update that moves the row to another type or tier.
+pub fn moves(body: &Value) -> bool {
+    body.get("retype") == Some(&Value::Bool(true)) || body.get("tier").is_some()
+}
+
+pub fn owe_read_back(conn: &Connection, owed: &Owed) -> Result<(), CoreError> {
+    conn.execute(
+        "INSERT INTO read_backs (subject, id, source_id, edge_type, moved)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (subject, id) DO UPDATE SET
+           source_id = coalesce(excluded.source_id, source_id),
+           edge_type = coalesce(excluded.edge_type, edge_type),
+           moved = moved OR excluded.moved",
+        params![
+            subject_name(owed.subject),
+            owed.id,
+            owed.source_id,
+            owed.edge_type,
+            owed.moved
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn owed_read_backs(conn: &Connection) -> Result<Vec<Owed>, CoreError> {
+    let mut statement = conn.prepare(
+        "SELECT subject, id, source_id, edge_type, moved FROM read_backs ORDER BY subject, id",
+    )?;
+    let rows = statement.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            Owed {
+                subject: Subject::Item,
+                id: row.get(1)?,
+                source_id: row.get(2)?,
+                edge_type: row.get(3)?,
+                moved: row.get(4)?,
+            },
+        ))
+    })?;
+    let mut owed = Vec::new();
+    for row in rows {
+        let (subject, mut entry) = row?;
+        entry.subject = if subject == "edge" {
+            Subject::Edge
+        } else {
+            Subject::Item
+        };
+        owed.push(entry);
+    }
+    Ok(owed)
+}
+
+pub fn settle_read_back(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "DELETE FROM read_backs WHERE subject = ?1 AND id = ?2",
+        params![subject_name(subject), id],
+    )?;
+    Ok(())
 }
 
 pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreError> {
@@ -269,7 +651,7 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
 
 const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
-     conflicted_copy_id, refusals, queued_at, answered_at, blob, follows";
+     conflicted_copy_id, refusals, queued_at, answered_at, blob, follows, payload";
 
 pub struct NewWrite<'a> {
     pub kind: WriteKind,
@@ -551,6 +933,13 @@ pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     Ok(hashes)
 }
 
+/// Whether a write to the row itself waits, not an edge from it.
+fn row_writes_wait(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(waiting_writes_for_item(conn, id)?
+        .iter()
+        .any(|row| row.kind.subject() == Some(Subject::Item)))
+}
+
 pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(!waiting_writes_for_item(conn, id)?.is_empty())
 }
@@ -611,6 +1000,7 @@ fn read_writes(
             answered_at: row.get(16)?,
             blob: row.get(17)?,
             follows: row.get(18)?,
+            payload: row.get(19)?,
         })
     })?;
 
@@ -644,6 +1034,18 @@ fn read_writes(
                     ))
                 })?;
         }
+        let body = serde_json::from_str(&raw.payload).map_err(|error| {
+            CoreError::Store(format!(
+                "queued write {} carries a body this build cannot read ({error})",
+                raw.id
+            ))
+        })?;
+        let refusal = (verdict == Some(Verdict::Refused)).then(|| {
+            crate::model::Refusal::read(
+                raw.reason.as_deref().unwrap_or_default(),
+                raw.answer.as_deref(),
+            )
+        });
         writes.push(QueuedWrite {
             kind: raw.kind.parse()?,
             id: raw.id,
@@ -660,6 +1062,8 @@ fn read_writes(
             verdict,
             reason: raw.reason,
             answer: raw.answer,
+            refusal,
+            body,
             conflicted_copy_id: raw.conflicted_copy_id,
             refusals: raw.refusals,
             queued_at: raw.queued_at,
@@ -689,6 +1093,7 @@ struct RawWrite {
     queued_at: String,
     answered_at: Option<String>,
     follows: Option<String>,
+    payload: String,
 }
 
 type TypeRow = (
@@ -919,7 +1324,9 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
         "DELETE FROM tags;
          DELETE FROM edges;
          DELETE FROM items;
-         DELETE FROM items_fts;",
+         DELETE FROM items_fts;
+         DELETE FROM beneath;
+         DELETE FROM read_backs;",
     )?;
     Ok(())
 }
@@ -994,6 +1401,13 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
     }
     // Left where the server's row was pinned already.
     unpin(conn, local)?;
+    drop_beneath(conn, Subject::Item, local)?;
+    settle_read_back(conn, Subject::Item, local)?;
+    // The writes just moved onto `answered` wait on the row as the copy
+    // holds it now, which nothing has laid them over yet.
+    if beneath_row(conn, Subject::Item, answered)?.is_none() {
+        keep_beneath_item(conn, answered, None)?;
+    }
     // An edge create carries its endpoints in its payload too.
     let mut edges = conn
         .prepare("SELECT id, payload FROM queue WHERE kind = 'create_edge' AND verdict IS NULL")?;
@@ -1060,16 +1474,9 @@ pub fn land_on_held_row(
                  and this {} was made against a row the server never made",
                 row.kind
             );
-            record_verdict(
-                conn,
-                &row.id,
-                &Answered {
-                    verdict: Verdict::Refused,
-                    reason: Some(&reason),
-                    answer: None,
-                    conflicted_copy_id: None,
-                },
-            )?;
+            // Its row is the minted one, which goes below: there is nothing
+            // of the server's to read back.
+            record_refusal(conn, &row, &reason, None, false)?;
             refused.push((row, reason));
             continue;
         }
@@ -1153,12 +1560,7 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
 
 pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let unpinned = unpin(conn, id)?;
-    let removed = remove_item(
-        conn,
-        id,
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        &[],
-    )?;
+    let removed = remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
     Ok(removed || unpinned)
 }
 
@@ -1167,31 +1569,57 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     let kept = vec!["?"; whole.len()].join(", ");
     let edges = if whole.is_empty() {
-        "DELETE FROM edges WHERE source_id = ?1".to_string()
+        "source_id = ?1".to_string()
     } else {
-        format!("DELETE FROM edges WHERE source_id = ?1 AND edge_type NOT IN ({kept})")
+        format!("source_id = ?1 AND edge_type NOT IN ({kept})")
     };
     remove_item(conn, id, &edges, whole)
 }
 
-/// Whether the copy changed: a purge of an item already evicted still takes
-/// the edges held items drew to it.
+/// The one way a row leaves the copy, with the edges `edges` names (a
+/// condition on `edges`, `?1` the row's id, then `kept`): what is kept
+/// beneath them and any read-back owed for them go too, so a refusal cannot
+/// put back what the copy let go of. Whether the copy changed: a purge of an
+/// item already evicted still takes the edges held items drew to it.
 fn remove_item(
     conn: &Connection,
     id: &str,
     edges: &str,
     kept: &[String],
 ) -> Result<bool, CoreError> {
+    drop_beneath(conn, Subject::Item, id)?;
+    settle_read_back(conn, Subject::Item, id)?;
     conn.execute(
         "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    let edges = conn.execute(
-        edges,
-        params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
-    )?;
-    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? + edges > 0)
+    // An edge hidden behind this device's own waiting delete is in
+    // `beneath` alone, and leaves with the row all the same. An edge still in
+    // `edges` is matched by its ends there, which a waiting write may have
+    // moved, never by the ones `beneath` recorded.
+    let leaving: Vec<String> = conn
+        .prepare(&format!(
+            "SELECT id FROM (
+               SELECT id, source_id, target_id, edge_type FROM edges
+               UNION
+               SELECT id, json_extract(row, '$.source_id') AS source_id,
+                      json_extract(row, '$.target_id') AS target_id,
+                      json_extract(row, '$.edge_type') AS edge_type
+                 FROM beneath
+                WHERE subject = 'edge' AND id NOT IN (SELECT id FROM edges)
+             ) WHERE {edges}"
+        ))?
+        .query_map(
+            params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
+            |row| row.get(0),
+        )?
+        .collect::<Result<_, _>>()?;
+    let mut changed = false;
+    for edge in leaving {
+        changed |= forget_edge(conn, &edge)?;
+    }
+    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0 || changed)
 }
 
 pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
@@ -1224,7 +1652,7 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
     {
         return Ok(false);
     }
-    delete_edge(conn, id)
+    forget_edge(conn, id)
 }
 
 /// Whether it was not pinned already.
@@ -1280,8 +1708,19 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
     Ok(())
 }
 
+/// Takes the edge out of what the copy shows and nothing else: for a write
+/// of this device's laid over it. An edge leaving the copy goes by
+/// `forget_edge`.
 pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
+}
+
+/// The one way an edge leaves the copy, with what is kept beneath it and any
+/// read-back owed for it.
+pub fn forget_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    drop_beneath(conn, Subject::Edge, id)?;
+    settle_read_back(conn, Subject::Edge, id)?;
+    delete_edge(conn, id)
 }
 
 /// Nothing for a trashed row, as the server answers a read by id.
@@ -1505,7 +1944,6 @@ impl Tier {
 /// SQLite refuses the write; lowered below it, nothing complains.
 pub const CEILING: i64 = 5;
 
-/// Not on `QueuedWrite`, so a queue listing does not carry every write's fields.
 pub fn payload_of(conn: &Connection, id: &str) -> Result<String, CoreError> {
     conn.query_row("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
         row.get(0)
@@ -1698,7 +2136,8 @@ pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreErr
     )
 }
 
-/// Also refuses each of `held`, unsent.
+/// Also refuses each of `held`, unsent, and puts the copy back as it was
+/// beneath each. The caller has read their rows back already.
 pub fn withdraw(
     conn: &Connection,
     row: &QueuedWrite,
@@ -1706,27 +2145,19 @@ pub fn withdraw(
 ) -> Result<(), CoreError> {
     let reason = format!("the {} it waits for was withdrawn", row.kind);
     for dependant in held {
-        record_verdict(
-            conn,
-            &dependant.id,
-            &Answered {
-                verdict: Verdict::Refused,
-                reason: Some(&reason),
-                answer: None,
-                conflicted_copy_id: None,
-            },
-        )?;
+        record_refusal(conn, dependant, &reason, None, false)?;
     }
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
-    Ok(())
+    put_back(conn, row)
 }
 
 /// Never clears a row `release` takes (blocked, dead, or refused unsent), nor
 /// one an unanswered or releasable row depends on: written as a list of
 /// verdicts instead, a release would leave a row waiting forever on a
-/// dependency that is gone. A row refused unsent behind a withdrawn write can
-/// never be released and is cleared; passes repeat until one clears nothing,
-/// since each can free what the last kept.
+/// dependency that is gone. Nor a refused row carrying content, which goes
+/// only by `discard`. A row refused unsent behind a withdrawn write can never
+/// be released and is cleared; passes repeat until one clears nothing, since
+/// each can free what the last kept.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     let mut cleared = 0;
     loop {
@@ -1739,11 +2170,13 @@ pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
 }
 
 fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
+    let kept = content_kinds();
     // Kept while an unanswered or releasable row names it, which would
     // otherwise wait on a write no drain can find.
     let unreleasable = conn.execute(
-        "DELETE FROM queue
-          WHERE verdict = ?1 AND sent = 0
+        &format!(
+            "DELETE FROM queue
+          WHERE verdict = ?1 AND sent = 0 AND kind NOT IN ({kept})
             AND EXISTS (
               SELECT 1 FROM json_each(queue.depends_on) AS named
                WHERE named.value NOT IN (SELECT id FROM queue)
@@ -1752,7 +2185,8 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
               SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
                WHERE named.value = queue.id
                  AND (waiting.verdict IS NULL OR waiting.verdict IN (?2, ?3))
-            )",
+            )"
+        ),
         [
             Verdict::Refused.as_str(),
             Verdict::Blocked.as_str(),
@@ -1761,16 +2195,19 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
     )?;
     Ok(unreleasable
         + conn.execute(
-            "DELETE FROM queue
+            &format!(
+                "DELETE FROM queue
           WHERE verdict IN (:accepted, :merged, :conflicted, :refused)
             AND NOT (verdict = :refused AND sent = 0)
+            AND NOT (verdict = :refused AND kind IN ({kept}))
             AND NOT EXISTS (
               SELECT 1 FROM queue AS waiting
                WHERE (waiting.verdict IS NULL
                       OR waiting.verdict IN (:blocked, :dead)
                       OR (waiting.verdict = :refused AND waiting.sent = 0))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
-            )",
+            )"
+            ),
             named_params! {
                 ":accepted": Verdict::Accepted.as_str(),
                 ":merged": Verdict::Merged.as_str(),
@@ -1780,6 +2217,33 @@ fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
                 ":dead": Verdict::Dead.as_str(),
             },
         )?)
+}
+
+/// The kinds `carries_content` names, as an SQL list.
+fn content_kinds() -> String {
+    WriteKind::ALL
+        .into_iter()
+        .filter(|kind| kind.carries_content())
+        .map(|kind| format!("'{}'", kind.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Takes a refused write out of the queue, the one way a refused write that
+/// carried content leaves it. Answers `false` for a row not refused, or one a
+/// write still waits on, which would then wait on nothing.
+pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    let Some(row) = queued_write(conn, id)? else {
+        return Err(CoreError::NotFound {
+            code: "queued_write_not_found".into(),
+            message: format!("{id} is not a write this queue holds"),
+        });
+    };
+    if row.verdict != Some(Verdict::Refused) || !held_for(conn, id)?.is_empty() {
+        return Ok(false);
+    }
+    conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
+    Ok(true)
 }
 
 pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
@@ -1798,16 +2262,12 @@ pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, C
 
 pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
     unpin(conn, id)?;
-    conn.execute(
-        "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
-        [id],
-    )?;
-    conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    conn.execute(
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        [id],
-    )?;
+    forget_row(conn, id)
+}
+
+/// `forget_item`, keeping a pin.
+fn forget_row(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
     Ok(())
 }
 
@@ -1828,79 +2288,205 @@ pub fn lay_waiting_writes_over(
     };
     let mut tags = item.tags.clone();
     for row in waiting {
-        let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
-        let named_tags = || -> Vec<String> {
-            payload
-                .get("tags")
-                .and_then(Value::as_array)
-                .map(|tags| {
-                    tags.iter()
-                        .filter_map(|tag| tag.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        match row.kind {
-            WriteKind::UpdateItem => {
-                if let Some(Value::Object(properties)) = payload.get("properties") {
-                    // Only an edit that read the copy knows which properties
-                    // it cleared; one said to be read earlier is laid over.
-                    let read = match read_of(conn, &row.id)? {
-                        Some(read) if replaces_properties(&payload) => {
-                            serde_json::from_str::<Value>(&read)?
-                                .get("properties")
-                                .and_then(Value::as_object)
-                                .cloned()
-                        }
-                        _ => None,
-                    };
-                    if let Some(read) = read {
-                        lay_changes(&mut item.properties, properties, &read);
-                    } else {
-                        for (key, value) in properties {
-                            item.properties.insert(key.clone(), value.clone());
-                        }
-                    }
-                }
-                if let Some(Value::String(key)) = payload.get("source_id") {
-                    item.source_id = Some(key.clone());
-                }
-                if payload.get("retype") == Some(&Value::Bool(true))
-                    && let Some(Value::String(r#type)) = payload.get("type")
-                {
-                    item.r#type = r#type.clone();
-                }
-                if let Some(tier) = payload.get("tier").and_then(Value::as_str) {
-                    item.tier = Tier::parse_wire(Some(tier))?;
-                }
-            }
-            WriteKind::TransitionItem => {
-                if let Some(state) = payload.get("state").and_then(Value::as_str) {
-                    item.state = state.parse()?;
-                }
-            }
-            WriteKind::DeleteItem => item.state = ItemState::Trashed,
-            WriteKind::RestoreItem => item.state = ItemState::Active,
-            WriteKind::AddTag | WriteKind::MergeMetadata => {
-                for tag in named_tags() {
-                    if !tags.contains(&tag) {
-                        tags.push(tag);
-                    }
-                }
-            }
-            WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
-            WriteKind::ReplaceMetadata => tags = named_tags(),
-            WriteKind::CreateItem
-            | WriteKind::CreateEdge
-            | WriteKind::UpdateEdge
-            | WriteKind::DeleteEdge
-            | WriteKind::WriteExtension
-            | WriteKind::DeleteExtension
-            | WriteKind::UploadBlob => {}
-        }
+        lay_write(conn, &mut item, &mut tags, &row)?;
     }
     tags.sort();
     upsert_item(conn, &item.as_wire(), Some(&tags), &indexing(&item.r#type))
+}
+
+fn lay_write(
+    conn: &Connection,
+    item: &mut Item,
+    tags: &mut Vec<String>,
+    row: &QueuedWrite,
+) -> Result<(), CoreError> {
+    let payload = &row.body;
+    let named_tags = || -> Vec<String> {
+        payload
+            .get("tags")
+            .and_then(Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|tag| tag.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    match row.kind {
+        WriteKind::UpdateItem => {
+            if let Some(Value::Object(properties)) = payload.get("properties") {
+                // Only an edit that read the copy knows which properties it
+                // cleared; one said to be read earlier is laid over.
+                let read = match read_of(conn, &row.id)? {
+                    Some(read) if replaces_properties(payload) => {
+                        serde_json::from_str::<Value>(&read)?
+                            .get("properties")
+                            .and_then(Value::as_object)
+                            .cloned()
+                    }
+                    _ => None,
+                };
+                if let Some(read) = read {
+                    lay_changes(&mut item.properties, properties, &read);
+                } else {
+                    for (key, value) in properties {
+                        item.properties.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            if let Some(Value::String(key)) = payload.get("source_id") {
+                item.source_id = Some(key.clone());
+            }
+            if payload.get("retype") == Some(&Value::Bool(true))
+                && let Some(Value::String(r#type)) = payload.get("type")
+            {
+                item.r#type = r#type.clone();
+            }
+            if let Some(tier) = payload.get("tier").and_then(Value::as_str) {
+                item.tier = Tier::parse_wire(Some(tier))?;
+            }
+        }
+        WriteKind::TransitionItem => {
+            if let Some(state) = payload.get("state").and_then(Value::as_str) {
+                item.state = state.parse()?;
+            }
+        }
+        WriteKind::DeleteItem => item.state = ItemState::Trashed,
+        WriteKind::RestoreItem => item.state = ItemState::Active,
+        WriteKind::AddTag | WriteKind::MergeMetadata => {
+            for tag in named_tags() {
+                if !tags.contains(&tag) {
+                    tags.push(tag);
+                }
+            }
+        }
+        WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
+        WriteKind::ReplaceMetadata => *tags = named_tags(),
+        WriteKind::CreateItem
+        | WriteKind::CreateEdge
+        | WriteKind::UpdateEdge
+        | WriteKind::DeleteEdge
+        | WriteKind::WriteExtension
+        | WriteKind::DeleteExtension
+        | WriteKind::UploadBlob => {}
+    }
+    Ok(())
+}
+
+/// The one way a refusal is recorded, whoever refused: the verdict, and the
+/// copy put back at once to what was beneath the write, so it stops showing
+/// what the server did not take even while the server cannot be read. With
+/// `owe`, the copy owes a read of the server's row, which every drain tries
+/// until it lands; a read the caller has already made, or a row only this
+/// device ever held, owes none.
+pub fn record_refusal(
+    conn: &Connection,
+    row: &QueuedWrite,
+    reason: &str,
+    answer: Option<&str>,
+    owe: bool,
+) -> Result<(), CoreError> {
+    let owed = if owe { owed_of(conn, row)? } else { None };
+    record_verdict(
+        conn,
+        &row.id,
+        &Answered {
+            verdict: Verdict::Refused,
+            reason: Some(reason),
+            answer,
+            conflicted_copy_id: None,
+        },
+    )?;
+    put_back(conn, row)?;
+    if let Some(owed) = owed {
+        owe_read_back(conn, &owed)?;
+    }
+    Ok(())
+}
+
+/// Puts the copy back as it was beneath `row`, which no longer waits: the
+/// server's row as last taken, with every write still waiting laid back
+/// over it. A create's row was only ever this device's, so it goes; its pin
+/// stays until a read says whether the server holds the id.
+pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
+    match row.kind.subject() {
+        Some(Subject::Item) => {
+            let Some(id) = row.item_id.as_deref() else {
+                return Ok(());
+            };
+            if row.kind == WriteKind::CreateItem {
+                return forget_row(conn, id);
+            }
+            let catalog = crate::catalog::Catalog::load(conn)?;
+            if let Some(held) = beneath_item(conn, id)?
+                && item_held(conn, id)?
+            {
+                upsert_item(
+                    conn,
+                    &held.as_wire(),
+                    Some(&held.tags),
+                    &catalog.indexing(&held.r#type),
+                )?;
+            }
+            lay_waiting_writes_over(conn, id, &|laid| catalog.indexing(laid))?;
+            if !row_writes_wait(conn, id)? {
+                drop_beneath(conn, Subject::Item, id)?;
+            }
+        }
+        Some(Subject::Edge) => {
+            let Some(id) = row.edge_id.as_deref() else {
+                return Ok(());
+            };
+            if row.kind == WriteKind::CreateEdge {
+                delete_edge(conn, id)?;
+                return drop_beneath(conn, Subject::Edge, id);
+            }
+            if let Some(held) = beneath_edge(conn, id)? {
+                upsert_edge(conn, &held.as_wire())?;
+            }
+            lay_waiting_edge_writes_over(conn, id)?;
+            if !edge_write_waits(conn, id)? {
+                drop_beneath(conn, Subject::Edge, id)?;
+            }
+            // Where the server moved it to a source the copy does not hold
+            // while the refused write waited.
+            let_go_of_untaken_edge(conn, id)?;
+        }
+        None => {}
+    }
+    Ok(())
+}
+
+/// An answer that carries no row says the server took `row` as sent, so the
+/// row beneath the writes still waiting now holds it too: put back over a
+/// later refusal, it would otherwise undo a write the server took.
+pub fn fold_into_beneath(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
+    match row.kind.subject() {
+        Some(Subject::Item) => {
+            let Some(id) = row.item_id.as_deref() else {
+                return Ok(());
+            };
+            if !row_writes_wait(conn, id)? {
+                return drop_beneath(conn, Subject::Item, id);
+            }
+            if let Some(mut held) = beneath_item(conn, id)? {
+                let mut tags = held.tags.clone();
+                lay_write(conn, &mut held, &mut tags, row)?;
+                tags.sort();
+                held.tags = tags;
+                set_beneath(conn, Subject::Item, id, &serde_json::to_string(&held)?)?;
+            }
+        }
+        Some(Subject::Edge) => {
+            if let Some(id) = row.edge_id.as_deref()
+                && (row.kind == WriteKind::DeleteEdge || !edge_write_waits(conn, id)?)
+            {
+                drop_beneath(conn, Subject::Edge, id)?;
+            }
+        }
+        None => {}
+    }
+    Ok(())
 }
 
 pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
@@ -2098,12 +2684,12 @@ pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result
     add_tags(conn, item_id, tags)
 }
 
-/// The version is untouched: the server bumps it only on a write to an
-/// item's fields, and catch-up's version rule rests on that.
+/// The version and the time are the server's, untouched: a row the server
+/// writes after this is ordered against them (`Stamp`).
 pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
     let changed = conn.execute(
-        "UPDATE items SET state = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, state.as_str(), now_iso()],
+        "UPDATE items SET state = ?2 WHERE id = ?1",
+        params![id, state.as_str()],
     )?;
     if changed > 0 && state == ItemState::Trashed {
         // A trashed row is out of the local index, as in `index_row`.
@@ -2677,10 +3263,11 @@ mod tests {
     #[test]
     fn a_withdraw_refuses_the_chain_behind_it_and_clearing_takes_all_of_it() {
         let conn = conn();
+        // Deletes, which carry nothing a clearing could lose.
         let row = |id: &str, verdict: Option<&str>, sent: i64, depends: &str| {
             conn.execute(
                 "INSERT INTO queue (id, kind, idempotency_key, payload, verdict, reason, sent, depends_on, queued_at)
-                 VALUES (?1, 'update_item', ?1, '{}', ?2, ?3, ?4, ?5, '2026-01-01T00:00:00Z')",
+                 VALUES (?1, 'delete_item', ?1, '{}', ?2, ?3, ?4, ?5, '2026-01-01T00:00:00Z')",
                 params![
                     id,
                     verdict,
@@ -3038,19 +3625,122 @@ mod tests {
     }
 
     #[test]
-    fn an_answer_is_older_only_than_a_later_version_held() {
+    fn a_store_made_before_the_tables_beneath_and_read_backs_opens_and_gains_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("older.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            upsert_item(
+                &conn,
+                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
+                None,
+                &Indexing::default(),
+            )
+            .unwrap();
+            conn.execute_batch("DROP TABLE beneath; DROP TABLE read_backs;")
+                .unwrap();
+        }
+        let conn = open(&path).unwrap();
+        assert!(item_held(&conn, "row").unwrap());
+        assert_eq!(beneath_item(&conn, "row").unwrap(), None);
+        assert!(owed_read_backs(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_row_is_older_than_a_later_version_held_or_one_stamped_later_at_the_same() {
         let conn = conn();
+        let held_at = "2026-01-01T00:00:01.500Z";
         let mut row = note("row", "title", "body", "2026-01-01T00:00:00Z");
         row.version = 5;
+        row.updated_at = held_at.into();
         upsert_item(&conn, &row, None, &Indexing::default()).unwrap();
         let mut edge = wire_edge("link", "row", "row", "references");
         edge.version = 5;
+        edge.updated_at = held_at.into();
         upsert_edge(&conn, &edge).unwrap();
         for (subject, id) in [(Subject::Item, "row"), (Subject::Edge, "link")] {
-            assert!(holds_newer(&conn, subject, id, 4).unwrap());
-            assert!(!holds_newer(&conn, subject, id, 5).unwrap());
-            assert!(!holds_newer(&conn, subject, id, 6).unwrap());
-            assert!(!holds_newer(&conn, subject, "elsewhere", 1).unwrap());
+            assert!(holds_later(&conn, subject, id, 4, "2027-01-01T00:00:00Z").unwrap());
+            assert!(holds_later(&conn, subject, id, 5, "2026-01-01T00:00:01Z").unwrap());
+            // The same instant written another way is a tie, which is no
+            // later.
+            assert!(!holds_later(&conn, subject, id, 5, "2026-01-01T01:00:01.5+01:00").unwrap());
+            assert!(!holds_later(&conn, subject, id, 5, "2026-01-01T00:00:02Z").unwrap());
+            assert!(!holds_later(&conn, subject, id, 6, "2020-01-01T00:00:00Z").unwrap());
+            // A time that cannot be read leaves the version alone to order.
+            assert!(!holds_later(&conn, subject, id, 5, "yesterday").unwrap());
+            assert!(!holds_later(&conn, subject, "elsewhere", 1, held_at).unwrap());
+        }
+    }
+
+    #[test]
+    fn a_server_row_never_goes_in_over_a_later_one() {
+        let conn = conn();
+        let mut later = note("row", "later", "body", "2026-01-01T00:00:00Z");
+        later.version = 3;
+        later.state = "archived".into();
+        later.updated_at = "2026-01-02T00:00:00.000Z".into();
+        assert!(put_server_item(&conn, &later, None, &Indexing::default()).unwrap());
+        let mut older = later.clone();
+        older.state = "active".into();
+        older.properties.insert("title".into(), "older".into());
+        older.updated_at = "2026-01-01T12:00:00.000Z".into();
+        owe_read_back(
+            &conn,
+            &Owed {
+                subject: Subject::Item,
+                id: "row".into(),
+                source_id: None,
+                edge_type: None,
+                moved: false,
+            },
+        )
+        .unwrap();
+        assert!(
+            !put_server_item(&conn, &older, None, &Indexing::default()).unwrap(),
+            "a row stamped before the one held went in over it"
+        );
+        let held = item_by_id(&conn, "row").unwrap().unwrap();
+        assert_eq!(held.state, ItemState::Archived);
+        assert_eq!(held.properties["title"], "later");
+        assert!(
+            owed_read_backs(&conn).unwrap().is_empty(),
+            "a server row in the copy left the read-back owed for it"
+        );
+
+        let mut edge = wire_edge("link", "row", "row", "references");
+        edge.version = 2;
+        edge.updated_at = "2026-01-02T00:00:00Z".into();
+        assert!(put_server_edge(&conn, &edge).unwrap());
+        let mut stale = edge.clone();
+        stale.version = 1;
+        stale.updated_at = "2026-03-01T00:00:00Z".into();
+        assert!(!put_server_edge(&conn, &stale).unwrap());
+        assert_eq!(edge_by_id(&conn, "link").unwrap().unwrap().version, 2);
+    }
+
+    #[test]
+    fn an_instant_reads_any_fraction_and_offset() {
+        let at = |stamp| instant_of(stamp).unwrap();
+        assert_eq!(at("1970-01-01T00:00:00Z"), 0);
+        assert_eq!(at("1970-01-01T00:00:01.25Z"), 1_250_000_000);
+        assert_eq!(at("1970-01-01T01:00:00+01:00"), 0);
+        assert_eq!(at("1969-12-31T23:00:00-01:00"), 0);
+        assert_eq!(
+            at("2026-01-01T00:00:00.123456789123Z") % 1_000_000_000,
+            123_456_789
+        );
+        for unreadable in [
+            "",
+            "2026-01-01",
+            "2026-13-01T00:00:00Z",
+            "2026-01-01T00:00:00",
+            "2026-01-01T00:00:00.Z",
+        ] {
+            assert_eq!(
+                instant_of(unreadable),
+                None,
+                "{unreadable:?} read as an instant"
+            );
         }
     }
 

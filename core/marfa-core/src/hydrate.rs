@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::catalog::Catalog;
 use crate::error::CoreError;
 use crate::http::{Http, ItemsQuery};
-use crate::model::{Draft, EdgeDraft, HydrateReport, Subject, Tier, WriteKind};
+use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
 use crate::wire::{EventPayload, WireEdge, WireEdgeBlock, WireItemWithMetadata};
@@ -83,15 +83,15 @@ pub(crate) fn hydrate(
             let tx = conn.transaction()?;
             for row in &page.data {
                 let indexing = catalog.indexing(&row.item.r#type);
-                store::upsert_item(&tx, &row.item, Some(&row.metadata.tags), &indexing)?;
+                store::put_server_item(&tx, &row.item, Some(&row.metadata.tags), &indexing)?;
                 for block in row.item.edges.iter().flat_map(|blocks| blocks.values()) {
                     for edge in &block.data {
-                        store::upsert_edge(&tx, edge)?;
+                        store::put_server_edge(&tx, edge)?;
                     }
                 }
             }
             for edge in &overflow {
-                store::upsert_edge(&tx, edge)?;
+                store::put_server_edge(&tx, edge)?;
             }
             tx.commit()?;
             let Some(next) = page.next_cursor.clone() else {
@@ -118,7 +118,7 @@ pub(crate) fn hydrate(
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             for edge in &page.data {
-                store::upsert_edge(&tx, edge)?;
+                store::put_server_edge(&tx, edge)?;
             }
             tx.commit()?;
             // Rows the key cannot read leave a page short or empty, not last.
@@ -145,14 +145,14 @@ pub(crate) fn hydrate(
         };
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        store::upsert_item(
+        store::put_server_item(
             &tx,
             &row.item,
             Some(&row.metadata.tags),
             &catalog.indexing(&row.item.r#type),
         )?;
         for edge in &edges {
-            store::upsert_edge(&tx, edge)?;
+            store::put_server_edge(&tx, edge)?;
         }
         tx.commit()?;
     }
@@ -337,7 +337,7 @@ pub(crate) fn read_with_edges(
     Ok(Some((read, edges)))
 }
 
-/// A row held at a later version came from an event since the read, and
+/// A row held at a later stamp came from an event since the read, and
 /// stays.
 pub(crate) fn hold_row(
     conn: &rusqlite::Connection,
@@ -345,14 +345,12 @@ pub(crate) fn hold_row(
     row: &WireItemWithMetadata,
     edges: &[WireEdge],
 ) -> Result<()> {
-    if !store::holds_newer(conn, Subject::Item, &row.item.id, row.item.version)? {
-        let indexing = catalog.indexing(&row.item.r#type);
-        store::upsert_item(conn, &row.item, Some(&row.metadata.tags), &indexing)?;
+    let indexing = catalog.indexing(&row.item.r#type);
+    if store::put_server_item(conn, &row.item, Some(&row.metadata.tags), &indexing)? {
         store::lay_waiting_writes_over(conn, &row.item.id, &|laid| catalog.indexing(laid))?;
     }
     for edge in edges {
-        if !store::holds_newer(conn, Subject::Edge, &edge.id, edge.version)? {
-            store::upsert_edge(conn, edge)?;
+        if store::put_server_edge(conn, edge)? {
             store::lay_waiting_edge_writes_over(conn, &edge.id)?;
         }
     }

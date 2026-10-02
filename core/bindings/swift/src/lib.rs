@@ -347,17 +347,63 @@ pub enum Verdict {
         sibling_id: String,
         fields: Vec<String>,
     },
-    /// The server's code verbatim, or the sentence naming the write this one
-    /// waited on where that write was refused.
+    /// The refusal read into its parts.
     Refused {
-        reason: String,
+        refusal: Refusal,
     },
+    /// Stopped until something outside the queue changes. A write held
+    /// behind another that has no answer yet is not blocked: it has no
+    /// verdict, and its `waiting` says so.
     Blocked {
         reason: BlockedReason,
     },
     /// Refused until the ceiling; released by id. The row's `answer` holds
     /// the last answer it got.
     Dead,
+}
+
+/// Why the server, or the drain for a write it never sent, refused a write.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct Refusal {
+    /// The server's code verbatim, or the sentence naming the write this one
+    /// waited on where that write was refused.
+    pub reason: String,
+    /// The code in the server's envelope, where the server refused it.
+    pub code: Option<String>,
+    pub message: Option<String>,
+    /// Each property the server would not take, and why.
+    pub fields: Vec<FieldRefusal>,
+    /// The row the write named is in the bin, and can be restored.
+    pub trashed: bool,
+    /// The permission the credential's key lacks, where the refusal names one.
+    pub grant: Option<MissingGrant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FieldRefusal {
+    pub field: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct MissingGrant {
+    pub kind: GrantKind,
+    /// The type or edge type id, or the extension namespace.
+    pub name: String,
+    pub level: GrantLevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum GrantKind {
+    Type,
+    EdgeType,
+    Extension,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum GrantLevel {
+    Read,
+    Write,
 }
 
 /// A create, before it is queued.
@@ -439,7 +485,14 @@ pub struct QueuedWrite {
     /// The write ahead of this one to the same row or edge, which it goes
     /// out after and is not refused with.
     pub follows: Option<String>,
+    /// None while the server has not answered it.
     pub verdict: Option<Verdict>,
+    /// Held behind a write that has no answer yet: `depends_on` and
+    /// `follows` say which.
+    pub waiting: bool,
+    /// The body the write sends, or sent, as one JSON object: a refused
+    /// write's content stays readable here until it is discarded.
+    pub body_json: String,
     /// The server's answer, whole, as it arrived.
     pub answer: Option<String>,
     pub refusals: i64,
@@ -469,12 +522,14 @@ pub struct Attached {
     pub edge: QueuedWrite,
 }
 
-/// What became of one write a drain sent.
+/// What became of one write a drain answered, sent or not.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
+    /// An edge write's source; otherwise the row written to.
     pub item_id: Option<String>,
+    pub edge_id: Option<String>,
     pub verdict: Option<Verdict>,
     pub refusals: i64,
     /// The server answered from its record of this idempotency key rather
@@ -880,25 +935,63 @@ impl From<SearchFilters> for marfa_core::SearchFilters {
     }
 }
 
-impl From<marfa_core::Outcome> for Verdict {
-    fn from(outcome: marfa_core::Outcome) -> Self {
-        use marfa_core::Outcome as O;
-        match outcome {
-            O::Accepted => Verdict::Accepted,
-            O::Merged { fields } => Verdict::Merged { fields },
-            O::Conflicted { sibling_id, fields } => Verdict::Conflicted { sibling_id, fields },
-            O::Refused { reason } => Verdict::Refused { reason },
-            O::Blocked { reason } => Verdict::Blocked {
-                reason: reason.into(),
-            },
-            O::Dead => Verdict::Dead,
+impl From<marfa_core::Refusal> for Refusal {
+    fn from(refusal: marfa_core::Refusal) -> Self {
+        Refusal {
+            reason: refusal.reason,
+            code: refusal.code,
+            message: refusal.message,
+            fields: refusal
+                .fields
+                .into_iter()
+                .map(|field| FieldRefusal {
+                    field: field.field,
+                    message: field.message,
+                })
+                .collect(),
+            trashed: refusal.trashed,
+            grant: refusal.grant.map(|grant| MissingGrant {
+                kind: match grant.kind {
+                    marfa_core::GrantKind::Type => GrantKind::Type,
+                    marfa_core::GrantKind::EdgeType => GrantKind::EdgeType,
+                    marfa_core::GrantKind::Extension => GrantKind::Extension,
+                },
+                name: grant.name,
+                level: match grant.level {
+                    marfa_core::GrantLevel::Read => GrantLevel::Read,
+                    marfa_core::GrantLevel::Write => GrantLevel::Write,
+                },
+            }),
         }
     }
 }
 
+/// The verdict, and whether the write waits behind another instead.
+fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
+    use marfa_core::Outcome as O;
+    let verdict = match outcome {
+        None => return (None, false),
+        Some(O::Waiting) => return (None, true),
+        Some(O::Accepted) => Verdict::Accepted,
+        Some(O::Merged { fields }) => Verdict::Merged { fields },
+        Some(O::Conflicted { sibling_id, fields }) => Verdict::Conflicted { sibling_id, fields },
+        Some(O::Refused(refusal)) => Verdict::Refused {
+            refusal: refusal.into(),
+        },
+        Some(O::Blocked { reason }) => Verdict::Blocked {
+            reason: reason.into(),
+        },
+        Some(O::Dead) => Verdict::Dead,
+    };
+    (Some(verdict), false)
+}
+
 fn queued(write: marfa_core::QueuedWrite) -> Result<QueuedWrite, MarfaError> {
+    let (verdict, waiting) = crossed(write.outcome()?);
     Ok(QueuedWrite {
-        verdict: write.outcome()?.map(Into::into),
+        verdict,
+        waiting,
+        body_json: write.body.to_string(),
         id: write.id,
         kind: write.kind.into(),
         item_id: write.item_id,
@@ -922,10 +1015,11 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
     let mut verdicts = Vec::with_capacity(report.verdicts.len());
     for entry in report.verdicts {
         verdicts.push(DrainVerdict {
-            verdict: entry.outcome()?.map(Into::into),
+            verdict: crossed(entry.outcome()?).0,
             id: entry.id,
             kind: entry.kind.into(),
             item_id: entry.item_id,
+            edge_id: entry.edge_id,
             refusals: entry.refusals,
             replayed: entry.replayed,
         });
@@ -1451,9 +1545,17 @@ impl MarfaCore {
         Ok(self.inner.withdraw(&id)?)
     }
 
-    /// Clears the writes the server has answered, and says how many went.
+    /// Clears the writes the server has answered, and says how many went. A
+    /// refused write that carried content stays until it is discarded.
     pub fn forget_answered(&self) -> Result<u64, MarfaError> {
         Ok(self.inner.forget_answered()? as u64)
+    }
+
+    /// Takes a refused write out of the queue, with the content it carried.
+    /// Answers whether the row was one a discard takes: refused, and with no
+    /// write still waiting on it.
+    pub fn discard(&self, id: String) -> Result<bool, MarfaError> {
+        Ok(self.inner.discard(&id)?)
     }
 }
 
@@ -1473,42 +1575,78 @@ mod tests {
     fn every_outcome_crosses_with_what_it_carries() {
         use marfa_core::Outcome as O;
         let fields = vec!["title".to_string()];
-        assert_eq!(Verdict::from(O::Accepted), Verdict::Accepted);
+        assert_eq!(crossed(None), (None, false));
+        assert_eq!(crossed(Some(O::Accepted)), (Some(Verdict::Accepted), false));
         assert_eq!(
-            Verdict::from(O::Merged {
+            crossed(Some(O::Merged {
                 fields: fields.clone()
-            }),
-            Verdict::Merged {
-                fields: fields.clone()
-            }
+            })),
+            (
+                Some(Verdict::Merged {
+                    fields: fields.clone()
+                }),
+                false
+            )
         );
         assert_eq!(
-            Verdict::from(O::Conflicted {
+            crossed(Some(O::Conflicted {
                 sibling_id: "s".into(),
                 fields: fields.clone()
-            }),
-            Verdict::Conflicted {
-                sibling_id: "s".into(),
-                fields
-            }
+            })),
+            (
+                Some(Verdict::Conflicted {
+                    sibling_id: "s".into(),
+                    fields
+                }),
+                false
+            )
+        );
+        let refusal = marfa_core::Refusal::read(
+            "type_not_permitted",
+            Some(
+                r#"{"error":{"code":"type_not_permitted","message":"no","details":{"trashed":true,"errors":[{"field":"title","message":"long"}],"grant":{"kind":"extension","name":"acme","level":"read"}}}}"#,
+            ),
         );
         assert_eq!(
-            Verdict::from(O::Refused {
-                reason: "type_not_permitted".into()
-            }),
-            Verdict::Refused {
-                reason: "type_not_permitted".into()
-            }
+            crossed(Some(O::Refused(refusal))),
+            (
+                Some(Verdict::Refused {
+                    refusal: Refusal {
+                        reason: "type_not_permitted".into(),
+                        code: Some("type_not_permitted".into()),
+                        message: Some("no".into()),
+                        fields: vec![FieldRefusal {
+                            field: "title".into(),
+                            message: "long".into()
+                        }],
+                        trashed: true,
+                        grant: Some(MissingGrant {
+                            kind: GrantKind::Extension,
+                            name: "acme".into(),
+                            level: GrantLevel::Read,
+                        }),
+                    }
+                }),
+                false
+            )
         );
         for reason in marfa_core::BlockedReason::ALL {
             assert_eq!(
-                Verdict::from(O::Blocked { reason }),
-                Verdict::Blocked {
-                    reason: reason.into()
-                }
+                crossed(Some(O::Blocked { reason })),
+                (
+                    Some(Verdict::Blocked {
+                        reason: reason.into()
+                    }),
+                    false
+                )
             );
         }
-        assert_eq!(Verdict::from(O::Dead), Verdict::Dead);
+        assert_eq!(
+            crossed(Some(O::Waiting)),
+            (None, true),
+            "a write held behind another crossed as a verdict"
+        );
+        assert_eq!(crossed(Some(O::Dead)), (Some(Verdict::Dead), false));
     }
 
     #[test]

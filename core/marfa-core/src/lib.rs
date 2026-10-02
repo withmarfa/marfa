@@ -41,9 +41,9 @@ pub use folder::{
 pub use lock::Handle;
 pub use model::{
     Added, Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit,
-    Edit, HydrateReport, Hydration, Item, ItemState, ListFilters, MetadataWrite, Outcome,
-    QueuedWrite, SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
-    Verdict, WriteKind,
+    Edit, FieldRefusal, GrantKind, GrantLevel, HydrateReport, Hydration, Item, ItemState,
+    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, SearchFilters,
+    SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier, Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -81,8 +81,6 @@ const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
 
 /// Well past any fetch or copy of a blob's bytes still running.
 const INCOMING_GRACE: Duration = Duration::from_secs(3600);
-
-const WITHDRAW_READS: usize = 3;
 
 impl Core {
     /// Creates the file when absent. A file bound to a different server is
@@ -425,56 +423,36 @@ impl Core {
     /// queue and the copy as they were.
     pub fn withdraw(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        for _ in 0..WITHDRAW_READS {
-            let Some(row) = store::queued_write(&*self.conn()?, id)? else {
-                return Err(CoreError::NotFound {
-                    code: "queued_write_not_found".into(),
-                    message: format!("{id} is not a write this queue holds"),
-                });
-            };
-            if !row.withdrawable() {
-                return Ok(false);
-            }
-            let held = store::held_for(&*self.conn()?, id)?;
-            // A catch-up landing while the reads are out would be rolled back
-            // by the older read, with its event already behind the cursor.
-            let versions = |conn: &Connection| -> Result<Vec<Option<i64>>> {
-                std::iter::once(&row)
-                    .chain(&held)
-                    .map(|write| match write.item_id.as_deref() {
-                        Some(item) => Ok(store::item_by_id(conn, item)?.map(|held| held.version)),
-                        None => Ok(None),
-                    })
-                    .collect()
-            };
-            let before = versions(&*self.conn()?)?;
-            let mut reads = vec![drain::read_back(self, &row)?];
-            for dependant in &held {
-                reads.push(drain::read_back(self, dependant)?);
-            }
-            let mut conn = self.conn()?;
-            let tx = conn.transaction()?;
-            // Another thread may have released or answered a row while the
-            // reads were out.
-            if store::queued_write(&tx, id)?.as_ref() != Some(&row)
-                || store::held_for(&tx, id)? != held
-            {
-                return Ok(false);
-            }
-            if versions(&tx)? != before {
-                continue;
-            }
-            store::withdraw(&tx, &row, &held)?;
-            for read in &reads {
-                drain::apply_read_back(&tx, read)?;
-            }
-            tx.commit()?;
-            return Ok(true);
+        let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+            return Err(CoreError::NotFound {
+                code: "queued_write_not_found".into(),
+                message: format!("{id} is not a write this queue holds"),
+            });
+        };
+        if !row.withdrawable() {
+            return Ok(false);
         }
-        Err(CoreError::Invalid(format!(
-            "{id} was not withdrawn: the copy kept catching up while the server's rows were \
-             read back, and withdrawing then would put back an older row; ask again"
-        )))
+        let held = store::held_for(&*self.conn()?, id)?;
+        let mut reads = vec![drain::read_back(self, &row)?];
+        for dependant in &held {
+            reads.push(drain::read_back(self, dependant)?);
+        }
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        // Another thread may have released or answered a row while the
+        // reads were out.
+        if store::queued_write(&tx, id)?.as_ref() != Some(&row) || store::held_for(&tx, id)? != held
+        {
+            return Ok(false);
+        }
+        store::withdraw(&tx, &row, &held)?;
+        // A row a follow brought while the reads were out is later than what
+        // they read, and is kept.
+        for read in &reads {
+            drain::apply_read_back(&tx, read)?;
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     pub(crate) fn rebase_on_held(&self, id: &str) -> Result<bool> {
@@ -585,6 +563,7 @@ impl Core {
         // Only the create, for the reason `queue_update` gives.
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
+        store::hold_beneath_item(&tx, id)?;
         store::set_item_state(&tx, id, state)?;
         let queued = store::enqueue(
             &tx,
@@ -658,8 +637,8 @@ impl Core {
                 }
             }
         }
-        next.updated_at = store::now_iso();
         let tx = conn.transaction()?;
+        store::hold_beneath_edge(&tx, id)?;
         store::upsert_edge(&tx, &next.as_wire())?;
         let queued = store::enqueue(
             &tx,
@@ -723,6 +702,7 @@ impl Core {
         }
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
+        store::hold_beneath_item(&tx, id)?;
         apply(&tx)?;
         let queued = store::enqueue(
             &tx,
@@ -1029,11 +1009,20 @@ impl Core {
     }
 
     /// Only terminal verdicts go: a `blocked` or a `dead` row is one a
-    /// caller may still release.
+    /// caller may still release, and a refused write that carried content
+    /// stays until it is discarded.
     pub fn forget_answered(&self) -> Result<usize> {
         self.lock.refuse_unless_writer()?;
         let conn = self.conn()?;
         store::forget_answered(&conn)
+    }
+
+    /// Takes a refused write out of the queue, with what it carried. Answers
+    /// `false` for a row that is not refused, or one a write still waits on.
+    pub fn discard(&self, id: &str) -> Result<bool> {
+        self.lock.refuse_unless_writer()?;
+        let conn = self.conn()?;
+        store::discard(&conn, id)
     }
 
     pub fn status(&self) -> Result<Status> {
@@ -1269,7 +1258,7 @@ fn queue_update(
     if let Some(tier) = edit.tier {
         next.tier = Some(tier);
     }
-    next.updated_at = store::now_iso();
+    store::hold_beneath_item(tx, id)?;
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;
     // Only the row's untaken create, besides what the caller names: a write
     // held on every unanswered row would be refused with a sibling that
@@ -1360,6 +1349,7 @@ fn queue_edge_delete(tx: &Connection, held: &model::Edge) -> Result<QueuedWrite>
     // A refused delete is reconciled by reading edges by type, and the row
     // is gone from the copy by then.
     let payload = serde_json::json!({ "edge_type": held.edge_type }).to_string();
+    store::hold_beneath_edge(tx, &held.id)?;
     store::delete_edge(tx, &held.id)?;
     store::enqueue(
         tx,
@@ -1466,6 +1456,299 @@ mod tests {
         );
         let earlier = queue_update(&conn, &catalog, "row", &edit(3), &[], Based::AsRead).unwrap();
         assert_eq!(store::read_of(&conn, &earlier.id).unwrap(), None);
+    }
+
+    fn held_copy() -> Core {
+        let core = Core::open_in_memory(None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            let mut row = store::testing::note("row", "server", "body", "2026-01-01T00:00:00Z");
+            row.version = 3;
+            store::put_server_item(
+                &conn,
+                &row,
+                Some(&["a".into()]),
+                &catalog::Indexing::default(),
+            )
+            .unwrap();
+            store::put_server_edge(
+                &conn,
+                &store::testing::wire_edge("link", "row", "row", "references"),
+            )
+            .unwrap();
+        }
+        core
+    }
+
+    fn refuse(core: &Core, write: &QueuedWrite) {
+        let conn = core.conn().unwrap();
+        store::mark_sent(&conn, &write.id).unwrap();
+        let row = store::queued_write(&conn, &write.id).unwrap().unwrap();
+        store::record_refusal(&conn, &row, "type_not_permitted", None, false).unwrap();
+    }
+
+    #[test]
+    fn a_refusal_puts_back_what_was_beneath_the_write_and_keeps_what_still_waits() {
+        let core = held_copy();
+        let tagged = core.add_tag("row", "b").unwrap();
+        let edited = core
+            .update_item(
+                "row",
+                &Edit {
+                    properties: serde_json::json!({ "title": "mine" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(3),
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+        let archived = core.transition_item("row", ItemState::Archived).unwrap();
+        let unlinked = core.delete_edge("link").unwrap();
+        let held = || core.get("row").unwrap().unwrap();
+        assert_eq!(held().properties["title"], "mine");
+
+        // The tag lands with an answer carrying no row, so the row beneath
+        // the writes still waiting holds it too.
+        {
+            let conn = core.conn().unwrap();
+            store::record_verdict(
+                &conn,
+                &tagged.id,
+                &store::Answered {
+                    verdict: Verdict::Accepted,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+            store::fold_into_beneath(&conn, &tagged).unwrap();
+        }
+        refuse(&core, &edited);
+        assert_eq!(
+            held().properties["title"],
+            "server",
+            "the copy went on showing an edit the server refused"
+        );
+        assert_eq!(
+            held().state,
+            ItemState::Archived,
+            "a write still waiting was undone with the refused one"
+        );
+        assert_eq!(
+            held().tags,
+            ["a", "b"],
+            "a tag the server took was undone by a refusal behind it"
+        );
+        assert_eq!(held().version, 3);
+
+        refuse(&core, &archived);
+        assert_eq!(held().state, ItemState::Active);
+        assert_eq!(held().tags, ["a", "b"]);
+
+        assert!(core.edges_from("row").unwrap().is_empty());
+        refuse(&core, &unlinked);
+        assert_eq!(
+            core.edges_from("row").unwrap().len(),
+            1,
+            "a refused delete of an edge left the edge gone from the copy"
+        );
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::beneath_item(&conn, "row").unwrap(),
+            None,
+            "a row with nothing waiting on it kept a row beneath"
+        );
+    }
+
+    #[test]
+    fn a_refused_edge_write_never_brings_back_an_edge_the_copy_let_go_of() {
+        let core = held_copy();
+        let unlinked = core.delete_edge("link").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            // The witness: while its source is held, a refusal puts it back.
+            assert!(store::beneath_edge(&conn, "link").unwrap().is_some());
+            store::evict_item(&conn, "row", &[]).unwrap();
+        }
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused delete put back an edge whose source left the copy"
+        );
+        assert_eq!(store::beneath_edge(&conn, "link").unwrap(), None);
+    }
+
+    #[test]
+    fn a_refused_edge_delete_never_brings_back_an_edge_to_a_purged_row() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+            store::put_server_edge(
+                &conn,
+                &store::testing::wire_edge("link2", "row", "other", "references"),
+            )
+            .unwrap();
+        }
+        let unlinked = core.delete_edge("link2").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            assert!(store::beneath_edge(&conn, "link2").unwrap().is_some());
+            store::purge_item(&conn, "other").unwrap();
+        }
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link2").unwrap(),
+            None,
+            "a refused delete put back an edge to a row the server purged"
+        );
+    }
+
+    #[test]
+    fn a_refused_edge_delete_never_brings_back_an_edge_of_a_type_held_whole_from_a_purged_row() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_SLICE_EDGE_TYPES, "[\"references\"]").unwrap();
+        }
+        let unlinked = core.delete_edge("link").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::purge_item(&conn, "row").unwrap();
+        }
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused delete put back an edge from a row the server purged"
+        );
+    }
+
+    /// The server moved `link` to start at `elsewhere`, a row the copy does
+    /// not hold, while a write of this device's to it waited.
+    fn moved_off_the_slice(core: &Core) {
+        let conn = core.conn().unwrap();
+        let mut moved = store::testing::wire_edge("link", "elsewhere", "row", "references");
+        moved.version = 2;
+        store::put_server_edge(&conn, &moved).unwrap();
+        store::lay_waiting_edge_writes_over(&conn, "link").unwrap();
+    }
+
+    #[test]
+    fn a_row_leaving_keeps_an_edge_a_waiting_write_moved_off_it() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+        }
+        core.update_edge(
+            "link",
+            &EdgeEdit {
+                base_version: Some(1),
+                source_id: Some("other".into()),
+                ..EdgeEdit::default()
+            },
+        )
+        .unwrap();
+        let conn = core.conn().unwrap();
+        store::evict_item(&conn, "row", &[]).unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link")
+                .unwrap()
+                .map(|edge| edge.source_id),
+            Some("other".to_string()),
+            "a row leaving took an edge a waiting write moved to a row the copy holds"
+        );
+        assert!(store::beneath_edge(&conn, "link").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_refused_edge_delete_never_brings_back_an_edge_moved_off_the_slice() {
+        let core = held_copy();
+        let unlinked = core.delete_edge("link").unwrap();
+        moved_off_the_slice(&core);
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused delete put back an edge whose source the copy does not hold"
+        );
+    }
+
+    #[test]
+    fn a_refused_edge_edit_lets_go_of_an_edge_moved_off_the_slice() {
+        let core = held_copy();
+        let edited = core
+            .update_edge(
+                "link",
+                &EdgeEdit {
+                    properties: serde_json::json!({ "note": "mine" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(1),
+                    ..EdgeEdit::default()
+                },
+            )
+            .unwrap();
+        moved_off_the_slice(&core);
+        assert!(core.edges_from("elsewhere").unwrap().len() == 1);
+        refuse(&core, &edited);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused edit left an edge whose source the copy does not hold"
+        );
+    }
+
+    #[test]
+    fn a_refused_write_with_content_stays_through_a_clearing_until_it_is_discarded() {
+        let core = held_copy();
+        let edited = core
+            .update_item(
+                "row",
+                &Edit {
+                    properties: serde_json::json!({ "title": "the words" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(3),
+                    ..Edit::default()
+                },
+            )
+            .unwrap();
+        let tagged = core.add_tag("row", "b").unwrap();
+        refuse(&core, &edited);
+        refuse(&core, &tagged);
+        assert_eq!(
+            core.forget_answered().unwrap(),
+            1,
+            "the clearing took the refused edit, or kept the refused tag"
+        );
+        let queue = core.queue().unwrap();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].body["properties"]["title"], "the words");
+        assert!(matches!(
+            queue[0].outcome().unwrap(),
+            Some(Outcome::Refused(Refusal { ref reason, .. })) if reason == "type_not_permitted"
+        ));
+        assert!(!core.discard(&tagged.id).is_ok_and(|taken| taken));
+        assert!(core.discard(&edited.id).unwrap());
+        assert!(core.queue().unwrap().is_empty());
     }
 
     #[test]
@@ -1939,6 +2222,7 @@ mod tests {
             // Refused at the handle before the missing server, so not `NoServer`.
             ("drain", reader.drain().unwrap_err()),
             ("forget_answered", reader.forget_answered().unwrap_err()),
+            ("discard", reader.discard("refused").unwrap_err()),
             (
                 "put_blob",
                 reader
@@ -2012,7 +2296,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            32,
+            33,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

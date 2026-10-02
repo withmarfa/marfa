@@ -2088,23 +2088,7 @@ fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
 }
 
 fn millis_of(stamp: &str) -> Option<i64> {
-    // `YYYY-MM-DDTHH:MM:SS.mmmZ`, which is the one shape `now_iso` writes.
-    let bytes = stamp.as_bytes();
-    if bytes.len() < 24 {
-        return None;
-    }
-    let number = |from: usize, to: usize| stamp.get(from..to)?.parse::<i64>().ok();
-    let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
-    let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
-    let millis = number(20, 23)?;
-    // Days since the epoch, by the days-from-civil algorithm run backwards.
-    let year = if month <= 2 { year - 1 } else { year };
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = year - era * 400;
-    let day_of_year = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-    let days = era * 146_097 + day_of_era - 719_468;
-    Some(((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000) + millis)
+    i64::try_from(crate::store::instant_of(stamp)? / 1_000_000).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

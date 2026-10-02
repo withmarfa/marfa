@@ -311,6 +311,10 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<number>(["forget"]);
   }
 
+  async discard(id: string): Promise<Outcome<boolean>> {
+    return this.json<boolean>(["discard", id]);
+  }
+
   async status(): Promise<Outcome<Status>> {
     return this.json<Status>(["status"]);
   }

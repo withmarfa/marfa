@@ -340,11 +340,11 @@ impl Folder {
                 && edge.target_id == self.folder
                 && !held.iter().any(|found| found.id == edge.id)
             {
-                store::delete_edge(&conn, &edge.id)?;
+                store::forget_edge(&conn, &edge.id)?;
             }
         }
         for edge in &held {
-            store::upsert_edge(&conn, edge)?;
+            store::put_server_edge(&conn, edge)?;
         }
         Ok(())
     }
