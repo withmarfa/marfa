@@ -77,14 +77,14 @@ impl Scripted {
     pub fn start() -> Scripted {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        // A catalog is read with both halves, and a script about something
-        // else need not write the second.
+        // A catalog is read with both halves, and every server answers its
+        // root, so a script about something else need not write either.
         let script = Arc::new(Mutex::new(Script::default()));
-        script
-            .lock()
-            .unwrap()
-            .answers
-            .insert("/edge-types".into(), vec![edge_types(&[])]);
+        {
+            let answers = &mut script.lock().unwrap().answers;
+            answers.insert("/edge-types".into(), vec![edge_types(&[])]);
+            answers.insert("/".into(), vec![root(INSTANCE)]);
+        }
         let stopping = Arc::new(AtomicBool::new(false));
         let open = Arc::new(Mutex::new(Vec::new()));
         {
@@ -415,6 +415,18 @@ pub fn edge_types(entries: &[(&str, Option<&str>)]) -> Answer {
     json(
         200,
         &format!(r#"{{"data":[{}],"next_cursor":null}}"#, data.join(",")),
+    )
+}
+
+/// The instance a scripted root names unless a script names another.
+pub const INSTANCE: &str = "00000000-0000-7000-8000-000000000000";
+
+pub fn root(instance: &str) -> Answer {
+    json(
+        200,
+        &format!(
+            r#"{{"name":"marfa","version":"dev","instance_id":"{instance}","contract":{CONTRACT_VERSION},"features":[]}}"#
+        ),
     )
 }
 

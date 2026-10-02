@@ -87,6 +87,8 @@ export interface Status {
   /** The rows held by id whatever the slice says of them. */
   pinned: string[];
   event_cursor?: string | null;
+  /** The instance the copy was hydrated from, as the server's root named it. */
+  instance_id?: string | null;
   hydration: "never" | "in_progress" | "complete" | "expired";
   items: number;
   edges: number;

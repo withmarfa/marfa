@@ -123,7 +123,7 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
         });
         match followed {
             Ok(_) => break,
-            Err(CoreError::CatchUpTooOld { .. }) => {}
+            Err(CoreError::CopyExpired { .. }) => {}
             Err(error) if error.is_environmental() => {
                 let (wait, next) = retry_schedule(retry, &error);
                 if !said {

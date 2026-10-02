@@ -166,6 +166,8 @@ pub struct CatchUpReport {
 #[napi(object)]
 pub struct Status {
     pub server_origin: Option<String>,
+    /// The instance the copy was hydrated from.
+    pub instance_id: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
     pub slice_edge_types: Vec<String>,
@@ -868,7 +870,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::NoCatalog => ("no_catalog", error.to_string()),
         E::WrongSchema { .. } => ("wrong_schema", error.to_string()),
         E::ReadingHandle => ("reading_handle", error.to_string()),
-        E::CatchUpTooOld { .. } => ("catch_up_too_old", error.to_string()),
+        E::CopyExpired { .. } => ("copy_expired", error.to_string()),
         E::StreamIncomplete { .. } => ("stream_incomplete", error.to_string()),
         E::WrongServer { .. } => ("wrong_server", error.to_string()),
         E::BytesAbsent { .. } => ("bytes_absent", error.to_string()),
@@ -1335,6 +1337,7 @@ impl MarfaCore {
         let status = self.inner.status().map_err(failure)?;
         Ok(Status {
             server_origin: status.server_origin,
+            instance_id: status.instance_id,
             slice_types: status.slice_types,
             slice_tier: status.slice_tier.map(Into::into),
             slice_edge_types: status.slice_edge_types,

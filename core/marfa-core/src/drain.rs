@@ -39,8 +39,9 @@ pub struct DrainReport {
     pub unavailable: Option<String>,
     /// Also holds rows settled without being sent, by another write's answer.
     pub verdicts: Vec<DrainVerdict>,
-    /// Set when a refused credential parks the queue. An answer on another
-    /// contract ends the drain as an error instead.
+    /// Set when a refused credential parks the queue, or when the server
+    /// could not say which instance it is, so nothing was sent. An answer on
+    /// another contract ends the drain as an error instead.
     pub stopped: Option<String>,
     /// Reported because `credential_refused` alone reads as a key that no
     /// longer works.
@@ -494,6 +495,33 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         unclaimed_sources: Vec::new(),
         retry_after_seconds: None,
     };
+    // Confirmed once, and only where the pass talks to the server: a pass
+    // with nothing to send or read sends nothing at all, and one that cannot
+    // confirm the instance sends nothing either, since a restart is when
+    // another instance appears.
+    let mut confirmed = false;
+    let mut confirm = |report: &mut DrainReport| -> Result<bool> {
+        if confirmed {
+            return Ok(true);
+        }
+        match crate::catch_up::refuse_another_instance(core, http) {
+            Ok(()) => {
+                confirmed = true;
+                Ok(true)
+            }
+            Err(error) if error.is_environmental() => {
+                report.stopped = Some(format!(
+                    "the server could not say which instance it is ({error}), so nothing was sent; the queue waits for the next drain"
+                ));
+                waited(report, error.retry_after().map(|wait| wait.as_secs()));
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    };
+    if !store::owed_read_backs(&*core.conn()?)?.is_empty() && !confirm(&mut report)? {
+        return Ok(report);
+    }
 
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
@@ -556,6 +584,9 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 continue;
             }
             Readiness::RefusedWith(reason) => {
+                if !confirm(&mut report)? {
+                    break;
+                }
                 {
                     let mut conn = core.conn()?;
                     let tx = conn.transaction()?;
@@ -577,7 +608,11 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 }
                 continue;
             }
-            Readiness::Ready => {}
+            Readiness::Ready => {
+                if !confirm(&mut report)? {
+                    break;
+                }
+            }
         }
 
         let payload = {

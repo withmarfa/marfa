@@ -298,9 +298,12 @@ pub enum Hydration {
     Never,
     InProgress,
     Complete,
-    /// A catch-up was told the log has moved past the kept cursor. Set only
-    /// on that answer: a store whose cursor aged out and has not asked since
-    /// still reports `Complete`. Reads are refused as for `Never`.
+    /// A catch-up or a held stream learned that the server's log no longer
+    /// continues from the kept cursor, or any call that reads the root (a
+    /// catch-up, a held stream, a drain, a pin or a folder's settings edit)
+    /// found another instance at the origin. Set only on that answer: a store
+    /// whose cursor aged out and has not asked since still reports
+    /// `Complete`. Reads are refused as for `Never`.
     Expired,
 }
 
@@ -954,6 +957,9 @@ impl QueuedWrite {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     pub server_origin: Option<String>,
+    /// The instance the copy was hydrated from, as the server's root named
+    /// it; `None` before a hydration that read one.
+    pub instance_id: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
     pub slice_edge_types: Vec<String>,

@@ -5,6 +5,7 @@ import {
   answers,
   edgeEvent,
   headRead,
+  SCRIPTED_INSTANCE,
   itemEvent,
   refusal,
   replay,
@@ -17,7 +18,11 @@ import type {
   DrainReport,
   QueuedWrite,
 } from "../../device/protocol.js";
-import type { Answer, Responder } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  type Answer,
+  type Responder,
+} from "../../device/scripted-server.js";
 import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -1739,14 +1744,14 @@ describe("offline, reconnect and re-hydration", () => {
       `a drain against an unreachable server refused rather than leaving the queue where it was: ${JSON.stringify(drained)}`,
     ).toBe(true);
     if (!drained.ok) return;
+    // An unreachable server cannot say which instance it is, so the pass
+    // ends before anything is sent, and says why (`device.md` 2).
+    expect(drained.value.sent).toBe(0);
+    expect(drained.value.stopped).toContain("which instance");
     expect(
-      drained.value.verdicts[0]?.verdict,
+      drained.value.verdicts.filter((entry) => entry.verdict !== null),
       "a write the network refused was given a verdict, and a device that could not ask has not been answered",
-    ).toBeNull();
-    expect(
-      drained.value.verdicts[0]?.refusals,
-      "an unreachable server spent the ceiling, so a week offline would kill a valid write",
-    ).toBe(0);
+    ).toEqual([]);
 
     await harness.server.online();
     const row = (await queueOf(harness.device))[0];
@@ -1754,6 +1759,10 @@ describe("offline, reconnect and re-hydration", () => {
       row?.verdict,
       "an outage left a verdict on a write nobody answered",
     ).toBeNull();
+    expect(
+      row?.refusals,
+      "an unreachable server spent the ceiling, so a week offline would kill a valid write",
+    ).toBe(0);
     expect(
       row?.id,
       "the write queued during the outage is gone, and the caller was told it was queued",
@@ -1768,32 +1777,130 @@ describe("offline, reconnect and re-hydration", () => {
     });
     expect(before.ok).toBe(true);
     if (!before.ok) return;
-
-    await harness.server.offline();
     const during = await harness.device.create({
       type: "core.note",
       properties: { title: "during", body: "during" },
     });
     expect(during.ok).toBe(true);
     if (!during.ok) return;
-    // The drain while offline is what makes this about a reconnect rather
-    // than about two writes queued back to back: without it, nothing was
-    // ever attempted and the order below is just the order they were made.
-    expect((await harness.device.drain()).ok).toBe(true);
-    await harness.server.online();
 
-    scriptWrites(harness.server, {
-      create: [
-        answers.created(wireItem({ id: before.value.item_id ?? "a" })),
-        answers.created(wireItem({ id: during.value.item_id ?? "b" })),
-      ],
+    // The connection dies under every create while the outage lasts, so the
+    // drain that sent them is the one the reconnect follows: without it,
+    // nothing was ever attempted and the order below is just the order they
+    // were made. The root still answers, so the drain can confirm the
+    // instance and send.
+    let outage = true;
+    harness.server.answer("POST", "/items", (request) => {
+      if (outage) return { kind: "drop" };
+      const { id } = JSON.parse(request.body) as { id: string };
+      return answers.created(wireItem({ id }));
     });
     expect((await harness.device.drain()).ok).toBe(true);
+    const attempted = creates(harness).length;
+    expect(
+      attempted,
+      "the creates did not go out before the connection died, so nothing below is about a reconnect",
+    ).toBeGreaterThan(0);
+    outage = false;
+    expect((await harness.device.drain()).ok).toBe(true);
 
+    const answered = creates(harness).slice(attempted);
+    expect(
+      answered.filter(
+        (id) => id === before.value.item_id || id === during.value.item_id,
+      ),
+      "the write queued first was answered after the one queued behind it, so the queue's order did not survive the reconnect",
+    ).toEqual([before.value.item_id, during.value.item_id]);
+  });
+
+  it("sends nothing to another instance at the same address, keeping the queue", async () => {
+    harness = await startHarness("queue-other-instance");
+    const { server, device } = harness;
+    const replaced = "00000000-0000-7000-8000-0000000000ff";
+    let instance = SCRIPTED_INSTANCE;
+    server.answer("GET", "/", () => answers.root(Number(BUILT_FOR), instance));
+    scriptHydration(server, { head: "10", rows: held() });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "waiting", body: "waiting" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    scriptWrites(server, {
+      create: [answers.created(wireItem({ id: queued.value.item_id ?? "a" }))],
+    });
+
+    instance = replaced;
+    const refused = await device.drain();
+    expect(
+      refused.ok,
+      "a drain sent the queue to another instance at the same address, onto rows the copy never held",
+    ).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("copy_expired");
+      expect(refused.refusal.raw).toContain(replaced);
+    }
+    expect(creates(harness), "a write reached the other instance").toEqual([]);
+    expect((await queueOf(device)).map((row) => row.id)).toEqual([
+      queued.value.id,
+    ]);
+    const status = await device.status();
+    expect(status.ok ? status.value.hydration : status).toBe("expired");
+
+    // The witness: hydrated from the instance now there, the same queue is
+    // sent to it, so the refusal above was about the instance.
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const named = await device.status();
+    expect(named.ok ? named.value.instance_id : named).toBe(replaced);
+    expect((await device.drain()).ok).toBe(true);
+    expect(creates(harness)).toEqual([queued.value.item_id]);
+  });
+
+  it("sends nothing while the server cannot say which instance it is", async () => {
+    harness = await startHarness("queue-instance-unknown");
+    const { server, device } = harness;
+    let restarting = false;
+    server.answer("GET", "/", () =>
+      restarting
+        ? refusal(503, "unavailable", "restarting")
+        : answers.root(Number(BUILT_FOR)),
+    );
+    scriptHydration(server, { head: "10", rows: held() });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "waiting", body: "waiting" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+    scriptWrites(server, {
+      create: [answers.created(wireItem({ id: queued.value.item_id ?? "a" }))],
+    });
+
+    // A restart is when another instance appears at the address, so a root
+    // that cannot answer is no confirmation.
+    restarting = true;
+    const waited = await device.drain();
+    expect(waited.ok, JSON.stringify(waited)).toBe(true);
+    if (waited.ok) {
+      expect(waited.value.sent).toBe(0);
+      expect(waited.value.stopped).toContain("which instance");
+    }
     expect(
       creates(harness),
-      "the write queued before the outage was answered after the one queued during it, so the queue's order did not survive the reconnect",
-    ).toEqual([before.value.item_id, during.value.item_id]);
+      "a write was sent to a server whose instance the drain could not confirm",
+    ).toEqual([]);
+    const after = await queueOf(device);
+    expect(
+      after.map((row) => [row.id, row.verdict, row.refusals]),
+      "the write was answered or counted against while nothing was sent",
+    ).toEqual([[queued.value.id, null, 0]]);
+
+    // The witness: once the root answers, the same drain sends it.
+    restarting = false;
+    expect((await device.drain()).ok).toBe(true);
+    expect(creates(harness)).toEqual([queued.value.item_id]);
   });
 
   it("keeps the queue through a re-hydration", async () => {
@@ -4338,9 +4445,14 @@ describe("an edit behind an edit of the same row", () => {
     await editEdge(device, { weight: 2 }, 1);
     await editEdge(device, { weight: 3 }, 1);
 
-    // A drain with no server: the first edit of each goes out and meets a
-    // refused connection, so it has no answer.
-    await server.offline();
+    // The first edit of each goes out and its connection dies, so it has no
+    // answer. An unreachable server would see none go out: the drain cannot
+    // confirm its instance.
+    const door = scriptDoor(harness, {
+      refuse: (_id, nth) => (nth === 1 ? { kind: "drop" } : undefined),
+    });
+    server.answer("PATCH", /^\/edges\/[^/]+$/, { kind: "drop" });
+    scriptEdgeDoor(harness);
     expect((await device.drain()).ok).toBe(true);
     const waiting = (await queueOf(device)).filter(
       (row) => row.kind === "update_item" || row.kind === "update_edge",
@@ -4355,12 +4467,9 @@ describe("an edit behind an edit of the same row", () => {
       ["update_edge", "blocked", "awaiting_dependency"],
     ]);
 
-    await server.online();
-    const door = scriptDoor(harness);
-    scriptEdgeDoor(harness);
     const report = await drained(device);
     expect(
-      sentOn(harness, `/items/${HELD.id}`),
+      sentOn(harness, `/items/${HELD.id}`).slice(1),
       "the second edit went out on the version both were queued against: it had gone out, unanswered, beside the first, and a body sent under its key cannot be moved",
     ).toEqual([HELD.version, HELD.version + 1]);
     expect(verdictsOf(report, "update_item", HELD.id)).toEqual([
@@ -4368,7 +4477,7 @@ describe("an edit behind an edit of the same row", () => {
       "accepted",
     ]);
     expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
-    expect(sentOn(harness, `/edges/${EDGE}`)).toEqual([1, 2]);
+    expect(sentOn(harness, `/edges/${EDGE}`).slice(1)).toEqual([1, 2]);
     expect(verdictsOf(report, "update_edge", HELD.id)).toEqual([
       "accepted",
       "accepted",

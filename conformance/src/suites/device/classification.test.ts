@@ -1207,7 +1207,8 @@ describe("the ceiling, and releasing what it stopped", () => {
     expect(
       server.requests
         .slice(before)
-        .map((request) => `${request.method} ${request.pathname}`),
+        .map((request) => `${request.method} ${request.pathname}`)
+        .filter((sent) => sent !== "GET /"),
     ).toEqual(["POST /items"]);
     // The edge's create is held behind the row's now, and an edit of the edge
     // waits for it in turn rather than going to an edge the server lacks.

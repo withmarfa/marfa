@@ -24,7 +24,9 @@ async function unclaiming() {
       });
       res.end(JSON.stringify(body));
     };
-    if (path === "/types") {
+    if (path === "/") {
+      json(200, { instance_id: "00000000-0000-7000-8000-000000000000" });
+    } else if (path === "/types") {
       json(200, {
         data: [{ id: "core.note", display_hints: { title_field: "title" } }],
         next_cursor: null,
@@ -208,7 +210,9 @@ async function refusing() {
       });
       res.end(JSON.stringify(body));
     };
-    if (path === "/types") {
+    if (path === "/") {
+      json(200, { instance_id: "00000000-0000-7000-8000-000000000000" });
+    } else if (path === "/types") {
       json(200, {
         data: [{ id: "core.note", display_hints: { title_field: "title" } }],
         next_cursor: null,

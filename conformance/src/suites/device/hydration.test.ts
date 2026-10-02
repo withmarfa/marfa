@@ -140,31 +140,95 @@ describe("what a hydration declares", () => {
     expect(signedIn.ok, JSON.stringify(signedIn)).toBe(true);
   });
 
-  it("refuses a type name outside the grammar", async () => {
+  it("refuses a type name outside the grammar, or one the server does not hold, keeping the copy it had", async () => {
     harness = await startHarness("grammar");
     const { server, device } = harness;
-    server.answer("GET", "/events", headRead("10"));
-    server.answer("GET", "/types", typeCatalog());
-    server.answer("GET", "/edge-types", edgeTypeCatalog());
-    scriptKey(server);
-    server.answer("GET", "/items", (request) =>
-      request.query.get("type") === "bookmark"
-        ? refusal(
-            400,
-            "validation_error",
-            "Type identifier must have at least two segments",
-          )
-        : itemsPage([{ item: wireItem({ id: "n1" }) }]),
-    );
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    server.answer("GET", "/items", (request) => {
+      const type = request.query.get("type");
+      if (type === "bookmark") {
+        return refusal(
+          400,
+          "validation_error",
+          "Type identifier must have at least two segments",
+        );
+      }
+      if (type === "acme.bookmark") {
+        return refusal(400, "unknown_type", "Unknown type: acme.bookmark");
+      }
+      return itemsPage([{ item: wireItem({ id: "n1" }) }]);
+    });
+    const first = await device.hydrate(["core.note"], "library");
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    const asked = () => server.requests.length;
 
-    const refused = await device.hydrate(["bookmark"], "library");
+    for (const [declared, refused] of [
+      ["bookmark", "a name that is not a type identifier"],
+      ["acme.bookmark", "a well-formed type the server does not hold"],
+    ] as const) {
+      const before = asked();
+      const listed = server.requests.filter(
+        (request) => request.pathname === "/items",
+      ).length;
+      const hydrated = await device.hydrate(["core.note", declared], "library");
+      expect(
+        hydrated.ok,
+        `${refused} hydrated, so the device holds a slice of a type that does not exist and reports it as complete`,
+      ).toBe(false);
+      if (declared === "bookmark") {
+        expect(
+          asked(),
+          "the device went to the server for a name it could refuse on its own",
+        ).toBe(before);
+      }
+      expect(
+        server.requests.filter((request) => request.pathname === "/items")
+          .length,
+        `the device read pages for ${refused}, so it cleared the copy it had before the server refused it`,
+      ).toBe(listed);
+      const kept = await device.list();
+      expect(
+        kept.ok ? kept.value.map((item) => item.id) : kept,
+        `the hydration naming ${refused} cleared the copy it had`,
+      ).toEqual(["n1"]);
+      const status = await device.status();
+      expect(
+        status.ok ? [status.value.hydration, status.value.slice_types] : status,
+      ).toEqual(["complete", ["core.note"]]);
+      if (!hydrated.ok) {
+        expect(
+          hydrated.refusal.raw,
+          "the refusal did not name the type, so a caller cannot tell which to correct",
+        ).toContain(declared);
+      }
+    }
+
+    // An edge type to hold whole that the server does not hold is refused
+    // the same way, before the copy is cleared.
+    const listedEdges = () =>
+      server.requests.filter((request) => request.pathname === "/edges").length;
+    const edgesBefore = listedEdges();
+    const unheldEdge = await device.hydrate(["core.note"], "library", {
+      edgeTypes: ["acme.link"],
+    });
     expect(
-      refused.ok,
-      "a name that is not a type identifier hydrated, so the device holds a slice of a type that cannot exist and reports it as complete",
+      unheldEdge.ok,
+      "a slice holding whole an edge type the server does not hold hydrated",
     ).toBe(false);
+    expect(listedEdges()).toBe(edgesBefore);
+    const keptEdges = await device.list();
+    expect(
+      keptEdges.ok ? keptEdges.value.map((item) => item.id) : keptEdges,
+      "the hydration naming an edge type the server does not hold cleared the copy it had",
+    ).toEqual(["n1"]);
+    if (!unheldEdge.ok) expect(unheldEdge.refusal.raw).toContain("acme.link");
 
-    // The control, on the same server: a well-formed name hydrates, so the
-    // refusal above is about the name rather than about the door.
+    // The control, on the same server: a well-formed name it holds
+    // hydrates, so the refusals above are about the names rather than the
+    // door.
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
   });
 });

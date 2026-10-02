@@ -10,6 +10,7 @@ import {
   answers,
   catchupTooOld,
   connected,
+  cursorAhead,
   edgeEvent,
   headRead,
   heldLog,
@@ -20,13 +21,14 @@ import {
   replay,
   streamCursor,
   streamLive,
+  SCRIPTED_INSTANCE,
   edgeTypeCatalog,
   typeCatalog,
   wireEdge,
   wireItem,
   wireType,
 } from "../../device/marfa-answers.js";
-import type { Answer } from "../../device/scripted-server.js";
+import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
 import type { FollowReport } from "../../device/protocol.js";
 
 /**
@@ -1370,7 +1372,7 @@ describe("catch-up replays from the cursor", () => {
       aged.ok,
       "a held stream told its cursor had aged out went on as if current",
     ).toBe(false);
-    if (!aged.ok) expect(aged.refusal.code).toBe("catch_up_too_old");
+    if (!aged.ok) expect(aged.refusal.code).toBe("copy_expired");
     expect(
       server.requests.filter((request) => request.pathname === "/events")
         .length - before,
@@ -3252,7 +3254,7 @@ describe("a cursor the log no longer holds", () => {
       expect(
         aged.refusal.code,
         `the refusal did not name the aged-out cursor: ${aged.refusal.raw}`,
-      ).toBe("catch_up_too_old");
+      ).toBe("copy_expired");
       expect(
         aged.refusal.raw,
         "the refusal did not carry the oldest id the log still holds, so nothing can say how far behind the copy is",
@@ -3366,5 +3368,171 @@ describe("a cursor the log no longer holds", () => {
       recovered.ok,
       `a hydration did not clear the refusal, so an aged-out cursor bricks the store: ${JSON.stringify(recovered)}`,
     ).toBe(true);
+  });
+});
+
+/**
+ * A server restored from a backup holds a log that ends behind the copy's
+ * cursor, and another instance started at the same address holds another
+ * log altogether. Either way the copy holds rows the server does not, and
+ * misses rows it does; a catch-up that answered "reached the head" would
+ * leave it reporting itself current for good.
+ */
+describe("a server that is not the one the copy followed", () => {
+  const OTHER_INSTANCE = "00000000-0000-7000-8000-0000000000ff";
+
+  async function queued(h: Harness): Promise<string> {
+    const created = await h.device.create({
+      type: "core.note",
+      properties: { title: "waiting", body: "waiting" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) throw new Error("unreachable: the assertion above threw");
+    return created.value.id;
+  }
+
+  async function expectExpired(
+    h: Harness,
+    ended: { ok: boolean; refusal?: { code: string; raw: string } },
+    named: string[],
+    waiting: string,
+  ): Promise<void> {
+    expect(
+      ended.ok,
+      "a server that does not continue the copy's log was answered as a clean pass, so the copy reports itself current while it misses what the server holds",
+    ).toBe(false);
+    if (!ended.ok) {
+      expect(ended.refusal?.code).toBe("copy_expired");
+      for (const word of named) expect(ended.refusal?.raw).toContain(word);
+    }
+    const status = await h.device.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (status.ok) {
+      expect(
+        status.value.hydration,
+        "the copy did not say it is owed a hydration",
+      ).toBe("expired");
+      expect(status.value.event_cursor ?? null).toBeNull();
+      // The witness that `expired` is this copy's and not an empty store's.
+      expect(status.value.slice_types).toContain("core.note");
+    }
+    const queue = await h.device.queue();
+    expect(
+      queue.ok ? queue.value.map((row) => row.id) : queue,
+      "the queue went with the copy, so a write the caller was told was queued is gone",
+    ).toContain(waiting);
+  }
+
+  it("hydrates again when the server's log ends behind its cursor, keeping the queue", async () => {
+    harness = await startHarness("restored-behind");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "first" } }] },
+    });
+    // What the real server answers a cursor past its head: the head it
+    // holds, then the terminal frame.
+    server.answer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, streamCursor("7"), cursorAhead("10", "7")],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const waiting = await queued(harness);
+
+    await expectExpired(harness, await device.catchUp(), ["7", "10"], waiting);
+
+    server.answer("GET", "/events", headRead("7"));
+    const again = await device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(again.ok ? again.value.cursor : undefined).toBe("7");
+    const queue = await device.queue();
+    expect(queue.ok ? queue.value.map((row) => row.id) : queue).toContain(
+      waiting,
+    );
+  });
+
+  it("hydrates again when the server says its cursor is ahead of the log", async () => {
+    harness = await startHarness("cursor-ahead");
+    const { server, device } = harness;
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "first" } }] },
+    });
+    // A head read that outran its budget names no position, so the
+    // terminal frame is the only word the copy has.
+    server.answer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, cursorAhead("10", "7")],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const waiting = await queued(harness);
+    await expectExpired(harness, await device.catchUp(), ["7"], waiting);
+  });
+
+  it("ends a follow whose server's log ends behind its cursor, and forgets the cursor", async () => {
+    harness = await startHarness("follow-restored");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer("GET", "/events", {
+      kind: "sse",
+      frames: [connected, streamCursor("7"), cursorAhead("10", "7")],
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const waiting = await queued(harness);
+    const before = server.requests.filter(
+      (request) => request.pathname === "/events",
+    ).length;
+    const started = Date.now();
+    const ended = await device.follow(30);
+    expect(
+      Date.now() - started,
+      "the follow stayed open over a log behind its cursor and ended only when its time ran out",
+    ).toBeLessThan(10_000);
+    expect(
+      server.requests.filter((request) => request.pathname === "/events")
+        .length - before,
+      "the follow asked again from a cursor the server's log does not hold",
+    ).toBe(1);
+    await expectExpired(harness, ended, ["7"], waiting);
+  });
+
+  it("hydrates again when another instance answers at the same address", async () => {
+    harness = await startHarness("other-instance");
+    const { server, device } = harness;
+    let instance = SCRIPTED_INSTANCE;
+    server.answer("GET", "/", () => answers.root(Number(BUILT_FOR), instance));
+    scriptHydration(server, {
+      head: "10",
+      rows: { "core.note": [{ item: { id: "first" } }] },
+    });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // The witness: the instance the copy hydrated from catches up.
+    server.answer("GET", "/events", liveReplay("10", []));
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+
+    // A fresh instance at the same address, whose log has run past the
+    // copy's cursor, so nothing in the stream says it is another.
+    instance = OTHER_INSTANCE;
+    server.answer("GET", "/events", liveReplay("40", []));
+    const waiting = await queued(harness);
+    await expectExpired(
+      harness,
+      await device.catchUp(),
+      [OTHER_INSTANCE, SCRIPTED_INSTANCE],
+      waiting,
+    );
+
+    // A follow meets another instance and ends as the catch-up did.
+    server.answer("GET", "/events", headRead("40"));
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    instance = SCRIPTED_INSTANCE;
+    const followed = await device.follow(30);
+    await expectExpired(
+      harness,
+      followed,
+      [OTHER_INSTANCE, SCRIPTED_INSTANCE],
+      waiting,
+    );
   });
 });

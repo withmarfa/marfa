@@ -153,6 +153,9 @@ pub struct EventPayload {
     pub cursor: Option<String>,
     #[serde(default, deserialize_with = "lenient_string")]
     pub min_retained_id: Option<String>,
+    /// The log's head, which a `cursor_ahead` frame names.
+    #[serde(default, deserialize_with = "lenient_string")]
+    pub head: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
 }

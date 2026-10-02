@@ -485,7 +485,7 @@ impl Folder {
                 caught_up: Some(report),
                 hydrated: None,
             }),
-            Err(CoreError::CatchUpTooOld { .. }) => Ok(CaughtUp {
+            Err(CoreError::CopyExpired { .. }) => Ok(CaughtUp {
                 caught_up: None,
                 hydrated: Some(self.hydrate()?),
             }),

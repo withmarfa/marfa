@@ -111,7 +111,7 @@ impl CliError {
                 CoreError::NoCatalog => "no_catalog",
                 CoreError::ReadingHandle => "reading_handle",
                 CoreError::WrongSchema { .. } => "wrong_schema",
-                CoreError::CatchUpTooOld { .. } => "catch_up_too_old",
+                CoreError::CopyExpired { .. } => "copy_expired",
                 CoreError::StreamIncomplete { .. } => "stream_incomplete",
                 CoreError::WrongServer { .. } => "wrong_server",
                 CoreError::BytesAbsent { .. } => "bytes_absent",
@@ -169,7 +169,7 @@ impl CliError {
                 | CoreError::NoCatalog
                 | CoreError::ReadingHandle
                 | CoreError::WrongSchema { .. }
-                | CoreError::CatchUpTooOld { .. }
+                | CoreError::CopyExpired { .. }
                 | CoreError::WrongServer { .. } => Exit::Local,
             },
             CliError::Io(_) | CliError::Watch(_) => Exit::Environment,
@@ -292,7 +292,7 @@ With --json a refusal is one JSON object on stderr:
 where error.code is one of: usage, invalid, not_found, unauthorized, forbidden, validation, conflict,
 too_large, unknown_type, rate_limited, server, network, unnamed_answer, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
-no_catalog, reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
+no_catalog, reading_handle, wrong_schema, copy_expired, stream_incomplete, wrong_server, not_held,
 contract_mismatch, redirect.";
 
 #[cfg(test)]
@@ -386,13 +386,13 @@ mod tests {
             CliError::Core(CoreError::NoCatalog).code(),
             CliError::Core(CoreError::ReadingHandle).code(),
             CliError::Core(CoreError::WrongSchema {
-                expected: String::new(),
-                found: String::new(),
                 path: String::new(),
+                reason: String::new(),
+                unsent: None,
             })
             .code(),
-            CliError::Core(CoreError::CatchUpTooOld {
-                min_retained_id: String::new(),
+            CliError::Core(CoreError::CopyExpired {
+                reason: String::new(),
             })
             .code(),
             CliError::Core(CoreError::StreamIncomplete {

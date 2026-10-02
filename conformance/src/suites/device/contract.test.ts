@@ -876,7 +876,7 @@ describe("the contract the working copy was built for", () => {
     expect(
       sent(scripted),
       "the device asked for more after an answer that named another contract",
-    ).toEqual(["GET /events"]);
+    ).toEqual(["GET /"]);
     const status = await device.status();
     expect(status.ok && status.value.hydration).toBe("never");
 
@@ -964,6 +964,9 @@ describe("the contract the working copy was built for", () => {
     scriptWrites(scripted, { create: [answers.created(wireItem({ id }))] });
 
     scripted.contract = other;
+    // The root on the core's own contract, so the instance is read and the
+    // answer refused is the one this case is about.
+    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     const refused = await device.drain();
     expect(
       refused.ok,
@@ -1022,6 +1025,9 @@ describe("the contract the working copy was built for", () => {
     });
 
     scripted.contract = other;
+    // The root on the core's own contract, so the instance is read and the
+    // answer refused is the one this case is about.
+    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     const ended = await device.drain();
     expect(ended.ok).toBe(false);
     if (!ended.ok) {
@@ -1379,6 +1385,9 @@ describe("the contract the working copy was built for", () => {
     harness = await startHarness("contract-unnamed-refusal");
     const { server: scripted, device } = harness;
     scripted.contract = null;
+    // The root on the core's own contract, so the refusal handed on is the
+    // head read's.
+    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     scripted.answer("GET", "/events", {
       kind: "json",
       status: 502,
@@ -1412,6 +1421,7 @@ describe("the contract the working copy was built for", () => {
     );
     if (!refused.ok) expect(refused.refusal.code).toBe("contract_mismatch");
     expect(sent(scripted)).toEqual([
+      "GET /",
       "GET /events",
       "GET /types",
       "GET /edge-types",
@@ -1454,7 +1464,7 @@ describe("the contract the working copy was built for", () => {
     expect(
       sent(scripted).slice(before),
       "the device opened the stream after a catalog on another contract",
-    ).toEqual(["GET /types"]);
+    ).toEqual(["GET /", "GET /types"]);
 
     // The witness: with the catalog on the core's own contract, the stream
     // is opened and its event applied.
@@ -1577,6 +1587,9 @@ describe("the contract the working copy was built for", () => {
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
 
     scripted.contract = other;
+    // The root on the core's own contract, so the instance is read and the
+    // answer refused is the one this case is about.
+    scripted.answer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     // The stream's head read, the catalog and the link door: one of each of
     // the core's ways of reading an answer.
     const reads = {
