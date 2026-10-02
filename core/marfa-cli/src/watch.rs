@@ -300,6 +300,7 @@ fn refused_credential(server: &str, said: &CoreError) -> CliError {
 struct Standing {
     root_gone: Option<String>,
     undelivered: usize,
+    stopped: Option<String>,
     lost: usize,
     unreached: usize,
     directories: Vec<String>,
@@ -380,6 +381,7 @@ fn step(
     let now = Standing {
         root_gone: None,
         undelivered: drained.report.undelivered,
+        stopped: drained.report.stopped.clone(),
         paused: (scanned.paused, pulled.paused),
         lost: scanned.lost,
         unreached: scanned.unreached,
@@ -430,8 +432,19 @@ fn step(
         .is_none_or(|before| before.unplaced != now.unplaced)
         .then(|| crate::folders::unplaced_line(pulled.unplaced))
         .flatten();
+    // Once each time it changes, as the reachability line is.
+    let stopped = now
+        .stopped
+        .clone()
+        .filter(|_| {
+            standing
+                .as_ref()
+                .is_none_or(|before| before.stopped != now.stopped)
+        })
+        .map(|reason| format!("the drain stopped: {reason}"));
     let said: Vec<String> = crate::folders::trashed_lines(&scanned)
         .into_iter()
+        .chain(stopped)
         .chain(crate::folders::uncarried_line(&now.uncarried))
         .chain((scanned.paused > 0).then(|| crate::folders::paused_line(scanned.paused, false)))
         .chain((pulled.paused > 0).then(|| crate::folders::paused_line(pulled.paused, true)))
@@ -447,15 +460,27 @@ fn step(
         .chain(now.embeds.iter().cloned())
         .collect();
     *standing = Some(now);
-    let refused = drained.report.stopped.as_ref().map(|stopped| {
-        refused_credential(
-            server,
-            &CoreError::Unauthorized {
-                code: "unauthorized".into(),
-                message: stopped.clone(),
-            },
-        )
-    });
+    // The write the drain stopped at says why: only a refused credential
+    // ends the watch, as it ends a one-off command.
+    let credential = drained
+        .report
+        .verdicts
+        .last()
+        .is_some_and(|verdict| verdict.reason.as_deref() == Some("credential_refused"));
+    let refused = drained
+        .report
+        .stopped
+        .as_ref()
+        .filter(|_| credential)
+        .map(|stopped| {
+            refused_credential(
+                server,
+                &CoreError::Unauthorized {
+                    code: "unauthorized".into(),
+                    message: stopped.clone(),
+                },
+            )
+        });
     if !happened && !changed {
         return refused.map_or(Ok(()), Err);
     }
