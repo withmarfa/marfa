@@ -1,22 +1,30 @@
 import { createHmac } from "node:crypto";
-import { matchesTypePattern } from "@withmarfa/shared";
-import type { Webhook } from "@withmarfa/shared";
+import { hasPermission, matchesTypePattern } from "@withmarfa/shared";
 import type {
   PendingWebhookDelivery,
-  WebhookStore,
+  Storage,
+  StoredWebhook,
   WebhookDeliveryStore,
+  WebhookOwner,
 } from "../storage/interface.js";
 import {
   fansOut,
-  frameFor,
   storedFrame,
   subscribe,
   subscribeEdges,
   wireEventName,
   type EdgeEvent,
   type ItemEvent,
+  type PubsubEvent,
 } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
+import {
+  resolveLiveCredential,
+  resolveLiveGrant,
+  type LiveCredential,
+} from "../auth/live-credential.js";
+import { frameInReach } from "./reach.js";
+import { DELIVERY_FAILURE, type WebhookHttpClient } from "./outbound-http.js";
 
 /** Maps pubsub event types to webhook event types. Single entry point so
  *  the wire strings (item.*, metadata.changed, edge.*) stay consistent
@@ -107,97 +115,219 @@ export function parseRetryAfter(headerValue: string | null): number | null {
 }
 
 /**
+ * What the consumer and the poller send through: the store, from which each
+ * attempt reads the subscription and its owner again, and the
+ * address-checked client every delivery is posted with.
+ */
+export interface WebhookDeliveryContext {
+  storage: Storage;
+  http: WebhookHttpClient;
+}
+
+/** Why a pending delivery is settled unsent, as the delivery log says it. */
+export const DELIVERY_CANCELLED = {
+  removed: "The subscription was removed.",
+  inactive: "The subscription was turned off.",
+  repointed: "The subscription was pointed at another URL.",
+  credential:
+    "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.",
+  unreadable:
+    "The credential the subscription belongs to may not read this event.",
+} as const;
+
+/**
+ * The credential a subscription belongs to, as it stands now, where it still
+ * stands and still holds `webhooks.manage`; null where the subscription is to
+ * send nothing. A signed-in app's subscription is its grant's, so it is
+ * answered with the grant's consented scopes whatever became of the token
+ * that registered it.
+ */
+async function ownerCredential(
+  storage: Storage,
+  owner: WebhookOwner,
+): Promise<LiveCredential | null> {
+  const credential =
+    owner.kind === "key"
+      ? await resolveLiveCredential(storage, owner.keyId, {
+          tokenOutlivesExpiry: false,
+        })
+      : await resolveLiveGrant(storage, owner.clientId, owner.authUserId);
+  if (!credential) return null;
+  if (!hasPermission(credential.permissions, "webhooks.manage")) return null;
+  return credential;
+}
+
+/** One name per owner, for asking each owner once per dispatch. */
+function ownerName(owner: WebhookOwner): string {
+  return owner.kind === "key"
+    ? `key ${owner.keyId}`
+    : `grant ${owner.clientId} ${owner.authUserId}`;
+}
+
+/**
+ * The body a pending delivery may be sent with now, and the secret to sign
+ * it under, or why it is to be settled unsent.
+ *
+ * Asked at every attempt rather than once at scheduling, because a retry
+ * runs long after the event: the subscription may since have been removed,
+ * turned off or pointed elsewhere, and its credential revoked or narrowed.
+ */
+export async function deliveryInReach(
+  storage: Storage,
+  delivery: PendingWebhookDelivery,
+): Promise<{ body: string; secret: string } | { cancel: string }> {
+  const subscription = await storage.outboundWebhooks.get(delivery.webhook_id);
+  if (!subscription) return { cancel: DELIVERY_CANCELLED.removed };
+  if (!subscription.active) return { cancel: DELIVERY_CANCELLED.inactive };
+  if (subscription.url !== delivery.webhook_url) {
+    return { cancel: DELIVERY_CANCELLED.repointed };
+  }
+  const credential = await ownerCredential(storage, subscription.owner);
+  if (!credential) return { cancel: DELIVERY_CANCELLED.credential };
+  let stored: unknown;
+  try {
+    stored = JSON.parse(delivery.payload);
+  } catch {
+    return { cancel: DELIVERY_CANCELLED.unreadable };
+  }
+  if (typeof stored !== "object" || stored === null) {
+    return { cancel: DELIVERY_CANCELLED.unreadable };
+  }
+  const frame = await frameInReach(
+    storage,
+    credential.key,
+    stored as Record<string, unknown>,
+  );
+  if (!frame) return { cancel: DELIVERY_CANCELLED.unreadable };
+  delete frame.type;
+  const body = JSON.stringify({
+    event_type: delivery.event_type,
+    ...frame,
+    ...("item" in frame && { metadata: frame.metadata ?? null }),
+    delivered_at: new Date().toISOString(),
+  });
+  return { body, secret: subscription.secret };
+}
+
+/**
  * Shared HTTP-attempt logic used by both the 30-second poller and the
- * best-effort direct-dispatch fast path. Signs, posts, and updates the
- * delivery row via `markSuccess` / `markDeadLetter` / `markFailed`. Never
- * throws — all errors are logged and written to the store. The `direct`
- * flag only influences log tagging so operators can distinguish the two
- * paths; the state transitions are identical.
+ * best-effort direct-dispatch fast path, and the only place a delivery is
+ * sent. Narrows it to the subscription's credential, signs, posts through
+ * the address-checked client, and updates the delivery row. Never throws:
+ * all errors are logged and written to the store. The `direct` flag only
+ * influences log tagging so operators can distinguish the two paths; the
+ * state transitions are identical.
  */
 export async function deliverWebhookAttempt(
-  store: WebhookDeliveryStore,
+  context: WebhookDeliveryContext,
   delivery: PendingWebhookDelivery,
   timeoutMs: number,
   direct: boolean,
 ): Promise<void> {
+  const store = context.storage.outboundWebhookDeliveries;
   const nextAttempt = delivery.attempt + 1;
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const signature = buildSignatureHeader(
-    timestamp,
-    delivery.payload,
-    delivery.webhook_secret,
-  );
+  const logged = {
+    delivery_id: delivery.id,
+    webhook_id: delivery.webhook_id,
+    event_type: delivery.event_type,
+    direct,
+  };
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, timeoutMs);
+    const prepared = await deliveryInReach(context.storage, delivery);
+    if ("cancel" in prepared) {
+      await store.markCancelled(delivery.id, prepared.cancel);
+      log("info", "Webhook delivery cancelled", {
+        ...logged,
+        reason: prepared.cancel,
+      });
+      return;
+    }
 
-    const response = await fetch(delivery.webhook_url, {
-      method: "POST",
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const outcome = await context.http.post({
+      url: delivery.webhook_url,
       headers: {
         "Content-Type": "application/json",
-        "X-Marfa-Signature": signature,
+        "X-Marfa-Signature": buildSignatureHeader(
+          timestamp,
+          prepared.body,
+          prepared.secret,
+        ),
         "X-Marfa-Event-Type": delivery.event_type,
       },
-      body: delivery.payload,
-      signal: controller.signal,
+      body: prepared.body,
+      timeoutMs,
     });
 
-    clearTimeout(timeout);
-
-    if (response.ok) {
-      await store.markSuccess(delivery.id, response.status, nextAttempt);
-      log("info", "Webhook delivered", {
-        delivery_id: delivery.id,
-        webhook_id: delivery.webhook_id,
-        event_type: delivery.event_type,
-        status: response.status,
-        attempt: nextAttempt,
+    if (outcome.kind === "failed") {
+      await scheduleDeliveryRetry(
+        store,
+        delivery,
+        nextAttempt,
+        undefined,
+        outcome.error,
+        undefined,
         direct,
+      );
+      return;
+    }
+
+    if (outcome.kind === "redirected") {
+      await store.markFailed(
+        delivery.id,
+        outcome.status,
+        DELIVERY_FAILURE.redirect,
+        nextAttempt,
+        null,
+      );
+      log("error", "Webhook dead-lettered", {
+        ...logged,
+        status: outcome.status,
+        attempt: nextAttempt,
+      });
+      return;
+    }
+
+    if (outcome.status >= 200 && outcome.status < 300) {
+      await store.markSuccess(delivery.id, outcome.status, nextAttempt);
+      log("info", "Webhook delivered", {
+        ...logged,
+        status: outcome.status,
+        attempt: nextAttempt,
       });
       return;
     }
 
     if (
-      response.status >= 400 &&
-      response.status < 500 &&
-      !RETRYABLE_4XX.has(response.status)
+      outcome.status >= 400 &&
+      outcome.status < 500 &&
+      !RETRYABLE_4XX.has(outcome.status)
     ) {
       await store.markDeadLetter(delivery.id);
       log("error", "Webhook dead-lettered", {
-        delivery_id: delivery.id,
-        webhook_id: delivery.webhook_id,
-        event_type: delivery.event_type,
-        status: response.status,
+        ...logged,
+        status: outcome.status,
         attempt: nextAttempt,
-        direct,
       });
       return;
     }
 
-    const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+    const retryAfterMs = parseRetryAfter(outcome.retryAfter);
     await scheduleDeliveryRetry(
       store,
       delivery,
       nextAttempt,
-      response.status,
+      outcome.status,
       undefined,
       retryAfterMs ?? undefined,
       direct,
     );
   } catch (err) {
-    const errMsg = err instanceof Error ? err.message : String(err);
-    await scheduleDeliveryRetry(
-      store,
-      delivery,
-      nextAttempt,
-      undefined,
-      errMsg,
-      undefined,
-      direct,
-    );
+    log("error", "Webhook attempt failed", {
+      ...logged,
+      error: err instanceof Error ? err.message : String(err),
+    });
   }
 }
 
@@ -254,10 +384,7 @@ export class WebhookConsumer {
   private running = false;
   private abortController: AbortController | null = null;
 
-  constructor(
-    private webhookStore: WebhookStore,
-    private deliveryStore: WebhookDeliveryStore,
-  ) {}
+  constructor(private context: WebhookDeliveryContext) {}
 
   start(): void {
     if (this.running) return;
@@ -298,7 +425,7 @@ export class WebhookConsumer {
         for await (const event of subscribeEdges({ signal })) {
           if (signal.aborted) break;
           if (!fansOut(event)) continue;
-          void this.dispatchEdge(event);
+          void this.dispatch(event);
         }
       } catch (err) {
         if (!signal.aborted) {
@@ -312,10 +439,18 @@ export class WebhookConsumer {
     await Promise.allSettled([itemLoop, edgeLoop]);
   }
 
-  private async dispatchEdge(event: EdgeEvent): Promise<void> {
-    let webhooks: Webhook[];
+  /**
+   * Queue a delivery of `event` to every subscription it matches whose
+   * credential may read it now. The event is stored as the log stores it and
+   * narrowed again at each attempt (`deliveryInReach`); asking here as well
+   * keeps a subscription's log from recording events its credential could
+   * never be sent.
+   */
+  private async dispatch(event: PubsubEvent): Promise<void> {
+    const { storage } = this.context;
+    let webhooks: StoredWebhook[];
     try {
-      webhooks = await this.webhookStore.listActive();
+      webhooks = await storage.outboundWebhooks.listActive();
     } catch (err) {
       log("error", "Failed to load active webhooks", {
         error: err instanceof Error ? err.message : String(err),
@@ -326,99 +461,48 @@ export class WebhookConsumer {
     const eventType = toWebhookEventType(event.type);
     const matching = webhooks.filter((w) => {
       if (!w.events.includes(eventType)) return false;
+      if (!w.type_filter) return true;
       // Edge events don't carry an item type; any type_filter skips them.
-      if (w.type_filter) return false;
-      return true;
+      if ("edge" in event) return false;
+      return matchesTypePattern(event.item.type, [w.type_filter]);
     });
     if (matching.length === 0) return;
-    const frame = storedFrame(event);
-    delete frame.type;
-    const payload = JSON.stringify({
-      event_type: eventType,
-      ...frame,
-      delivered_at: new Date().toISOString(),
-    });
-    const results = await Promise.allSettled(
-      matching.map((w) =>
-        this.deliveryStore.schedule({
+
+    const stored = storedFrame(event);
+    const payload = JSON.stringify(stored);
+    const credentials = new Map<string, Promise<LiveCredential | null>>();
+    const scheduled = await Promise.allSettled(
+      matching.map(async (w) => {
+        const name = ownerName(w.owner);
+        let credential = credentials.get(name);
+        if (!credential) {
+          credential = ownerCredential(storage, w.owner);
+          credentials.set(name, credential);
+        }
+        const standing = await credential;
+        if (!standing) return undefined;
+        if (!(await frameInReach(storage, standing.key, stored))) {
+          return undefined;
+        }
+        return storage.outboundWebhookDeliveries.schedule({
           webhookId: w.id,
           eventType,
           payload,
           webhookUrl: w.url,
-          webhookSecret: w.secret,
           nextAttemptAt: new Date().toISOString(),
-        }),
-      ),
+        });
+      }),
     );
-    for (const r of results) {
-      if (r.status === "fulfilled") void this.tryDirectDispatch(r.value);
-    }
-  }
-
-  private async dispatch(event: ItemEvent): Promise<void> {
-    let webhooks: Webhook[];
-    try {
-      webhooks = await this.webhookStore.listActive();
-    } catch (err) {
-      log("error", "Failed to load active webhooks", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-
-    const eventType = toWebhookEventType(event.type);
-
-    const matching = webhooks.filter((w) => {
-      // Must subscribe to this event type
-      if (!w.events.includes(eventType)) return false;
-      // Type filter — if the webhook has a type_filter, the item type must match
-      if (
-        w.type_filter &&
-        !matchesTypePattern(event.item.type, [w.type_filter])
-      )
-        return false;
-      return true;
-    });
-
-    if (matching.length === 0) return;
-
-    // Every mark: only a credential that reads everything may register a
-    // subscription, and a delivery carries no narrower one to gate on.
-    const frame = frameFor(storedFrame(event), () => true);
-    delete frame.type;
-    const payload = JSON.stringify({
-      event_type: eventType,
-      ...frame,
-      metadata: event.metadata ?? null,
-      delivered_at: new Date().toISOString(),
-    });
-
-    // Schedule deliveries in the database for durable retry
-    const results = await Promise.allSettled(
-      matching.map((w) =>
-        this.deliveryStore
-          .schedule({
-            webhookId: w.id,
-            eventType,
-            payload,
-            webhookUrl: w.url,
-            webhookSecret: w.secret,
-            nextAttemptAt: new Date().toISOString(),
-          })
-          .catch((err: unknown) => {
-            log("error", "Failed to schedule webhook delivery", {
-              webhook_id: w.id,
-              error: err instanceof Error ? err.message : String(err),
-            });
-            return undefined;
-          }),
-      ),
-    );
-    for (const r of results) {
-      if (r.status === "fulfilled" && typeof r.value === "string") {
-        void this.tryDirectDispatch(r.value);
+    scheduled.forEach((r, i) => {
+      if (r.status === "fulfilled") {
+        if (typeof r.value === "string") void this.tryDirectDispatch(r.value);
+        return;
       }
-    }
+      log("error", "Failed to schedule webhook delivery", {
+        webhook_id: matching[i]?.id,
+        error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+      });
+    });
   }
 
   /**
@@ -440,14 +524,15 @@ export class WebhookConsumer {
       const nowMs = Date.now();
       const now = new Date(nowMs).toISOString();
       const claimExpiry = new Date(nowMs + CLAIM_LOCK_TTL_MS).toISOString();
-      const claimed = await this.deliveryStore.claimById(
-        deliveryId,
-        claimExpiry,
-        now,
-      );
+      const claimed =
+        await this.context.storage.outboundWebhookDeliveries.claimById(
+          deliveryId,
+          claimExpiry,
+          now,
+        );
       if (!claimed) return;
       await deliverWebhookAttempt(
-        this.deliveryStore,
+        this.context,
         claimed,
         DIRECT_DISPATCH_TIMEOUT_MS,
         true,
@@ -470,19 +555,20 @@ export class WebhookConsumer {
 export const WEBHOOK_POLL_INTERVAL_MS = 30_000;
 
 export class WebhookPoller {
-  constructor(private deliveryStore: WebhookDeliveryStore) {}
+  constructor(private context: WebhookDeliveryContext) {}
 
   /** One poll: every pending delivery that is due is attempted. Reports
    *  how many were. A failure to read the queue is the scheduler's to
    *  classify. */
   async runOnce(): Promise<{ attempted: number }> {
-    const pending = await this.deliveryStore.getPending(
-      new Date().toISOString(),
-      50,
-    );
+    const pending =
+      await this.context.storage.outboundWebhookDeliveries.getPending(
+        new Date().toISOString(),
+        50,
+      );
     await Promise.allSettled(
       pending.map((d) =>
-        deliverWebhookAttempt(this.deliveryStore, d, POLLER_TIMEOUT_MS, false),
+        deliverWebhookAttempt(this.context, d, POLLER_TIMEOUT_MS, false),
       ),
     );
     return { attempted: pending.length };

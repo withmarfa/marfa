@@ -66,3 +66,40 @@ export async function resolveLiveCredential(
     permissions: token.scopes,
   };
 }
+
+/**
+ * Resolve a signed-in app's grant, the pair of app and person it was
+ * consented between, or null where it no longer stands: revoked from the
+ * security page, from the app's own revocation, or retired for inactivity,
+ * each of which removes the consent.
+ *
+ * **The grant rather than any one token**, for work that outlives the token
+ * that set it up: a refresh mints the next token, and a scope unticked on
+ * the consent screen, a replayed refresh token or the end of the browser
+ * session a token was issued under each ends live tokens while the grant
+ * stands. What the grant holds is its consented scopes as they stand now,
+ * so a grant narrowed since is answered narrowed.
+ */
+export async function resolveLiveGrant(
+  storage: Storage,
+  clientId: string,
+  authUserId: string,
+): Promise<LiveCredential | null> {
+  const scopes = await storage.oauthProvider?.getPriorConsent(
+    clientId,
+    authUserId,
+  );
+  if (scopes === undefined) return null;
+  return {
+    key: oauthPrincipal({
+      id: `${clientId}:${authUserId}`,
+      clientId,
+      userId: authUserId,
+      scopes: [...scopes],
+      expiresAtMs: null,
+      createdAtMs: null,
+    }),
+    kind: "oauth",
+    permissions: scopes,
+  };
+}

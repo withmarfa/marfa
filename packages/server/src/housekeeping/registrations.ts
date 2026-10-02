@@ -9,6 +9,7 @@ import {
   WebhookPoller,
   WEBHOOK_POLL_INTERVAL_MS,
 } from "../webhooks/delivery.js";
+import { createWebhookHttpClient } from "../webhooks/outbound-http.js";
 import { HeartbeatPinger } from "../heartbeat.js";
 import { VersionThinner } from "../storage/version-thinner.js";
 import {
@@ -118,7 +119,12 @@ export function registerHousekeepingJobs(
 
   // No first-run delay: on a fresh table a delivery left pending is picked
   // up at the first poll; on a restart, at the previous schedule.
-  const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
+  const webhookPoller = new WebhookPoller({
+    storage,
+    http: createWebhookHttpClient({
+      allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
+    }),
+  });
   housekeeping.register({
     name: "webhook-poll",
     intervalMs: WEBHOOK_POLL_INTERVAL_MS,

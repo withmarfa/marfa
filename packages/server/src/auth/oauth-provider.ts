@@ -1065,8 +1065,8 @@ async function resolveClientRevoke(
  * still the plugin's 200, because the tokens under the presented token are
  * already gone and refusing would tell the client to retry a revocation
  * that cannot be retried (the plugin has forgotten the token). The failure
- * is logged at error naming the grant, and the person's Disconnect or the
- * operator key's client delete puts the records right. The person's own
+ * is logged at error naming the grant, and the person's Disconnect puts the
+ * records right. The person's own
  * Disconnect makes the opposite call and fails loud, because there the
  * cascade is the whole of the work.
  */

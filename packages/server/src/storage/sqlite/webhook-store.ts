@@ -1,17 +1,29 @@
 import { randomBytes } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
-import type {
-  Webhook,
-  CreateWebhookInput,
-  UpdateWebhookInput,
-} from "@withmarfa/shared";
+import type { CreateWebhookInput, UpdateWebhookInput } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
-import type { WebhookStore } from "../interface.js";
+import type {
+  StoredWebhook,
+  WebhookOwner,
+  WebhookStore,
+} from "../interface.js";
 import { outboundWebhooks } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
+function ownerOf(row: typeof outboundWebhooks.$inferSelect): WebhookOwner {
+  if (row.key_id !== null) return { kind: "key", keyId: row.key_id };
+  // The table's check holds the grant pair whole wherever no key is named.
+  return {
+    kind: "grant",
+    clientId: row.grant_client_id ?? "",
+    authUserId: row.grant_user_id ?? "",
+  };
+}
+
+function rowToWebhook(
+  row: typeof outboundWebhooks.$inferSelect,
+): StoredWebhook {
   return {
     id: row.id,
     url: row.url,
@@ -19,6 +31,7 @@ function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
     events: safeJsonParse<string[]>(row.events, [], "webhook events"),
     type_filter: row.type_filter ?? undefined,
     active: row.active === 1,
+    owner: ownerOf(row),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -27,7 +40,9 @@ function rowToWebhook(row: typeof outboundWebhooks.$inferSelect): Webhook {
 export class SqliteWebhookStore implements WebhookStore {
   constructor(private db: DrizzleDb) {}
 
-  async create(input: CreateWebhookInput): Promise<Webhook> {
+  async create(
+    input: CreateWebhookInput & { owner: WebhookOwner },
+  ): Promise<StoredWebhook> {
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
@@ -36,6 +51,11 @@ export class SqliteWebhookStore implements WebhookStore {
       events: JSON.stringify(input.events),
       type_filter: input.type_filter ?? null,
       active: 1,
+      key_id: input.owner.kind === "key" ? input.owner.keyId : null,
+      grant_client_id:
+        input.owner.kind === "grant" ? input.owner.clientId : null,
+      grant_user_id:
+        input.owner.kind === "grant" ? input.owner.authUserId : null,
       created_at: now,
       updated_at: now,
     };
@@ -43,12 +63,12 @@ export class SqliteWebhookStore implements WebhookStore {
     return rowToWebhook(row);
   }
 
-  async list(): Promise<Webhook[]> {
+  async list(): Promise<StoredWebhook[]> {
     const rows = await this.db.select().from(outboundWebhooks).all();
     return rows.map(rowToWebhook);
   }
 
-  async get(id: string): Promise<Webhook | null> {
+  async get(id: string): Promise<StoredWebhook | null> {
     const row = await this.db
       .select()
       .from(outboundWebhooks)
@@ -57,7 +77,7 @@ export class SqliteWebhookStore implements WebhookStore {
     return row ? rowToWebhook(row) : null;
   }
 
-  async update(id: string, input: UpdateWebhookInput): Promise<Webhook> {
+  async update(id: string, input: UpdateWebhookInput): Promise<StoredWebhook> {
     const now = new Date().toISOString();
     const updates: Record<string, unknown> = { updated_at: now };
     if (input.url !== undefined) updates.url = input.url;
@@ -91,7 +111,7 @@ export class SqliteWebhookStore implements WebhookStore {
       .run();
   }
 
-  async listActive(): Promise<Webhook[]> {
+  async listActive(): Promise<StoredWebhook[]> {
     const rows = await this.db
       .select()
       .from(outboundWebhooks)

@@ -291,7 +291,6 @@ describe("GET /webhooks/:id/deliveries", () => {
         eventType: "item.created",
         payload: "{}",
         webhookUrl: created.url,
-        webhookSecret: created.secret,
         nextAttemptAt: new Date(Date.now() + 86_400_000).toISOString(),
       });
       await ctx.storage.outboundWebhookDeliveries.markSuccess(id, 200, 1);
@@ -368,9 +367,14 @@ describe("an event name the vocabulary no longer carries", () => {
   //
   // Written through the store, because the door is what refuses the name.
   it("reads back as written when a row already holds one", async () => {
+    const current = await request(ctx.app, "GET", "/keys/current", {
+      key: ctx.workingKey,
+    });
+    const { id: credentialId } = (await current.json()) as { id: string };
     const stored = await ctx.storage.outboundWebhooks.create({
       url: "https://example.com/retired",
       events: ["item.trashed"],
+      owner: { kind: "key", keyId: credentialId },
     });
 
     const res = await request(ctx.app, "GET", `/webhooks/${stored.id}`, {

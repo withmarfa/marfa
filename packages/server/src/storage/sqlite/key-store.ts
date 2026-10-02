@@ -18,7 +18,7 @@ import type {
   TypePermission,
 } from "@withmarfa/shared";
 import type { KeyRevokeOutcome, KeyStore, StoredApiKey } from "../interface.js";
-import { apiKeys } from "./schema.js";
+import { apiKeys, outboundWebhooks } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 /**
@@ -259,12 +259,21 @@ export class SqliteKeyStore implements KeyStore {
   }
 
   async revoke(id: string): Promise<KeyRevokeOutcome> {
-    const result = await this.db
-      .update(apiKeys)
-      .set({ revoked_at: new Date().toISOString() })
-      .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
-      .run();
-    if (result.rowsAffected > 0) return "revoked";
+    const revoked = await this.db.transaction(async (tx) => {
+      const result = await tx
+        .update(apiKeys)
+        .set({ revoked_at: new Date().toISOString() })
+        .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
+        .run();
+      if (result.rowsAffected === 0) return false;
+      // A key's webhook subscriptions go with it.
+      await tx
+        .delete(outboundWebhooks)
+        .where(eq(outboundWebhooks.key_id, id))
+        .run();
+      return true;
+    });
+    if (revoked) return "revoked";
     // Read only on the miss, and only to say which miss it was.
     const row = await this.db
       .select({ id: apiKeys.id })

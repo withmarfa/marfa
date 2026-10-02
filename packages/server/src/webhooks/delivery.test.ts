@@ -1,26 +1,37 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createHmac } from "node:crypto";
-import type { Item, Webhook } from "@withmarfa/shared";
-import type {
-  PendingWebhookDelivery,
-  WebhookDeliveryStore,
-  WebhookStore,
-} from "../storage/interface.js";
+import type { Edge, Item } from "@withmarfa/shared";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  seedOauthBearer,
+  TEST_API_KEY_SALT,
+  type TestContext,
+} from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
+import type { StoredWebhook, WebhookOwner } from "../storage/interface.js";
 import {
   __listenerCountForTests,
   publish,
   publishEdge,
-  type ItemEvent,
-  type EdgeEventWithId,
+  storedFrame,
+  type PubsubEvent,
 } from "../pubsub.js";
 import {
+  DELIVERY_CANCELLED,
   WEBHOOK_POLL_INTERVAL_MS,
   WebhookConsumer,
   WebhookPoller,
-  deliverWebhookAttempt,
-  parseRetryAfter,
   buildSignatureHeader,
+  parseRetryAfter,
 } from "./delivery.js";
+import {
+  DELIVERY_FAILURE,
+  type WebhookHttpClient,
+  type WebhookPost,
+  type WebhookPostOutcome,
+} from "./outbound-http.js";
 
 // ---------------------------------------------------------------------------
 // parseRetryAfter — header parsing
@@ -68,875 +79,646 @@ describe("parseRetryAfter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// WebhookPoller — retry routing on response codes
+// Harness: a real store, a recording client in place of the network
 // ---------------------------------------------------------------------------
 
-interface PendingDelivery {
-  id: string;
-  webhook_id: string;
-  event_type: string;
-  payload: string;
-  webhook_url: string;
-  webhook_secret: string;
-  attempt: number;
-  max_attempts: number;
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ctx = await createTestContext();
+});
+
+afterAll(async () => {
+  await ctx.cleanup();
+});
+
+afterEach(async () => {
+  for (const w of await ctx.storage.outboundWebhooks.list()) {
+    await ctx.storage.outboundWebhooks.delete(w.id);
+  }
+});
+
+const SECRET = "s".repeat(32);
+
+interface Recorder extends WebhookHttpClient {
+  posts: WebhookPost[];
 }
 
-function makeDelivery(
-  overrides: Partial<PendingDelivery> = {},
-): PendingDelivery {
+function recorder(
+  answer: (post: WebhookPost) => WebhookPostOutcome = () => ({
+    kind: "answered",
+    status: 200,
+    retryAfter: null,
+  }),
+): Recorder {
+  const posts: WebhookPost[] = [];
   return {
-    id: "del_1",
-    webhook_id: "wh_1",
-    event_type: "item.created",
-    payload: '{"event_type":"item.created"}',
-    webhook_url: "https://example.test/hook",
-    webhook_secret: "shh",
-    attempt: 0,
-    max_attempts: 4,
-    ...overrides,
-  };
-}
-
-interface StoreCalls {
-  markSuccess: { id: string; statusCode: number; attempt: number }[];
-  markFailed: {
-    id: string;
-    statusCode: number | undefined;
-    error: string;
-    attempt: number;
-    nextAttemptAt: string | null;
-  }[];
-  markDeadLetter: { id: string }[];
-}
-
-function makeStubStore(pending: PendingDelivery[]): {
-  store: WebhookDeliveryStore;
-  calls: StoreCalls;
-} {
-  const calls: StoreCalls = {
-    markSuccess: [],
-    markFailed: [],
-    markDeadLetter: [],
-  };
-
-  const store: WebhookDeliveryStore = {
-    cleanup: () => Promise.resolve(0),
-    list: () => Promise.resolve({ data: [], next_cursor: null }),
-    schedule: () => Promise.resolve("del_x"),
-    getPending: () => Promise.resolve(pending),
-    // Tests that don't exercise the direct path leave this unused; the
-    // direct-dispatch tests override with their own stub.
-    claimById: () => Promise.resolve(null),
-    markSuccess: (id, statusCode, attempt) => {
-      calls.markSuccess.push({ id, statusCode, attempt });
-      return Promise.resolve();
+    posts,
+    post(request) {
+      posts.push(request);
+      return Promise.resolve(answer(request));
     },
-    markFailed: (id, statusCode, error, attempt, nextAttemptAt) => {
-      calls.markFailed.push({
-        id,
-        statusCode,
-        error,
-        attempt,
-        nextAttemptAt,
+  };
+}
+
+function raw(): { all: (query: string) => Promise<unknown[]> } {
+  const storage = ctx.storage as unknown as {
+    __sqliteAll: (query: string) => Promise<unknown[]>;
+  };
+  return { all: storage.__sqliteAll };
+}
+
+async function row(id: string): Promise<Record<string, unknown>> {
+  const [found] = await raw().all(
+    `SELECT status, status_code, attempt, error, next_attempt_at FROM outbound_webhook_deliveries WHERE id = '${id}'`,
+  );
+  return found as Record<string, unknown>;
+}
+
+async function keyIdOf(rawKey: string): Promise<string> {
+  const res = await request(ctx.app, "GET", "/keys/current", { key: rawKey });
+  expect(res.status).toBe(200);
+  return ((await res.json()) as { id: string }).id;
+}
+
+/** A key with `webhooks.manage` and the reach given, and its id. */
+async function owner(
+  reach: Parameters<typeof mintWorkingKey>[1] = {},
+): Promise<{ raw: string; id: string }> {
+  const rawKey = await mintWorkingKey(ctx, {
+    permissions: ["webhooks.manage"],
+    ...reach,
+  });
+  return { raw: rawKey, id: await keyIdOf(rawKey) };
+}
+
+async function subscription(
+  owner: string | WebhookOwner,
+  events: string[],
+  url = "https://receiver.example/hook",
+): Promise<StoredWebhook> {
+  return ctx.storage.outboundWebhooks.create({
+    url,
+    events,
+    secret: SECRET,
+    owner: typeof owner === "string" ? { kind: "key", keyId: owner } : owner,
+  });
+}
+
+/** A pending delivery of `event` to `webhook`, as dispatch stores one. */
+async function pending(
+  webhook: StoredWebhook,
+  event: PubsubEvent,
+  eventType: string,
+): Promise<string> {
+  return ctx.storage.outboundWebhookDeliveries.schedule({
+    webhookId: webhook.id,
+    eventType,
+    payload: JSON.stringify(storedFrame(event)),
+    webhookUrl: webhook.url,
+    nextAttemptAt: new Date(Date.now() - 1_000).toISOString(),
+  });
+}
+
+function item(id: string, type = "core.note"): Item {
+  return {
+    id,
+    type,
+    version: 1,
+    state: "active",
+    tier: "library",
+    source: "test",
+    properties: { title: id },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  } as unknown as Item;
+}
+
+function edge(id: string, sourceId: string, edgeType = "references"): Edge {
+  return {
+    id,
+    edge_type: edgeType,
+    source_id: sourceId,
+    target_id: "01HBBBBBBBBBBBBBBBBBBBBBBB",
+    properties: {},
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    version: 1,
+  };
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+/** Start a consumer, publish, let its deliveries go, stop it. */
+async function dispatch(
+  http: Recorder,
+  publishAll: () => Promise<void>,
+): Promise<void> {
+  const consumer = new WebhookConsumer({ storage: ctx.storage, http });
+  consumer.start();
+  await settle();
+  try {
+    await publishAll();
+    await settle();
+  } finally {
+    consumer.stop();
+  }
+}
+
+function sentBodies(http: Recorder): Record<string, unknown>[] {
+  return http.posts.map((p) => JSON.parse(p.body) as Record<string, unknown>);
+}
+
+// ---------------------------------------------------------------------------
+// One attempt: what the receiver's answer does to the row
+// ---------------------------------------------------------------------------
+
+describe("an attempt's outcome", () => {
+  async function attempt(outcome: WebhookPostOutcome) {
+    const { id } = await owner();
+    const webhook = await subscription(id, ["item.created"]);
+    const deliveryId = await pending(
+      webhook,
+      { type: "created", item: item("01HOUTCOMEOUTCOMEOUTCOME00") },
+      "item.created",
+    );
+    const http = recorder(() => outcome);
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    expect(http.posts).toHaveLength(1);
+    return row(deliveryId);
+  }
+
+  it("settles a 2xx as delivered", async () => {
+    expect(
+      await attempt({ kind: "answered", status: 204, retryAfter: null }),
+    ).toMatchObject({ status: "success", status_code: 204, attempt: 1 });
+  });
+
+  it("dead-letters a 4xx other than 408 and 429", async () => {
+    expect(
+      await attempt({ kind: "answered", status: 400, retryAfter: null }),
+    ).toMatchObject({ status: "dead_letter" });
+  });
+
+  it("retries 408, 429 and 5xx, honoring Retry-After up to its ceiling", async () => {
+    for (const status of [408, 429, 503]) {
+      const t0 = Date.now();
+      const settled = await attempt({
+        kind: "answered",
+        status,
+        retryAfter: status === 503 ? "120" : null,
       });
-      return Promise.resolve();
-    },
-    markDeadLetter: (id) => {
-      calls.markDeadLetter.push({ id });
-      return Promise.resolve();
-    },
-  };
-
-  return { store, calls };
-}
-
-/** One poll, the way the housekeeping scheduler drives it. */
-async function pollOnce(poller: WebhookPoller): Promise<void> {
-  await poller.runOnce();
-}
-
-describe("WebhookPoller retry behavior", () => {
-  let originalFetch: typeof fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
+      expect(settled).toMatchObject({ status: "pending", status_code: status });
+      const delay = Date.parse(settled.next_attempt_at as string) - t0;
+      if (status === 503) {
+        expect(delay).toBeGreaterThanOrEqual(119_000);
+        expect(delay).toBeLessThan(125_000);
+      } else {
+        expect(delay).toBeLessThan(5_000);
+      }
+    }
+    const capped = await attempt({
+      kind: "answered",
+      status: 429,
+      retryAfter: "999999",
+    });
+    expect(
+      Date.parse(capped.next_attempt_at as string) - Date.now(),
+    ).toBeLessThanOrEqual(5 * 60 * 1000);
   });
 
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    vi.useRealTimers();
+  it("dead-letters a redirect, which is not followed", async () => {
+    expect(await attempt({ kind: "redirected", status: 302 })).toMatchObject({
+      status: "dead_letter",
+      status_code: 302,
+      error: DELIVERY_FAILURE.redirect,
+    });
   });
 
-  it("dead-letters generic 4xx (e.g. 400)", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 400 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_400" })]);
-    const poller = new WebhookPoller(store);
-    await pollOnce(poller);
-
-    expect(calls.markDeadLetter).toEqual([{ id: "del_400" }]);
-    expect(calls.markFailed).toEqual([]);
-  });
-
-  it("retries on 408 instead of dead-lettering", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 408 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_408" })]);
-    const poller = new WebhookPoller(store);
-    await pollOnce(poller);
-
-    expect(calls.markDeadLetter).toEqual([]);
-    expect(calls.markFailed).toHaveLength(1);
-    expect(calls.markFailed[0]?.statusCode).toBe(408);
-    expect(calls.markFailed[0]?.nextAttemptAt).not.toBeNull();
-  });
-
-  it("retries on 429 and falls back to default schedule when Retry-After is absent", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 429 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_429" })]);
-    const poller = new WebhookPoller(store);
-
-    const beforeMs = Date.now();
-    await pollOnce(poller);
-
-    expect(calls.markFailed).toHaveLength(1);
-    const nextAt = calls.markFailed[0]?.nextAttemptAt;
-    expect(nextAt).toBeTruthy();
-    // Default first-retry delay is 1000ms (RETRY_DELAYS[0]).
-    const delay = new Date(nextAt!).getTime() - beforeMs;
-    expect(delay).toBeGreaterThanOrEqual(900);
-    expect(delay).toBeLessThan(2000);
-  });
-
-  it("honors Retry-After on 429", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(
-        new Response(null, { status: 429, headers: { "retry-after": "30" } }),
-      ),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_429ra" })]);
-    const poller = new WebhookPoller(store);
-
-    const beforeMs = Date.now();
-    await pollOnce(poller);
-
-    expect(calls.markFailed).toHaveLength(1);
-    const nextAt = calls.markFailed[0]?.nextAttemptAt;
-    const delay = new Date(nextAt!).getTime() - beforeMs;
-    // ~30s, allow a generous tolerance for test-runner overhead.
-    expect(delay).toBeGreaterThanOrEqual(29_500);
-    expect(delay).toBeLessThan(31_000);
-  });
-
-  it("clamps an absurd Retry-After to the 5-minute ceiling", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(
-        new Response(null, {
-          status: 429,
-          headers: { "retry-after": "99999999" },
-        }),
-      ),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_clamp" })]);
-    const poller = new WebhookPoller(store);
-
-    const beforeMs = Date.now();
-    await pollOnce(poller);
-
-    const nextAt = calls.markFailed[0]?.nextAttemptAt;
-    const delay = new Date(nextAt!).getTime() - beforeMs;
-    expect(delay).toBeGreaterThanOrEqual(295_000);
-    expect(delay).toBeLessThanOrEqual(300_500);
-  });
-
-  it("retries on 5xx and honors Retry-After when present", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(
-        new Response(null, { status: 503, headers: { "retry-after": "5" } }),
-      ),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_503" })]);
-    const poller = new WebhookPoller(store);
-
-    const beforeMs = Date.now();
-    await pollOnce(poller);
-
-    const nextAt = calls.markFailed[0]?.nextAttemptAt;
-    const delay = new Date(nextAt!).getTime() - beforeMs;
-    expect(delay).toBeGreaterThanOrEqual(4_500);
-    expect(delay).toBeLessThan(6_000);
-    expect(calls.markFailed[0]?.statusCode).toBe(503);
-  });
-
-  it("marks success on 2xx", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 204 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([makeDelivery({ id: "del_ok" })]);
-    const poller = new WebhookPoller(store);
-    await pollOnce(poller);
-
-    expect(calls.markSuccess).toEqual([
-      { id: "del_ok", statusCode: 204, attempt: 1 },
-    ]);
-  });
-
-  it("emits a Stripe-style X-Marfa-Signature header signed over timestamp.body", async () => {
-    const captured: { header: string | null; body: string } = {
-      header: null,
-      body: "",
-    };
-    const fetchSpy = vi.fn(
-      (_url: string | URL, init?: RequestInit): Promise<Response> => {
-        const headers = new Headers(init?.headers);
-        captured.header = headers.get("x-marfa-signature");
-        const b = init?.body;
-        captured.body = typeof b === "string" ? b : "";
-        return Promise.resolve(new Response(null, { status: 200 }));
-      },
-    );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-
-    const payload = '{"event_type":"item.created","item":{"id":"abc"}}';
-    const secret = "whsec_delivery_test";
-    const { store } = makeStubStore([
-      makeDelivery({ id: "del_sig", payload, webhook_secret: secret }),
-    ]);
-    const poller = new WebhookPoller(store);
-    await pollOnce(poller);
-
-    expect(captured.body).toBe(payload);
-    expect(captured.header).not.toBeNull();
-    // Parse `t=<unix>,v1=<hex>` without regex so the test stays in the
-    // "no .exec() anywhere" camp the lint rule prefers.
-    const parts = captured.header!.split(",");
-    expect(parts).toHaveLength(2);
-    expect(parts[0]!.startsWith("t=")).toBe(true);
-    expect(parts[1]!.startsWith("v1=")).toBe(true);
-    const ts = parts[0]!.slice(2);
-    const sig = parts[1]!.slice(3);
-    // Re-derive the signature and assert equality.
-    const computed = createHmac("sha256", secret)
-      .update(`${ts}.${payload}`)
-      .digest("hex");
-    expect(sig).toBe(computed);
-    // Header should match buildSignatureHeader's output for the same inputs.
-    expect(buildSignatureHeader(ts, payload, secret)).toBe(captured.header);
+  it("retries a delivery that reached no receiver, recording why in its own words", async () => {
+    expect(
+      await attempt({ kind: "failed", error: DELIVERY_FAILURE.notPublic }),
+    ).toMatchObject({
+      status: "pending",
+      status_code: null,
+      error: DELIVERY_FAILURE.notPublic,
+    });
   });
 });
 
 // ---------------------------------------------------------------------------
-// deliverWebhookAttempt — shared helper used by both the poller and the
-// direct-dispatch fast path. Verifies the `direct` flag and the short
-// timeout behavior the consumer relies on.
+// Signing and the two paths
 // ---------------------------------------------------------------------------
 
-describe("deliverWebhookAttempt (direct fast path)", () => {
-  let originalFetch: typeof fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-    vi.useRealTimers();
-  });
-
-  it("writes markSuccess on 2xx when invoked with direct=true", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const { store, calls } = makeStubStore([]);
-    const delivery = makeDelivery({ id: "del_direct_ok" });
-    await deliverWebhookAttempt(store, delivery, 5_000, true);
-
-    expect(calls.markSuccess).toEqual([
-      { id: "del_direct_ok", statusCode: 200, attempt: 1 },
-    ]);
-    expect(calls.markFailed).toEqual([]);
-  });
-
-  it("aborts on the shorter 5s direct timeout without hanging the caller", async () => {
-    // Resolve only when the AbortSignal fires — simulates a slow receiver.
-    const fetchSpy = vi.fn(
-      (_url: string | URL, init?: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () => {
-            reject(new DOMException("aborted", "AbortError"));
-          });
-        }),
-    );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-
-    vi.useFakeTimers();
-    const { store, calls } = makeStubStore([]);
-    const delivery = makeDelivery({ id: "del_direct_slow" });
-    const attemptP = deliverWebhookAttempt(store, delivery, 5_000, true);
-    await vi.advanceTimersByTimeAsync(5_001);
-    await attemptP;
-
-    // No success, one retry scheduled (not dead-letter — network errors
-    // follow the retry path).
-    expect(calls.markSuccess).toEqual([]);
-    expect(calls.markFailed).toHaveLength(1);
-    expect(calls.markFailed[0]?.nextAttemptAt).not.toBeNull();
-  });
-
-  it("when claimById returns null, tryDirectDispatch is a silent no-op", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    // A store whose `schedule` returns an id, but whose `claimById`
-    // always returns null — i.e. the poller or another direct worker
-    // got there first.
-    const store: WebhookDeliveryStore = {
-      cleanup: () => Promise.resolve(0),
-      list: () => Promise.resolve({ data: [], next_cursor: null }),
-      schedule: () => Promise.resolve("del_raced"),
-      getPending: () => Promise.resolve([]),
-      claimById: () => Promise.resolve(null),
-      markSuccess: () => Promise.resolve(),
-      markFailed: () => Promise.resolve(),
-      markDeadLetter: () => Promise.resolve(),
-    };
-
-    const webhook: Webhook = {
-      id: "wh_raced",
-      url: "https://example.test/hook",
-      secret: "s",
-      events: ["item.created"],
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    const webhookStore: WebhookStore = {
-      create: () => Promise.resolve(webhook),
-      list: () => Promise.resolve([webhook]),
-      get: () => Promise.resolve(webhook),
-      update: () => Promise.resolve(webhook),
-      delete: () => Promise.resolve(),
-      listActive: () => Promise.resolve([webhook]),
-      count: () => Promise.resolve(1),
-    };
-
-    const consumer = new WebhookConsumer(webhookStore, store);
-    consumer.start();
-
-    const event: ItemEvent = {
-      type: "created",
-      item: {
-        id: "01HXXXXXXXXXXXXXXXXXXXXXXX",
-        type: "core.note",
-        version: 1,
-        state: "active",
-        tier: "library",
-        source: "test",
-        properties: { title: "x" },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as unknown as Item,
-    };
-    await publish(event);
-    // Let the consumer's async iterator tick and the fire-and-forget
-    // direct-dispatch attempt settle.
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    consumer.stop();
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("when claimById returns the row, tryDirectDispatch fires HTTP", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    let markedSuccess = false;
-    const claimed: PendingWebhookDelivery = {
-      id: "del_fast",
-      webhook_id: "wh_fast",
-      event_type: "item.created",
-      payload: '{"event_type":"item.created"}',
-      webhook_url: "https://example.test/hook",
-      webhook_secret: "s",
-      attempt: 0,
-      max_attempts: 4,
-    };
-    const store: WebhookDeliveryStore = {
-      cleanup: () => Promise.resolve(0),
-      list: () => Promise.resolve({ data: [], next_cursor: null }),
-      schedule: () => Promise.resolve(claimed.id),
-      getPending: () => Promise.resolve([]),
-      claimById: () => Promise.resolve(claimed),
-      markSuccess: () => {
-        markedSuccess = true;
-        return Promise.resolve();
-      },
-      markFailed: () => Promise.resolve(),
-      markDeadLetter: () => Promise.resolve(),
-    };
-
-    const webhook: Webhook = {
-      id: "wh_fast",
-      url: "https://example.test/hook",
-      secret: "s",
-      events: ["item.created"],
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    const webhookStore: WebhookStore = {
-      create: () => Promise.resolve(webhook),
-      list: () => Promise.resolve([webhook]),
-      get: () => Promise.resolve(webhook),
-      update: () => Promise.resolve(webhook),
-      delete: () => Promise.resolve(),
-      listActive: () => Promise.resolve([webhook]),
-      count: () => Promise.resolve(1),
-    };
-
-    const consumer = new WebhookConsumer(webhookStore, store);
-    consumer.start();
-
-    const event: ItemEvent = {
-      type: "created",
-      item: {
-        id: "01HYYYYYYYYYYYYYYYYYYYYYYY",
-        type: "core.note",
-        version: 1,
-        state: "active",
-        tier: "library",
-        source: "test",
-        properties: { title: "x" },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as unknown as Item,
-    };
+describe("the signature and the direct path", () => {
+  it("signs <t>.<body> under the subscription's secret on both paths, the direct one sooner and with the shorter timeout", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.created"]);
+    const http = recorder();
     const t0 = Date.now();
-    await publish(event);
-    for (let i = 0; i < 30; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    consumer.stop();
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(markedSuccess).toBe(true);
-    // Derived from the poll interval rather than picked, because the only
-    // regression this can see is direct dispatch not happening — and the
-    // fallback is the poller, which costs at least one whole interval. Half of
-    // it separates the two with room to spare in both directions, where a
-    // flat sub-second bound would report on the runner rather than on the
-    // code. This one cannot drift from the thing it is about.
-    expect(Date.now() - t0).toBeLessThan(WEBHOOK_POLL_INTERVAL_MS / 2);
-  });
-
-  it("direct path produces byte-identical signatures to the poller path", async () => {
-    const captured: { headers: string[] } = { headers: [] };
-    const fetchSpy = vi.fn(
-      (_url: string | URL, init?: RequestInit): Promise<Response> => {
-        const h = new Headers(init?.headers);
-        const sig = h.get("x-marfa-signature");
-        if (sig) captured.headers.push(sig);
-        return Promise.resolve(new Response(null, { status: 200 }));
-      },
-    );
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-
-    const { store } = makeStubStore([]);
-    const delivery: PendingWebhookDelivery = makeDelivery({
-      id: "del_sig_parity",
-      payload: '{"event_type":"item.created"}',
-      webhook_secret: "whsec_parity",
+    await dispatch(http, async () => {
+      await publish({
+        type: "created",
+        item: item("01HSIGNEDSIGNEDSIGNEDSIGN0"),
+      });
     });
+    expect(http.posts).toHaveLength(1);
+    expect(Date.now() - t0).toBeLessThan(WEBHOOK_POLL_INTERVAL_MS / 2);
+    const direct = http.posts[0];
+    expect(direct?.timeoutMs).toBe(5_000);
 
-    await deliverWebhookAttempt(store, delivery, 5_000, true);
-    await deliverWebhookAttempt(store, delivery, 10_000, false);
+    const webhook = (await ctx.storage.outboundWebhooks.list())[0];
+    if (!webhook) throw new Error("no subscription");
+    await pending(
+      webhook,
+      { type: "created", item: item("01HSIGNEDPOLLEDPOLLEDPOLL0") },
+      "item.created",
+    );
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    const polled = http.posts[1];
+    expect(polled?.timeoutMs).toBe(10_000);
 
-    // Both paths hit the same signing helper; headers differ only in the
-    // embedded timestamp, and the HMAC is derived from that timestamp plus
-    // the identical payload. Re-derive and assert equality.
-    expect(captured.headers).toHaveLength(2);
-    for (const header of captured.headers) {
-      const [tPart, v1Part] = header.split(",");
-      const ts = tPart!.slice(2);
-      const sig = v1Part!.slice(3);
-      const expected = createHmac("sha256", delivery.webhook_secret)
-        .update(`${ts}.${delivery.payload}`)
-        .digest("hex");
-      expect(sig).toBe(expected);
+    for (const post of [direct, polled]) {
+      if (!post) throw new Error("missing post");
+      const header = post.headers["X-Marfa-Signature"] ?? "";
+      const match = /^t=(\d+),v1=([0-9a-f]{64})$/.exec(header);
+      expect(match).not.toBeNull();
+      const [, t, v1] = match ?? [];
+      expect(v1).toBe(
+        createHmac("sha256", SECRET)
+          .update(`${String(t)}.${post.body}`)
+          .digest("hex"),
+      );
+      expect(header).toBe(buildSignatureHeader(String(t), post.body, SECRET));
+      expect(post.headers["X-Marfa-Event-Type"]).toBe("item.created");
     }
   });
 });
 
 // ---------------------------------------------------------------------------
-// WebhookConsumer — a write that declined fan-out is logged, not delivered
+// Which subscriptions an event reaches
 // ---------------------------------------------------------------------------
 
-describe("WebhookConsumer fan-out gate", () => {
-  let originalFetch: typeof fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  function harness(events: string[]) {
-    let scheduled = 0;
-    const store: WebhookDeliveryStore = {
-      cleanup: () => Promise.resolve(0),
-      list: () => Promise.resolve({ data: [], next_cursor: null }),
-      schedule: () => {
-        scheduled += 1;
-        return Promise.resolve(`del_fan_${String(scheduled)}`);
-      },
-      getPending: () => Promise.resolve([]),
-      claimById: () => Promise.resolve(null),
-      markSuccess: () => Promise.resolve(),
-      markFailed: () => Promise.resolve(),
-      markDeadLetter: () => Promise.resolve(),
-    };
-    const webhook: Webhook = {
-      id: "wh_fanout",
-      url: "https://example.test/hook",
-      secret: "s",
-      events,
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    const webhookStore: WebhookStore = {
-      create: () => Promise.resolve(webhook),
-      list: () => Promise.resolve([webhook]),
-      get: () => Promise.resolve(webhook),
-      update: () => Promise.resolve(webhook),
-      delete: () => Promise.resolve(),
-      listActive: () => Promise.resolve([webhook]),
-      count: () => Promise.resolve(1),
-    };
-    return {
-      consumer: new WebhookConsumer(webhookStore, store),
-      scheduledCount: () => scheduled,
-    };
-  }
-
-  const drain = async (): Promise<void> => {
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  };
-
-  const item = (id: string) =>
-    ({
-      id,
-      type: "core.note",
-      version: 1,
-      state: "active",
-      tier: "library",
-      source: "test",
-      properties: { title: "bulk row" },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }) as unknown as ItemEvent["item"];
-
-  it("does not deliver an item event that declined fan-out, but still delivers one that did not", async () => {
-    // The bulk doors publish every row they write so the event log has it,
-    // and decline fan-out so five thousand rows do not become five
-    // thousand deliveries. The second half is the control: a gate that
-    // suppressed everything would satisfy the first assertion alone.
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
+describe("dispatch", () => {
+  it("does not deliver an event that declined fan-out, but delivers one that did not, for items and edges", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.created", "edge.created"]);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "created",
+        item: item("01HQUIETQUIETQUIETQUIETQU0"),
+        enableFanout: false,
+      });
+      await publishEdge({
+        type: "edge_created",
+        edge: edge("edge_quiet", "01HAAAAAAAAAAAAAAAAAAAAAAA"),
+        enableFanout: false,
+      });
+      await publish({
+        type: "created",
+        item: item("01HLOUDLOUDLOUDLOUDLOUD00"),
+      });
+      await publishEdge({
+        type: "edge_created",
+        edge: edge("edge_loud", "01HAAAAAAAAAAAAAAAAAAAAAAA"),
+      });
+    });
+    const ids = sentBodies(http).map(
+      (b) =>
+        (b.item as { id?: string } | undefined)?.id ??
+        (b.edge as { id?: string } | undefined)?.id,
     );
-    globalThis.fetch = fetchSpy;
-    const { consumer, scheduledCount } = harness(["item.created"]);
-    consumer.start();
-
-    await publish({
-      type: "created",
-      item: item("01HCCCCCCCCCCCCCCCCCCCCCCC"),
-      enableFanout: false,
-    });
-    await drain();
-    const afterQuiet = scheduledCount();
-
-    await publish({
-      type: "created",
-      item: item("01HDDDDDDDDDDDDDDDDDDDDDDD"),
-    });
-    await drain();
-    consumer.stop();
-
-    expect(afterQuiet).toBe(0);
-    expect(scheduledCount()).toBe(1);
-  });
-
-  it("applies the same gate to edge events", async () => {
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-    globalThis.fetch = fetchSpy;
-    const { consumer, scheduledCount } = harness(["edge.created"]);
-    consumer.start();
-
-    const edge = (id: string) =>
-      ({
-        id,
-        edge_type: "references",
-        source_id: "01HAAAAAAAAAAAAAAAAAAAAAAA",
-        target_id: "01HBBBBBBBBBBBBBBBBBBBBBBB",
-        created_at: new Date().toISOString(),
-      }) as unknown as EdgeEventWithId["edge"];
-
-    await publishEdge({
-      type: "edge_created",
-      edge: edge("edge_quiet"),
-      enableFanout: false,
-    });
-    await drain();
-    const afterQuiet = scheduledCount();
-
-    await publishEdge({ type: "edge_created", edge: edge("edge_loud") });
-    await drain();
-    consumer.stop();
-
-    expect(afterQuiet).toBe(0);
-    expect(scheduledCount()).toBe(1);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// WebhookConsumer — a stored name the vocabulary dropped matches nothing
-// ---------------------------------------------------------------------------
-
-describe("WebhookConsumer subscription matching", () => {
-  let originalFetch: typeof fetch;
-
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-  });
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
+    expect(ids.sort()).toEqual(["01HLOUDLOUDLOUDLOUDLOUD00", "edge_loud"]);
   });
 
   it("schedules nothing for a retired name, and one delivery for a live subscription on the same event", async () => {
-    // Retiring an event name does not rewrite the rows that subscribed to it,
-    // and nothing is going to: a refusal keyed on stored content is the one
-    // shape the boot checks refuse to take, because a caller could then write
-    // a row that stopped the instance opening. So such a row's fate is this
-    // dispatch pass, which is what `WebhookSchema.events` staying
-    // `z.array(z.string())` in `routes/webhooks.ts` rests on.
-    //
-    // Both subscriptions are evaluated in the one pass, so the live one's
-    // delivery is what makes the retired one's silence a decision rather than
-    // a consumer that scheduled nothing at all.
-    const fetchSpy = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-    globalThis.fetch = fetchSpy;
-
-    const scheduledFor: string[] = [];
-    const store: WebhookDeliveryStore = {
-      cleanup: () => Promise.resolve(0),
-      list: () => Promise.resolve({ data: [], next_cursor: null }),
-      schedule: (entry) => {
-        scheduledFor.push(entry.webhookId);
-        return Promise.resolve(`del_match_${String(scheduledFor.length)}`);
-      },
-      getPending: () => Promise.resolve([]),
-      claimById: () => Promise.resolve(null),
-      markSuccess: () => Promise.resolve(),
-      markFailed: () => Promise.resolve(),
-      markDeadLetter: () => Promise.resolve(),
-    };
-
-    const subscription = (id: string, events: string[]): Webhook => ({
-      id,
-      url: "https://example.test/hook",
-      secret: "s",
-      events,
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+    // Retiring an event name does not rewrite the rows that subscribed to
+    // it, so such a row's fate is this dispatch pass, which is what
+    // `WebhookSchema.events` staying `z.array(z.string())` rests on.
+    const { id } = await owner();
+    const retired = await subscription(id, ["item.trashed"]);
+    const named = await subscription(id, ["item.created"]);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "created",
+        item: item("01HRETIREDRETIREDRETIRED0"),
+      });
     });
-    const retired = subscription("wh_retired", ["item.trashed"]);
-    const named = subscription("wh_named", ["item.created"]);
-    const webhooks = [retired, named];
-    const webhookStore: WebhookStore = {
-      create: () => Promise.resolve(retired),
-      list: () => Promise.resolve(webhooks),
-      get: () => Promise.resolve(retired),
-      update: () => Promise.resolve(retired),
-      delete: () => Promise.resolve(),
-      listActive: () => Promise.resolve(webhooks),
-      count: () => Promise.resolve(webhooks.length),
-    };
-
-    const consumer = new WebhookConsumer(webhookStore, store);
-    consumer.start();
-    await publish({
-      type: "created",
-      item: {
-        id: "01HEEEEEEEEEEEEEEEEEEEEEEE",
-        type: "core.note",
-        version: 1,
-        state: "active",
-        tier: "library",
-        source: "test",
-        properties: { title: "retired" },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      } as unknown as Item,
-    });
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    consumer.stop();
-
-    expect(scheduledFor).toEqual(["wh_named"]);
+    expect(
+      (
+        await ctx.storage.outboundWebhookDeliveries.list(retired.id, {
+          limit: 5,
+        })
+      ).data,
+    ).toHaveLength(0);
+    expect(
+      (await ctx.storage.outboundWebhookDeliveries.list(named.id, { limit: 5 }))
+        .data,
+    ).toHaveLength(1);
   });
 });
 
-describe("WebhookConsumer payload marks", () => {
-  let originalFetch: typeof fetch;
+// ---------------------------------------------------------------------------
+// A delivery is a read made for the subscription's credential
+// ---------------------------------------------------------------------------
 
-  beforeEach(() => {
-    originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-  });
-  afterEach(() => {
-    globalThis.fetch = originalFetch;
-  });
-
-  it("carries every mark where the event names one, and none where it does not", async () => {
-    const payloads: Record<string, unknown>[] = [];
-    const store: WebhookDeliveryStore = {
-      cleanup: () => Promise.resolve(0),
-      list: () => Promise.resolve({ data: [], next_cursor: null }),
-      schedule: (entry) => {
-        payloads.push(JSON.parse(entry.payload) as Record<string, unknown>);
-        return Promise.resolve(`del_mark_${String(payloads.length)}`);
-      },
-      getPending: () => Promise.resolve([]),
-      claimById: () => Promise.resolve(null),
-      markSuccess: () => Promise.resolve(),
-      markFailed: () => Promise.resolve(),
-      markDeadLetter: () => Promise.resolve(),
-    };
-    const webhook: Webhook = {
-      id: "wh_marks",
-      url: "https://example.test/hook",
-      secret: "s",
-      events: ["item.restored", "item.deleted", "edge.deleted"],
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    const webhookStore: WebhookStore = {
-      create: () => Promise.resolve(webhook),
-      list: () => Promise.resolve([webhook]),
-      get: () => Promise.resolve(webhook),
-      update: () => Promise.resolve(webhook),
-      delete: () => Promise.resolve(),
-      listActive: () => Promise.resolve([webhook]),
-      count: () => Promise.resolve(1),
-    };
-    const item = (id: string) =>
-      ({
-        id,
-        type: "core.note",
-        version: 1,
-        state: "active",
-        tier: "library",
-        source: "test",
-        properties: { title: "marked" },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      }) as unknown as Item;
-    const edge = (id: string) =>
-      ({
-        id,
-        edge_type: "references",
-        source_id: "01HAAAAAAAAAAAAAAAAAAAAAAA",
-        target_id: "01HBBBBBBBBBBBBBBBBBBBBBBB",
-        created_at: new Date().toISOString(),
-      }) as unknown as EdgeEventWithId["edge"];
-
-    const consumer = new WebhookConsumer(webhookStore, store);
-    consumer.start();
-    await publish({
-      type: "restored",
-      item: item("01HFFFFFFFFFFFFFFFFFFFFFFF"),
-      restoredWith: { id: "01HGGGGGGGGGGGGGGGGGGGGGGG", type: "core.task" },
+describe("what a delivery carries", () => {
+  it("carries every mark to a credential that may read the rows they name, and no stored type", async () => {
+    const { id } = await owner();
+    await subscription(id, ["item.restored", "item.deleted", "edge.deleted"]);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "restored",
+        item: item("01HFFFFFFFFFFFFFFFFFFFFFFF"),
+        restoredWith: { id: "01HGGGGGGGGGGGGGGGGGGGGGGG", type: "core.task" },
+      });
+      await publish({
+        type: "deleted",
+        item: item("01HHHHHHHHHHHHHHHHHHHHHHHH"),
+        trashedWith: { id: "01HGGGGGGGGGGGGGGGGGGGGGGG", type: "core.task" },
+      });
+      await publishEdge({
+        type: "edge_deleted",
+        edge: edge("edge_purged", "01HAAAAAAAAAAAAAAAAAAAAAAA"),
+        purgedWith: "01HAAAAAAAAAAAAAAAAAAAAAAA",
+      });
     });
-    await publish({
-      type: "deleted",
-      item: item("01HHHHHHHHHHHHHHHHHHHHHHHH"),
-      trashedWith: { id: "01HGGGGGGGGGGGGGGGGGGGGGGG", type: "core.task" },
-    });
-    await publish({
-      type: "restored",
-      item: item("01HGGGGGGGGGGGGGGGGGGGGGGG"),
-    });
-    await publishEdge({
-      type: "edge_deleted",
-      edge: edge("edge_purged"),
-      purgedWith: "01HAAAAAAAAAAAAAAAAAAAAAAA",
-    });
-    await publishEdge({ type: "edge_deleted", edge: edge("edge_direct") });
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    consumer.stop();
-
-    const sent = (id: string) =>
-      payloads.find(
-        (p) =>
-          (p.item as { id?: string } | undefined)?.id === id ||
-          (p.edge as { id?: string } | undefined)?.id === id,
+    const sent = (key: string) =>
+      sentBodies(http).find(
+        (b) =>
+          (b.item as { id?: string } | undefined)?.id === key ||
+          (b.edge as { id?: string } | undefined)?.id === key,
       );
-    expect(sent("01HFFFFFFFFFFFFFFFFFFFFFFF")?.restored_with).toBe(
-      "01HGGGGGGGGGGGGGGGGGGGGGGG",
-    );
+    expect(sent("01HFFFFFFFFFFFFFFFFFFFFFFF")).toMatchObject({
+      event_type: "item.restored",
+      restored_with: "01HGGGGGGGGGGGGGGGGGGGGGGG",
+    });
     expect(sent("01HFFFFFFFFFFFFFFFFFFFFFFF")).not.toHaveProperty(
       "restored_with_type",
     );
-    const taken = sent("01HHHHHHHHHHHHHHHHHHHHHHHH");
-    expect(taken?.item).toMatchObject({
+    expect(sent("01HFFFFFFFFFFFFFFFFFFFFFFF")).not.toHaveProperty("type");
+    expect(sent("01HHHHHHHHHHHHHHHHHHHHHHHH")?.item).toMatchObject({
       trashed_by_cascade: true,
       trashed_with: "01HGGGGGGGGGGGGGGGGGGGGGGG",
     });
-    expect(taken).not.toHaveProperty("trashed_with_type");
-    expect(sent("01HGGGGGGGGGGGGGGGGGGGGGGG")).toBeDefined();
-    expect(sent("01HGGGGGGGGGGGGGGGGGGGGGGG")).not.toHaveProperty(
-      "restored_with",
+    expect(sent("01HHHHHHHHHHHHHHHHHHHHHHHH")).not.toHaveProperty(
+      "trashed_with_type",
     );
     expect(sent("edge_purged")?.purged_with).toBe("01HAAAAAAAAAAAAAAAAAAAAAAA");
-    expect(sent("edge_direct")).toBeDefined();
-    expect(sent("edge_direct")).not.toHaveProperty("purged_with");
+  });
+
+  it("sends a narrow credential only the types it may read, and names a row in a mark only where it may read that row's type", async () => {
+    const { id } = await owner({ type_permissions: { "core.note": "read" } });
+    await subscription(id, ["item.created", "item.restored"]);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "created",
+        item: item("01HTASKTASKTASKTASKTASKT0", "core.task"),
+      });
+      await publish({
+        type: "created",
+        item: item("01HNOTENOTENOTENOTENOTEN0"),
+      });
+      await publish({
+        type: "restored",
+        item: item("01HRESTOREDRESTOREDRESTO0"),
+        restoredWith: { id: "01HTASKTASKTASKTASKTASKT0", type: "core.task" },
+      });
+    });
+    const bodies = sentBodies(http);
+    expect(bodies.map((b) => (b.item as { id: string }).id).sort()).toEqual([
+      "01HNOTENOTENOTENOTENOTEN0",
+      "01HRESTOREDRESTOREDRESTO0",
+    ]);
+    expect(
+      bodies.find(
+        (b) => (b.item as { id: string }).id === "01HRESTOREDRESTOREDRESTO0",
+      ),
+    ).not.toHaveProperty("restored_with");
+  });
+
+  it("sends a key only the extension namespaces its map reaches", async () => {
+    const { id } = await owner({
+      type_permissions: { "*": "read" },
+      extension_permissions: { alpha: "read" },
+    });
+    await subscription(id, ["metadata.changed"]);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "metadata_changed",
+        item: item("01HMETAMETAMETAMETAMETAME0"),
+        metadata: {
+          item_id: "01HMETAMETAMETAMETAMETAME0",
+          tags: ["t"],
+          extensions: { alpha: { a: 1 }, beta: { b: 2 } },
+        },
+      });
+    });
+    const [body] = sentBodies(http);
+    expect(body?.metadata).toEqual({
+      item_id: "01HMETAMETAMETAMETAMETAME0",
+      tags: ["t"],
+      extensions: { alpha: { a: 1 } },
+    });
+  });
+
+  it("sends a signed-in app no extension namespace, whatever types it reads", async () => {
+    const { token } = await seedOauthBearer(ctx.storage, [
+      "content:read",
+      "webhooks.manage",
+    ]);
+    const row = await ctx.storage.oauthProvider?.validateAccessToken(
+      hashApiKey(token.slice("marfa_at_".length), TEST_API_KEY_SALT),
+    );
+    if (!row?.userId) throw new Error("the seeded token did not resolve");
+    await ctx.storage.oauthProvider?.upsertConsent({
+      clientId: row.clientId,
+      authUserId: row.userId,
+      scopes: ["content:read", "webhooks.manage"],
+    });
+    await subscription(
+      { kind: "grant", clientId: row.clientId, authUserId: row.userId },
+      ["metadata.changed"],
+    );
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publish({
+        type: "metadata_changed",
+        item: item("01HAPPMETAAPPMETAAPPMETA0"),
+        metadata: {
+          item_id: "01HAPPMETAAPPMETAAPPMETA0",
+          tags: [],
+          extensions: { alpha: { a: 1 }, beta: { b: 2 } },
+        },
+      });
+    });
+    const [body] = sentBodies(http);
+    expect(body?.metadata).toEqual({
+      item_id: "01HAPPMETAAPPMETAAPPMETA0",
+      tags: [],
+      extensions: {},
+    });
+  });
+
+  it("sends an edge only where its kind and its source's type are readable", async () => {
+    const readable = await ctx.storage.items.create({
+      type: "core.note",
+      tier: "library",
+      state: "active",
+      properties: { body: "readable source" },
+      source: "test/webhook-edges",
+    });
+    const hidden = await ctx.storage.items.create({
+      type: "core.task",
+      tier: "library",
+      state: "active",
+      properties: { title: "hidden source" },
+      source: "test/webhook-edges",
+    });
+    const { id } = await owner({
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { references: "read" },
+    });
+    await subscription(id, ["edge.created"]);
+    const http = recorder();
+    await dispatch(http, async () => {
+      await publishEdge({
+        type: "edge_created",
+        edge: edge("edge_readable", readable.id),
+      });
+      await publishEdge({
+        type: "edge_created",
+        edge: edge("edge_kind_hidden", readable.id, "cites"),
+      });
+      await publishEdge({
+        type: "edge_created",
+        edge: edge("edge_source_hidden", hidden.id),
+      });
+    });
+    expect(sentBodies(http).map((b) => (b.edge as { id: string }).id)).toEqual([
+      "edge_readable",
+    ]);
+  });
+
+  it("narrows a pending delivery to the credential as it stands at the attempt", async () => {
+    const key = await owner({ type_permissions: { "core.note": "read" } });
+    const webhook = await subscription(key.id, ["item.created"]);
+    const deliveryId = await pending(
+      webhook,
+      { type: "created", item: item("01HNARROWEDNARROWEDNARROW0") },
+      "item.created",
+    );
+    await ctx.storage.keys.update(key.id, {
+      type_permissions: { "core.task": "read" },
+    });
+    const http = recorder();
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    expect(http.posts).toHaveLength(0);
+    expect(await row(deliveryId)).toMatchObject({
+      status: "cancelled",
+      error: DELIVERY_CANCELLED.unreadable,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A subscription stops with its credential and with itself
+// ---------------------------------------------------------------------------
+
+describe("when a delivery stops", () => {
+  it("sends nothing, now or pending, once the credential is revoked", async () => {
+    const key = await owner();
+    const webhook = await subscription(key.id, ["item.created"]);
+    const before = recorder();
+    await dispatch(before, async () => {
+      await publish({
+        type: "created",
+        item: item("01HBEFOREBEFOREBEFOREBEF0"),
+      });
+    });
+    expect(before.posts).toHaveLength(1);
+
+    const left = await pending(
+      webhook,
+      { type: "created", item: item("01HLEFTLEFTLEFTLEFTLEFTL0") },
+      "item.created",
+    );
+    await ctx.storage.keys.revoke(key.id);
+    const after = recorder();
+    await dispatch(after, async () => {
+      await publish({
+        type: "created",
+        item: item("01HAFTERAFTERAFTERAFTERA0"),
+      });
+    });
+    await new WebhookPoller({ storage: ctx.storage, http: after }).runOnce();
+    expect(after.posts).toHaveLength(0);
+    expect(await row(left)).toMatchObject({
+      status: "cancelled",
+      error: DELIVERY_CANCELLED.removed,
+    });
+    // Deleted with the key, as a witnessed subscription.
+    expect(await ctx.storage.outboundWebhooks.get(webhook.id)).toBeNull();
+  });
+
+  it("sends nothing once the credential no longer holds webhooks.manage", async () => {
+    const key = await owner();
+    const webhook = await subscription(key.id, ["item.created"]);
+    const left = await pending(
+      webhook,
+      { type: "created", item: item("01HNOMANAGENOMANAGENOMAN0") },
+      "item.created",
+    );
+    await ctx.storage.keys.update(key.id, { permissions: [] });
+    const http = recorder();
+    await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+    expect(http.posts).toHaveLength(0);
+    expect(await row(left)).toMatchObject({ status: "cancelled" });
+  });
+
+  it("sends no pending delivery of a subscription removed, turned off or pointed elsewhere", async () => {
+    const key = await owner();
+    const http = recorder();
+    const cases: [string, (w: StoredWebhook) => Promise<unknown>][] = [
+      [
+        DELIVERY_CANCELLED.removed,
+        (w) => ctx.storage.outboundWebhooks.delete(w.id),
+      ],
+      [
+        DELIVERY_CANCELLED.inactive,
+        (w) => ctx.storage.outboundWebhooks.update(w.id, { active: false }),
+      ],
+      [
+        DELIVERY_CANCELLED.repointed,
+        (w) =>
+          ctx.storage.outboundWebhooks.update(w.id, {
+            url: "https://elsewhere.example/hook",
+          }),
+      ],
+    ];
+    for (const [reason, change] of cases) {
+      const webhook = await subscription(key.id, ["item.created"]);
+      const left = await pending(
+        webhook,
+        { type: "created", item: item("01HCHANGEDCHANGEDCHANGED00") },
+        "item.created",
+      );
+      await change(webhook);
+      await new WebhookPoller({ storage: ctx.storage, http }).runOnce();
+      expect(await row(left)).toMatchObject({
+        status: "cancelled",
+        error: reason,
+      });
+    }
+    expect(http.posts).toHaveLength(0);
   });
 });
 
@@ -945,56 +727,9 @@ describe("WebhookConsumer payload marks", () => {
 // ---------------------------------------------------------------------------
 
 describe("WebhookConsumer stop", () => {
-  function consumer(): {
-    consumer: WebhookConsumer;
-    scheduledCount: () => number;
-  } {
-    let scheduled = 0;
-    const webhook: Webhook = {
-      id: "wh_stop",
-      url: "https://example.test/hook",
-      secret: "s",
-      events: ["item.created"],
-      active: true,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    const store: WebhookDeliveryStore = {
-      cleanup: () => Promise.resolve(0),
-      list: () => Promise.resolve({ data: [], next_cursor: null }),
-      schedule: () => {
-        scheduled += 1;
-        return Promise.resolve(`del_stop_${String(scheduled)}`);
-      },
-      getPending: () => Promise.resolve([]),
-      claimById: () => Promise.resolve(null),
-      markSuccess: () => Promise.resolve(),
-      markFailed: () => Promise.resolve(),
-      markDeadLetter: () => Promise.resolve(),
-    };
-    const webhookStore: WebhookStore = {
-      create: () => Promise.resolve(webhook),
-      list: () => Promise.resolve([webhook]),
-      get: () => Promise.resolve(webhook),
-      update: () => Promise.resolve(webhook),
-      delete: () => Promise.resolve(),
-      listActive: () => Promise.resolve([webhook]),
-      count: () => Promise.resolve(1),
-    };
-    return {
-      consumer: new WebhookConsumer(webhookStore, store),
-      scheduledCount: () => scheduled,
-    };
-  }
-
-  const settle = async (): Promise<void> => {
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  };
-
   it("leaves no listener behind after several start and stop cycles on a quiet bus", async () => {
     const baseline = __listenerCountForTests();
-    const { consumer: c } = consumer();
+    const c = new WebhookConsumer({ storage: ctx.storage, http: recorder() });
     for (let cycle = 0; cycle < 5; cycle++) {
       c.start();
       await settle();
@@ -1007,41 +742,21 @@ describe("WebhookConsumer stop", () => {
   });
 
   it("starts again after a stop and delivers what follows", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = vi.fn(() =>
-      Promise.resolve(new Response(null, { status: 200 })),
-    );
-    try {
-      const baseline = __listenerCountForTests();
-      const { consumer: c, scheduledCount } = consumer();
-      c.start();
-      c.stop();
-      c.start();
-      await settle();
-      expect(__listenerCountForTests()).toBe(baseline + 2);
-
-      await publish({
-        type: "created",
-        item: {
-          id: "01HEEEEEEEEEEEEEEEEEEEEEEE",
-          type: "core.note",
-          version: 1,
-          state: "active",
-          tier: "library",
-          source: "test",
-          properties: { title: "after restart" },
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as unknown as ItemEvent["item"],
-      });
-      await settle();
-      c.stop();
-      await settle();
-
-      expect(scheduledCount()).toBe(1);
-      expect(__listenerCountForTests()).toBe(baseline);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    const { id } = await owner();
+    await subscription(id, ["item.created"]);
+    const http = recorder();
+    const baseline = __listenerCountForTests();
+    const c = new WebhookConsumer({ storage: ctx.storage, http });
+    c.start();
+    c.stop();
+    c.start();
+    await settle();
+    expect(__listenerCountForTests()).toBe(baseline + 2);
+    await publish({ type: "created", item: item("01HRESTARTRESTARTRESTART0") });
+    await settle();
+    c.stop();
+    await settle();
+    expect(http.posts).toHaveLength(1);
+    expect(__listenerCountForTests()).toBe(baseline);
   });
 });

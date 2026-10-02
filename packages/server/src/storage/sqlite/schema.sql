@@ -585,7 +585,6 @@ CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
 	`next_attempt_at` text,
 	`payload` text,
 	`webhook_url` text,
-	`webhook_secret` text,
 	`max_attempts` integer DEFAULT 4 NOT NULL,
 	`status` text DEFAULT 'pending' NOT NULL
 );
@@ -599,8 +598,12 @@ CREATE TABLE IF NOT EXISTS `outbound_webhooks` (
 	`events` text DEFAULT '[]' NOT NULL,
 	`type_filter` text,
 	`active` integer DEFAULT 1 NOT NULL,
+	`key_id` text,
+	`grant_client_id` text,
+	`grant_user_id` text,
 	`created_at` text NOT NULL,
-	`updated_at` text NOT NULL
+	`updated_at` text NOT NULL,
+	CONSTRAINT "outbound_webhooks_one_owner" CHECK(("outbound_webhooks"."key_id" IS NOT NULL AND "outbound_webhooks"."grant_client_id" IS NULL AND "outbound_webhooks"."grant_user_id" IS NULL) OR ("outbound_webhooks"."key_id" IS NULL AND "outbound_webhooks"."grant_client_id" IS NOT NULL AND "outbound_webhooks"."grant_user_id" IS NOT NULL))
 );
 
 CREATE TABLE IF NOT EXISTS `rate_limit_windows` (

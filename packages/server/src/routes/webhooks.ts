@@ -1,15 +1,17 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
-import { MarfaError, ErrorCode, GLOBAL_TYPE_WILDCARD } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
+import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  computeTypeFilter,
-  requirePermission,
-  requireAuth,
-} from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import { requirePermission, requireAuth } from "../middleware/auth.js";
+import type {
+  Storage,
+  StoredWebhook,
+  WebhookOwner,
+} from "../storage/interface.js";
+import { refuseWebhookUrl } from "../webhooks/outbound-http.js";
+import { DELIVERY_CANCELLED } from "../webhooks/delivery.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -21,6 +23,9 @@ function redactSecret(secret: string): string {
   if (secret.length <= 4) return secret;
   return "****" + secret.slice(-4);
 }
+
+/** The shortest signing secret a subscription takes. */
+export const MIN_WEBHOOK_SECRET_LENGTH = 32;
 
 /**
  * Every event an outbound webhook may subscribe to.
@@ -120,7 +125,7 @@ const createWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Create a webhook",
   description:
-    "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
+    "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -132,7 +137,13 @@ const createWebhookRoute = createRoute({
               .array(EventNameSchema)
               .min(1, "events must be a non-empty array"),
             type_filter: z.string().nullish(),
-            secret: z.string().optional(),
+            secret: z
+              .string()
+              .min(
+                MIN_WEBHOOK_SECRET_LENGTH,
+                `secret must be at least ${String(MIN_WEBHOOK_SECRET_LENGTH)} characters`,
+              )
+              .optional(),
           }),
         },
       },
@@ -169,14 +180,10 @@ const createWebhookRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "forbidden",
-            "scoped_credential_not_permitted",
-          ]),
+          schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may register or re-point one.",
+      description: "The credential does not hold `webhooks.manage`.",
     },
   },
 });
@@ -188,7 +195,7 @@ const listWebhooksRoute = createRoute({
   tags: ["Webhooks"],
   summary: "List webhooks",
   description:
-    "Returns every outbound webhook subscription. Secrets are redacted here — the plaintext is only returned at create time.",
+    "Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -226,7 +233,7 @@ const getWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Get a webhook",
   description:
-    "Returns one outbound webhook subscription by id, with its secret redacted.",
+    "Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -277,7 +284,7 @@ const updateWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Update a webhook",
   description:
-    "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. The signing secret cannot be rotated here — delete the subscription and create a new one.",
+    "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -327,14 +334,10 @@ const updateWebhookRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "forbidden",
-            "scoped_credential_not_permitted",
-          ]),
+          schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may register or re-point one.",
+      description: "The credential does not hold `webhooks.manage`.",
     },
     404: {
       content: {
@@ -354,7 +357,7 @@ const deleteWebhookRoute = createRoute({
   tags: ["Webhooks"],
   summary: "Delete a webhook",
   description:
-    "Removes the subscription so no new deliveries are queued. Deliveries already queued still fire and retry on the standard schedule, and delivery history is retained until the audit retention window expires.",
+    "Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -381,14 +384,10 @@ const deleteWebhookRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "forbidden",
-            "scoped_credential_not_permitted",
-          ]),
+          schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may create, re-point or destroy one.",
+      description: "The credential does not hold `webhooks.manage`.",
     },
     404: {
       content: {
@@ -471,85 +470,94 @@ const listDeliveriesRoute = createRoute({
 // ---------------------------------------------------------------------------
 
 /**
- * Refuse a credential that cannot read everything stored.
- *
- * A webhook subscription is instance-wide and carries no credential of its
- * own: the row stores a url, a secret and an event list, and deliveries are
- * built once and sent to every matching endpoint. So there is no principal
- * to narrow a payload against, and the only way the delivery can be bounded
- * is for the subscription to belong to a credential that already reaches
- * everything.
- *
- * **`webhooks.manage` alone does not give that**, and under one permission
- * model that is clearer than it was rather than less true. A credential can
- * hold the permission to set up webhooks and hold read on one type, and the
- * subscription it registers would then deliver every type — a standing
- * subscription carrying more than its own credential could ever fetch, with
- * nothing on the row to say so. The two are separate axes and holding one says
- * nothing about the other.
- *
- * The test is the credential's own content reach: the global read wildcard
- * present in what it may reach, with nothing subtracted from it. Nothing about
- * how the credential was minted enters into it, so a key and a sign-in are
- * asked the same question and answered the same way.
- *
- * Every write door is guarded, not only registration. `PATCH` re-points the
- * url and rewrites the event list, which is registering a different
- * subscription on a row that already exists; `DELETE` destroys one the
- * credential could not have created, silencing deliveries something else
- * depends on. The message names all three so it stays true wherever it is
- * returned.
- *
- * Refused rather than filtered, because filtering needs a principal the row
- * does not have.
+ * The owner a subscription this caller registers belongs to: the key itself,
+ * or for a signed-in app its grant, so that every token of the grant is the
+ * same owner and the subscription outlives the token that registered it.
  */
-function refuseNarrowCredential(key: ApiKey): void {
-  // `allowed === undefined` means "no credential at all" and nothing else, so
-  // it cannot be the test: every authenticated caller arrives with a real
-  // list. The question is whether that list reaches every type, which is the
-  // global wildcard present and nothing subtracted from it.
-  const filter = computeTypeFilter(key, "read");
-  const reachesEverything =
-    filter.allowed !== undefined &&
-    filter.allowed.includes(GLOBAL_TYPE_WILDCARD) &&
-    filter.excluded.length === 0;
-  if (reachesEverything) return;
-  throw new MarfaError(
-    ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED,
-    "A webhook subscription sends everything stored to its endpoint, and this credential cannot read everything. Registering, re-pointing or removing one takes a credential that can.",
+function callerOwner(c: Context<AppEnv>): WebhookOwner {
+  const key = requireAuth(c);
+  if (c.get("authType") !== "oauth") return { kind: "key", keyId: key.id };
+  const grant = c.get("oauthGrant");
+  // Every grant this server issues has a person behind it; a token without
+  // one names no grant a subscription could belong to.
+  if (!grant?.authUserId) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "This sign-in names no grant a subscription could belong to",
+    );
+  }
+  return {
+    kind: "grant",
+    clientId: grant.clientId,
+    authUserId: grant.authUserId,
+  };
+}
+
+function isOwner(c: Context<AppEnv>, owner: WebhookOwner): boolean {
+  const key = requireAuth(c);
+  if (c.get("authType") !== "oauth") {
+    return owner.kind === "key" && owner.keyId === key.id;
+  }
+  const grant = c.get("oauthGrant");
+  return (
+    owner.kind === "grant" &&
+    owner.clientId === grant?.clientId &&
+    owner.authUserId === grant.authUserId
   );
 }
 
-export function webhookRoutes(storage: Storage) {
+/**
+ * The subscription `id` as this caller may act on it, or `webhook_not_found`.
+ *
+ * **A subscription belongs to the credential that registered it**, and one
+ * registered by another credential answers as an id nobody holds: listing,
+ * reading, re-pointing or removing another credential's subscription would
+ * let one credential send another's events to an address of its choosing,
+ * or silence them.
+ */
+async function ownedWebhook(
+  storage: Storage,
+  c: Context<AppEnv>,
+  id: string,
+): Promise<StoredWebhook> {
+  const webhook = await storage.outboundWebhooks.get(id);
+  if (webhook && isOwner(c, webhook.owner)) return webhook;
+  throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+}
+
+/** A subscription as the wire carries it: no owner, secret redacted. */
+function wireWebhook(webhook: StoredWebhook, revealSecret = false) {
+  const wire: Omit<StoredWebhook, "owner"> &
+    Partial<Pick<StoredWebhook, "owner">> = { ...webhook };
+  delete wire.owner;
+  return revealSecret ? wire : { ...wire, secret: redactSecret(wire.secret) };
+}
+
+function assertUrlAccepted(url: string, allowPrivateAddresses: boolean): void {
+  const refusal = refuseWebhookUrl(url, allowPrivateAddresses);
+  if (refusal !== null) {
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, refusal);
+  }
+}
+
+export function webhookRoutes(
+  storage: Storage,
+  options: { allowPrivateAddresses: boolean },
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createWebhookRoute, async (c) => {
-    // `webhooks.manage` only.
-    const key = requireAuth(c);
+    requireAuth(c);
     requirePermission(c, "webhooks.manage");
-    refuseNarrowCredential(key);
-
-    // Reserved around the create below rather than checked here, so
-    // concurrent creates cannot each see room against the same pre-write
-    // count.
     const body = c.req.valid("json");
+    assertUrlAccepted(body.url, options.allowPrivateAddresses);
 
-    try {
-      new URL(body.url);
-    } catch {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "url must be a valid URL",
-      );
-    }
-
-    const webhook = await storage.runInTransaction(async () => {
-      return storage.outboundWebhooks.create({
-        url: body.url,
-        events: body.events,
-        type_filter: body.type_filter ?? undefined,
-        secret: body.secret ?? undefined,
-      });
+    const webhook = await storage.outboundWebhooks.create({
+      url: body.url,
+      events: body.events,
+      type_filter: body.type_filter ?? undefined,
+      secret: body.secret,
+      owner: callerOwner(c),
     });
 
     void storage.audit.log({
@@ -559,7 +567,7 @@ export function webhookRoutes(storage: Storage) {
       resource_type: "webhook",
       resource_id: webhook.id,
     });
-    return c.json(webhook, 201);
+    return c.json(wireWebhook(webhook, true), 201);
   });
 
   router.openapi(listWebhooksRoute, async (c) => {
@@ -568,10 +576,9 @@ export function webhookRoutes(storage: Storage) {
     const webhooks = await storage.outboundWebhooks.list();
     return c.json(
       {
-        data: webhooks.map((w) => ({
-          ...w,
-          secret: redactSecret(w.secret),
-        })),
+        data: webhooks
+          .filter((w) => isOwner(c, w.owner))
+          .map((w) => wireWebhook(w)),
         next_cursor: null,
       },
       200,
@@ -582,44 +589,40 @@ export function webhookRoutes(storage: Storage) {
     requireAuth(c);
     requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
-    const webhook = await storage.outboundWebhooks.get(id);
-    if (!webhook) {
-      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
-    }
-    return c.json({ ...webhook, secret: redactSecret(webhook.secret) }, 200);
+    const webhook = await ownedWebhook(storage, c, id);
+    return c.json(wireWebhook(webhook), 200);
   });
 
   router.openapi(updateWebhookRoute, async (c) => {
-    const key = requireAuth(c);
+    requireAuth(c);
     requirePermission(c, "webhooks.manage");
-    // The update door too: it re-points `url` and rewrites `events`, so
-    // admitting a scoped credential here would let it take over a
-    // subscription it could not have created.
-    refuseNarrowCredential(key);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
-    const existing = await storage.outboundWebhooks.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
+    if (body.url !== undefined) {
+      assertUrlAccepted(body.url, options.allowPrivateAddresses);
     }
 
-    if (body.url !== undefined) {
-      try {
-        new URL(body.url);
-      } catch {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          "url must be a valid URL",
+    const updated = await storage.runInTransaction(async () => {
+      const existing = await ownedWebhook(storage, c, id);
+      const next = await storage.outboundWebhooks.update(id, {
+        url: body.url,
+        events: body.events,
+        type_filter: body.type_filter,
+        active: body.active,
+      });
+      if (next.url !== existing.url) {
+        await storage.outboundWebhookDeliveries.cancelPending(
+          id,
+          DELIVERY_CANCELLED.repointed,
+        );
+      } else if (!next.active) {
+        await storage.outboundWebhookDeliveries.cancelPending(
+          id,
+          DELIVERY_CANCELLED.inactive,
         );
       }
-    }
-
-    const updated = await storage.outboundWebhooks.update(id, {
-      url: body.url,
-      events: body.events,
-      type_filter: body.type_filter,
-      active: body.active,
+      return next;
     });
 
     void storage.audit.log({
@@ -629,26 +632,22 @@ export function webhookRoutes(storage: Storage) {
       resource_type: "webhook",
       resource_id: id,
     });
-    return c.json({ ...updated, secret: redactSecret(updated.secret) }, 200);
+    return c.json(wireWebhook(updated), 200);
   });
 
   router.openapi(deleteWebhookRoute, async (c) => {
-    const key = requireAuth(c);
+    requireAuth(c);
     requirePermission(c, "webhooks.manage");
-    // Destroying a subscription this credential could not have created is
-    // the same rationale as refusing to create one: the row belongs to the
-    // instance, not to the grant, and an app that can read only part of what
-    // is stored must not be able to silence deliveries something else
-    // depends on.
-    refuseNarrowCredential(key);
     const { id } = c.req.valid("param");
 
-    const existing = await storage.outboundWebhooks.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
-    }
-
-    await storage.outboundWebhooks.delete(id);
+    await storage.runInTransaction(async () => {
+      await ownedWebhook(storage, c, id);
+      await storage.outboundWebhooks.delete(id);
+      await storage.outboundWebhookDeliveries.cancelPending(
+        id,
+        DELIVERY_CANCELLED.removed,
+      );
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -665,10 +664,7 @@ export function webhookRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const { limit, cursor } = c.req.valid("query");
 
-    const existing = await storage.outboundWebhooks.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
-    }
+    await ownedWebhook(storage, c, id);
 
     return c.json(
       await storage.outboundWebhookDeliveries.list(id, { limit, cursor }),

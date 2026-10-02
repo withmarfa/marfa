@@ -4934,37 +4934,6 @@
           "updated_at"
         ]
       },
-      "ForbiddenOrScopedCredentialNotPermittedRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "forbidden",
-                  "scoped_credential_not_permitted"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
       "WebhookPage": {
         "type": "object",
         "properties": {
@@ -30491,7 +30460,7 @@
           "Webhooks"
         ],
         "summary": "Create a webhook",
-        "description": "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.",
+        "description": "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.",
         "security": [
           {
             "bearerAuth": []
@@ -30533,7 +30502,8 @@
                     ]
                   },
                   "secret": {
-                    "type": "string"
+                    "type": "string",
+                    "minLength": 32
                   }
                 },
                 "required": [
@@ -30633,11 +30603,11 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may register or re-point one.",
+            "description": "The credential does not hold `webhooks.manage`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrScopedCredentialNotPermittedRefusal"
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
                 }
               }
             },
@@ -30754,7 +30724,7 @@
           "Webhooks"
         ],
         "summary": "List webhooks",
-        "description": "Returns every outbound webhook subscription. Secrets are redacted here — the plaintext is only returned at create time.",
+        "description": "Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.",
         "security": [
           {
             "bearerAuth": []
@@ -30921,7 +30891,7 @@
           "Webhooks"
         ],
         "summary": "Get a webhook",
-        "description": "Returns one outbound webhook subscription by id, with its secret redacted.",
+        "description": "Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.",
         "security": [
           {
             "bearerAuth": []
@@ -31128,7 +31098,7 @@
           "Webhooks"
         ],
         "summary": "Update a webhook",
-        "description": "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. The signing secret cannot be rotated here — delete the subscription and create a new one.",
+        "description": "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.",
         "security": [
           {
             "bearerAuth": []
@@ -31277,11 +31247,11 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may register or re-point one.",
+            "description": "The credential does not hold `webhooks.manage`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrScopedCredentialNotPermittedRefusal"
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
                 }
               }
             },
@@ -31428,7 +31398,7 @@
           "Webhooks"
         ],
         "summary": "Delete a webhook",
-        "description": "Removes the subscription so no new deliveries are queued. Deliveries already queued still fire and retry on the standard schedule, and delivery history is retained until the audit retention window expires.",
+        "description": "Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.",
         "security": [
           {
             "bearerAuth": []
@@ -31505,11 +31475,11 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may create, re-point or destroy one.",
+            "description": "The credential does not hold `webhooks.manage`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenOrScopedCredentialNotPermittedRefusal"
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
                 }
               }
             },
