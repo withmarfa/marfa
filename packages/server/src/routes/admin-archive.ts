@@ -553,12 +553,17 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     }
     await rm(bodySpool, { force: true });
 
-    const items: { item: Record<string, unknown>; metadata?: unknown }[] = [];
+    const items: {
+      item: Record<string, unknown>;
+      metadata?: unknown;
+      lending_blobs?: unknown;
+    }[] = [];
     for (const line of itemLines) {
       try {
         const parsed = JSON.parse(line) as {
           item: Record<string, unknown>;
           metadata?: unknown;
+          lending_blobs?: unknown;
         };
         items.push(parsed);
       } catch {
@@ -727,11 +732,15 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
         // that exact id, so edges naming it still land correctly.
         const resolvableIds = new Set<string>();
 
-        for (const { item, metadata: meta } of items) {
+        for (const { item, metadata: meta, lending_blobs: lending } of items) {
           const archiveId = typeof item.id === "string" ? item.id : undefined;
           try {
             const created = await storage.items.create({
               blob_writer: uploader,
+              // A line naming none lent nothing where it was taken.
+              blob_lenders: Array.isArray(lending)
+                ? lending.filter((h): h is string => typeof h === "string")
+                : [],
               ...(archiveId !== undefined && { id: archiveId }),
               // The row comes back under its archived id, so it comes
               // back at its archived version too. Re-minting at 1 lets a

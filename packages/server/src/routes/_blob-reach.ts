@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import {
   computeTypeFilter,
   getTypeFilter,
+  isReservedCredentialSource,
   mayReadType,
   requireAuth,
   type AppEnv,
@@ -16,12 +17,13 @@ function blobNotFound(): MarfaError {
 }
 
 /**
- * Who a blob upload and a reference are credited to. A key is itself; a
- * signed-in app is its grant's source rather than its token, which a
- * refresh replaces between an upload and the write naming it.
+ * Who a blob upload and a reference are credited to. A stored key is itself,
+ * an app's own included. A signed-in app's token is its grant, named by the
+ * source only a sign-in can carry, because a refresh replaces the token
+ * between an upload and the write naming it.
  */
 export function blobPrincipal(key: ApiKey): string {
-  return key.oauth_client_id ? key.source : `key:${key.id}`;
+  return isReservedCredentialSource(key.source) ? key.source : `key:${key.id}`;
 }
 
 /**

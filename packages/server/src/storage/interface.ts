@@ -616,6 +616,13 @@ export interface RestoredRowInput {
  */
 export interface BlobWriterInput {
   blob_writer?: string;
+  /**
+   * On a create, the only digests `blob_writer` is credited with; any other
+   * the row names is credited to nobody. An archive restore names the
+   * digests that lent their row's reach where the archive was taken, so a
+   * restore lends no more than the instance it came from did.
+   */
+  blob_lenders?: readonly string[];
 }
 
 export type StoredCreateItemInput = CreateItemInput &
@@ -1273,6 +1280,8 @@ export interface BlobRegistry {
    * an index keyed by hash, so the cost is the references to this one blob.
    */
   lendingTypes(hash: string): Promise<string[]>;
+  /** The digests in this item's properties that lend its reach. */
+  lendingHashesOf(itemId: string): Promise<string[]>;
   /** Record that `uploader` sent this blob's bytes. Idempotent. */
   recordUploader(hash: string, uploader: string): Promise<void>;
   remove(hash: string): Promise<void>;

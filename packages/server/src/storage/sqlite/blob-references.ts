@@ -14,13 +14,13 @@ type Executor = DrizzleDb | SqliteTxContext;
  *
  * A digest the item already named keeps the writer that first named it, so
  * a later write carrying it through unchanged, by anyone, neither lends nor
- * withdraws reach; only a digest this write introduces is credited to
- * `writer`.
+ * withdraws reach; only a digest this write introduces is credited, to the
+ * writer `creditOf` names for it.
  */
 export async function syncBlobReferences(
   db: Executor,
   row: { id: string; properties: Record<string, unknown> },
-  writer: string | null,
+  creditOf: (hash: string) => string | null,
 ): Promise<void> {
   const named = new Set<string>();
   collectBlobHashes(row.properties, named);
@@ -49,8 +49,30 @@ export async function syncBlobReferences(
   if (added.length > 0) {
     await db
       .insert(item_blob_references)
-      .values(added.map((hash) => ({ hash, item_id: row.id, writer })))
+      .values(
+        added.map((hash) => ({
+          hash,
+          item_id: row.id,
+          writer: creditOf(hash),
+        })),
+      )
       .onConflictDoNothing()
       .run();
   }
+}
+
+/** Who each digest an item's index holds is credited to. */
+export async function blobCredits(
+  db: Executor,
+  itemId: string,
+): Promise<Map<string, string | null>> {
+  const rows = await db
+    .select({
+      hash: item_blob_references.hash,
+      writer: item_blob_references.writer,
+    })
+    .from(item_blob_references)
+    .where(eq(item_blob_references.item_id, itemId))
+    .all();
+  return new Map(rows.map((r) => [r.hash, r.writer]));
 }

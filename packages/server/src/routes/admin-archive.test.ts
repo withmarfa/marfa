@@ -115,8 +115,8 @@ function manifestFor(...blobs: { hash: string; data: Buffer }[]) {
   };
 }
 
-/** One `items.ndjson` line: a note naming the blob, with what else is
- *  given on the row. */
+/** One `items.ndjson` line: a note naming the blob, as an export writes a
+ *  row whose reference lent its reach, with what else is given on the row. */
 function noteLine(
   blob: { hash: string },
   extra: Record<string, unknown> = {},
@@ -127,6 +127,7 @@ function noteLine(
       properties: { body: "Spooled", blob_ref: blob.hash },
       ...extra,
     },
+    lending_blobs: [blob.hash],
   });
 }
 
@@ -176,6 +177,7 @@ describe("POST /admin/restore-archive", () => {
             source,
             source_id: "ai-1",
           },
+          lending_blobs: [blob.hash],
         }),
       ],
       [blob],

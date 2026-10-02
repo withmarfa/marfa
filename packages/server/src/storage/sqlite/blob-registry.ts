@@ -84,6 +84,23 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return rows.map((r) => r.type);
   }
 
+  async lendingHashesOf(itemId: string): Promise<string[]> {
+    const rows = await this.db
+      .select({ hash: item_blob_references.hash })
+      .from(item_blob_references)
+      .innerJoin(
+        blobUploaders,
+        and(
+          eq(blobUploaders.hash, item_blob_references.hash),
+          eq(blobUploaders.uploader, item_blob_references.writer),
+        ),
+      )
+      .where(eq(item_blob_references.item_id, itemId))
+      .orderBy(item_blob_references.hash)
+      .all();
+    return rows.map((r) => r.hash);
+  }
+
   async recordUploader(hash: string, uploader: string): Promise<void> {
     await this.db
       .insert(blobUploaders)

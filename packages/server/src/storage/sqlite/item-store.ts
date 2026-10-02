@@ -108,7 +108,7 @@ import {
   settleNaturalKeyTombstones,
   syncLink,
 } from "./item-links.js";
-import { syncBlobReferences } from "./blob-references.js";
+import { blobCredits, syncBlobReferences } from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
@@ -270,7 +270,13 @@ async function insertConflictedSibling(
   // indexing and the announcing, and doing either again would report a
   // create that did not happen.
   if (inserted.length === 0) return null;
-  await syncBlobReferences(tx, { id: siblingId, properties }, args.writer);
+  // The sibling starts from the row's own properties, so a digest it carries
+  // from there keeps the credit the row gave it; only one the losing write
+  // brought is the writer's.
+  const inherited = await blobCredits(tx, row.id);
+  await syncBlobReferences(tx, { id: siblingId, properties }, (hash) =>
+    inherited.has(hash) ? (inherited.get(hash) ?? null) : args.writer,
+  );
 
   const [held] = await tx
     .select({ tags: metadata.tags })
@@ -667,10 +673,12 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       await syncLink(tx, { id, type: input.type, properties });
-      await syncBlobReferences(
-        tx,
-        { id, properties },
-        input.blob_writer ?? null,
+      const lenders =
+        input.blob_lenders === undefined ? null : new Set(input.blob_lenders);
+      await syncBlobReferences(tx, { id, properties }, (hash) =>
+        lenders === null || lenders.has(hash)
+          ? (input.blob_writer ?? null)
+          : null,
       );
       if (input.source && input.source_id) {
         await forgetNaturalKey(tx, input.source, input.source_id);
@@ -834,7 +842,7 @@ export class SqliteItemStore implements ItemStore {
     writer: string | null,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
-    await syncBlobReferences(tx, after, writer);
+    await syncBlobReferences(tx, after, () => writer);
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }

@@ -8,6 +8,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
+import { blobPrincipal } from "./_blob-reach.js";
 
 let ctx: TestContext;
 let seq = 0;
@@ -146,6 +147,102 @@ async function indexed(
   collectBlobHashes(item?.properties ?? {}, named);
   return { held: rows.map((r) => r.hash), named: [...named].sort() };
 }
+
+describe("who a reference is credited to", () => {
+  it("credits a stored key as itself, an app's own key whatever source it names", () => {
+    const base = {
+      id: "k1",
+      label: "l",
+      sources: [],
+      default_tier: "library" as const,
+      is_operator: false,
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      created_at: "2026-01-01T00:00:00.000Z",
+      last_used_at: null,
+    };
+    expect(
+      blobPrincipal({ ...base, source: "key:another", oauth_client_id: "c" }),
+    ).toBe("key:k1");
+    expect(blobPrincipal({ ...base, source: "device" })).toBe("key:k1");
+    expect(
+      blobPrincipal({ ...base, source: "oauth:c:u", oauth_client_id: "c" }),
+    ).toBe("oauth:c:u");
+  });
+
+  it("keeps a sibling's inherited digests credited as the row credited them", async () => {
+    const hash = await upload("planted in a title");
+    const reader = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "read" },
+    });
+    const planted = await ctx.storage.items.create({
+      blob_writer: "key:never-sent-the-bytes",
+      type: "core.note",
+      properties: { title: hash, body: "original" },
+      tier: "library",
+    });
+    expect(await read(reader, hash)).toBe(404);
+    const moved = await ctx.storage.items.update(planted.id, {
+      blob_writer: writer,
+      properties: { body: "from the winner" },
+      version: planted.version,
+    });
+    expect("error" in moved).toBe(false);
+    const stale = await ctx.storage.items.update(planted.id, {
+      blob_writer: writer,
+      properties: { body: "from the loser" },
+      version: planted.version,
+      conflict_mode: "auto",
+    });
+    expect("error" in stale).toBe(false);
+    const sibling = (await ctx.storage.items.list({ limit: 500 })).data.find(
+      (item) =>
+        item.id !== planted.id && item.properties.body === "from the loser",
+    );
+    expect(sibling?.properties.title).toBe(hash);
+    expect(await read(reader, hash)).toBe(404);
+  });
+
+  it("restores a row's credit only for the digests its archive line says lent", async () => {
+    const lent = await upload("lent where the archive was taken");
+    const planted = await upload("planted where the archive was taken");
+    const reader = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "read" },
+    });
+    const source = await ctx.storage.items.create({
+      blob_writer: writer,
+      type: "core.note",
+      properties: { body: `![a](${lent})` },
+      tier: "library",
+    });
+    await ctx.storage.items.update(source.id, {
+      blob_writer: "key:never-sent-the-bytes",
+      properties: { title: planted },
+    });
+    expect(await ctx.storage.blobs.lendingHashesOf(source.id)).toEqual([lent]);
+
+    const restored = await ctx.storage.items.create({
+      blob_writer: "key:operator",
+      blob_lenders: [lent],
+      type: "core.note",
+      properties: { title: planted, body: `![a](${lent})` },
+      tier: "library",
+    });
+    await ctx.storage.blobs.recordUploader(lent, "key:operator");
+    await ctx.storage.blobs.recordUploader(planted, "key:operator");
+    expect(await ctx.storage.blobs.lendingHashesOf(restored.id)).toEqual([
+      lent,
+    ]);
+    await ctx.storage.items.purge(
+      (await ctx.storage.items.transition(source.id, "trashed")).id,
+    );
+    expect(await read(reader, lent)).toBe(200);
+    expect(await read(reader, planted)).toBe(404);
+  });
+});
 
 describe("the reference index a blob door reads", () => {
   it("follows an item's properties through every write that changes them", async () => {
