@@ -118,6 +118,8 @@ pub struct ScanReport {
     pub unsure: Vec<Unsure>,
     pub registry: Option<String>,
     pub skipped: usize,
+    /// Files that are not documents left for a later pass, still changing.
+    pub settling: Vec<String>,
     /// Counted in `created` too.
     pub requeued: usize,
     pub lost: usize,
@@ -200,7 +202,7 @@ impl Folder {
 
     fn bind(root: PathBuf, folder: &str, server: Server) -> Result<Folder> {
         let state = root.join(STATE_DIR);
-        let core = Core::open(state.join("core.sqlite"), Some(server))?;
+        let core = working(Core::open(state.join("core.sqlite"), Some(server))?)?;
         if let Some(bound) = settings_file::bound(&core)?
             && bound != folder
         {
@@ -256,17 +258,11 @@ impl Folder {
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
-        let not_a_folder = || {
-            CoreError::Invalid(format!(
-                "{} is not a folder; `folders add` makes one",
-                root.display()
-            ))
-        };
         if !state.join("core.sqlite").exists() {
-            return Err(not_a_folder());
+            return Err(not_a_folder(&root));
         }
-        let core = Core::open(state.join("core.sqlite"), server)?;
-        let folder = settings_file::bound(&core)?.ok_or_else(not_a_folder)?;
+        let core = working(Core::open(state.join("core.sqlite"), server)?)?;
+        let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
         let opened = Folder {
             root,
             folder,
@@ -282,6 +278,27 @@ impl Folder {
             let _ = opened.register();
         }
         Ok(opened)
+    }
+
+    /// Reads the store without claiming it, so it answers beside a running
+    /// watch and never keeps one from starting.
+    pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
+        let root = root.as_ref().to_path_buf();
+        let state = root.join(STATE_DIR);
+        if !state.join("core.sqlite").exists() {
+            return Err(not_a_folder(&root));
+        }
+        let core = Core::open_reader(state.join("core.sqlite"))?;
+        let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
+        Folder {
+            root,
+            folder,
+            core,
+            key: std::sync::Mutex::new(None),
+            permissions: std::sync::OnceLock::new(),
+            store_mark: store_mark(&state),
+        }
+        .status()
     }
 
     /// Answers whether the directory was listed.
@@ -315,14 +332,8 @@ impl Folder {
         }
     }
 
-    /// Leaves the folder's files; refused while it is held or writes wait.
+    /// Leaves the folder's files; refused while writes wait.
     pub fn remove(self) -> Result<()> {
-        if self.core.handle() != crate::Handle::Writer {
-            return Err(CoreError::Invalid(format!(
-                "{} is held by another process, a `folders watch` say; stop it and remove the folder then",
-                self.root.display()
-            )));
-        }
         let waiting = self
             .core
             .queue()?
@@ -418,7 +429,6 @@ impl Folder {
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
-        self.core.lock.refuse_unless_writer()?;
         let fetched = self.core.http()?.catalog()?;
         crate::store::replace_catalog(&*self.core.conn()?, &fetched)?;
         let edge_types = EdgeTypes::load(&*self.core.conn()?)?;
@@ -496,6 +506,21 @@ impl Folder {
             && !in_package(&self.root, path)
             && !in_nested_folder(&self.root, path)
     }
+}
+
+fn not_a_folder(root: &Path) -> CoreError {
+    CoreError::Invalid(format!(
+        "{} is not a folder; `folders add` makes one",
+        root.display()
+    ))
+}
+
+/// One process works a folder at a time: every working path starts from a
+/// `Folder` this makes, so a second opener is refused before it reads or
+/// writes a file, a binding or the server.
+fn working(core: Core) -> Result<Core> {
+    core.lock.refuse_unless_writer()?;
+    Ok(core)
 }
 
 fn in_nested_folder(root: &Path, relative: &str) -> bool {
@@ -807,16 +832,19 @@ enum Missing {
 
 impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
-        self.scan_as(true)
+        self.scan_as(true, None)
     }
 
-    /// Skips a file whose size, time and identity are as the last read left
-    /// them; a full pass catches what that misses.
-    pub fn scan_quick(&self) -> Result<ScanReport> {
-        self.scan_as(false)
+    /// A watch's pass. Short of `full`, it skips a file whose size, time and
+    /// identity are as the last read left them, which a full pass catches.
+    /// Either way it leaves for a later pass a file that is not a document
+    /// and changed within `settle`, which a copy or a download may still be
+    /// writing.
+    pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
+        self.scan_as(full, Some(settle))
     }
 
-    fn scan_as(&self, full: bool) -> Result<ScanReport> {
+    fn scan_as(&self, full: bool, settle: Option<Duration>) -> Result<ScanReport> {
         if let Some(gone) = self.root_gone() {
             return Ok(ScanReport {
                 root_gone: Some(gone),
@@ -990,6 +1018,13 @@ impl Folder {
         let identities = identity::resolve(&held);
         let mut files = Vec::new();
         for path in held {
+            if let Some(settle) = settle
+                && !is_document(&path)
+                && changed_within(&path, settle)
+            {
+                report.settling.push(identity::relative(&self.root, &path)?);
+                continue;
+            }
             // Unreadable now, a dataless placeholder say: the next scan reads
             // it, and the folder holds what it last agreed with meanwhile.
             let bytes = match early.remove(&path) {
@@ -1191,8 +1226,9 @@ impl Folder {
                             work.push(self.edge_work(file, &item_id, Some(&bound)));
                         }
                         // An editor's atomic save gives the same bytes a new
-                        // inode, and a stale record would lose the next rename.
-                        if bound.identity != file.mark {
+                        // inode, and a stale record would lose the next rename;
+                        // and a file taken back by its bytes has no record yet.
+                        if bound.identity != file.mark || !by_path.contains_key(file.key.as_str()) {
                             let conn = self.core.conn()?;
                             state::bind(
                                 &conn,
@@ -1485,6 +1521,62 @@ impl Folder {
                 });
             }
         }
+        // A file that cannot carry an id and that no record here names, the
+        // folder added again over its own files say, is the item this folder
+        // holds that is placed where it sits and whose bytes it holds. An item
+        // the search no longer holds, one another folder took in or one that
+        // left by state, has a file elsewhere or none, and a copy of it is new.
+        let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
+        for (at, file) in files.iter().enumerate() {
+            if claims[at].is_some()
+                || waiting.contains_key(&at)
+                || file.id.is_some()
+                || carries_frontmatter(&file.path)
+            {
+                continue;
+            }
+            let placed = match &mut placed {
+                Some(placed) => placed,
+                None => placed.insert(self.placed_here()?),
+            };
+            let Some(candidates) = placed.get(&names::folded(&file.key)) else {
+                continue;
+            };
+            for edge in candidates {
+                if by_item.contains_key(edge.source_id.as_str())
+                    || taken.contains(&edge.source_id)
+                    || !self.holds(&edge.source_id, settings, &members)
+                {
+                    continue;
+                }
+                let Some(item) = self.core.get(&edge.source_id)? else {
+                    continue;
+                };
+                if !self.holds_bytes(&item, file, catalog) {
+                    continue;
+                }
+                taken.insert(item.id.clone());
+                claims[at] = Some(Claim {
+                    item_id: item.id.clone(),
+                    bound: Some(state::Bound {
+                        path: file.key.clone(),
+                        item_id: item.id,
+                        identity: None,
+                        content_hash: file.hash.clone(),
+                        // The item's own bytes, as a pull would have written
+                        // them, so the file is the folder's to take away.
+                        written_hash: Some(file.hash.clone()),
+                        links: Vec::new(),
+                        lines: Vec::new(),
+                        edit_line: None,
+                        held: None,
+                        own: None,
+                        writes: state::Writes::default(),
+                    }),
+                });
+                break;
+            }
+        }
         // A file that cannot carry an id, moved here from another folder on
         // this machine, is the item that folder bound it to.
         for (at, file) in files.iter().enumerate() {
@@ -1523,6 +1615,27 @@ impl Folder {
             }
         }
         Ok((claims, waiting))
+    }
+
+    /// Whether the file holds what the item would be written as: a file
+    /// item's bytes, or a text file's body.
+    fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
+        if item.r#type.starts_with("system.") || !suited(item, &file.key, catalog) {
+            return false;
+        }
+        match bytes_of(item, catalog) {
+            Some(blob) => crate::blob::named(blob).is_ok_and(|named| {
+                std::fs::read(&file.path).is_ok_and(|bytes| crate::blob::name_of(&bytes) == named)
+            }),
+            None => {
+                file.unreadable.is_none()
+                    && item
+                        .properties
+                        .get(fields::body_field(catalog, &item.r#type))
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| state::hash(body.as_bytes()) == file.hash)
+            }
+        }
     }
 
     fn arrival(
@@ -3859,6 +3972,32 @@ fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
+/// The status change time where the system keeps one, which an editor
+/// restoring the modification time does not move back.
+fn changed_within(path: &Path, settle: Duration) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    let changed = {
+        use std::os::unix::fs::MetadataExt;
+        u64::try_from(metadata.ctime())
+            .ok()
+            .map(|seconds| {
+                std::time::UNIX_EPOCH
+                    + Duration::new(seconds, u32::try_from(metadata.ctime_nsec()).unwrap_or(0))
+            })
+            .or_else(|| metadata.modified().ok())
+    };
+    #[cfg(not(unix))]
+    let changed = metadata.modified().ok();
+    changed.is_some_and(|changed| {
+        std::time::SystemTime::now()
+            .duration_since(changed)
+            .is_ok_and(|since| since < settle)
+    })
+}
+
 /// What a quick pass compares with what its last read recorded.
 fn stat_of(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
@@ -3983,5 +4122,27 @@ fn safe_name(title: &str) -> String {
         "untitled".into()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_another_process_holds_is_refused_before_it_is_worked() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let holder = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&holder, "01a00000-0000-7000-8000-000000000001").unwrap();
+        assert!(
+            matches!(
+                Folder::open(dir.path(), None),
+                Err(CoreError::ReadingHandle)
+            ),
+            "a second opener was handed a folder to work beside the one holding it"
+        );
+        assert!(working(holder).is_ok());
     }
 }

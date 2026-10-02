@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -85,6 +85,27 @@ impl Folder {
             .into_iter()
             .filter(|edge| edge.edge_type == PLACEMENT_EDGE && edge.target_id == self.folder)
             .min_by_key(rank_of))
+    }
+
+    /// Every item placed in this folder, by its path folded as names are
+    /// compared, the older placement first.
+    pub(super) fn placed_here(&self) -> Result<HashMap<String, Vec<Edge>>> {
+        let mut placed: HashMap<String, Vec<Edge>> = HashMap::new();
+        for edge in self.core.edges_to(&self.folder)? {
+            if edge.edge_type != PLACEMENT_EDGE {
+                continue;
+            }
+            if let Some(path) = path_of(&edge).and_then(cleaned) {
+                placed
+                    .entry(super::names::folded(&path))
+                    .or_default()
+                    .push(edge);
+            }
+        }
+        for edges in placed.values_mut() {
+            edges.sort_by_key(rank_of);
+        }
+        Ok(placed)
     }
 
     /// Records that the item's file sits at `path`, as an edge create or an

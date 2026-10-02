@@ -228,6 +228,7 @@ struct Standing {
     unreached: usize,
     directories: Vec<String>,
     secrets: Vec<String>,
+    settling: Vec<String>,
     unwritten: usize,
     outside: usize,
     unsuited: usize,
@@ -251,11 +252,7 @@ fn step(
     standing: &mut Option<Standing>,
 ) -> Result<(), CliError> {
     let settings = folder.send_settings_edit()?;
-    let scanned = if full {
-        folder.scan()?
-    } else {
-        folder.scan_quick()?
-    };
+    let scanned = folder.scan_watching(full, SETTLE)?;
     // Said once, and every tick looks again, so the watch goes on where it
     // left off once the directory is back.
     if let Some(gone) = &scanned.root_gone {
@@ -301,6 +298,13 @@ fn step(
         unreached: scanned.unreached,
         directories: crate::folders::directory_lines(&scanned.directories),
         secrets: crate::folders::secret_lines(&scanned.secrets),
+        settling: scanned
+            .settling
+            .iter()
+            .map(|path| {
+                format!("{path}: still changing, so not sent yet; it is sent once it stops")
+            })
+            .collect(),
         unwritten: pulled.unwritten,
         outside: pulled.outside,
         unsuited: pulled.unsuited,
@@ -359,6 +363,7 @@ fn step(
         )
         .chain(now.directories.iter().cloned())
         .chain(now.secrets.iter().cloned())
+        .chain(now.settling.iter().cloned())
         .chain(crate::folders::flagged_lines(&now.flagged))
         .chain(now.embeds.iter().cloned())
         .collect();

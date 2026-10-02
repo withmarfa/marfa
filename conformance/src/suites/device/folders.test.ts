@@ -2759,6 +2759,106 @@ describe("files and items", () => {
     }
   });
 
+  it("sends a file being copied in only once it stops changing, while every other file goes on", async () => {
+    harness = await folderHarness("folder-watch-copying", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    const uploads = () =>
+      harness!.server.requests
+        .filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/blobs",
+        )
+        .map((request) => request.raw);
+    const copying = join(harness.dir, "movie.bin");
+    writeFileSync(copying, Buffer.alloc(0));
+    let written = 0;
+    // Faster than the watch's debounce, for longer than it waits for the
+    // folder to settle, so passes run while the copy is under way.
+    const writing = setInterval(() => {
+      written += 1;
+      appendFileSync(copying, Buffer.alloc(4096, written % 256));
+    }, 50);
+    const watching = harness.folder.watch();
+    let whole: Buffer;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      put(harness, "other.md", "---\ntitle: Other\n---\nwritten beside it\n");
+      // The witness: a pass ran, and sent a file, while the copy went on.
+      await vi.waitFor(
+        () => {
+          expect(
+            sentTitles(harness!),
+            "no pass ran while the copy went on, so nothing below shows a pass passing it over",
+          ).toContain("Other");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      clearInterval(writing);
+      whole = readFileSync(copying);
+      await vi.waitFor(
+        () => {
+          expect(sentTitles(harness!)).toContain("movie.bin");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
+    }
+    expect(
+      uploads().map((bytes) => bytes.length),
+      "a file still being copied in was uploaded half-written",
+    ).toEqual([whole.length]);
+    expect(uploads()[0]).toEqual(whole);
+  });
+
+  it("says once that a file which never stops changing has not been sent", async () => {
+    harness = await folderHarness("folder-watch-never-settles", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    const log = join(harness.dir, "capture.bin");
+    writeFileSync(log, Buffer.alloc(0));
+    let written = 0;
+    const writing = setInterval(() => {
+      written += 1;
+      appendFileSync(log, Buffer.alloc(1024, written % 256));
+    }, 50);
+    const said = "capture.bin: still changing, so not sent yet";
+    const watching = harness.folder.watchText();
+    try {
+      // Long enough for several passes the folder never settles for.
+      await vi.waitFor(
+        () => {
+          expect(watching.stdout).toContain(said);
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 11_000));
+      expect(
+        watching.stdout.split(said).length - 1,
+        `a watch said the same still-changing file at every pass: ${watching.stdout}`,
+      ).toBe(1);
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/blobs",
+        ),
+        "a file that never stopped changing was uploaded part-written",
+      ).toEqual([]);
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
+    }
+  });
+
   describe("a copy that falls behind the log", () => {
     const id = "01a00000-0000-7000-8000-0000000000c3";
     const agedOut: Answer = {
@@ -9038,6 +9138,7 @@ describe("where a file sits", () => {
     properties?: Record<string, unknown>;
     path?: string;
     tags?: string[];
+    state?: string;
   }
 
   /**
@@ -9059,6 +9160,7 @@ describe("where a file sits", () => {
           title: note.title,
           body: `${note.title}\n`,
         },
+        ...(note.state === undefined ? {} : { state: note.state }),
       } as WireItemOptions,
       tags: note.tags,
     }));
@@ -9284,6 +9386,168 @@ describe("where a file sits", () => {
     ).toBe("Plan.md");
     expect(idIn(harness, "Plan.md")).toBe(id);
     expect(existsSync(join(harness.dir, "Elsewhere", "Plan.md"))).toBe(false);
+  });
+
+  it("takes back the files it holds by placement and bytes when it is added again over them", async () => {
+    const [photo, paper, words] = [
+      "01a00000-0000-7000-8000-0000000016f1",
+      "01a00000-0000-7000-8000-0000000016f2",
+      "01a00000-0000-7000-8000-0000000016f3",
+    ];
+    const photoBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x16, 0xf1,
+    ]);
+    const paperBytes = Buffer.from("%PDF-1.4\n%%EOF\n");
+    const placed = await placedHarness(
+      "placement-added-again",
+      [
+        {
+          id: photo,
+          title: "photo.png",
+          type: "core.file.image",
+          properties: {
+            title: "photo.png",
+            blob_ref: hashOf(photoBytes),
+            mime_type: "image/png",
+          },
+          path: "Pictures/photo.png",
+        },
+        {
+          id: paper,
+          title: "paper.pdf",
+          type: "core.file",
+          properties: {
+            title: "paper.pdf",
+            blob_ref: hashOf(paperBytes),
+            mime_type: "application/pdf",
+          },
+          path: "paper.pdf",
+        },
+        {
+          id: words,
+          title: "words",
+          properties: { title: "words", body: "plain words\n" },
+          path: "words.txt",
+        },
+      ],
+      { search: { types: ["core.file", "core.file.image", "core.note"] } },
+    );
+    harness = placed.harness;
+    acceptUploads(harness.server);
+    for (const bytes of [photoBytes, paperBytes]) {
+      scriptBlob(harness.server, bytes);
+    }
+    const first = await harness.folder.pull();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(readFileSync(join(harness.dir, "Pictures", "photo.png"))).toEqual(
+      photoBytes,
+    );
+    expect(read(harness, "words.txt")).toBe("plain words\n");
+
+    // Its own state goes, and the directory is added again: none of these
+    // files can carry an id, so only where each sits and what it holds can
+    // name its item.
+    expect((await harness.folder.remove()).ok).toBe(true);
+    const added = await harness.folder.add(harness.settings.id);
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    // The witness: a new picture beside them is created.
+    writeFileSync(
+      join(harness.dir, "Pictures", "new.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x16, 0xf9]),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentTitles(harness),
+      "a folder added again over its own files made a second item of each",
+    ).toEqual(["new.png"]);
+    expect(sentUpdates(harness)).toEqual([]);
+    expect(
+      readdirSync(join(harness.dir, "Pictures")).sort(),
+      "the pull wrote the item again beside the file that already held it",
+    ).toEqual(["new.png", "photo.png"]);
+    expect(existsSync(join(harness.dir, "words (2).txt"))).toBe(false);
+    expect(existsSync(join(harness.dir, "paper (2).pdf"))).toBe(false);
+
+    // Taken back, a file holds its item's own bytes, so it goes with the
+    // item when another device trashes it.
+    for (const [id, title, properties] of [
+      [
+        photo,
+        "photo.png",
+        { blob_ref: hashOf(photoBytes), mime_type: "image/png" },
+      ],
+      [words, "words", { body: "plain words\n" }],
+    ] as const) {
+      placed.edges.events.push(
+        itemEvent(
+          String(placed.edges.events.length + 2),
+          "item.deleted",
+          wireItem({
+            id,
+            type: id === photo ? "core.file.image" : "core.note",
+            state: "trashed",
+            properties: { title, ...properties },
+          }),
+        ),
+      );
+    }
+    const trashed = await harness.folder.push();
+    expect(trashed.ok, JSON.stringify(trashed)).toBe(true);
+    if (!trashed.ok) return;
+    expect(
+      [trashed.value.pull?.removed, trashed.value.pull?.kept],
+      "a file taken back by its bytes was kept as the person's when its item was trashed",
+    ).toEqual([2, 0]);
+    expect(existsSync(join(harness.dir, "Pictures", "photo.png"))).toBe(false);
+    expect(existsSync(join(harness.dir, "words.txt"))).toBe(false);
+  });
+
+  it("takes back by placement and bytes only an item its search holds", async () => {
+    const [archived, kept] = [
+      "01a00000-0000-7000-8000-0000000016f5",
+      "01a00000-0000-7000-8000-0000000016f6",
+    ];
+    const placed = await placedHarness(
+      "placement-added-again-left",
+      [
+        {
+          id: archived,
+          title: "gone",
+          properties: { title: "gone", body: "" },
+          path: "gone.txt",
+          state: "archived",
+        },
+        {
+          id: kept,
+          title: "kept",
+          properties: { title: "kept", body: "" },
+          path: "kept.txt",
+        },
+      ],
+      { search: { types: ["core.note"], state: ["active"] } },
+    );
+    harness = placed.harness;
+    // An empty text file at each placement, which is each item's body: the
+    // witness is taken back, and the one whose item left by state is new.
+    put(harness, "gone.txt", "");
+    put(harness, "kept.txt", "");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentCreates(harness).length,
+      "a file was taken as the file of an item its folder no longer holds",
+    ).toBe(1);
+    expect(sentUpdates(harness)).toEqual([]);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files
+          .filter((file) => file.path !== "gone.txt")
+          .map((file) => [file.path, file.item_id]),
+    ).toEqual([["kept.txt", kept]]);
   });
 
   it("places a file whose placement another item holds beside it, and writes none where its placement is unsafe", async () => {
@@ -12274,6 +12538,47 @@ describe("what a folder takes", () => {
     );
   });
 
+  it("never takes an editor's or a download's temporary file", async () => {
+    harness = await folderHarness("folder-temporary", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    const temporary = [
+      "report.pdf.crdownload",
+      "page.html.crswap",
+      "archive.zip.part",
+      "movie.mov.download",
+      "#draft.md#",
+      "notes.txt___jb_tmp___",
+      "notes.txt___jb_old___",
+      ".#draft.md",
+      "draft.md.swp",
+      "~$Budget.xlsx",
+      "upload.tmp",
+    ];
+    for (const name of temporary) put(harness, name, `half of ${name}\n`);
+    // Safari's download is a directory holding the bytes as they arrive.
+    put(harness, "image.png.download/image.png", "half a picture\n");
+    // The witnesses: a finished download and a note beside them are taken.
+    writeFileSync(
+      join(harness.dir, "report.pdf"),
+      Buffer.from("%PDF-1.4\n%%EOF\n"),
+    );
+    put(harness, "draft.md", "---\ntitle: Draft\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTitles(harness).sort(),
+      "an editor's or a download's temporary file was sent as an item",
+    ).toEqual(["Draft", "report.pdf"]);
+    expect(
+      harness.server.requests.filter((request) =>
+        request.body.includes("half"),
+      ),
+    ).toEqual([]);
+  });
+
   it("ignores what its ignore list names", async () => {
     harness = await folderHarness("folder-ignore", {
       events: [liveReplay("1", [])],
@@ -14768,6 +15073,72 @@ describe("folders on one Mac", () => {
     ).toBe(1);
   });
 
+  it("takes no file back by its bytes for an item another folder on the Mac took in", async () => {
+    const bytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xc1,
+    ]);
+    const photo = {
+      id: "01a00000-0000-7000-8000-0000000023c1",
+      type: "core.file.image",
+      properties: {
+        title: "photo.png",
+        blob_ref: hashOf(bytes),
+        mime_type: "image/png",
+      },
+    };
+    const { a, b, edges } = await onOneMac(
+      "bytes-moved",
+      { search: { types: ["core.file.image"], filter: 'tags contains "a"' } },
+      { search: { types: ["core.file.image"], filter: 'tags contains "b"' } },
+      { "core.file.image": [{ item: photo, tags: ["a"] }] },
+      (server) => {
+        scriptBlob(server, bytes);
+        acceptUploads(server);
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(edges.placements(a.settings.id).get(photo.id)).toBe("photo.png");
+
+    // Retagged elsewhere: the other folder takes the file in.
+    edges.events.push(
+      itemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(photo),
+        { tags: ["b"] },
+      ),
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    const took = await b.folder.push();
+    expect(took.ok && took.value.pull?.taken, JSON.stringify(took)).toBe(1);
+    expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
+    // The first folder finds its file moved, past the grace, and lets its
+    // binding go.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok && swept.value.scan.moved_away).toBe(1);
+    expect(
+      edges.placements(a.settings.id).get(photo.id),
+      "the first folder no longer places the item where its file sat, so nothing below tries the rule",
+    ).toBe("photo.png");
+    const creates = sentCreates(a).length;
+
+    // A copy put back where the file sat in the first folder, which still
+    // places the item there, is a new item: one item is never edited from
+    // two places.
+    copyFileSync(join(b.dir, "photo.png"), join(a.dir, "photo.png"));
+    const copied = await a.folder.push();
+    expect(copied.ok, JSON.stringify(copied)).toBe(true);
+    if (!copied.ok) return;
+    expect(
+      sentCreates(a).length - creates,
+      "a copy of another folder's file was taken as that item's file here",
+    ).toBe(1);
+  });
+
   it("keeps a file saved back where another folder took the item's file from as the item's while its binding lasts", async () => {
     const plan = {
       id: "01a00000-0000-7000-8000-0000000023b1",
@@ -15033,6 +15404,7 @@ describe("folders on one Mac", () => {
         "a folder was removed from under its running watch",
       ).toBe(false);
       if (refused.ok) return;
+      expect(refused.refusal.code).toBe("reading_handle");
       expect(refused.refusal.raw).toContain("folders watch");
       expect(existsSync(join(harness.dir, ".marfa"))).toBe(true);
     } finally {
@@ -15040,6 +15412,63 @@ describe("folders on one Mac", () => {
     }
     const removed = await harness.folder.remove();
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
+  });
+
+  it("lets one process work a folder at a time, and answers its status beside it", async () => {
+    harness = await folderHarness("one-worker", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000f0a1",
+              properties: { title: "Kept", body: "as it was\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    const watch = harness.folder.watch();
+    try {
+      await vi.waitFor(
+        () => {
+          expect(existsSync(join(harness!.dir, "Kept.md"))).toBe(true);
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      for (const [name, run] of [
+        ["pull", () => harness!.folder.pull()],
+        ["scan", () => harness!.folder.scan()],
+        ["push", () => harness!.folder.push()],
+        ["confirm", () => harness!.folder.confirm()],
+      ] as const) {
+        const refused = await run();
+        expect(
+          refused.ok,
+          `a ${name} worked the folder beside its running watch`,
+        ).toBe(false);
+        if (refused.ok) continue;
+        expect(refused.refusal.code, refused.refusal.raw).toBe(
+          "reading_handle",
+        );
+      }
+      const another = harness.folder.watch();
+      await vi.waitFor(() => {
+        expect(another.running(), "a second watch ran beside the first").toBe(
+          false,
+        );
+      });
+      expect(another.stderr).toContain("folders watch");
+      // Status writes nothing, so it answers beside the watch.
+      const status = await harness.folder.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      expect(watch.running(), watch.stderr).toBe(true);
+    } finally {
+      await watch.stop();
+    }
+    // The witness: alone, the same pull works the folder.
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
   });
 
   it("lists a folder reached through a symlink once, and never as another", async () => {
@@ -16636,6 +17065,15 @@ describe("what a folder never does to a person's text", () => {
     expect(pushed.value.pull?.flagged).toEqual([
       expect.objectContaining({ path: "Held.md", flag: "encoding" }),
     ]);
+    const reasons = new Map(
+      pushed.value.scan.flagged.map((file) => [file.path, file.reason]),
+    );
+    expect(reasons.get("naive.txt")).toContain("not UTF-8");
+    expect(
+      reasons.get("wide.txt"),
+      "a file holding a NUL byte was given the reason of one that is not UTF-8",
+    ).toContain("NUL byte");
+    expect(reasons.get("wide.txt")).not.toContain("not UTF-8");
     // The push's pull met the change made elsewhere and left the file.
     expect(
       [
@@ -16830,13 +17268,15 @@ describe("what a folder never does to a person's text", () => {
       // A note is text the folder renders, never bytes to run.
       expect(marked("Readme.md")).toBe(false);
       // Unmarked, as a file the person made is, before the server says it
-      // runs.
-      execFileSync("xattr", [
-        "-d",
-        "com.apple.quarantine",
-        join(harness.dir, "later.bin"),
-      ]);
-      expect(marked("later.bin")).toBe(false);
+      // runs; and a file the person cleared, which nothing changes.
+      for (const name of ["later.bin", "tool.bin"]) {
+        execFileSync("xattr", [
+          "-d",
+          "com.apple.quarantine",
+          join(harness.dir, name),
+        ]);
+        expect(marked(name)).toBe(false);
+      }
     }
     // The push's catch-up makes the file in place runnable, and marks it.
     expect((await harness.folder.push()).ok).toBe(true);
@@ -16846,6 +17286,10 @@ describe("what a folder never does to a person's text", () => {
         marked("later.bin"),
         "a file a pull made runnable in place carries no quarantine mark",
       ).toBe(true);
+      expect(
+        marked("tool.bin"),
+        "a push put back a quarantine mark the person took off a file it did not change",
+      ).toBe(false);
     }
     expect(sentUpdates(harness)).toEqual([]);
   });
