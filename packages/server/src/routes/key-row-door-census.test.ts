@@ -2,17 +2,21 @@
  * Every door that reads or changes an existing key row, held to the caller's
  * reach through one function.
  *
- * **A census, for the reason the mint census exists.** The mint was clamped
- * to the minter's reach and revoke, update and list were not: each door was
- * written on its own, and nothing about one being right said anything about
- * the next. So the property is asserted of the whole surface, two ways.
+ * **A census rather than a test per door**, because a rule asked of some doors
+ * and not others reads as covered from every door that has it. So the
+ * property is asserted of the whole surface, two ways.
  *
- * The first leg reads the source. Every call into the key store in this
- * package is either in `auth/key-reach.ts`, which measures the caller's reach
- * before it lists, reads, changes or revokes a row, or is named below with
- * why it is not a door acting for a caller. A handler that calls
- * `storage.keys.get` itself fails here, and so does a new method on the store
- * that nobody has classified.
+ * The first leg reads this package's source, comments aside. A call of
+ * `get`, `list`, `update` or `revoke` on a member named `keys`, across line
+ * breaks, is either in `auth/key-reach.ts` or named below by file and
+ * enclosing function with why it acts for no caller. Every method the key
+ * store declares is classified. The store reached any other way fails: a
+ * `keys` member that is not called, `["keys"]`, or `keys` destructured out of
+ * anything. So does the key table reached past the store: `apiKeys` or
+ * `api_keys` outside the files named with a reason.
+ *
+ * **What it cannot see** is a call that builds the member name at run time,
+ * or SQL assembled from fragments; those are for review.
  *
  * The second leg drives the doors. Every route the app serves under `/keys`
  * either has a row below asserting a key beyond the caller's reach is refused
@@ -65,6 +69,22 @@ const NOT_A_DOOR: Record<string, string> = {
     "the worker re-reading the credential that queued a job, as the bearer check does",
 };
 
+/** Files that name the key table itself, each with why. */
+const KEY_TABLE: Record<string, string> = {
+  "storage/sqlite/schema.ts": "declares the table",
+  "storage/sqlite/key-store.ts": "the key store",
+  "storage/sqlite/inbound-store.ts":
+    "resolves an inbound webhook endpoint only while its connector's key is live, which authenticates the delivery and acts for no caller",
+  "storage/stored-value-scan.ts":
+    "counts rows whose stored `default_tier` falls outside the declared set, and reads no key for anyone",
+};
+
+/** Whether the match at `index` sits on a comment line. */
+function inComment(text: string, index: number): boolean {
+  const line = text.slice(text.lastIndexOf("\n", index) + 1).trimStart();
+  return line.startsWith("//") || line.startsWith("*") || line.startsWith("/*");
+}
+
 function sourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir).sort()) {
@@ -104,8 +124,7 @@ function keyStoreCalls(): Call[] {
     // A member named `keys`, so a local array of keys is not the store, and
     // across line breaks, because Prettier may put the method on the next line.
     for (const m of text.matchAll(/\.\s*keys\s*\.\s*(\w+)\s*\(/g)) {
-      const line = text.slice(text.lastIndexOf("\n", m.index) + 1).trimStart();
-      if (line.startsWith("//") || line.startsWith("*")) continue;
+      if (inComment(text, m.index)) continue;
       out.push({ file, fn: enclosing(text, m.index), method: m[1] ?? "" });
     }
   }
@@ -152,18 +171,35 @@ describe("every call into the key store is classified", () => {
   });
 
   it("is not handed the store under another name", () => {
-    // An alias would take every call through it out of the scan above.
+    // Any of these takes the calls through it out of the scan above.
+    const shapes = [
+      /\.\s*keys\b(?!\s*\.\s*\w+\s*\(|\s*\()/g,
+      /\[\s*["'`]keys["'`]\s*\]/g,
+      /\{[^{}]*\bkeys\b[^{}]*\}\s*(?:=(?![=>])|:\s*\w)/g,
+    ];
+    const found: string[] = [];
     for (const path of sourceFiles(SRC)) {
       const text = readFileSync(path, "utf8");
-      expect(
-        /storage\s*\.\s*keys\b(?!\s*\.)/.exec(text),
-        relative(SRC, path),
-      ).toBeNull();
-      expect(
-        /\{[^}]*\bkeys\b[^}]*\}\s*=\s*[\w.]*storage\b/.exec(text),
-        relative(SRC, path),
-      ).toBeNull();
+      for (const shape of shapes) {
+        for (const m of text.matchAll(shape)) {
+          if (inComment(text, m.index)) continue;
+          found.push(`${relative(SRC, path)}: ${m[0]}`);
+        }
+      }
     }
+    expect(found).toEqual([]);
+  });
+
+  it("does not reach the key table past the store, but where named", () => {
+    const files = new Set<string>();
+    for (const path of sourceFiles(SRC)) {
+      const text = readFileSync(path, "utf8");
+      for (const m of text.matchAll(/\bapiKeys\b|\bapi_keys\b/g)) {
+        if (inComment(text, m.index)) continue;
+        files.add(relative(SRC, path));
+      }
+    }
+    expect([...files].sort()).toEqual(Object.keys(KEY_TABLE).sort());
   });
 });
 
