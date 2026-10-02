@@ -67,7 +67,7 @@ describe("jobs use standard GitHub-hosted runners", () => {
     }
   });
 
-  it.each(["ci.yml", "core.yml"])(
+  it.each(["ci.yml", "core.yml", "codeql.yml"])(
     "%s cancels a superseded run on every branch, main included, per event",
     (file) => {
       const { concurrency } = parse(
