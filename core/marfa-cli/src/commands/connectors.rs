@@ -498,6 +498,10 @@ fn deliveries(command: DeliveriesCommand, remote: &Remote, out: &Printer) -> Res
 }
 
 pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let done = match &command {
+        ConnectorsCommand::Delete { id } => Some(format!("removed connector {id}")),
+        _ => None,
+    };
     let request = match command {
         ConnectorsCommand::Endpoints { command } => return endpoints(command, remote, out),
         ConnectorsCommand::Deliveries { command } => return deliveries(command, remote, out),
@@ -515,5 +519,9 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         ConnectorsCommand::Hold { id, process } => hold_request(&id, &process),
         ConnectorsCommand::Release { id, process } => release_request(&id, &process),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match done {
+        Some(sentence) => out.report(&answer, || sentence),
+        None => out.value(&answer),
+    }
 }

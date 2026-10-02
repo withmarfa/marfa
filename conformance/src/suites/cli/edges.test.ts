@@ -128,6 +128,56 @@ describe("edges from the terminal", () => {
     }
   });
 
+  it("says in plain lines what a link did and what an item links to", async () => {
+    const titleA = unique("cli-edge-plain-a");
+    const titleB = unique("cli-edge-plain-b");
+    const a = await note(titleA);
+    const b = await note(titleB);
+
+    const linked = await c.cli.run([
+      "edges",
+      "create",
+      "--source",
+      a,
+      "--target",
+      b,
+      "--type",
+      "references",
+    ]);
+    expect(linked.code, linked.stderr).toBe(0);
+    const sentence = linked.stdout.trim();
+    expect(sentence).toMatch(
+      new RegExp(`^linked ${a} -> ${b} with references edge \\S+$`),
+    );
+    const edgeId = sentence.split(" ").pop()!;
+
+    const outbound = await c.cli.run(["items", "edges", a]);
+    expect(outbound.code, outbound.stderr).toBe(0);
+    const row = outbound.stdout
+      .split("\n")
+      .find((line) => line.startsWith(edgeId));
+    expect(row, outbound.stdout).toBeDefined();
+    expect(row).toContain(`-> ${b}`);
+    expect(row).toContain(titleB);
+
+    const inbound = await c.cli.run(["items", "backrefs", b]);
+    expect(inbound.code, inbound.stderr).toBe(0);
+    const back = inbound.stdout
+      .split("\n")
+      .find((line) => line.startsWith(edgeId));
+    expect(back, inbound.stdout).toBeDefined();
+    expect(back).toContain(`<- ${a}`);
+    expect(back).toContain(titleA);
+
+    const removed = await c.cli.run(["edges", "delete", edgeId]);
+    expect(removed.code, removed.stderr).toBe(0);
+    expect(removed.stdout).toBe(`removed edge ${edgeId}\n`);
+
+    const trashed = await c.cli.run(["items", "delete", b]);
+    expect(trashed.code, trashed.stderr).toBe(0);
+    expect(trashed.stdout).toBe(`trashed ${b}\n`);
+  });
+
   it("refuses a self-loop with the server's own code", async () => {
     const a = await note(unique("cli-edge-loop"));
     const refused = await c.cli.refused([
