@@ -1,5 +1,4 @@
 use std::fs::File;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -192,18 +191,11 @@ impl Registry {
         Ok((listing.folders, edited))
     }
 
-    /// Written beside and renamed over, synced first so a crash leaves the
-    /// old list or the new one.
+    /// Held under the lock, so whatever is there is this process's to replace.
     fn write(&self, listing: &Listing) -> Result<()> {
-        let beside = self.path.with_extension("json.writing");
         let bytes = serde_json::to_vec_pretty(listing)?;
-        File::create(&beside)
-            .and_then(|mut file| {
-                file.write_all(&bytes)?;
-                file.sync_all()
-            })
-            .and_then(|()| std::fs::rename(&beside, &self.path))
-            .map_err(|error| self.failed("write", &error))
+        super::landing::write(&self.path, &bytes, |_| true)
+            .map_err(|unlanded| self.failed("write", &unlanded.into()))
     }
 
     fn failed(&self, doing: &str, error: &std::io::Error) -> CoreError {

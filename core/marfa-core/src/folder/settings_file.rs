@@ -2,8 +2,7 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use super::settings::{FOLDER_TYPE, Settings};
-use super::{Folder, SETTINGS_FILE, STATE_DIR, document, state};
-use crate::error::CoreError;
+use super::{Folder, SETTINGS_FILE, STATE_DIR, document, landing, state};
 use crate::http::{Method, Outgoing};
 use crate::{Core, Result, store};
 
@@ -12,6 +11,8 @@ const META_WRITTEN: &str = "folder_file";
 const META_WRITTEN_VERSION: &str = "folder_file_version";
 /// Kept so the same refused text is flagged rather than sent again.
 const META_REFUSED: &str = "folder_file_refused";
+/// The text and version written before, kept while a write has not landed.
+const META_LANDING: &str = "folder_file_landing";
 
 /// Keys the file carries beside the settings; never sent.
 const FOLDER_KEY: &str = "folder";
@@ -24,6 +25,31 @@ pub struct SettingsFileReport {
     pub sent: bool,
     pub written: bool,
     pub flagged: Option<String>,
+    /// Why the file could not be written, a full disk say; the next pass
+    /// writes it.
+    pub unwritten: Option<String>,
+}
+
+/// What became of a write of the settings file.
+pub(super) enum Wrote {
+    Written,
+    /// The person changed the file meanwhile, and it stays as their edit.
+    Overtaken,
+    Failed(String),
+}
+
+impl Wrote {
+    fn report(self, sent: bool) -> SettingsFileReport {
+        SettingsFileReport {
+            sent,
+            written: matches!(self, Wrote::Written),
+            flagged: None,
+            unwritten: match self {
+                Wrote::Failed(reason) => Some(reason),
+                _ => None,
+            },
+        }
+    }
 }
 
 pub(super) fn bound(core: &Core) -> Result<Option<String>> {
@@ -40,12 +66,17 @@ impl Folder {
     }
 
     /// Records the text before the bytes land, so a watch never reads the
-    /// write back as an edit.
+    /// write back as an edit, and keeps the text before it until they do, so
+    /// a crash in between leaves the old file the folder's own. `over` is the
+    /// text the file must still hold, or no file at all; with none, whatever
+    /// is there is replaced. A file changed from `over` meanwhile is the
+    /// person's edit, and stays.
     pub(super) fn write_settings_file(
         &self,
         properties: &Map<String, Value>,
         version: i64,
-    ) -> Result<()> {
+        over: Option<&str>,
+    ) -> Result<Wrote> {
         let mut map = Map::new();
         map.insert(FOLDER_KEY.into(), Value::String(self.folder.clone()));
         map.insert(VERSION_KEY.into(), Value::from(version));
@@ -57,21 +88,94 @@ impl Folder {
         let text = format!("{HEADER}{}", document::write_map(&map)?);
         {
             let conn = self.core.conn()?;
+            let before = json!({
+                "text": store::meta_get(&conn, META_WRITTEN)?,
+                "version": store::meta_get(&conn, META_WRITTEN_VERSION)?,
+            });
+            store::meta_set(&conn, META_LANDING, &before.to_string())?;
             store::meta_set(&conn, META_WRITTEN, &text)?;
             store::meta_set(&conn, META_WRITTEN_VERSION, &version.to_string())?;
-            store::meta_delete(&conn, META_REFUSED)?;
         }
         let path = self.settings_path();
-        std::fs::write(&path, text)
-            .map_err(|error| CoreError::Store(format!("cannot write {}: {error}", path.display())))
+        let landed = self.land(
+            &path,
+            |file, _| std::io::Write::write_all(file, text.as_bytes()),
+            |found| match (over, found) {
+                (None, _) | (Some(_), None) => true,
+                (Some(over), Some(found)) => found == over.as_bytes(),
+            },
+        );
+        if landed.is_ok() {
+            let conn = self.core.conn()?;
+            store::meta_delete(&conn, META_LANDING)?;
+            store::meta_delete(&conn, META_REFUSED)?;
+            return Ok(Wrote::Written);
+        }
+        // Left as the old text, the file would read as an edit of the new.
+        self.put_settings_back()?;
+        Ok(match landed {
+            Err(landing::Unlanded::Failed(error)) => {
+                Wrote::Failed(format!("cannot write {}: {error}", path.display()))
+            }
+            _ => Wrote::Overtaken,
+        })
     }
 
-    fn edited_settings(&self) -> Result<Option<String>> {
-        let Ok(found) = std::fs::read_to_string(self.settings_path()) else {
+    /// Puts back the text and version written before a write that did not
+    /// land.
+    fn put_settings_back(&self) -> Result<()> {
+        let conn = self.core.conn()?;
+        let Some(before) = store::meta_get(&conn, META_LANDING)? else {
+            return Ok(());
+        };
+        let before: Value = serde_json::from_str(&before)?;
+        for (key, value) in [
+            (META_WRITTEN, &before["text"]),
+            (META_WRITTEN_VERSION, &before["version"]),
+        ] {
+            match value.as_str() {
+                Some(value) => store::meta_set(&conn, key, value)?,
+                None => store::meta_delete(&conn, key)?,
+            }
+        }
+        store::meta_delete(&conn, META_LANDING)
+    }
+
+    /// Settles a write a crash cut off between its record and its landing.
+    fn settle_settings(&self) -> Result<()> {
+        let (landing, written) = {
+            let conn = self.core.conn()?;
+            (
+                store::meta_get(&conn, META_LANDING)?,
+                store::meta_get(&conn, META_WRITTEN)?,
+            )
+        };
+        if landing.is_none() {
+            return Ok(());
+        }
+        let found = std::fs::read(self.settings_path()).ok();
+        if found.is_some() && found.as_deref() == written.as_deref().map(str::as_bytes) {
+            return store::meta_delete(&*self.core.conn()?, META_LANDING);
+        }
+        self.put_settings_back()
+    }
+
+    /// The text, and why the bytes are not text where they are not: the text
+    /// of bytes that are not only names the edit, and is never sent.
+    fn edited_settings(&self) -> Result<Option<(String, Option<&'static str>)>> {
+        self.settle_settings()?;
+        let Ok(found) = std::fs::read(self.settings_path()) else {
             return Ok(None);
         };
+        let (found, not_text) = match super::text_of(&found) {
+            Ok(text) => (text.to_string(), None),
+            Err(reason) => (String::from_utf8_lossy(&found).into_owned(), Some(reason)),
+        };
         let written = store::meta_get(&*self.core.conn()?, META_WRITTEN)?;
-        Ok((written.as_deref() != Some(found.as_str())).then_some(found))
+        Ok(
+            (not_text.is_some() || written.as_deref() != Some(found.as_str()))
+                .then_some((found, not_text)),
+        )
     }
 
     fn refused_for(&self, text: &str) -> Result<Option<String>> {
@@ -98,7 +202,10 @@ impl Folder {
     /// Leaves a file the person changed alone: that is their edit, and it is
     /// sent first.
     pub fn write_settings_if_moved(&self) -> Result<SettingsFileReport> {
-        if let Some(edited) = self.edited_settings()? {
+        if self.root_gone().is_some() {
+            return Ok(SettingsFileReport::default());
+        }
+        if let Some((edited, _)) = self.edited_settings()? {
             return Ok(SettingsFileReport {
                 flagged: self.refused_for(&edited)?,
                 ..Default::default()
@@ -107,23 +214,35 @@ impl Folder {
         let Some(row) = self.core.get(&self.folder)? else {
             return Ok(SettingsFileReport::default());
         };
-        let written = store::meta_get(&*self.core.conn()?, META_WRITTEN_VERSION)?;
-        if written.as_deref() == Some(row.version.to_string().as_str())
+        let (written, version) = {
+            let conn = self.core.conn()?;
+            (
+                store::meta_get(&conn, META_WRITTEN)?,
+                store::meta_get(&conn, META_WRITTEN_VERSION)?,
+            )
+        };
+        if version.as_deref() == Some(row.version.to_string().as_str())
             && self.settings_path().exists()
         {
             return Ok(SettingsFileReport::default());
         }
-        self.write_settings_file(&row.properties, row.version)?;
-        Ok(SettingsFileReport {
-            written: true,
-            ..Default::default()
-        })
+        Ok(self
+            .write_settings_file(
+                &row.properties,
+                row.version,
+                Some(written.as_deref().unwrap_or_default()),
+            )?
+            .report(false))
     }
 
     /// A refused edit, or a file that does not parse, is flagged in the report
     /// rather than returned as an error, and the settings in force stay.
     pub fn send_settings_edit(&self) -> Result<SettingsFileReport> {
-        let Some(text) = self.edited_settings()? else {
+        // The scan says so; a file read from where the folder was is not its.
+        if self.root_gone().is_some() {
+            return Ok(SettingsFileReport::default());
+        }
+        let Some((text, not_text)) = self.edited_settings()? else {
             return Ok(SettingsFileReport::default());
         };
         if let Some(reason) = self.refused_for(&text)? {
@@ -131,6 +250,9 @@ impl Folder {
                 flagged: Some(reason),
                 ..Default::default()
             });
+        }
+        if let Some(reason) = not_text {
+            return self.flag(&text, format!("the file is held and not sent: {reason}"));
         }
         let edited = match document::read_map(&text) {
             Ok(edited) => edited,
@@ -197,11 +319,9 @@ impl Folder {
             let Some(row) = self.core.get(&self.folder)? else {
                 return Ok(SettingsFileReport::default());
             };
-            self.write_settings_file(&row.properties, row.version)?;
-            return Ok(SettingsFileReport {
-                written: true,
-                ..Default::default()
-            });
+            return Ok(self
+                .write_settings_file(&row.properties, row.version, Some(&text))?
+                .report(false));
         }
         // Refused here rather than sent: the door would take a search this
         // folder cannot answer, and every pass after would stop on it.
@@ -267,11 +387,8 @@ impl Folder {
             crate::hydrate::hold_row(&tx, &catalog, &row, &[])?;
             tx.commit()?;
         }
-        self.write_settings_file(&row.item.properties, row.item.version)?;
-        Ok(SettingsFileReport {
-            sent: true,
-            written: true,
-            flagged: None,
-        })
+        Ok(self
+            .write_settings_file(&row.item.properties, row.item.version, Some(&text))?
+            .report(true))
     }
 }

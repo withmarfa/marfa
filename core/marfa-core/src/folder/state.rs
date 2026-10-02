@@ -7,7 +7,7 @@ use crate::error::CoreError;
 use crate::model::ItemState;
 use crate::store::now_iso;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bound {
     pub path: String,
     pub item_id: String,
@@ -41,6 +41,51 @@ pub struct Writes {
     pub save: i64,
     pub queued: Vec<Queued>,
     pub refused: Vec<Refused>,
+    /// Set while a pull's write is bound and its bytes have not landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<Landing>,
+}
+
+/// A write bound before its bytes land: what the path was bound as before,
+/// `None` where nothing was, so a write a crash cut off can be undone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Landing {
+    pub before: Option<Box<Bound>>,
+}
+
+/// What a binding a write left before its bytes landed settles to: itself,
+/// where the bytes are on the disk; what the path was bound as before, where
+/// they are not; or nothing, where it was bound as nothing. `None` where the
+/// binding waits on no write, or the disk cannot be read now.
+pub fn settled(row: &Bound, root: &std::path::Path) -> Option<Option<Bound>> {
+    let landing = row.writes.landing.as_ref()?;
+    let found = match std::fs::read(root.join(&row.path)) {
+        Ok(found) => Some(hash(&found)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return None,
+    };
+    if found.as_deref() == Some(row.content_hash.as_str()) {
+        let mut landed = row.clone();
+        landed.writes.landing = None;
+        return Some(Some(landed));
+    }
+    Some(landing.before.as_deref().cloned())
+}
+
+/// Settles every write a crash cut off between its binding and its landing,
+/// so the file there is never read as the person's edit nor as deleted.
+pub fn settle_landings(conn: &Connection, root: &std::path::Path) -> Result<(), CoreError> {
+    for row in every_bound(conn)? {
+        match settled(&row, root) {
+            None => {}
+            Some(Some(settled)) => bind(conn, &settled)?,
+            Some(None) => {
+                unbind(conn, &row.path)?;
+                journal_clear(conn, &row.path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

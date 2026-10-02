@@ -229,7 +229,10 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     if let Some(hydrated) = &hydrated {
                         lines.push(format!("hydrated {} item(s) first", hydrated.items));
                     }
-                    lines.extend(settings_line(&settings));
+                    lines.extend(settings_lines(
+                        &settings,
+                        pulled.as_ref().map(|pulled| &pulled.settings),
+                    ));
                     lines.push(describe_scan(&scanned));
                     let mut flagged = scanned.flagged.clone();
                     if let Some(pulled) = &pulled {
@@ -261,6 +264,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         lines.push(format!("could not catch up: {error}"));
                     }
                     lines.push(match &pulled {
+                        Some(pulled) if pulled.root_gone.is_some() => describe_pull(pulled),
                         Some(pulled) => format!(
                             "{} file(s) written{}",
                             pulled.written + pulled.rewritten,
@@ -376,7 +380,27 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
     })
 }
 
+/// What became of the settings file in a pass: its edit, sent first, and
+/// the pull's write of it, each said once.
+pub fn settings_lines(
+    sent: &marfa_core::SettingsFileReport,
+    pulled: Option<&marfa_core::SettingsFileReport>,
+) -> Vec<String> {
+    let mut lines: Vec<String> = settings_line(sent).into_iter().collect();
+    if let Some(line) = pulled.and_then(settings_line)
+        && !lines.contains(&line)
+    {
+        lines.push(line);
+    }
+    lines
+}
+
 pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
+    if let Some(reason) = &report.unwritten {
+        return Some(format!(
+            "the settings file was not written, and the next pass writes it: {reason}"
+        ));
+    }
     match (&report.flagged, report.sent) {
         (Some(reason), _) => Some(format!(
             "the settings file is not in force, and the settings before it are: {reason}"
@@ -387,6 +411,9 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 }
 
 fn describe_pull(report: &marfa_core::PullReport) -> String {
+    if let Some(gone) = &report.root_gone {
+        return format!("nothing written: {gone}");
+    }
     let mut line = format!(
         "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
         report.written, report.rewritten, report.moved, report.unchanged, report.skipped
@@ -528,6 +555,9 @@ pub fn paused_line(count: usize, from_pull: bool) -> String {
 }
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
+    if let Some(gone) = &report.root_gone {
+        return format!("nothing scanned: {gone}");
+    }
     let mut line = format!(
         "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
         report.created,

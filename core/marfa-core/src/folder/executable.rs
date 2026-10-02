@@ -73,10 +73,45 @@ pub fn set(_path: &Path, _executable: bool) -> std::io::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub const QUARANTINE: &str = "com.apple.quarantine";
+
+/// Marks a file as one that arrived from elsewhere, as a browser marks a
+/// download. Flags `0081` are a download's as browsers write them; the empty
+/// last field names no download event.
+#[cfg(target_os = "macos")]
+pub fn quarantine(path: &Path) -> std::io::Result<()> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    xattr::set(
+        path,
+        QUARANTINE,
+        format!("0081;{now:08x};Marfa;").as_bytes(),
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn quarantine(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_quarantined_file_carries_the_attribute_gatekeeper_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tool.command");
+        std::fs::write(&path, b"#!/bin/sh\n").unwrap();
+        assert!(xattr::get(&path, QUARANTINE).unwrap().is_none());
+        quarantine(&path).unwrap();
+        let value = xattr::get(&path, QUARANTINE).unwrap().unwrap();
+        assert!(String::from_utf8(value).unwrap().starts_with("0081;"));
+    }
 
     fn mode_after(start: u32, executable: bool) -> u32 {
         let dir = tempfile::tempdir().unwrap();

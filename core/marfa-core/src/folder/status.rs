@@ -75,6 +75,7 @@ impl FileStatus {
 impl Folder {
     /// Writes nothing, so a reading handle beside a running watch answers it.
     pub fn status(&self) -> Result<StatusReport> {
+        self.refuse_if_gone()?;
         let settings = self.settings()?;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
@@ -85,7 +86,11 @@ impl Folder {
         let (snapshot, disk, pull, unmatched) = {
             let conn = self.core.conn()?;
             (
-                state::every_bound(&conn)?,
+                // As the next scan settles any write a crash cut off.
+                state::every_bound(&conn)?
+                    .into_iter()
+                    .filter_map(|row| state::settled(&row, &self.root).unwrap_or(Some(row)))
+                    .collect::<Vec<_>>(),
                 state::paused(&conn, state::Removal::Disk)?,
                 state::paused(&conn, state::Removal::Pull)?,
                 state::unmatched(&conn)?,
@@ -277,14 +282,19 @@ impl Folder {
             return entry.because("empty", "is empty, and a file item holds bytes");
         }
         // Held by the scan before anything binds it, so read as the scan reads.
-        if super::carries_frontmatter(path)
-            && let Some(reason) = bytes.and_then(|bytes| {
-                let read = super::document::read(&String::from_utf8_lossy(bytes));
-                read.unreadable
-                    .or_else(|| super::fields::read(&read.front, edge_types).err())
+        if is_document(path)
+            && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
+                Err(reason) => Some(reason.to_string()),
+                Ok(_) if !super::carries_frontmatter(path) => None,
+                Ok(text) => {
+                    let read = super::document::read(text);
+                    read.unreadable
+                        .or_else(|| super::fields::read(&read.front, edge_types).err())
+                }
             })
         {
-            return FileStatus::new(key, None, "held").because("unreadable", reason);
+            let flagged = Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
+            return FileStatus::new(key, None, "held").because(flagged.flag, flagged.reason);
         }
         if self.pushes(path, settings, catalog) {
             return waits(FileStatus::new(key, None, "waiting"), vec!["scan"]);

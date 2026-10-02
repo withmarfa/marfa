@@ -91,6 +91,7 @@ impl Peer {
                     core,
                     key: std::sync::Mutex::new(None),
                     permissions: std::sync::OnceLock::new(),
+                    store_mark: super::store_mark(&root.join(STATE_DIR)),
                 })
             });
         Peer {
@@ -167,7 +168,7 @@ impl Peer {
                         walked
                             .directories
                             .iter()
-                            .find(|dir| dir.flag == "unreadable")
+                            .find(|dir| dir.flag != "package")
                             .map(|dir| format!("{} {}", dir.path, dir.reason))
                     }
                     Err(error) => Some(error.to_string()),

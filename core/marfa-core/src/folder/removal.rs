@@ -28,6 +28,7 @@ pub struct Restored {
 impl Folder {
     pub fn confirm(&self) -> Result<Confirmed> {
         self.core.lock.refuse_unless_writer()?;
+        self.refuse_if_gone()?;
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let (disk, pull, journaled) = {
@@ -66,8 +67,8 @@ impl Folder {
             if matches!(
                 self.departing(&row, &members, &settings, &lists)?,
                 Departing::Yes
-            ) {
-                self.take_away(&row)?;
+            ) && self.take_away(&row)?
+            {
                 confirmed.removed += 1;
             }
         }
@@ -79,6 +80,7 @@ impl Folder {
 
     pub fn restore(&self) -> Result<Restored> {
         self.core.lock.refuse_unless_writer()?;
+        self.refuse_if_gone()?;
         let settings = self.settings()?;
         let (disk, pull) = {
             let conn = self.core.conn()?;
