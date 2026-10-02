@@ -154,13 +154,24 @@ describe("unhandled errors reach PostHog's error tracking", () => {
     expect(collector.events).toHaveLength(0);
   });
 
-  it("refuses a PostHog host without a project token", async () => {
+  it("stops the process on a PostHog host without a project token, naming the setting", async () => {
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("exited");
+    });
     await expect(
       bootInstrumentation({
         MARFA_OTEL_ENABLED: "true",
         MARFA_OTEL_ENVIRONMENT: "test-environment",
         MARFA_POSTHOG_HOST: collector.url,
       }),
-    ).rejects.toThrow(/MARFA_POSTHOG_PROJECT_TOKEN/);
+    ).rejects.toThrow("exited");
+    expect(exit).toHaveBeenCalledWith(1);
+    const written = write.mock.calls.map((call) => String(call[0])).join("");
+    expect(written).toContain(
+      "MARFA_POSTHOG_HOST needs MARFA_POSTHOG_PROJECT_TOKEN set too",
+    );
   });
 });

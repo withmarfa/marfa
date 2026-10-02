@@ -3,7 +3,6 @@ import { eq } from "drizzle-orm";
 import { createTestContext, readSse, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
-import { parseEventLogRetentionHours } from "../config.js";
 import { eventLog } from "../storage/sqlite/schema.js";
 
 // Enable event_log persistence for the whole suite. The default test
@@ -340,26 +339,6 @@ describe("GET /events — catchup_too_old", () => {
       // persisting through `ctx.storage.eventLog`.
       initEventLog(ctx.storage.eventLog);
     }
-  });
-});
-
-describe("MARFA_EVENT_LOG_RETENTION_HOURS parser", () => {
-  it("defaults to 168 when unset or empty", () => {
-    expect(parseEventLogRetentionHours(undefined)).toBe(168);
-    expect(parseEventLogRetentionHours("")).toBe(168);
-  });
-
-  it("accepts positive integers", () => {
-    expect(parseEventLogRetentionHours("1")).toBe(1);
-    expect(parseEventLogRetentionHours("24")).toBe(24);
-    expect(parseEventLogRetentionHours("720")).toBe(720);
-  });
-
-  it("falls back to 168 for invalid values", () => {
-    expect(parseEventLogRetentionHours("0")).toBe(168);
-    expect(parseEventLogRetentionHours("-5")).toBe(168);
-    expect(parseEventLogRetentionHours("1.5")).toBe(168);
-    expect(parseEventLogRetentionHours("not-a-number")).toBe(168);
   });
 });
 

@@ -106,6 +106,17 @@ describe("the Telegram message format", () => {
     return JSON.parse(bodies[0]!) as Record<string, unknown>;
   }
 
+  it("names the instance it came from, never an environment it guessed", async () => {
+    const { notifyError } = await freshNotifier();
+    notifyError("https://api.telegram.org/bot123/sendMessage", {
+      ...notification("boom", "/a"),
+      instance: "marfa.example",
+    });
+    const text = (JSON.parse(bodies[0]!) as { text: string }).text;
+    expect(text).toContain("*Marfa 500 Error* (marfa.example)");
+    expect(text).not.toContain("staging");
+  });
+
   it("is used for the Telegram host", async () => {
     const body = await bodyFor("https://api.telegram.org/bot123/sendMessage");
     expect(body).toHaveProperty("parse_mode", "Markdown");

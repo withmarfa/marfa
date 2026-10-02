@@ -97,7 +97,12 @@ function shapedError(err: unknown): ShapedError | undefined {
 export function createErrorHandler(config: {
   errorWebhookUrl: string;
   errorWebhookTimeoutMs?: number;
+  /** Names the instance in an alert, so one channel can serve several. */
+  authBaseUrl?: string;
 }): ErrorHandler<AppEnv> {
+  const instance = config.authBaseUrl
+    ? new URL(config.authBaseUrl).host
+    : undefined;
   return (err, c) => {
     const shaped = shapedError(err);
     if (shaped) {
@@ -204,6 +209,7 @@ export function createErrorHandler(config: {
           error: err instanceof Error ? err.message : String(err),
           path: loggablePath(c.req.path),
           method: c.req.method,
+          ...(instance && { instance }),
         },
         config.errorWebhookTimeoutMs,
       );

@@ -9,7 +9,11 @@ import {
   humanizeType,
 } from "./consent.js";
 import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
-import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
+import {
+  DEFAULT_PERMISSION_BUNDLES,
+  loadConfig,
+  setActivePermissionBundles,
+} from "../config.js";
 import {
   PERMISSION_LABELS,
   PERMISSION_SHORT,
@@ -189,16 +193,19 @@ describe("renderConsentScreen — soft-tile groups", () => {
     // The screen and the discovery document must describe the same
     // bundles, so the renderer reads the same operator-overridable
     // config instead of carrying its own taxonomy.
-    const prior = process.env.MARFA_PERMISSION_BUNDLES;
-    process.env.MARFA_PERMISSION_BUNDLES = JSON.stringify([
-      {
-        id: "read",
-        label: "Peruse your things",
-        description: "Custom operator copy.",
-        scopes: ["core.note:read", "core.task:read"],
-        default_on: true,
-      },
-    ]);
+    setActivePermissionBundles(
+      loadConfig({
+        MARFA_PERMISSION_BUNDLES: JSON.stringify([
+          {
+            id: "read",
+            label: "Peruse your things",
+            description: "Custom operator copy.",
+            scopes: ["core.note:read", "core.task:read"],
+            default_on: true,
+          },
+        ]),
+      }).permissionBundles ?? null,
+    );
     try {
       const html = renderConsentScreen(PARAMS);
       expect(html).toContain("Peruse your things");
@@ -208,8 +215,7 @@ describe("renderConsentScreen — soft-tile groups", () => {
       expect(html).toContain('value="core.note:write"');
       expect(html).toContain("Other write access");
     } finally {
-      if (prior === undefined) delete process.env.MARFA_PERMISSION_BUNDLES;
-      else process.env.MARFA_PERMISSION_BUNDLES = prior;
+      setActivePermissionBundles(null);
     }
   });
 

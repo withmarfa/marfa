@@ -6,6 +6,7 @@ import {
   loggerMiddleware,
   resolveRequestId,
   serializeError,
+  setLogStacks,
 } from "./logger.js";
 import { isValidId } from "@withmarfa/shared";
 
@@ -215,9 +216,8 @@ describe("formatErrorSummary", () => {
 });
 
 describe("serializeError", () => {
-  const originalNodeEnv = process.env.NODE_ENV;
   afterEach(() => {
-    process.env.NODE_ENV = originalNodeEnv;
+    setLogStacks(true);
   });
 
   it("keeps every branch of an AggregateError with its socket detail", () => {
@@ -268,11 +268,10 @@ describe("serializeError", () => {
     expect(out.cause.message).toBe("inner");
   });
 
-  it("omits stacks in production and includes them otherwise", () => {
-    process.env.NODE_ENV = "production";
-    expect(serializeError(new Error("boom"))).not.toHaveProperty("stack");
-    process.env.NODE_ENV = "development";
+  it("omits stacks once boot says so, and includes them otherwise", () => {
     expect(serializeError(new Error("boom"))).toHaveProperty("stack");
+    setLogStacks(false);
+    expect(serializeError(new Error("boom"))).not.toHaveProperty("stack");
   });
 
   it("terminates on a self-referential cause chain", () => {

@@ -3,13 +3,7 @@ import {
   ensureBootstrapSecret,
   isBootstrapped,
 } from "./auth/bootstrap-secret.js";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import {
-  loadConfig,
-  setActivePermissionBundles,
-  hasUsablePermissionBundleOverride,
-} from "./config.js";
+import { bootConfig, setActivePermissionBundles } from "./config.js";
 import {
   buildDefaultPermissionBundles,
   resolveAllRegisteredNamespaceRoots,
@@ -31,6 +25,7 @@ import {
   log,
   formatErrorSummary,
   serializeError,
+  setLogStacks,
 } from "./middleware/logger.js";
 import {
   BulkActionWorker,
@@ -39,23 +34,12 @@ import {
 import { shutdownInOrder } from "./shutdown.js";
 
 async function main() {
-  const config = loadConfig();
-
-  // version.json is written at deploy time; absent in dev (falls back to "dev").
-  try {
-    const versionPath = resolve(process.cwd(), "version.json");
-    const raw = await readFile(versionPath, "utf-8");
-    const version = JSON.parse(raw) as Record<string, unknown>;
-    if (typeof version.sha === "string" && version.sha) {
-      config.versionSha = version.sha;
-    }
-    log("info", "Server version", {
-      sha: version.sha,
-      deployed_at: version.deployed_at,
-    });
-  } catch {
-    log("info", "Server version", { sha: "dev" });
-  }
+  const config = bootConfig();
+  setLogStacks(!config.isProduction);
+  log("info", "Server version", {
+    sha: config.versionSha ?? "dev",
+    deployed_at: config.versionFile?.deployed_at,
+  });
 
   // Before the first connection opens, because the wrapper reads it on
   // every statement and a budget set afterwards would leave the boot's
@@ -112,19 +96,15 @@ async function main() {
 
   // Fold the runtime custom-type namespaces into the active permission
   // bundles, so a custom type under a claimed publisher handle is offerable
-  // through the default consent set rather than only `user.*`.
-  // A *usable* override outranks the derivation and skips it entirely. An
-  // override that failed validation does not: it has already fallen back to
-  // the shipped bundles, and skipping here as well would drop the handle
-  // namespaces too, so one bad environment variable would cost two things
-  // rather than one.
-  if (!hasUsablePermissionBundleOverride()) {
-    const bundles = buildDefaultPermissionBundles(
+  // through the default consent set rather than only `user.*`. The
+  // operator's override, when set, outranks the derivation.
+  const bundles =
+    config.permissionBundles ??
+    buildDefaultPermissionBundles(
       await resolveRegisteredNamespaceRoots(storage),
     );
-    setActivePermissionBundles(bundles);
-    config.permissionBundles = bundles;
-  }
+  setActivePermissionBundles(bundles);
+  config.permissionBundles = bundles;
 
   // **The bootstrap window, announced.** An instance that has never minted a
   // credential accepts one unauthenticated `POST /keys`, and the secret below

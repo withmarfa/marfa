@@ -1,4 +1,3 @@
-import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -42,12 +41,9 @@ export interface MarfaAuthOptions {
    *  at. Used by better-auth to set cookie domains and base paths.
    *  In dev this is typically `http://localhost:8600`. */
   baseURL: string;
-  /** Shared secret used to sign cookies and the OAuth authorize query.
-   *  When unset, falls back to `BETTER_AUTH_SECRET` / `AUTH_SECRET` and
-   *  then to a per-process ephemeral secret — fine for dev (sessions
-   *  don't survive a restart), not safe for production. Production
-   *  deployments must set `MARFA_AUTH_SECRET`. */
-  secret?: string;
+  /** Signs cookies and the OAuth authorize query: `MARFA_AUTH_SECRET`,
+   *  or the per-process one the settings mint outside production. */
+  secret: string;
   /** Origins permitted to make credentialed (cookie) requests against
    *  the auth surface. Defaults to the `baseURL` plus any `corsOrigins`
    *  from `AppConfig`. */
@@ -220,9 +216,7 @@ export interface MarfaAuth {
    *  the OAuth issuer field on the discovery doc, and the cookie
    *  domain). Mirrors `MARFA_AUTH_BASE_URL`. */
   baseURL: string;
-  /** The secret Better Auth signs with, after resolution — the
-   *  configured value, an environment fallback, or a per-process
-   *  ephemeral one. Exposed so the consent route can verify the OAuth
+  /** The secret Better Auth signs with. Exposed so the consent route can verify the OAuth
    *  Provider plugin's signed authorize query against the same value the
    *  plugin signed it with. Never log or serialize it. */
   signingSecret: string;
@@ -260,25 +254,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     jwks: sqliteSchema.auth_jwks,
   };
 
-  // Better Auth resolves its signing secret from `secret`, then
-  // BETTER_AUTH_SECRET / AUTH_SECRET, then a constant that ships inside
-  // the published package. Resolve it here and pass the result
-  // explicitly instead, for two reasons. The consent route has to verify
-  // the OAuth Provider plugin's signed authorize query, and a verifier
-  // reading a different value than the signer used fails open. And an
-  // instance that configured nothing should not end up signing with a
-  // secret anyone can read off npm. `MARFA_AUTH_SECRET` is mandatory in
-  // production, so the ephemeral branch is dev-only — where a restart
-  // invalidating sessions is the documented behavior.
-  const configuredSecret = [
-    options.secret,
-    process.env.BETTER_AUTH_SECRET,
-    process.env.AUTH_SECRET,
-  ].find(
-    (candidate): candidate is string =>
-      typeof candidate === "string" && candidate.length > 0,
-  );
-  const signingSecret = configuredSecret ?? randomBytes(32).toString("hex");
+  // Passed explicitly: Better Auth would otherwise fall back to its own
+  // environment variables and then to a constant that ships inside the
+  // published package, and the consent route verifies the plugin's signed
+  // authorize query with this same value, so a verifier reading a
+  // different one than the signer used would fail open.
+  const signingSecret = options.secret;
 
   const instance = betterAuth({
     baseURL: options.baseURL,

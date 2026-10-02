@@ -6,12 +6,13 @@
  *
  * Usage: tsx src/storage/migrate.ts, or node dist/migrate.js
  */
+import { loadConfig } from "../config.js";
 import { createConnection } from "./sqlite/connection.js";
 
-const path = process.env.SQLITE_PATH ?? "./data/marfa.db";
-console.log(`Applying the schema to ${path}...`);
 try {
-  const { close } = await createConnection(path);
+  const { sqlitePath } = loadConfig();
+  console.log(`Applying the schema to ${sqlitePath}...`);
+  const { close } = await createConnection(sqlitePath);
   await close();
   console.log("Schema applied.");
   process.exit(0);

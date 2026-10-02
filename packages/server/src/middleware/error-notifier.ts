@@ -45,6 +45,8 @@ export interface ErrorNotification {
   error: string;
   path: string;
   method: string;
+  /** The host the instance is reached at. */
+  instance?: string;
 }
 
 /** The host itself, not a URL that merely mentions it in a path, query or longer hostname. */
@@ -70,14 +72,14 @@ export function notifyError(
 
   // Telegram sendMessage API — format as a readable text message
   if (isTelegramUrl(webhookUrl)) {
-    const env =
-      process.env.NODE_ENV === "production" ? "production" : "staging";
     const time = new Date(notification.timestamp)
       .toISOString()
       .replace("T", " ")
       .replace(/\.\d+Z$/, " UTC");
     const text = [
-      `\u26a0\ufe0f *Marfa 500 Error* (${env})`,
+      notification.instance
+        ? `\u26a0\ufe0f *Marfa 500 Error* (${notification.instance})`
+        : "\u26a0\ufe0f *Marfa 500 Error*",
       `\`${notification.method} ${notification.path}\` \u2014 ${time}`,
       notification.error,
       `Request: \`${notification.request_id}\``,

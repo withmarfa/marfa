@@ -16,8 +16,8 @@ import { deriveKey, SECRET_INFO } from "../crypto/derive-key.js";
  *  of link obey one rule. */
 export const MAX_BLOB_LINK_TTL_SECONDS = 7 * 24 * 60 * 60;
 
-function signature(hash: string, expiresAt: number): Buffer {
-  return createHmac("sha256", deriveKey(SECRET_INFO.blobLink))
+function signature(secret: string, hash: string, expiresAt: number): Buffer {
+  return createHmac("sha256", deriveKey(secret, SECRET_INFO.blobLink))
     .update(`${hash}\n${String(expiresAt)}`)
     .digest();
 }
@@ -32,17 +32,22 @@ export function blobLinkExpiry(nowMs: number, ttlSeconds: number): number {
 }
 
 /**
- * The link's URL. `origin` is the scheme and host the instance is reached
- * at; `expiresAt` is Unix seconds.
+ * The link's URL. `secret` is the instance's `MARFA_AUTH_SECRET`; `origin`
+ * is the scheme and host the instance is reached at; `expiresAt` is Unix
+ * seconds.
  */
 export function mintBlobLink(
+  secret: string,
   origin: string,
   hash: string,
   expiresAt: number,
 ): string {
   const url = new URL(`/blobs/${hash}/fetch`, origin);
   url.searchParams.set("expires", String(expiresAt));
-  url.searchParams.set("signature", signature(hash, expiresAt).toString("hex"));
+  url.searchParams.set(
+    "signature",
+    signature(secret, hash, expiresAt).toString("hex"),
+  );
   return url.toString();
 }
 
@@ -52,6 +57,7 @@ export function mintBlobLink(
  * signature, not an error.
  */
 export function verifyBlobLink(
+  secret: string,
   hash: string,
   expires: string,
   presented: string,
@@ -60,7 +66,7 @@ export function verifyBlobLink(
   if (!/^\d{1,12}$/.test(expires)) return false;
   const expiresAt = Number(expires);
   if (expiresAt <= nowSeconds) return false;
-  const expected = signature(hash, expiresAt);
+  const expected = signature(secret, hash, expiresAt);
   // `Buffer.from(..., "hex")` stops at the first character that is not hex
   // rather than throwing, so a malformed value arrives short and fails the
   // length check.

@@ -1,8 +1,7 @@
 import { Hono } from "hono";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
 import { platformDrift } from "../storage/platform-drift.js";
 import { storedValueScan } from "../storage/stored-value-scan.js";
+import type { AppConfig } from "../config.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -11,42 +10,6 @@ interface ComponentStatus {
   status: "ok" | "degraded" | "down";
   latency_ms?: number;
   error?: string;
-}
-
-/** Where the platform says this instance is running. */
-interface Placement {
-  region?: string;
-  location?: string;
-  country?: string;
-}
-
-/**
- * Read the placement this deployment states about itself. The variables are
- * platform-neutral and set per environment, so the answer describes where the
- * server actually runs rather than which provider it runs on, and an
- * operator can set them without pretending to be on one. Unset means the
- * block is absent rather than carrying empty strings that would read as a
- * real answer.
- *
- * It is here because placement is otherwise invisible from outside the
- * platform's own API, and getting it wrong produces no error, no failed
- * deploy and no degraded status, only latency against a database that then
- * takes the blame: an instance can run a continent away from its data
- * while every check stays green. Stated rather than read from a
- * provider's own variables, because nothing outside that provider sets
- * those and a check keyed on them goes quiet without ever failing; a
- * stated value is worth the three lines of configuration it costs.
- */
-function readPlacement(): Placement | null {
-  const region = process.env.MARFA_PLACEMENT_REGION;
-  const location = process.env.MARFA_PLACEMENT_LOCATION;
-  const country = process.env.MARFA_PLACEMENT_COUNTRY;
-  if (!region && !location && !country) return null;
-  return {
-    ...(region && { region }),
-    ...(location && { location }),
-    ...(country && { country }),
-  };
 }
 
 /**
@@ -94,27 +57,22 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
   }
 }
 
-export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
+/**
+ * Placement is stated per environment rather than read from a provider's
+ * own variables, because nothing outside that provider sets those and a
+ * check keyed on them goes quiet without ever failing. It is reported
+ * because getting it wrong produces no error, no failed deploy and no
+ * degraded status, only latency against a database that then takes the
+ * blame. Unset, the block is absent rather than carrying empty strings
+ * that would read as a real answer.
+ */
+export function healthRoutes(
+  storage: Storage,
+  blobs: BlobLayer,
+  config: Pick<AppConfig, "versionFile" | "placement">,
+): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
-
-  // Read once rather than per request. The file cannot change under a
-  // running process — a new build is a new container — and a liveness
-  // endpoint should not reach the disk to answer.
-  let versionCache: Record<string, unknown> | null | undefined;
-  const readVersion = async (): Promise<Record<string, unknown> | null> => {
-    if (versionCache !== undefined) return versionCache;
-    try {
-      const raw = await readFile(
-        resolve(process.cwd(), "version.json"),
-        "utf-8",
-      );
-      versionCache = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      // No version file — normal in development.
-      versionCache = null;
-    }
-    return versionCache;
-  };
+  const { versionFile: version, placement } = config;
 
   router.get("/", async (c) => {
     const components: Record<string, ComponentStatus> = {};
@@ -251,9 +209,6 @@ export function healthRoutes(storage: Storage, blobs: BlobLayer): Hono<AppEnv> {
       rows: scan.values.reduce((sum, v) => sum + v.count, 0),
       scanned: scan.scanned,
     };
-
-    const version = await readVersion();
-    const placement = readPlacement();
 
     return c.json({
       status: overall,

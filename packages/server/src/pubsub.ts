@@ -1,7 +1,6 @@
 import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
-import { envNumber } from "./config.js";
 import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
 
 /**
@@ -169,7 +168,10 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
  * stream only what its own process wrote.
  */
 const emitter = new EventEmitter();
-emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
+// Every SSE viewer listens here, and `MARFA_SSE_MAX_VIEWERS` is what bounds
+// them, so a listener count past any fixed number is expected rather than
+// a leak worth Node's warning.
+emitter.setMaxListeners(0);
 
 let eventLogStore: EventLogStore | null = null;
 
@@ -338,7 +340,7 @@ export interface SubscribeOptions {
  * generator is constructed but never iterated, the inner `on()` iterator
  * still gets closed when this function's frame unwinds. Without it, a
  * subscriber that forgets to close would keep the listener attached for
- * the life of the process, slowly counting against `setMaxListeners()`.
+ * the life of the process.
  */
 /**
  * Whether an event's item type answers a `?type=` subscription filter.

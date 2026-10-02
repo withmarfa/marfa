@@ -119,6 +119,7 @@ export function createApp(
   const errorHandler = createErrorHandler({
     errorWebhookUrl: config.errorWebhookUrl,
     errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
+    authBaseUrl: config.authBaseUrl,
   });
   app.onError(errorHandler);
 
@@ -282,8 +283,8 @@ export function createApp(
     "connectors",
     "inbound_webhooks",
   ];
-  // The deployed `version` comes from `version.json`, read at startup by
-  // index.ts and threaded through `config.versionSha`; `contract` is the
+  // The deployed `version` comes from `version.json`, read with the
+  // settings at boot; `contract` is the
   // contract version, which does not move on a deploy.
   const deployedVersion = config.versionSha ?? "dev";
   // `instance_id` names the deployment, and the root is where a caller that
@@ -299,7 +300,7 @@ export function createApp(
       features,
     }),
   );
-  app.route("/health", healthRoutes(storage, blobs));
+  app.route("/health", healthRoutes(storage, blobs, config));
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
@@ -443,7 +444,7 @@ export function createApp(
     auth = createMarfaAuth({
       db: storage.betterAuthDb,
       baseURL: config.authBaseUrl,
-      secret: config.authSecret || undefined,
+      secret: config.authSecret,
       trustedOrigins,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
       // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
