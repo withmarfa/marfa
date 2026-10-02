@@ -12943,7 +12943,7 @@
         },
         "responses": {
           "200": {
-            "description": "Updated extensions",
+            "description": "The namespaces on the item the caller may read",
             "content": {
               "application/json": {
                 "schema": {
@@ -13211,7 +13211,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Remaining extensions after deletion",
+            "description": "The namespaces left on the item the caller may read",
             "content": {
               "application/json": {
                 "schema": {

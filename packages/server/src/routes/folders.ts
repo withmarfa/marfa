@@ -30,7 +30,7 @@ import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema, TierEnum } from "./_schemas.js";
 import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
-import { filterMetadataForCaller } from "./util.js";
+import { readableMetadata } from "./_extension-reach.js";
 import { requestBlobProof } from "./_blob-reach.js";
 
 const FOLDER_TYPE = "system.folder";
@@ -481,7 +481,7 @@ export function folderRoutes(storage: Storage) {
       resource_id: item.id,
     });
     return c.json(
-      { item, metadata: filterMetadataForCaller(metadata, credential) },
+      { item, metadata: readableMetadata(metadata, credential) },
       201,
     );
   });
@@ -519,7 +519,7 @@ export function folderRoutes(storage: Storage) {
       resource_id: id,
     });
     return c.json(
-      { item, metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });
@@ -545,7 +545,7 @@ export function folderRoutes(storage: Storage) {
       resource_id: id,
     });
     return c.json(
-      { item, metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { item, metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });

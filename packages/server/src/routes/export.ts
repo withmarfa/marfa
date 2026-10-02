@@ -25,6 +25,7 @@ import {
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
 import { mayReadBlob } from "./_blob-reach.js";
+import { readableMetadata } from "./_extension-reach.js";
 
 /**
  * What an export answers when the caller names no state.
@@ -256,7 +257,10 @@ export function exportRoutes(
           callerKey,
           result.data,
         )) {
-          const metadata = await storage.metadata.get(item.id);
+          const metadata = readableMetadata(
+            await storage.metadata.get(item.id),
+            callerKey,
+          );
           exportedIds.add(item.id);
           yield JSON.stringify({ item, metadata }) + "\n";
         }
@@ -441,7 +445,10 @@ async function handleArchiveExport(
         callerKey,
         result.data,
       )) {
-        const metadata = await storage.metadata.get(item.id);
+        const metadata = readableMetadata(
+          await storage.metadata.get(item.id),
+          callerKey,
+        );
         exportedIds.add(item.id);
         // Which of the row's digests lend its reach, so a restore credits
         // those and no others.

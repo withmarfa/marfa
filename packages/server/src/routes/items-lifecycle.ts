@@ -12,7 +12,7 @@ import type { CascadeRoot, Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
-import { filterMetadataForCaller } from "./util.js";
+import { readableMetadata } from "./_extension-reach.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -222,7 +222,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     return c.json(
       {
         item: restored,
-        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
       },
       200,
     );
@@ -294,7 +294,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     return c.json(
       {
         item: updated,
-        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
       },
       200,
     );

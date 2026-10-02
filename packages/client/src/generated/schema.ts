@@ -6715,7 +6715,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated extensions */
+            /** @description The namespaces on the item the caller may read */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6848,7 +6848,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Remaining extensions after deletion */
+            /** @description The namespaces left on the item the caller may read */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

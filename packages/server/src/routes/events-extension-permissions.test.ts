@@ -1,7 +1,7 @@
 /**
  * The stream shows a subscriber only the extension namespaces it may read.
  *
- * `filterMetadataForCaller` narrows an item's `extensions` map to what the
+ * `readableMetadata` narrows an item's `extensions` map to what the
  * caller's `extension_permissions` admit, and every REST read of metadata
  * goes through it. The event path did not: `GET /events` narrows on the
  * item *type* alone, and the frame carries `event.metadata` verbatim — so
