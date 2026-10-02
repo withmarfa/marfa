@@ -9,6 +9,7 @@
  * could have carried), and metadata was parsed and discarded.
  */
 
+import { itemWrites } from "../storage/item-writes.js";
 import { createHash } from "node:crypto";
 import { createGunzip, createGzip } from "node:zlib";
 import { Readable } from "node:stream";
@@ -91,7 +92,7 @@ describe("export → restore round trip", () => {
     const source = await newContext();
     const destination = await newContext();
 
-    const note1 = await source.storage.items.create({
+    const note1 = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { title: "First", body: "carries tags and an extension" },
       source: "rt-seed",
@@ -100,14 +101,14 @@ describe("export → restore round trip", () => {
       occurred_at: "2026-01-01T00:00:00.000Z",
       tags: ["alpha", "beta"],
     });
-    const note2 = await source.storage.items.create({
+    const note2 = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { title: "Second", body: "archived on purpose" },
       source: "rt-seed",
       source_id: "n2",
       state: "archived",
     });
-    const note3 = await source.storage.items.create({
+    const note3 = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { title: "Third", body: "plain" },
       source: "rt-seed",
@@ -210,11 +211,11 @@ describe("export → restore round trip", () => {
     });
     expect(made.status).toBe(201);
     const folderId = ((await made.json()) as { item: { id: string } }).item.id;
-    const placed = await source.storage.items.create({
+    const placed = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "placed" },
     });
-    const planted = await source.storage.items.create({
+    const planted = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "planted" },
     });
@@ -270,14 +271,14 @@ describe("export → restore round trip", () => {
   it("re-restoring the same archive changes nothing and counts duplicates", async () => {
     const source = await newContext();
 
-    const a = await source.storage.items.create({
+    const a = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "a" },
       source: "rt2",
       source_id: "a",
       tags: ["keep"],
     });
-    const b = await source.storage.items.create({
+    const b = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "b" },
       source: "rt2",
@@ -383,13 +384,13 @@ describe("export → restore round trip", () => {
   it("emits only edges whose endpoints are both inside a filtered export", async () => {
     const ctx = await newContext();
 
-    const note = await ctx.storage.items.create({
+    const note = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "in filter" },
       source: "rt4",
       source_id: "n",
     });
-    const bookmark = await ctx.storage.items.create({
+    const bookmark = await itemWrites(ctx.storage).create({
       type: "core.bookmark",
       properties: { url: "https://example.com" },
       source: "rt4",

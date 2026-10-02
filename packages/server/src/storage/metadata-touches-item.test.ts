@@ -13,6 +13,7 @@
  * assertion is "the write moved it" rather than a comparison against a
  * clock the test would otherwise have to out-wait.
  */
+import { itemWrites } from "./item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -60,7 +61,7 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
 /** A fresh item, already tagged and carrying one extension, pinned to
  *  the past so any movement is the write under test. */
 async function pinnedItem(): Promise<string> {
-  const item = await ctx.storage.items.create({
+  const item = await itemWrites(ctx.storage).create({
     type: "core.note",
     properties: { body: "metadata touches item" },
     tags: ["seed"],

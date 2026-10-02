@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -19,7 +20,7 @@ let scopedKey: string;
 // same items and the difference between them is the permission map alone,
 // which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
-  const item = await ctx.storage.items.create({
+  const item = await itemWrites(ctx.storage).create({
     type: "core.note",
     properties: { body: `ext-item-${String(Math.random())}` },
   });

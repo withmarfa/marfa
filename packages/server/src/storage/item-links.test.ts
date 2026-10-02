@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { itemWrites } from "./item-writes.js";
 import { MarfaError } from "@withmarfa/shared";
 import type { TypeSchema } from "@withmarfa/shared";
 import { createTestContext } from "../test-utils.js";
@@ -48,12 +49,12 @@ async function refusal(write: Promise<unknown>): Promise<MarfaError> {
 describe("the link index", () => {
   it("is built when a type gains a link, and the type is refused one its rows share", async () => {
     const plain = await linkedType({ link_field: undefined });
-    const a = await ctx.storage.items.create({
+    const a = await itemWrites(ctx.storage).create({
       type: plain.id,
       properties: { vendor_id: "v-1", body: "a" },
       source: "test",
     });
-    const b = await ctx.storage.items.create({
+    const b = await itemWrites(ctx.storage).create({
       type: plain.id,
       properties: { vendor_id: "v-1", body: "b" },
       source: "test",
@@ -72,7 +73,7 @@ describe("the link index", () => {
     expect(refused.details).toEqual({ type: plain.id, field: "vendor_id" });
     expect((await ctx.storage.types.get(plain.id))?.link_field).toBeUndefined();
 
-    await ctx.storage.items.update(b.id, {
+    await itemWrites(ctx.storage).update(b.id, {
       properties: { vendor_id: "v-2" },
     });
     await ctx.storage.types.update(plain.id, {
@@ -84,7 +85,7 @@ describe("the link index", () => {
     expect(found.get("v-1")?.id).toBe(a.id);
     expect(found.get("v-2")?.id).toBe(b.id);
     const third = await refusal(
-      ctx.storage.items.create({
+      itemWrites(ctx.storage).create({
         type: plain.id,
         properties: { vendor_id: "v-1", body: "c" },
         source: "test",
@@ -98,17 +99,17 @@ describe("the link index", () => {
     const type = await linkedType({
       merge_policy: { fields: { body: "keep_both_copies" } },
     });
-    const row = await ctx.storage.items.create({
+    const row = await itemWrites(ctx.storage).create({
       type: type.id,
       properties: { vendor_id: "copied", body: "as written" },
       source: "test",
     });
-    await ctx.storage.items.update(row.id, {
+    await itemWrites(ctx.storage).update(row.id, {
       properties: { body: "changed here" },
       version: 1,
       may_read_type: () => true,
     });
-    const resolved = await ctx.storage.items.update(row.id, {
+    const resolved = await itemWrites(ctx.storage).update(row.id, {
       properties: { body: "changed there" },
       version: 1,
       may_read_type: () => true,
@@ -127,13 +128,13 @@ describe("the link index", () => {
 describe("the timed trash sweep", () => {
   it("leaves a tombstone for a row's link and its natural key", async () => {
     const type = await linkedType();
-    const row = await ctx.storage.items.create({
+    const row = await itemWrites(ctx.storage).create({
       type: type.id,
       properties: { vendor_id: "swept", body: "b" },
       source: "sweep-source",
       source_id: "sweep-1",
     });
-    await ctx.storage.items.delete(row.id);
+    await itemWrites(ctx.storage).delete(row.id);
     const before = await ctx.storage.items.tombstones(type.id, {
       links: ["swept"],
     });
@@ -144,7 +145,7 @@ describe("the timed trash sweep", () => {
         ?.state,
     ).toBe("trashed");
 
-    const purged = await ctx.storage.items.purgeTrashedOlderThan(
+    const purged = await itemWrites(ctx.storage).purgeTrashedOlderThan(
       "2999-01-01T00:00:00.000Z",
     );
     expect(purged).toBeGreaterThanOrEqual(1);
@@ -161,7 +162,7 @@ describe("the timed trash sweep", () => {
     expect(naturalKey?.key).toBe("sweep-1");
     expect(naturalKey?.purged_at).toBe(link?.purged_at);
     // The swept row's link entry went with it, so the value is free.
-    const again = await ctx.storage.items.create({
+    const again = await itemWrites(ctx.storage).create({
       type: type.id,
       properties: { vendor_id: "swept", body: "again" },
       source: "test",
@@ -174,15 +175,17 @@ describe("the timed trash sweep", () => {
 
   it("leaves a registered-again type none of the tombstones its orphaned rows left", async () => {
     const type = await linkedType();
-    const orphan = await ctx.storage.items.create({
+    const orphan = await itemWrites(ctx.storage).create({
       type: type.id,
       properties: { vendor_id: "orphaned", body: "b" },
       source: "orphan-source",
       source_id: "orphan-1",
     });
-    await ctx.storage.items.delete(orphan.id);
+    await itemWrites(ctx.storage).delete(orphan.id);
     await ctx.storage.types.delete(type.id);
-    await ctx.storage.items.purgeTrashedOlderThan("2999-01-01T00:00:00.000Z");
+    await itemWrites(ctx.storage).purgeTrashedOlderThan(
+      "2999-01-01T00:00:00.000Z",
+    );
     const byKey = { source: "orphan-source", source_ids: ["orphan-1"] };
     // The witness: the sweep left one under the identifier no type holds.
     expect(await ctx.storage.items.tombstones(type.id, byKey)).toHaveLength(1);
@@ -210,14 +213,14 @@ describe("deleting a type", () => {
 
   it("takes the type's tombstones with it", async () => {
     const type = await linkedType();
-    const row = await ctx.storage.items.create({
+    const row = await itemWrites(ctx.storage).create({
       type: type.id,
       properties: { vendor_id: "deleted-with", body: "b" },
       source: "delete-source",
       source_id: "delete-1",
     });
-    await ctx.storage.items.delete(row.id);
-    await ctx.storage.items.purge(row.id);
+    await itemWrites(ctx.storage).delete(row.id);
+    await itemWrites(ctx.storage).purge(row.id);
     // The witness: the purge left one of each under the type.
     expect(await keptUnder(type.id)).toEqual(["deleted-with", "delete-1"]);
 

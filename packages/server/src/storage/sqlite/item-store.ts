@@ -550,6 +550,37 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
   return conditions;
 }
 
+/**
+ * What a write leaves the row holding, judged against the type the row ends
+ * up as, at the current version and a stale one alike. Judged only where the
+ * write carries properties or a move: a type may gain a required field while
+ * rows that lack it stand, and a write that changes nothing a schema has an
+ * opinion about is not the write that has to satisfy it.
+ */
+function judgeResult(
+  input: StoredUpdateItemInput,
+  rowType: string,
+  result: Record<string, unknown>,
+): void {
+  if (input.properties === undefined && input.type === undefined) return;
+  const resultingType = input.type ?? rowType;
+  if (!getTypeSchema(resultingType)) return;
+  const validation = validateProperties(resultingType, result);
+  if (validation.success) return;
+  // The fields named in the message as well as in `details`: a bulk action
+  // reports a row's refusal by its code and message alone.
+  const detail = validation.errors
+    .map((e) => `${e.field}: ${e.message}`)
+    .join("; ");
+  throw new MarfaError(
+    ErrorCode.INVALID_PROPERTIES,
+    resultingType !== rowType
+      ? `Cannot move item to "${resultingType}": ${detail}`
+      : `Invalid properties: ${detail}`,
+    { errors: validation.errors },
+  );
+}
+
 export class SqliteItemStore implements ItemStore {
   constructor(
     private db: DrizzleDb,
@@ -1133,6 +1164,7 @@ export class SqliteItemStore implements ItemStore {
           incomingProps,
           input.properties_mode ?? "merge",
         );
+        judgeResult(input, row.type, merged);
         const newVersion = row.version + 1;
         const newTier = input.tier ?? row.tier;
 
@@ -1397,31 +1429,7 @@ export class SqliteItemStore implements ItemStore {
         resolvedFields = result.changedFields;
       }
 
-      // What the row ends up holding is judged here against the type it
-      // ends up as. The route's prediction was made against the current
-      // row, and a stale merge is made against the ancestor: a field the
-      // body echoes at the ancestor's value is not applied, so where the
-      // other writer removed it since, a move into a type that requires it
-      // would land a row that type never admits. Judged only where the
-      // write carries properties or a move, as the route judges a current
-      // one: a type may gain a required field while rows that lack it
-      // stand, and a write that changes nothing a schema has an opinion
-      // about is not the write that has to satisfy it.
-      const resultingType = input.type ?? row.type;
-      const judged = input.properties !== undefined || input.type !== undefined;
-      if (judged && getTypeSchema(resultingType)) {
-        const validation = validateProperties(
-          resultingType,
-          resolvedProperties,
-        );
-        if (!validation.success) {
-          throw new MarfaError(
-            ErrorCode.INVALID_PROPERTIES,
-            "Invalid properties",
-            { errors: validation.errors },
-          );
-        }
-      }
+      judgeResult(input, row.type, resolvedProperties);
 
       // Same invariant as the fast path above: the version being left behind
       // is snapshotted so a later stale write can merge against it.

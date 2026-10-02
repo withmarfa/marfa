@@ -3133,8 +3133,29 @@ export interface InboundStore {
   }): Promise<number>;
 }
 
+/** The item store's methods that write an item row. */
+export type ItemWriteMethod =
+  | "create"
+  | "update"
+  | "delete"
+  | "purge"
+  | "bulkPurge"
+  | "restore"
+  | "restoreBeneath"
+  | "transition"
+  | "purgeTrashedOlderThan"
+  | "purgeRevokedAppGrantsOlderThan";
+
+/**
+ * The item store as everything outside the write path holds it: its reads,
+ * and none of the methods that write an item row. Those are reached through
+ * `itemWrites` (`item-writes.ts`), whose importers the census names, so a
+ * stray write does not compile rather than passing a scan of its spelling.
+ */
+export type ItemReader = Omit<ItemStore, ItemWriteMethod>;
+
 export interface Storage extends Partial<BetterAuthStorageAdapter> {
-  items: ItemStore;
+  items: ItemReader;
   metadata: MetadataStore;
   versions: VersionStore;
   types: TypeStore;

@@ -4,6 +4,7 @@
  * active match or a row restored after the job was queued, is left
  * untouched and reported per row with the code the single door answers.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
@@ -143,7 +144,7 @@ describe("a bulk purge takes only trashed rows", () => {
     // operator key names them, so no job a working credential queues
     // reaches one; the chunk is run directly.
     async function connection(): Promise<string> {
-      const item = await ctx.storage.items.create({
+      const item = await itemWrites(ctx.storage).create({
         type: "system.connection",
         properties: {
           kind: "app",
@@ -154,7 +155,7 @@ describe("a bulk purge takes only trashed rows", () => {
       return item.id;
     }
     const revoked = await connection();
-    await ctx.storage.items.delete(revoked);
+    await itemWrites(ctx.storage).delete(revoked);
     const active = await connection();
     expect((await ctx.storage.items.get(revoked))?.state).toBe("revoked");
 

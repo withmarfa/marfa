@@ -68,21 +68,6 @@ export const sqliteRequestContext =
   new AsyncLocalStorage<SqliteRequestContext>();
 
 /**
- * Run `fn` with `tx` installed on the per-request ALS, so every store
- * call inside `fn` resolves its executor to the transaction.
- *
- * Used directly by the storage's top-level `runInTransaction`. For
- * store-internal `db.transaction(...)` calls, the proxy below wraps the
- * callback automatically — no need to call this helper there.
- */
-export function withSqliteTx<T>(
-  tx: SqliteTxContext,
-  fn: () => T | Promise<T>,
-): Promise<T> {
-  return Promise.resolve(sqliteRequestContext.run({ tx }, () => fn()));
-}
-
-/**
  * Wrap a Drizzle libsql instance so per-request transactions transparently
  * substitute. Storage classes consume this wrapped instance; the unwrapped
  * base instance is reserved for Better Auth and other code paths that

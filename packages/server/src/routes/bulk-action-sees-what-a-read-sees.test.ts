@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   mintWorkingKey,
@@ -54,7 +55,7 @@ afterAll(async () => {
  * writes these rows.
  */
 function seedReserved(marker: string, state?: ItemState): Promise<Item> {
-  return ctx.storage.items.create({
+  return itemWrites(ctx.storage).create({
     type: "system.folder",
     properties: { title: `ba-${marker}` },
     ...(state === undefined ? {} : { state }),

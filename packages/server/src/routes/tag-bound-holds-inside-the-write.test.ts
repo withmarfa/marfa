@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
@@ -99,7 +100,7 @@ describe("the tag bound is enforced where the tags are written", () => {
     // Through `items.create`, the one writer that is deliberately unbounded,
     // which is now the only way such a row can come about — the same way an
     // archive restore produces one.
-    const created = await ctx.storage.items.create({
+    const created = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "already over" },
       tags: tags("legacy", MAX_TAGS_PER_ITEM + 20),

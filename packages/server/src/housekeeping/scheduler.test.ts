@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { itemWrites } from "../storage/item-writes.js";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { createTestContext } from "../test-utils.js";
@@ -545,7 +546,7 @@ describe("Housekeeping", () => {
         firstRunDelayMs: 0,
         run: () =>
           storage.runInTransaction(async () => {
-            await storage.items.create({
+            await itemWrites(storage).create({
               type: "core.note",
               properties: { body: "held under the lock" },
             });

@@ -3,6 +3,7 @@ import {
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
+import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -15,29 +16,17 @@ import {
   isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
-  getTypeSchema,
-  getEdgeTypeSchema,
-  validateProperties,
-  SYSTEM_DEFAULT_STATE,
-  validateTransition,
-  hasBoundedLifecycle,
   softDeleteState,
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
 import type {
-  AncestorUnavailableResponse,
   ApiKey,
-  ConflictResponse,
   Edge,
   Item,
   ItemState,
   Metadata,
 } from "@withmarfa/shared";
-import {
-  mergeUpdateProperties,
-  resolveIncomingProperties,
-} from "../storage/merge-properties.js";
 import { log } from "../middleware/logger.js";
 import { credentialIdempotencyKey } from "../middleware/idempotency.js";
 import type { Context } from "hono";
@@ -47,17 +36,10 @@ import {
   checkTypeAccess,
   checkTypePermission,
   getTypeFilter,
-  itemProvenanceSource,
-  mayReadEdgeEnd,
-  mayReadRow,
   typeReader,
   mayReadType,
-  mayWriteEdge,
   requireAuth,
-  requireDeclaredTypeMatches,
-  requireEdgePermission,
   requireReadableRow,
-  requireResolvedRowWrite,
   requireTypeAccess,
   standingPermission,
   readsSomeType,
@@ -66,16 +48,12 @@ import type {
   Storage,
   ItemFilters,
   ItemSortField,
-  ResolvedItem,
 } from "../storage/interface.js";
-import { baseVersion, ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
+import { writeItem } from "../storage/item-write.js";
+import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
 import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
-import {
-  assertEdgesCanBeCreated,
-  edgeTargetNotFound,
-} from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
 import {
   excludesSystemTypes,
@@ -89,18 +67,14 @@ import {
   groupAndCap,
   HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
-import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
+import { announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
-import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
-import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import {
   assertFilterEdgeTermsReadable,
   readableEdges,
   sourceTypesFor,
 } from "./_edge-visibility.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
-import type { InlineEdgeChanges } from "./_edges-inline.js";
-import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
   createOpenAPIRouter,
@@ -908,13 +882,14 @@ const updateItemRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "forbidden",
             "edge_permission_denied",
             "type_not_permitted",
           ]),
         },
       },
       description:
-        "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
+        "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on; `forbidden` when the body changes `source_id` on a row whose source the key neither writes under nor claims, named in `details.source`.",
     },
     404: {
       content: {
@@ -1482,554 +1457,97 @@ export function itemRoutes(storage: Storage) {
     if (body.occurred_at && !isValidTimestamp(body.occurred_at)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid occurred_at");
     }
-    // A create is not a transition, so nothing puts it through the graph on
-    // its own, and a membership test against the universal state list is a
-    // weaker question than the one that matters: `trashed` is a valid state
-    // and is not in the `system.*` lifecycle at all. That test alone would
-    // let the operator key create a `system.connection` directly in
-    // `trashed` (a state no transition can produce and none can leave) and
-    // then restore it into `active` having passed nothing the graph admits.
-    //
-    // Asking `validateTransition` what the default start state can reach
-    // gives each type its own answer with no second table to keep in step:
-    // a non-system type gets `active | archived | trashed`, a `system.*`
-    // type gets `active | revoked`. It also rejects a value that is not a
-    // state at all, so no separate check of the state's spelling is needed.
-    //
-    // **In the route, not in `storage.items.create`**, and the asymmetry
-    // with `items.restore()` is deliberate. The store's `create` is also
-    // the archive restore's writer, and that door asks the same question
-    // of every archived row before it writes any: a create is not a
-    // transition, so the gate belongs to the doors that create. The
-    // lifecycle gate that DOES belong in the store is the one on
-    // `restore()`, because a restore is a transition and its two siblings
-    // live there.
-    if (body.state && body.state !== SYSTEM_DEFAULT_STATE) {
-      const error = validateTransition(
+    const key = requireAuth(c);
+    // Resolving the row, every rule the write must pass and the write itself
+    // happen in one transaction, against the row and type as they stand
+    // there. A natural key or a minted id that resolves a row is decided
+    // there too, so two sends of one key land on one row.
+    const result = await writeItem(
+      storage,
+      { kind: "credential", key },
+      {
+        op: "put",
+        door: "item",
         type,
-        SYSTEM_DEFAULT_STATE,
-        body.state as ItemState,
-      );
-      if (error) {
-        throw new MarfaError(ErrorCode.VALIDATION_ERROR, error);
-      }
-    }
+        properties: body.properties,
+        ...(body.id !== undefined && { id: body.id }),
+        ...(body.state !== undefined && { state: body.state as ItemState }),
+        ...(body.tier !== undefined && { tier: body.tier }),
+        ...(body.occurred_at !== undefined && {
+          occurred_at: body.occurred_at,
+        }),
+        ...(body.source !== undefined && { source: body.source }),
+        ...(body.source_id !== undefined && { source_id: body.source_id }),
+        ...(body.version !== undefined && { version: body.version }),
+        ...(body.capture_latitude !== undefined && {
+          capture_latitude: body.capture_latitude,
+        }),
+        ...(body.capture_longitude !== undefined && {
+          capture_longitude: body.capture_longitude,
+        }),
+        ...(body.tags !== undefined && { tags: body.tags }),
+        ...(body.edges !== undefined && { edges: body.edges }),
+        blob_proof: requestBlobProof(c, storage),
+      },
+    );
 
-    requireTypeAccess(c, type, "write");
-
-    if (Array.isArray(body.tags) && body.tags.length > MAX_TAGS_PER_ITEM) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
-      );
-    }
-
-    // The enforcement levers: off by default, and set per type by the
-    // instance config or a credential's own override.
-    const instanceConfig = await readInstanceConfig(storage.settings);
-    const enforcement = resolveEnforcement(instanceConfig, c.get("apiKey"));
-
-    // The source the row is keyed by and stamped with: the credential's
-    // own, or one its key claims that the body names. A named source it
-    // does not claim is refused here, and so is one the type's allow-list
-    // excludes, both ahead of the natural-key lookup that runs under it.
-    const credential = c.get("apiKey");
-    const stampedSource = itemProvenanceSource(credential, body.source);
-    const notAllowed = sourceAllowlistRefusal(enforcement, type, stampedSource);
-    if (notAllowed) throw notAllowed;
-
-    // Strict-mode lever: when configured for this type, unknown properties
-    // are rejected. Storage's own validateProperties runs in loose mode
-    // regardless; this pre-check catches strict-mode violations before any
-    // persistence work. Shared with the restore door, which writes through
-    // the store and so cannot rely on the store to ask.
-    const undeclared = undeclaredPropertyRefusal(enforcement, type, properties);
-    if (undeclared) throw undeclared;
-    // `system.*` items have no tier; reject explicit values on write, and
-    // stamp `undefined` rather than the library default.
-    //
-    // Asked through the same predicate the delete door uses, so the two
-    // cannot answer differently for a reserved-root type this build did not
-    // seed: one refusing the tier while the other still stamps a default is
-    // how a platform record ends up with a field its own lifecycle has no
-    // room for.
-    // The refusal comes from the shared rule rather than a copy of it: a
-    // copy here would be the disagreement between doors `_tier-rules.ts`
-    // exists to prevent.
-    assertTierApplicable(type, body.tier);
-    // Still needed after the refusal, because what a system write stamps is a
-    // separate question from what it accepts. What it prevents is inheriting
-    // the credential's own default: a key with `default_tier: "feed"` would
-    // otherwise put every `system.*` row it writes into the feed.
-    //
-    // It does not prevent a tier altogether, which the surrounding code reads
-    // as though it does. The column is NOT NULL with a `library` default and
-    // the store writes `input.tier ?? "library"`, so the row lands on
-    // `library` either way and no tier is not a representable state. Whether
-    // that matters depends on whether anything reads a system row's tier as a
-    // surfacing decision, which is a schema question rather than this door's.
-    //
-    // Otherwise the body's tier, then the credential's default, then
-    // `library`: the curated layer is the default when neither the caller
-    // nor the credential says.
-    const isSystemTypeWrite = hasBoundedLifecycle(type);
-    const tierValue: "library" | "feed" | undefined = isSystemTypeWrite
-      ? undefined
-      : (body.tier ?? credential?.default_tier ?? "library");
-
-    // Validate edges payload up-front (shape only) so the write path doesn't
-    // have to double-check. Per-constraint validation runs inside the
-    // transaction against the just-created item.
-    if (body.edges) {
-      for (const [edgeType, targets] of Object.entries(body.edges)) {
-        if (!Array.isArray(targets)) {
-          throw new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            `edges.${edgeType} must be an array of item ids`,
-          );
-        }
-        for (const target of targets) {
-          if (!isValidId(target)) {
-            throw new MarfaError(
-              ErrorCode.INVALID_ID,
-              `Invalid target id in edges.${edgeType}`,
-            );
-          }
-        }
-        // Permission gate: atomic POST /items edges require the same
-        // edge-type write permission as POST /edges. Item-type write is
-        // already enforced above via requireTypeAccess(type, "write").
-        //
-        // Gated regardless of target count. On the natural-key upsert
-        // branch an empty list reaches `applyInlineEdges`, which reads it
-        // as "delete every edge of this type" — so exempting the empty
-        // case handed the delete primitive to a caller with no edge
-        // permission at all.
-        requireEdgePermission(c, edgeType, "write");
-      }
-    }
-
-    // Natural-key upsert. When both `source` (resolved above) and request
-    // `source_id` are present, look up an existing row by
-    // (source, source_id). If one matches,
-    // short-circuit to update so `POST /items` is idempotent on re-sync —
-    // the contract that lets inbound connector handlers recover from
-    // whole-batch retries (createItem-success / cursor-write-fail) without
-    // producing duplicates. Returns 200 on this branch (vs 201 on create) so
-    // the caller can distinguish the realized effect.
-    //
-    // Update semantics: properties / tier / occurred_at via `ItemStore.update`
-    // (shallow-merge); tags via `metadata.set`; edges via `applyInlineEdges`
-    // (replace-by-edge-type). Fields only meaningful at create time (id,
-    // state, capture_*) are ignored — the existing row's id wins.
-    if (stampedSource && body.source_id) {
-      // Including trashed rows, deliberately. `findBySourceId` hides them,
-      // which would send a re-sync of an item the user had deleted into
-      // the create path, where `create`'s own dedup pre-check (which does
-      // not filter state) finds the same row and refuses with a 409 that
-      // never clears: the row stays trashed, so every later sync fails the
-      // same way and the connector is wedged on one item.
-      const existing = await storage.items.findBySourceIdIncludingTrashed(
-        stampedSource,
-        body.source_id,
-      );
-      // The declared-type match is checked on BOTH arms below rather than
-      // once here, and the difference is disclosure. The row's type is a
-      // gate rather than a filter: gate before disclosing, so a refusal
-      // cannot be read off the body, and the match's refusal names
-      // `item_id`, `declared_type` and `actual_type`. Answering it ahead
-      // of `requireTypeAccess` would disclose the row's real type to a
-      // caller the type gate is about to refuse and tell nothing.
-      //
-      // So each arm runs it last among its own gates. That is two call
-      // sites for one rule, which is the shape this codebase treats as a
-      // hazard: the trashed arm has its own named test for exactly that
-      // reason, and deleting either call reddens one case and only one.
-      if (existing?.state === "trashed") {
-        // The user deleted this. Reviving it would overturn that decision
-        // silently, and refusing it would fail the same sync on every retry
-        // for as long as the row stays trashed, so the sync is acknowledged
-        // and nothing is written or published.
-        //
-        // **What the acknowledgment may disclose, stated rather than left
-        // to where this `return` sits.** The natural key bounds some axes
-        // and not others, and only the ones it bounds are safe to answer on:
-        //
-        //  - The row itself is disclosed, because every part of reaching it
-        //    is already the caller's own. `source` is the credential's own
-        //    or one its key was given to write under, and cannot be chosen
-        //    past those, and the `source_id` came from this request.
-        //  - The extension namespaces are NOT, because that axis is not
-        //    bounded by the natural key. `extension_permissions` are per
-        //    credential, so a row can carry namespaces this caller holds
-        //    nothing on — written by a person or by another tool. Hence the
-        //    same filter the other eleven sites in this file use.
-        //  - The type is NOT either, and that is a gate rather than a
-        //    filter. A source outlives any one credential's type map, so a
-        //    credential whose map has since narrowed, or another key
-        //    claiming the same source, still resolves rows whose type it
-        //    does not hold. The update branch below refuses
-        //    those on the resolved row's type; refusing here too is what
-        //    makes the two branches agree about who may address one row,
-        //    instead of the answer depending on whether the user happened
-        //    to have trashed it.
-        //
-        // Gate before disclosing, so a refusal cannot be read off the body,
-        // and a key that may not read the row learns only that its key is
-        // taken.
-        requireResolvedRowWrite(c, existing);
-        // A write never re-types the row it lands on, and an
-        // acknowledgment is a write's answer, so a body naming another
-        // type is refused here as the route's 409 description says.
-        requireDeclaredTypeMatches(type, existing);
+    switch (result.outcome) {
+      case "unchanged":
+        // A repeat of a create the server performed, or a re-sync of a row
+        // the person has since deleted: nothing written, nothing announced.
         return c.json(
-          await acknowledgedItemBody(storage, requireAuth(c), existing),
+          await acknowledgedItemBody(storage, key, result.item),
           200,
         );
-      }
-      if (existing) {
-        // Authorize the update against the row it lands on, not the body
-        // that addressed it. Every gate above ran on `type`, which the
-        // caller chose and which this branch never writes: the update
-        // takes the resolved row's type as it stands, so a type the
-        // credential holds write on must not admit an edit to a row of
-        // another. These are the gates `PATCH /items/{id}` runs; running
-        // them here is what makes the two doors agree. The create path
-        // below keeps authorizing the claim, because there the claim is
-        // the row. Refused without naming the row where the key may not
-        // read it, so every envelope below, the conditional upsert's `409`
-        // with its snapshot and id among them, reaches only a key that
-        // may write the row it describes.
-        requireResolvedRowWrite(c, existing);
-        // No check on the row's own `source` here, and none is owed. The
-        // lookup keyed on `stampedSource`, so the row carries a source
-        // this credential may write under by construction: its own, or
-        // one its key claims. A row another credential wrote under a
-        // shared claim is exactly the row a second device must land on,
-        // which is what the claim is for.
-
-        // If the caller explicitly supplied `id` but it doesn't match the row
-        // resolved by (source, source_id), reject rather than silently winning
-        // with the existing row's id. A 200 response carrying a different id
-        // than the body would be a confusing surprise; signaling the conflict
-        // gives the caller a clear path to reconcile.
-        if (body.id !== undefined && body.id !== existing.id) {
-          throw new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            "Request `id` does not match the item resolved by (source, source_id)",
-            {
-              field: "id",
-              requested_id: body.id,
-              existing_id: existing.id,
-              source: stampedSource,
-              source_id: body.source_id,
-            },
-          );
-        }
-
-        // And the same refusal on the type. `type` is required by this
-        // route because the create branch needs it, but it plays no part
-        // in resolving the row, so a body naming one type while the
-        // natural key lands on another would otherwise be merged in
-        // silently. Shared with the bulk door rather than written twice,
-        // so the two doors cannot drift apart on it.
-        requireDeclaredTypeMatches(type, existing);
-
-        // Judged on the merged result rather than the body, mirroring the
-        // merge the storage layer performs: a null on a required field is
-        // kept for the type to refuse, and only the merged result shows it,
-        // so a row that could not have been created in the state it sat in
-        // would otherwise land with a 200 and no signal.
-        if (
-          body.properties !== undefined &&
-          getTypeSchema(existing.type) !== undefined
-        ) {
-          const merged = mergeUpdateProperties(
-            existing.properties,
-            resolveIncomingProperties(existing.type, properties),
-            // "merge", because this branch is the natural-key upsert on
-            // `POST /items` and that route offers no mode. Stated rather
-            // than defaulted silently, so the prediction is visibly tied to
-            // what the door it predicts can actually be asked for.
-            "merge",
-          );
-          const validation = validateProperties(existing.type, merged);
-          if (!validation.success) {
-            throw new MarfaError(
-              ErrorCode.INVALID_PROPERTIES,
-              "Invalid properties",
-              { errors: validation.errors },
-            );
-          }
-        }
-
-        const upsertResult = await storage.runInTransaction(async () => {
-          const updated = await storage.items.update(existing.id, {
-            blob_proof: requestBlobProof(c, storage),
-            ...(body.properties !== undefined && { properties }),
-            ...(tierValue !== undefined && { tier: tierValue }),
-            ...(body.occurred_at !== undefined && {
-              occurred_at: body.occurred_at,
-            }),
-            ...baseVersion(body.version, typeReader(c)),
-          });
-          if ("error" in updated) {
-            // Reachable only when the caller sent a `version`, which is what
-            // makes this upsert conditional. The envelope is the update
-            // door's, because a caller that named a version is doing the
-            // same thing here and should read the same answer.
-            return { conflict: updated, item: null } as const;
-          }
-
-          if (Array.isArray(body.tags)) {
-            await storage.metadata.set(updated.id, body.tags);
-          }
-          const edgeChanges = body.edges
-            ? await applyInlineEdges(
-                storage,
-                updated.id,
-                body.edges,
-                (edgeType) => {
-                  requireEdgePermission(c, edgeType, "write");
-                },
-                mayReadEdgeEnd(c),
-              )
-            : undefined;
-
-          const meta = await storage.metadata.get(updated.id);
-          return {
-            conflict: null,
-            item: updated,
-            metadata: meta,
-            edgeChanges,
-          } as const;
-        });
-
-        if (upsertResult.item === null) {
-          // Stamped here for the same reason the update door stamps it: the
-          // refusal is returned rather than thrown, so the error handler
-          // that normally sets the header never runs.
-          c.header("X-Error-Code", upsertResult.conflict.error.code);
-          return c.json(upsertResult.conflict, 409);
-        }
-
-        const {
-          item: updatedItem,
-          metadata: updatedMetadata,
-          edgeChanges: updatedEdgeChanges,
-        } = upsertResult;
-
+      case "conflict":
+        // Returned rather than thrown, so the error handler that sets this
+        // never runs.
+        c.header("X-Error-Code", result.conflict.error.code);
+        return c.json(result.conflict, 409);
+      case "updated": {
+        const { item: updatedItem, metadata: updatedMetadata } = result;
         const hydratedExisting = await hydrateEdgesForItem(
           storage,
-          requireAuth(c),
+          key,
           updatedItem.id,
         );
-        const itemWithEdges = { ...updatedItem, edges: hydratedExisting };
-
         await publish({
           type: "updated",
           item: updatedItem,
           metadata: updatedMetadata,
         });
-        // After the item, and after the transaction that wrote both. A
-        // single-item door always announces: a subscriber cannot tell an
-        // edge written through an item from one written through
-        // `/edges`, so silence here would make propagation depend on
-        // which door the writer used.
-        if (updatedEdgeChanges) {
-          await announceInlineEdges(storage, updatedEdgeChanges);
-        }
+        // After the item: a subscriber cannot tell an edge written through
+        // an item from one written through `/edges`, so silence here would
+        // make propagation depend on which door the writer used.
+        if (result.edges) await announceInlineEdges(storage, result.edges);
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
-          key_id: c.get("apiKey")?.id,
+          key_id: key.id,
           action: "item.update",
           resource_type: "item",
           resource_id: updatedItem.id,
           details: {
             type: updatedItem.type,
             idempotent: true,
-            source: stampedSource,
+            source: updatedItem.source,
             source_id: body.source_id,
           },
         });
         return c.json(
           {
-            item: itemWithEdges,
-            metadata: readableMetadata(updatedMetadata, c.get("apiKey")),
+            item: { ...updatedItem, edges: hydratedExisting },
+            metadata: readableMetadata(updatedMetadata, key),
           },
           200,
         );
       }
+      case "stale":
+        throw new Error("An upsert always writes the row it lands on");
+      case "created":
+        break;
     }
-
-    // A create arriving a second time under an id the caller minted.
-    //
-    // A synced client names a row before the server has seen it, so when
-    // the response to its create is lost it retries with the same id.
-    // The server already holds that row: the second arrival is the
-    // client's own write, not a collision with somebody else's. Refusing
-    // it forever is what strands the item — the client reads 409 as
-    // transient, retries, and every later edit to that item queues behind
-    // it. So the contract answers success and hands back the row.
-    //
-    // **Both a pre-check and a catch, and each covers what the other
-    // cannot.** The pre-check answers a repeat without entering the write
-    // path, whose refusals are about a write this caller is not making
-    // again. The catch has to exist because the pre-check races: two sends
-    // of one id can both find nothing, and the loser of the insert still
-    // needs an answer other than 409.
-    //
-    // One comparison serves both, so the two paths cannot disagree about
-    // what a repeat is or which gates it passes.
-    const repeatedRow = async (): Promise<Item | null> => {
-      // Only a caller-minted id can be a repeat. A server-generated one
-      // colliding is not this caller's own write and has no business
-      // being answered with somebody's row.
-      const clientId = body.id;
-      if (clientId === undefined) return null;
-      // Including trashed, for the reason the natural-key branch is: a
-      // row the user has since deleted would otherwise refuse this retry
-      // forever, and the retry is not asking to revive it. The row comes
-      // back in whatever state it holds.
-      const existing = await storage.items.getIncludingTrashed(clientId);
-      // A row this caller cannot read goes on to the insert's plain
-      // `conflict`, which says the id is taken and nothing of the row.
-      if (!existing || !mayReadRow(c, existing)) return null;
-
-      // **No type gate of its own here, and its absence is the honest
-      // shape.** The comparison below is exact, so a row that is
-      // acknowledged has the type the body named — and that type already
-      // cleared `requireTypeAccess` at the top of this route. A second
-      // call could therefore never refuse, and a gate that cannot refuse
-      // reads as a protection somebody is relying on.
-      //
-      // The natural-key arms do carry one, and the difference is real:
-      // they resolve by `(source, source_id)`, which says nothing about
-      // the row's type, so the row can be a type the caller may not
-      // write.
-      //
-      // **`id_reused` here, where the natural-key branch above says
-      // `type_mismatch`, and the difference is which thing is in
-      // question.** There the caller resolved a row by its `(source,
-      // source_id)` and declared a type the row is not: the id was never
-      // named and the declaration is the mistake. Here the caller minted
-      // the id, and the id is taken by a row it is not describing —
-      // the same mistake the edge door answers for an id naming a
-      // different triple, so the same code, with `details.differs`
-      // naming what disagrees.
-      if (existing.type !== type) {
-        throw new MarfaError(
-          ErrorCode.ID_REUSED,
-          `Item id ${existing.id} already names an item of type "${existing.type}", not "${type}"`,
-          {
-            existing_id: existing.id,
-            differs: ["type"],
-            declared_type: type,
-            actual_type: existing.type,
-          },
-        );
-      }
-      return existing;
-    };
-
-    /** Whether this error is the trap firing on the id this request sent. */
-    const isOwnIdCollision = (err: unknown): boolean =>
-      body.id !== undefined &&
-      err instanceof MarfaError &&
-      err.code === ErrorCode.CONFLICT &&
-      // `existing_id` is set by the store from the colliding row, so this
-      // equality cannot pick up a CONFLICT raised elsewhere in the
-      // transaction.
-      (err.details as { existing_id?: string } | undefined)?.existing_id ===
-        body.id;
-
-    const alreadyHeld = await repeatedRow();
-    if (alreadyHeld) {
-      return c.json(
-        await acknowledgedItemBody(storage, requireAuth(c), alreadyHeld),
-        200,
-      );
-    }
-
-    let writeResult;
-    try {
-      writeResult = await storage.runInTransaction(async () => {
-        const created = await storage.items.create({
-          type,
-          properties,
-          blob_proof: requestBlobProof(c, storage),
-          id: body.id,
-          state: body.state as ItemState | undefined,
-          tier: tierValue,
-          occurred_at: body.occurred_at,
-          source: stampedSource,
-          source_id: body.source_id,
-          capture_latitude: body.capture_latitude,
-          capture_longitude: body.capture_longitude,
-          tags: body.tags,
-        });
-
-        // Atomic edges: for each entry, this item is the source; listed ids
-        // are targets. assertEdgesCanBeCreated enforces cardinality / type
-        // constraints / cycle rules across the whole batch in grouped queries;
-        // failure rolls the entire transaction. The created rows are kept:
-        // they are the complete outbound-edge set of an item born this
-        // instant, so the response hydration below needs no read.
-        const createdEdges: Edge[] = [];
-        if (body.edges) {
-          const proposals = Object.entries(body.edges).flatMap(
-            ([edgeType, targets]) =>
-              targets.map((targetId) => ({
-                source_id: created.id,
-                target_id: targetId,
-                edge_type: edgeType,
-              })),
-          );
-          if (proposals.length > 0) {
-            await assertEdgesCanBeCreated(
-              storage.edges,
-              storage.items,
-              proposals,
-              mayReadEdgeEnd(c),
-            );
-            for (const p of proposals) {
-              createdEdges.push(
-                await storage.edges.createRaw({
-                  source_id: p.source_id,
-                  target_id: p.target_id,
-                  edge_type: p.edge_type,
-                }),
-              );
-            }
-          }
-        }
-
-        // A fresh create's metadata layer is exactly what the create wrote:
-        // its tags (stored verbatim, `input.tags ?? []`) over empty
-        // extensions. Reading it back re-fetched the row written one
-        // statement earlier in this same transaction.
-        return {
-          item: created,
-          metadata: {
-            item_id: created.id,
-            tags: body.tags ?? [],
-            extensions: {},
-          },
-          createdEdges,
-        };
-      });
-    } catch (err) {
-      // The concurrency backstop. The row appeared between the pre-check
-      // and the insert, which is the one case the pre-check cannot cover.
-      if (!isOwnIdCollision(err)) throw err;
-      const raced = await repeatedRow();
-      if (!raced) throw err;
-      return c.json(
-        await acknowledgedItemBody(storage, requireAuth(c), raced),
-        200,
-      );
-    }
-    const { item, metadata, createdEdges } = writeResult;
+    const { item, metadata } = result;
+    const createdEdges = result.edges?.created ?? [];
 
     // Sorted to the listing's read order (created_at DESC, id DESC) before
     // grouping, because the block is cut at the cap and its cursor is read
@@ -2063,7 +1581,7 @@ export function itemRoutes(storage: Storage) {
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "item.create",
       resource_type: "item",
       resource_id: item.id,
@@ -2072,7 +1590,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(
       {
         item: itemWithEdges,
-        metadata: readableMetadata(metadata, c.get("apiKey")),
+        metadata: readableMetadata(metadata, key),
       },
       201,
     );
@@ -2511,333 +2029,56 @@ export function itemRoutes(storage: Storage) {
         "occurred_at must be an ISO 8601 string",
       );
     }
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-
-    // Held to the same rule as every other door rather than refused
-    // outright: a claim that matches the row is the ordinary case and
-    // passes, a claim that disagrees is the re-type this route does not
-    // perform. Refusing any `type` at all would have been tidier to
-    // describe and would have failed most reactive syncs in the fleet on
-    // their first request.
     if (body.retype === true && body.type === undefined) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "`retype` needs the `type` to move the item to",
       );
     }
-    // Captured rather than re-derived, so the narrowing survives: a
-    // boolean does not tell the compiler that `body.type` is a string at
-    // the three sites below that need it to be one. A move to the type
-    // the row already has is not a move: a corpus re-type sends `retype`
-    // to rows already at the destination, and those take no version step.
-    const retypeTo =
-      body.retype === true && body.type !== item.type ? body.type : undefined;
-    const retyping = retypeTo !== undefined;
-    if (retyping) {
-      // Write on the type being left is already required above; this is
-      // write on the one being entered. A caller may not move a row into
-      // a type it could not have created the row under.
-      requireTypeAccess(c, retypeTo, "write");
-    } else if (body.type !== undefined) {
-      requireDeclaredTypeMatches(body.type, item);
-    }
+    const key = requireAuth(c);
+    // A `type` that matches the row is the ordinary case and passes; one
+    // that disagrees is refused unless `retype` asks to move the row, which
+    // needs write on the type entered as well as the one left.
+    const result = await writeItem(
+      storage,
+      { kind: "credential", key },
+      {
+        op: "update",
+        id,
+        ...(body.type !== undefined && { declared_type: body.type }),
+        ...(body.retype === true && { retype: true }),
+        ...(hasProperties && { properties: body.properties }),
+        ...(body.properties_mode !== undefined && {
+          properties_mode: body.properties_mode,
+        }),
+        ...(hasTier && { tier: body.tier }),
+        ...(hasOccurredAt && { occurred_at: body.occurred_at }),
+        ...(hasSourceId && { source_id: body.source_id }),
+        ...(hasEdges && { edges: body.edges }),
+        version: body.version,
+        ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
+        // The key that makes a re-executed write produce one keep-both
+        // sibling rather than two.
+        ...(idempotencyKey !== null && { idempotency_key: idempotencyKey }),
+        blob_proof: requestBlobProof(c, storage),
+      },
+    );
 
-    // Same rule the create door applies, judged on the resolved row's
-    // type. The claim above is held to that type rather than replacing
-    // it: nothing below reads a caller-supplied type.
-    assertTierApplicable(item.type, body.tier);
-
-    // Natural-key uniqueness check. The `(source, source_id)` tuple is
-    // unique — the same constraint enforced at create time.
-    // Reject before the write so no partial state lands. PATCHing the value
-    // the item already carries is a no-op success. Cross-source isolation is
-    // automatic: `findBySourceId` scopes by `item.source`, so the same
-    // source_id literal under a different `source` never collides.
-    if (
-      hasSourceId &&
-      body.source_id !== undefined &&
-      body.source_id !== item.source_id
-    ) {
-      const newSourceId = body.source_id;
-      const existing = await storage.items.findBySourceId(
-        item.source,
-        newSourceId,
-      );
-      if (existing && existing.id !== id) {
-        throw new MarfaError(
-          ErrorCode.SOURCE_ID_CONFLICT,
-          `source_id "${newSourceId}" is already in use under source "${item.source}"`,
-          { source: item.source, source_id: newSourceId },
-        );
-      }
-    }
-
-    // Shape-validate and permission-gate the edges payload up-front.
-    //
-    // **Not redundant with `applyInlineEdges`, and not because it
-    // refuses earlier — the helper's permission gate and its id and
-    // self-edge refusals all run before its deletes, so nothing here
-    // saves a rollback.** Two things only this pass does: it is the only
-    // check that the value at an edge type is an array at all, which the
-    // helper assumes, and its refusals carry this door's own messages
-    // (`edges.<type> must be an array of item ids`), which callers read.
-    // Delete it and a non-array value reaches a `for` over a non-iterable
-    // instead of a 400.
-    if (hasEdges && body.edges) {
-      for (const [edgeType, targets] of Object.entries(body.edges)) {
-        if (!Array.isArray(targets)) {
-          throw new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            `edges.${edgeType} must be an array of item ids`,
-          );
-        }
-        for (const target of targets) {
-          if (!isValidId(target)) {
-            throw new MarfaError(
-              ErrorCode.INVALID_ID,
-              `Invalid target id in edges.${edgeType}`,
-            );
-          }
-        }
-        requireEdgePermission(c, edgeType, "write");
-      }
-    }
-
-    if (body.properties || retyping) {
-      // The levers this door has to ask before it writes. Read here
-      // rather than at the top of the handler because this is the only
-      // branch that needs them: a body carrying no `properties` and no
-      // move changes nothing a schema has an opinion about. A move alone
-      // does: the row's properties have to satisfy the type it enters.
-      const enforcementForUpdate = resolveEnforcement(
-        await readInstanceConfig(storage.settings),
-        c.get("apiKey"),
-      );
-      // The type the row ends up as, which is what the resulting
-      // properties have to satisfy. Validating against the type being left
-      // would admit a move whose result the destination calls invalid,
-      // which is the whole hazard of moving a corpus.
-      const resultingType = retypeTo ?? item.type;
-      // The strict-mode lever, which this door went past. `POST /items`
-      // asks it of the properties the caller sent, and so does the
-      // restore door; asked of the same input here, through the same
-      // function, so the three cannot drift. A caller could otherwise
-      // write a property no type declares through the update door that
-      // the create door beside it refuses, on a type the lever names —
-      // and the property reads back ever after undeclared and unmarked
-      // under the type's current version.
-      //
-      // Against the payload rather than the merged result, because that
-      // is the reading the other two callers take: the lever refuses a
-      // caller introducing an undeclared property, and measuring the
-      // merge would instead freeze every row that already carries one
-      // from before the lever was set.
-      //
-      // Against the type the row ends up as, for the reason the
-      // validation below uses it: a move is judged by the destination.
-      const undeclared =
-        body.properties === undefined
-          ? undefined
-          : undeclaredPropertyRefusal(
-              enforcementForUpdate,
-              resultingType,
-              body.properties,
-            );
-      if (undeclared) throw undeclared;
-      // The verdict on the row's resulting properties belongs to whoever
-      // computes them. At the current version that is this door, through
-      // the shared helper rather than a shallow spread of its own: a copy
-      // that validated the merged set while the store wrote the replaced
-      // one would pass a write dropping a required field on the strength
-      // of the value it was removing. At a stale version the store merges
-      // against the ancestor and judges that result before it writes; the
-      // body laid over the current row is not what lands, and judging it
-      // would refuse a write whose merge keeps a field the other writer
-      // added since.
-      if (body.version === item.version) {
-        const merged = mergeUpdateProperties(
-          item.properties,
-          resolveIncomingProperties(resultingType, body.properties),
-          body.properties_mode ?? "merge",
-        );
-        if (getTypeSchema(resultingType)) {
-          const validation = validateProperties(resultingType, merged);
-          if (!validation.success) {
-            throw new MarfaError(
-              ErrorCode.INVALID_PROPERTIES,
-              "Invalid properties",
-              {
-                errors: validation.errors,
-              },
-            );
-          }
-        }
-      }
-    }
-
-    // Before the version check inside the transaction, so a stale write
-    // cannot tell a target the key may not read from a missing one.
-    if (hasEdges && body.edges) {
-      const mayReadTarget = mayReadEdgeEnd(c);
-      for (const [edgeType, targets] of Object.entries(body.edges)) {
-        const schema = getEdgeTypeSchema(edgeType);
-        if (!schema) {
-          throw new MarfaError(
-            ErrorCode.EDGE_TYPE_NOT_FOUND,
-            `Unknown edge type: ${edgeType}`,
-          );
-        }
-        // Detect duplicate target ids in the payload (same edge would
-        // fail existsExact after the first insert).
-        const uniqueTargets = new Set<string>();
-        for (const target of targets) {
-          if (uniqueTargets.has(target)) {
-            throw new MarfaError(
-              ErrorCode.EDGE_CONSTRAINT_VIOLATION,
-              `Duplicate target ${target} in edges.${edgeType}`,
-            );
-          }
-          uniqueTargets.add(target);
-          const targetItem = await storage.items.get(target);
-          if (!targetItem || !mayReadTarget(targetItem.type)) {
-            throw edgeTargetNotFound(target);
-          }
-        }
-      }
-    }
-
-    // Declared outside the transaction so the announcement can happen
-    // after it commits. `undefined` when the request carried no edges.
-    let patchedEdgeChanges: InlineEdgeChanges | undefined;
-    const txResult = await storage.runInTransaction(async () => {
-      // The version is enforced here for the one arm that never reaches the
-      // store: a write carrying only `edges`, or a `retype` naming the type
-      // the row already has, applies over whatever the row has become, so
-      // without this the door would collect a required precondition and
-      // discard it — worse than not asking at all, because a caller reads
-      // a refusal that never came as proof it was current.
-      //
-      // Inside the transaction and re-reading the row, not against the copy
-      // read before it: a check outside is advisory, and any write landing
-      // in the window between the two is exactly what the precondition
-      // exists to notice.
-      //
-      // The envelope minus its merge half, rather than a bare refusal.
-      // Nothing here can be merged — that needs two property sets and the
-      // fields that collide, and a request carrying no properties has
-      // neither — so there is no `ancestor`, no `conflicting_fields` and no
-      // `merge_policy`. But `error.status` and `current` are on every
-      // single-write refusal carrying this code, so a client reading
-      // `body.current.version` reads it here too instead of finding
-      // `undefined` on one door out of three. (The bulk doors report the
-      // code per entry inside their own envelope and are not in that set.)
-      if (
-        !hasProperties &&
-        !hasTier &&
-        !hasOccurredAt &&
-        !hasSourceId &&
-        !retyping
-      ) {
-        const current = await storage.items.get(id);
-        if (current && body.version !== current.version) {
-          return staleVersion(
-            current.version,
-            current.properties,
-            body.version,
-            {
-              id: current.id,
-              tier: current.tier ?? "library",
-              occurred_at: current.occurred_at,
-              source_id: current.source_id ?? null,
-              type: current.type,
-            },
-          );
-        }
-      }
-
-      // Annotated rather than inferred: the `: item` arm is a plain `Item`,
-      // and left to inference the union collapses to it — losing the
-      // resolution report the store attaches on the other arm.
-      const updated:
-        ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
-        hasProperties || hasTier || hasOccurredAt || hasSourceId || retyping
-          ? await storage.items.update(id, {
-              blob_proof: requestBlobProof(c, storage),
-              properties: body.properties,
-              ...(body.properties_mode !== undefined && {
-                properties_mode: body.properties_mode,
-              }),
-              ...(retypeTo !== undefined && { type: retypeTo }),
-              version: body.version,
-              may_read_type: typeReader(c),
-              // Who resolves a collision, and the key that makes a retry
-              // recognizable as one. Both are request-level facts rather
-              // than fields of the item, which is why they ride here
-              // rather than in the body.
-              ...(conflictMode !== undefined && {
-                conflict_mode: conflictMode,
-              }),
-              ...(idempotencyKey !== null && {
-                idempotency_key: idempotencyKey,
-              }),
-              may_copy_edge: (
-                edgeType: string,
-                sourceType: string,
-                targetType: string,
-              ) =>
-                mayWriteEdge(requireAuth(c), edgeType, sourceType, targetType),
-              tier: hasTier ? body.tier : undefined,
-              occurred_at: hasOccurredAt ? body.occurred_at : undefined,
-              source_id: hasSourceId ? body.source_id : undefined,
-            })
-          : item;
-      if (
-        (hasProperties ||
-          hasTier ||
-          hasOccurredAt ||
-          hasSourceId ||
-          retyping) &&
-        "error" in updated
-      ) {
-        return updated;
-      }
-
-      // Through the shared helper rather than a second copy of it: what a
-      // second copy costs is every change after, made in one place and
-      // missed in the other.
-      if (hasEdges && body.edges) {
-        patchedEdgeChanges = await applyInlineEdges(
-          storage,
-          id,
-          body.edges,
-          // Already gated up-front, before any write. Passed again
-          // because the helper requires an answer rather than a default,
-          // and re-running an idempotent check costs nothing.
-          (edgeType) => {
-            requireEdgePermission(c, edgeType, "write");
-          },
-          mayReadEdgeEnd(c),
-        );
-      }
-
-      return updated;
-    });
-
-    if ("error" in txResult) {
+    if (result.outcome === "conflict" || result.outcome === "stale") {
       // Stamped here because this refusal is returned rather than thrown, so
       // the error handler that normally sets it never runs. Without it the
       // fresh answer and its idempotent replay describe one conflict
       // differently: the replay reads the code out of the recorded body and
       // sets the header, so a client that branches on it sees the header
       // appear only on the retry.
-      c.header("X-Error-Code", txResult.error.code);
-      return c.json(txResult, 409);
+      c.header("X-Error-Code", result.conflict.error.code);
+      return c.json(result.conflict, 409);
     }
+    if (result.outcome !== "updated") {
+      throw new Error(`PATCH /items/{id} answered ${result.outcome}`);
+    }
+    const txResult = result.item;
+    const patchedEdgeChanges = result.edges;
 
     // Off the item before anything reads it. It describes what this write
     // did, not what the row is, and the row has no such column — leaving it
@@ -2850,7 +2091,7 @@ export function itemRoutes(storage: Storage) {
       ...resolvedItem
     } = txResult;
 
-    const metadata = await storage.metadata.get(id);
+    const metadata = result.metadata;
     // The sibling first, then the row that gave its value up. A subscriber
     // then never observes a window in which the losing edit has left the
     // original and does not yet exist anywhere — which is the state this
@@ -2952,7 +2193,10 @@ export function itemRoutes(storage: Storage) {
         refuseUnlessUninstalled(snap, mayReadType(key, snap.type));
       }
       for (const delId of toDelete) {
-        await storage.items.delete(delId, delId === id ? undefined : root);
+        await itemWrites(storage).delete(
+          delId,
+          delId === id ? undefined : root,
+        );
       }
       return snaps;
     });
@@ -3014,26 +2258,30 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-
     const body = c.req.valid("json");
     const tags = body.tags;
-
-    if (tags.length > MAX_TAGS_PER_ITEM) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
-    }
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
 
-    const metadata = await storage.metadata.set(id, tags);
+      if (tags.length > MAX_TAGS_PER_ITEM) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+        );
+      }
+
+      const written = await storage.metadata.set(id, tags);
+      return { item, metadata: written };
+    });
     await publish({
       type: "metadata_changed",
       item: await itemAfterMetadataWrite(storage, item),
@@ -3051,44 +2299,48 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-
     const body = c.req.valid("json");
     const tags = body.tags;
-
-    // Not subsumed by the projection below, though it reads as though it
-    // should be: the projection counts a deduplicated set, so a body of 101
-    // copies of one tag projects to one and passes it. This bounds what a
-    // caller may send, that one bounds what the item may hold, and they are
-    // different questions with different messages.
-    if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
-    }
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
 
-    // No projection here. Reading the metadata row, unioning the incoming
-    // tags into it and refusing over the bound would read in one
-    // transaction and write in another, so it would bound nothing under
-    // concurrency, and it would cost an unconditional read on every
-    // successful request to duplicate a refusal the store makes inside
-    // the transaction that computes the set, with the same status, code
-    // and message, so nothing on the wire could tell the two apart.
-    //
-    // What is still checked above is what a caller may *send*, which is a
-    // different question and one the store cannot answer: a body of a
-    // hundred and one copies of one tag projects to one and is inside the
-    // bound.
+      // Not subsumed by the projection below, though it reads as though it
+      // should be: the projection counts a deduplicated set, so a body of 101
+      // copies of one tag projects to one and passes it. This bounds what a
+      // caller may send, that one bounds what the item may hold, and they are
+      // different questions with different messages.
+      if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+        );
+      }
 
-    const metadata = await storage.metadata.merge(id, tags);
+      // No projection here. Reading the metadata row, unioning the incoming
+      // tags into it and refusing over the bound would read in one
+      // transaction and write in another, so it would bound nothing under
+      // concurrency, and it would cost an unconditional read on every
+      // successful request to duplicate a refusal the store makes inside
+      // the transaction that computes the set, with the same status, code
+      // and message, so nothing on the wire could tell the two apart.
+      //
+      // What is still checked above is what a caller may *send*, which is a
+      // different question and one the store cannot answer: a body of a
+      // hundred and one copies of one tag projects to one and is inside the
+      // bound.
+
+      const written = await storage.metadata.merge(id, tags);
+      return { item, metadata: written };
+    });
 
     await publish({
       type: "metadata_changed",
@@ -3107,22 +2359,26 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-
     const body = c.req.valid("json");
     const tags = body.tags;
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+      );
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
 
-    // The resulting set is bounded by the store, inside the transaction that
-    // computes it. See the sibling door above for why there is no
-    // projection here.
-    const metadata = await storage.metadata.addTags(id, tags);
+      // The resulting set is bounded by the store, inside the transaction that
+      // computes it. See the sibling door above for why there is no
+      // projection here.
+      const written = await storage.metadata.addTags(id, tags);
+      return { item, metadata: written };
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -3230,7 +2486,7 @@ export function itemRoutes(storage: Storage) {
         storage,
         removed.map((edge) => edge.source_id),
       );
-      await storage.items.purge(id);
+      await itemWrites(storage).purge(id);
       return { removed, sourceTypes };
     });
     if ("error" in outcome) {
@@ -3288,15 +2544,20 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-    const metadata = await storage.metadata.removeTag(id, tag);
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+      );
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
+      const written = await storage.metadata.removeTag(id, tag);
+      return { item, metadata: written };
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

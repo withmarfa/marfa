@@ -7,6 +7,7 @@
  * trash step they never skipped. The ordinary refusal must stay as it was, so
  * that case is asserted too. A soft-deleted row is asked the key's type map.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -42,7 +43,7 @@ afterAll(async () => {
  * key holds no permissions to create one with.
  */
 async function seedReservedRow(sourceId: string): Promise<string> {
-  const item = await ctx.storage.items.create({
+  const item = await itemWrites(ctx.storage).create({
     type: "system.folder",
     properties: { title: "A folder" },
     source: "test/purge-refusal",
@@ -112,7 +113,7 @@ describe("purging a row a working credential may not write", () => {
     // whose map writes the type. Soft-deleted through storage, standing in
     // for the cascade and archive restore that put such rows there.
     const id = await seedReservedRow("folder:refusal-2");
-    await ctx.storage.items.delete(id);
+    await itemWrites(ctx.storage).delete(id);
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: workingKey,
@@ -136,11 +137,11 @@ describe("purging a soft-deleted row", () => {
   });
 
   async function trashedNote(): Promise<string> {
-    const note = await ctx.storage.items.create({
+    const note = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "trashed" },
     });
-    await ctx.storage.items.delete(note.id);
+    await itemWrites(ctx.storage).delete(note.id);
     return note.id;
   }
 
@@ -171,11 +172,11 @@ describe("purging a soft-deleted row", () => {
   }
 
   it("refuses a trashed row of a type the key may only read", async () => {
-    const task = await ctx.storage.items.create({
+    const task = await itemWrites(ctx.storage).create({
       type: "core.task",
       properties: { title: "read only here" },
     });
-    await ctx.storage.items.delete(task.id);
+    await itemWrites(ctx.storage).delete(task.id);
 
     await expectRefused(task.id, coreOnlyKey);
 
@@ -191,7 +192,7 @@ describe("purging a soft-deleted row", () => {
 
   it("answers a soft-deleted reserved-namespace row to a key whose map does not reach it as no row", async () => {
     const id = await seedReservedRow("folder:narrow-map");
-    await ctx.storage.items.delete(id);
+    await itemWrites(ctx.storage).delete(id);
 
     await expectHidden(id, coreOnlyKey);
 
@@ -203,7 +204,7 @@ describe("purging a soft-deleted row", () => {
 
   it("purges a revoked connection for a key whose map writes the type, and only for one", async () => {
     // A connection soft-deletes to `revoked`, not `trashed`.
-    const conn = await ctx.storage.items.create({
+    const conn = await itemWrites(ctx.storage).create({
       type: "system.connection",
       properties: {
         kind: "app",
@@ -212,7 +213,7 @@ describe("purging a soft-deleted row", () => {
         client_id: "acme.demo",
       },
     });
-    await ctx.storage.items.delete(conn.id);
+    await itemWrites(ctx.storage).delete(conn.id);
     expect((await ctx.storage.items.getIncludingTrashed(conn.id))?.state).toBe(
       "revoked",
     );

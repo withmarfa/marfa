@@ -79,24 +79,15 @@ function itemDoors(): string[] {
 }
 
 /**
- * Every module outside `storage/` that creates or updates an item, with why
- * what it writes is judged. A new writer fails until it is named.
+ * Every module that creates or updates an item, with why what it writes is
+ * judged. A new writer fails until it is named.
  */
 const ITEM_WRITERS: Record<string, string> = {
-  "routes/items.ts": "asks validateProperties of the resulting properties",
-  "routes/bulk.ts": "asks validateProperties of the resulting properties",
-  "bulk-actions/runner.ts":
-    "asks validateProperties of the resulting properties",
-  "routes/admin-archive.ts": "creates through the store, which asks it",
-  "enrichment/sweeper.ts":
-    "asks validateProperties of the resulting properties",
-  "routes/folders.ts": "system.folder rows, which carry no schedule",
-  "routes/auth-pages.ts": "system rows, which carry no schedule",
-  "routes/auth-consent.ts": "system rows, which carry no schedule",
-  "auth/grant-lifecycle.ts": "system rows, which carry no schedule",
+  "storage/item-write.ts":
+    "the one item write; it creates and updates through the store, which asks validateProperties of every result",
 };
 
-const WRITES_ITEMS = /\bitems\.(create|update)\(/;
+const WRITES_ITEMS = /\b(?:items|itemWrites\([^)]*\))\.(create|update)\(/;
 
 function itemWriters(): string[] {
   const root = join(import.meta.dirname, "..");
@@ -105,7 +96,7 @@ function itemWriters(): string[] {
     for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
       const rel = dir ? `${dir}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (rel !== "storage") walk(rel);
+        if (rel !== "storage/sqlite") walk(rel);
       } else if (
         entry.name.endsWith(".ts") &&
         !entry.name.endsWith(".test.ts") &&
@@ -189,13 +180,12 @@ describe("every item write door holds an event's schedule to one rule", () => {
 
   it("names every module that writes an item", () => {
     expect(itemWriters()).toEqual(Object.keys(ITEM_WRITERS).sort());
-    for (const [file, why] of Object.entries(ITEM_WRITERS)) {
-      if (why.startsWith("asks validateProperties")) {
-        expect(
-          readFileSync(join(import.meta.dirname, "..", file), "utf8"),
-        ).toContain("validateProperties(");
-      }
-    }
+    // Asked by the store on a create and on an update alike.
+    const store = readFileSync(
+      join(import.meta.dirname, "..", "storage/sqlite/item-store.ts"),
+      "utf8",
+    );
+    expect(store.match(/validateProperties\(/g)?.length).toBeGreaterThan(1);
   });
 
   it.each([

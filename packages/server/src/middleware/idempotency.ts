@@ -38,17 +38,16 @@ import { CONTRACT_VERSION } from "../contract.js";
  * The doors a key is honored on, spelled exactly as Hono registers them.
  *
  * **Enumerated at the layer writes happen, not by walking routes.** The
- * property is about a write, and several callers reach `items.create`,
- * `items.update`, `items.delete`, `edges.createRaw`,
- * `edges.updateProperties` and `edges.delete` with no HTTP request at all
- * — the enrichment sweeper, the bulk-action worker, and the grant
- * inactivity retirer, which reaches `items.update` through
+ * property is about a write, and several callers reach `writeItem`,
+ * `edges.createRaw`, `edges.updateProperties` and `edges.delete` with no
+ * HTTP request at all — the enrichment sweeper, the bulk-action worker, and
+ * the grant inactivity retirer, which reaches `writeItem` through
  * `revokeProjectedGrant`. A route walk sees none of them, and cannot show
  * that they are excluded deliberately rather than missed: all three write on
  * their own schedule, with no caller to hand them a key.
  *
- * That list is a snapshot and the query is the thing to keep: grep the six
- * methods across `packages/server/src` outside `storage/`, and trace each
+ * That list is a snapshot and the query is the thing to keep: grep those
+ * four across `packages/server/src` outside `storage/`, and trace each
  * hit back to whether a request drives it. The retirer is the easy one to
  * miss: it runs as a housekeeping job and its write is two calls away.
  * `routes/idempotent-write-doors.test.ts` holds the doors that do carry a

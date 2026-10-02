@@ -376,45 +376,49 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
-    );
-    // An extension is part of the item's row, so the item's type gate runs
-    // first, as it does on the tag doors, whatever the namespace grants.
-    requireTypeAccess(c, item.type, "write");
-
-    if (RESERVED_NAMESPACES.has(namespace)) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `Namespace "${namespace}" is reserved`,
-      );
-    }
-
-    const perm = resolveExtensionPermission(
-      namespace,
-      apiKey?.extension_permissions,
-      extensionLabelOf(apiKey),
-    );
-    if (perm !== "write") {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `No write access to extension namespace "${namespace}"`,
-      );
-    }
-
     const body = c.req.valid("json");
-
-    const serialized = JSON.stringify(body);
-    if (serialized.length > 102_400) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Extension data exceeds maximum size of 100KB",
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, extensions } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
       );
-    }
+      // An extension is part of the item's row, so the item's type gate runs
+      // first, as it does on the tag doors, whatever the namespace grants.
+      requireTypeAccess(c, item.type, "write");
 
-    const extensions = await storage.metadata.setExtension(id, namespace, body);
+      if (RESERVED_NAMESPACES.has(namespace)) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `Namespace "${namespace}" is reserved`,
+        );
+      }
+
+      const perm = resolveExtensionPermission(
+        namespace,
+        apiKey?.extension_permissions,
+        extensionLabelOf(apiKey),
+      );
+      if (perm !== "write") {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `No write access to extension namespace "${namespace}"`,
+        );
+      }
+
+      const serialized = JSON.stringify(body);
+      if (serialized.length > 102_400) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          "Extension data exceeds maximum size of 100KB",
+        );
+      }
+
+      const written = await storage.metadata.setExtension(id, namespace, body);
+      return { item, extensions: written };
+    });
 
     // The extensions map and the tags are one metadata row, and the four
     // doors that write the other half of it publish. A subscriber cannot
@@ -451,38 +455,43 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const apiKey = c.get("apiKey");
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
-    );
-    // An extension is part of the item's row, so the item's type gate runs
-    // first, as it does on the tag doors, whatever the namespace grants.
-    requireTypeAccess(c, item.type, "write");
-
-    if (RESERVED_NAMESPACES.has(namespace)) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `Namespace "${namespace}" is reserved`,
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, extensions } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
       );
-    } else {
-      const isOwner = extensionLabelOf(apiKey) === namespace;
-      if (!isOwner) {
-        const perm = resolveExtensionPermission(
-          namespace,
-          apiKey?.extension_permissions,
-          extensionLabelOf(apiKey),
+      // An extension is part of the item's row, so the item's type gate runs
+      // first, as it does on the tag doors, whatever the namespace grants.
+      requireTypeAccess(c, item.type, "write");
+
+      if (RESERVED_NAMESPACES.has(namespace)) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `Namespace "${namespace}" is reserved`,
         );
-        if (perm !== "write") {
-          throw new MarfaError(
-            ErrorCode.FORBIDDEN,
-            `No write access to extension namespace "${namespace}"`,
+      } else {
+        const isOwner = extensionLabelOf(apiKey) === namespace;
+        if (!isOwner) {
+          const perm = resolveExtensionPermission(
+            namespace,
+            apiKey?.extension_permissions,
+            extensionLabelOf(apiKey),
           );
+          if (perm !== "write") {
+            throw new MarfaError(
+              ErrorCode.FORBIDDEN,
+              `No write access to extension namespace "${namespace}"`,
+            );
+          }
         }
       }
-    }
 
-    const extensions = await storage.metadata.deleteExtension(id, namespace);
+      const written = await storage.metadata.deleteExtension(id, namespace);
+      return { item, extensions: written };
+    });
 
     // A removal is as observable as a write, and for the same reason as
     // the replace door above: the namespace's absence from the payload is

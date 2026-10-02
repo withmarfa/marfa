@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { itemWrites } from "./item-writes.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -100,7 +101,7 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
 describe("ItemStore purge methods — FTS coverage", () => {
   it("bulkPurge removes items and their FTS entries", async () => {
     const itemId = id("aaa1");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "alphabravo searchable" },
@@ -111,8 +112,8 @@ describe("ItemStore purge methods — FTS coverage", () => {
     const before = await ctx.storage.search.search("alphabravo", {});
     expect(before.some((h) => h.item.id === itemId)).toBe(true);
 
-    await ctx.storage.items.delete(itemId);
-    const deleted = await ctx.storage.items.bulkPurge([itemId]);
+    await itemWrites(ctx.storage).delete(itemId);
+    const deleted = await itemWrites(ctx.storage).bulkPurge([itemId]);
     expect(deleted).toEqual([itemId]);
 
     // The FTS row is gone.
@@ -124,20 +125,20 @@ describe("ItemStore purge methods — FTS coverage", () => {
 
   it("purgeTrashedOlderThan removes FTS entries for purged trashed items", async () => {
     const itemId = id("aaa2");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "charliedelta searchable" },
       tier: "library",
     });
-    await ctx.storage.items.transition(itemId, "trashed");
+    await itemWrites(ctx.storage).transition(itemId, "trashed");
     // Force updated_at well before our cutoff.
     await ageItem(
       itemId,
       new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
     );
 
-    const deleted = await ctx.storage.items.purgeTrashedOlderThan(
+    const deleted = await itemWrites(ctx.storage).purgeTrashedOlderThan(
       FIXED_NOW.toISOString(),
     );
     expect(deleted).toBe(1);
@@ -156,7 +157,7 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
     const bystander = id("ccc3");
 
     for (const itemId of [doomed, neighbor, bystander]) {
-      await ctx.storage.items.create({
+      await itemWrites(ctx.storage).create({
         id: itemId,
         type: "core.note",
         properties: { body: `note ${itemId}` },
@@ -182,13 +183,13 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
       edge_type: "references",
     });
 
-    await ctx.storage.items.transition(doomed, "trashed");
+    await itemWrites(ctx.storage).transition(doomed, "trashed");
     await ageItem(
       doomed,
       new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY).toISOString(),
     );
 
-    const deleted = await ctx.storage.items.purgeTrashedOlderThan(
+    const deleted = await itemWrites(ctx.storage).purgeTrashedOlderThan(
       FIXED_NOW.toISOString(),
     );
     expect(deleted).toBe(1);
@@ -210,7 +211,7 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
     const a = id("ddd1");
     const b = id("ddd2");
     for (const itemId of [a, b]) {
-      await ctx.storage.items.create({
+      await itemWrites(ctx.storage).create({
         id: itemId,
         type: "core.note",
         properties: { body: `note ${itemId}` },
@@ -224,10 +225,10 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
     });
 
     // `a` is trashed but still inside the retention window.
-    await ctx.storage.items.transition(a, "trashed");
+    await itemWrites(ctx.storage).transition(a, "trashed");
     await ageItem(a, FIXED_NOW.toISOString());
 
-    const deleted = await ctx.storage.items.purgeTrashedOlderThan(
+    const deleted = await itemWrites(ctx.storage).purgeTrashedOlderThan(
       new Date(FIXED_NOW.getTime() - MS_PER_DAY).toISOString(),
     );
     expect(deleted).toBe(0);
@@ -238,20 +239,20 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
 describe("ItemStore.bulkPurge — the trash gate", () => {
   it("takes only rows in their type's soft-deleted state, and says which", async () => {
     const make = async (type: string, properties: Record<string, unknown>) =>
-      (await ctx.storage.items.create({ type, properties })).id;
+      (await itemWrites(ctx.storage).create({ type, properties })).id;
     const connection = {
       kind: "app",
       status: "active",
       granted_at: new Date().toISOString(),
     };
     const trashedNote = await make("core.note", { body: "gone" });
-    await ctx.storage.items.delete(trashedNote);
+    await itemWrites(ctx.storage).delete(trashedNote);
     const activeNote = await make("core.note", { body: "kept" });
     const revoked = await make("system.connection", connection);
-    await ctx.storage.items.delete(revoked);
+    await itemWrites(ctx.storage).delete(revoked);
     const live = await make("system.connection", connection);
 
-    const taken = await ctx.storage.items.bulkPurge([
+    const taken = await itemWrites(ctx.storage).bulkPurge([
       trashedNote,
       activeNote,
       revoked,
@@ -273,21 +274,21 @@ describe("ItemStore.bulkPurge — atomicity", () => {
   it("rolls back the items DELETE if a mid-purge FTS removal fails", async () => {
     const id1 = id("bbb1");
     const id2 = id("bbb2");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: id1,
       type: "core.note",
       properties: { body: "rollbackalpha searchable" },
       tier: "library",
     });
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: id2,
       type: "core.note",
       properties: { body: "rollbackbravo searchable" },
       tier: "library",
     });
 
-    await ctx.storage.items.delete(id1);
-    await ctx.storage.items.delete(id2);
+    await itemWrites(ctx.storage).delete(id1);
+    await itemWrites(ctx.storage).delete(id2);
 
     // Force the second FTS removal to throw, mid-transaction.
     const search = ctx.storage.search as unknown as {
@@ -301,7 +302,7 @@ describe("ItemStore.bulkPurge — atomicity", () => {
       await orig(targetId);
     });
 
-    await expect(ctx.storage.items.bulkPurge([id1, id2])).rejects.toThrow(
+    await expect(itemWrites(ctx.storage).bulkPurge([id1, id2])).rejects.toThrow(
       /simulated FTS failure/,
     );
 
@@ -327,13 +328,13 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
 
   it("purges a trashed item that was written to after it entered the bin", async () => {
     const itemId = id("c10c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "past the window" },
       tier: "library",
     });
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
     await ageItem(itemId, LONG_AGO);
 
     // The edit. A tag write is the ordinary way this happens and reaches
@@ -343,21 +344,21 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     expect(afterEdit).toBeDefined();
     expect(afterEdit! > LONG_AGO).toBe(true);
 
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(1);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(1);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).toBeNull();
   });
 
   it("leaves a trashed item whose stamp is inside the window", async () => {
     const itemId = id("c11c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "recently binned" },
       tier: "library",
     });
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
 
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -379,13 +380,13 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
    */
   it("does not let the modification time vote once a stamp exists", async () => {
     const itemId = id("c15c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "stamp inside, modification time outside" },
       tier: "library",
     });
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
     await ageUpdatedAtOnly(itemId, LONG_AGO);
 
     // The fixture is the point, so it is asserted rather than assumed.
@@ -394,7 +395,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     expect(stamp! > CUTOFF).toBe(true);
     expect(await readUpdatedAt(itemId)).toBe(LONG_AGO);
 
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -404,7 +405,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     // until something else reads the column. The column's meaning is the
     // contract, so the assertion is on the column.
     const itemId = id("c14c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "in and back out" },
@@ -412,36 +413,36 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     });
     expect(await readTrashedAt(itemId)).toBeNull();
 
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
     expect(await readTrashedAt(itemId)).not.toBeNull();
 
-    await ctx.storage.items.restore(itemId);
+    await itemWrites(ctx.storage).restore(itemId);
     expect(await readTrashedAt(itemId)).toBeNull();
 
     // And the explicit transition door agrees with the two beside it.
-    await ctx.storage.items.transition(itemId, "trashed");
+    await itemWrites(ctx.storage).transition(itemId, "trashed");
     expect(await readTrashedAt(itemId)).not.toBeNull();
-    await ctx.storage.items.transition(itemId, "active");
+    await itemWrites(ctx.storage).transition(itemId, "active");
     expect(await readTrashedAt(itemId)).toBeNull();
   });
 
   it("starts a fresh window when an item is restored and binned again", async () => {
     const itemId = id("c12c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "back out and in again" },
       tier: "library",
     });
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
     await ageItem(itemId, LONG_AGO);
 
     // Out of the bin clears the stamp; back in sets a new one. Inheriting
     // the first would purge this row on its next tick, sixty days early.
-    await ctx.storage.items.restore(itemId);
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).restore(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
 
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -452,7 +453,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     // doors and the archive restore), so the sweep measures from the stamp
     // alone and a row without one is not its to remove.
     const itemId = id("c16c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "system.folder",
       state: "trashed",
@@ -464,7 +465,7 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     expect(await readTrashedAt(itemId)).toBeNull();
     expect(await readUpdatedAt(itemId)).toBe(LONG_AGO);
 
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 
@@ -472,17 +473,17 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
     // The window is strictly before the cutoff, as the interface says: a
     // row stamped at the instant itself is inside it.
     const itemId = id("c17c");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { body: "on the line" },
       source: "test/purge",
     });
-    await ctx.storage.items.delete(itemId);
+    await itemWrites(ctx.storage).delete(itemId);
     await ageItem(itemId, CUTOFF);
     expect(await readTrashedAt(itemId)).toBe(CUTOFF);
 
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
   });
 });

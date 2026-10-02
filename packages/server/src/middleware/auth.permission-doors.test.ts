@@ -15,6 +15,7 @@
  *    cannot see.
  */
 
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { ApiKey, Permission } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter, hashApiKey } from "./auth.js";
@@ -215,11 +216,11 @@ describe("DELETE /items/:id/purge — items.purge", () => {
 
     // Create + trash an item via storage so the test doesn't have to
     // model the full lifecycle through HTTP.
-    const item = await ctx.storage.items.create({
+    const item = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "doomed" },
     });
-    await ctx.storage.items.transition(item.id, "trashed");
+    await itemWrites(ctx.storage).transition(item.id, "trashed");
 
     const res = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
       key: caller,
@@ -235,11 +236,11 @@ describe("DELETE /items/:id/purge — items.purge", () => {
       label: "purge-none",
       typePermissions: { "*": "write" },
     });
-    const item = await ctx.storage.items.create({
+    const item = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "spared" },
     });
-    await ctx.storage.items.transition(item.id, "trashed");
+    await itemWrites(ctx.storage).transition(item.id, "trashed");
 
     const res = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
       key: caller,

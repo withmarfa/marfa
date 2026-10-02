@@ -48,6 +48,39 @@ describe("deduplication", () => {
     expect(r2.data.item.properties.body).toBe("second version");
   });
 
+  it("lands concurrent creates of one natural key on one row", async () => {
+    // Two devices sharing a claim, or a connector retrying in parallel: every
+    // send is answered as the upsert, and none is refused. Several rounds,
+    // because one round of a few sends can be served in order by chance.
+    const SENDS = 4;
+    for (let round = 0; round < 10; round++) {
+      const sourceId = `dedup-race-${generateId()}`;
+      const sends = await Promise.all(
+        Array.from({ length: SENDS }, (_, i) =>
+          client.createItem(
+            createNote({
+              source: ctx.source,
+              source_id: sourceId,
+              properties: { body: `send ${String(i)}` },
+            }),
+          ),
+        ),
+      );
+      for (const sent of sends) {
+        expect(sent.ok, JSON.stringify(sent.error)).toBe(true);
+      }
+      const ids = new Set(sends.map((sent) => sent.data.item.id));
+      expect(ids.size).toBe(1);
+      const [id] = [...ids] as [string];
+      trackItem(ctx, id);
+      expect(sends.filter((sent) => sent.status === 201)).toHaveLength(1);
+      const versions = sends
+        .map((sent) => sent.data.item.version)
+        .sort((a, b) => a - b);
+      expect(versions).toEqual([1, 2, 3, 4]);
+    }
+  });
+
   it("refuses a create naming an id that is not the row its natural key resolves", async () => {
     const sourceId = `dedup-id-${generateId()}`;
     const first = await client.createItem(

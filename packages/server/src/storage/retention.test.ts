@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { itemWrites } from "./item-writes.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -38,14 +39,14 @@ async function seedItemWithUpdatedAt(opts: {
   tier: "library" | "feed";
   updatedAtIso: string;
 }): Promise<void> {
-  await ctx.storage.items.create({
+  await itemWrites(ctx.storage).create({
     id: opts.id,
     type: "core.note",
     properties: { body: `seed ${opts.id}` },
     tier: opts.tier,
   });
   if (opts.state !== "active") {
-    await ctx.storage.items.transition(opts.id, opts.state);
+    await itemWrites(ctx.storage).transition(opts.id, opts.state);
   }
   // Force the timestamps to a contrived value via raw SQL through the
   // storage escape hatches.
@@ -140,7 +141,11 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new TrashPurger(ctx.storage.items, 60, () => FIXED_NOW);
+    const purger = new TrashPurger(
+      itemWrites(ctx.storage),
+      60,
+      () => FIXED_NOW,
+    );
 
     const deleted = await purger.runOnce();
     expect(deleted).toBe(2);
@@ -163,7 +168,11 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const disabled = new TrashPurger(ctx.storage.items, 0, () => FIXED_NOW);
+    const disabled = new TrashPurger(
+      itemWrites(ctx.storage),
+      0,
+      () => FIXED_NOW,
+    );
     expect(await disabled.runOnce()).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
   });
@@ -180,13 +189,17 @@ describe("TrashPurger.runOnce — behavioral", () => {
       ).toISOString(),
     });
 
-    const purger = new TrashPurger(ctx.storage.items, 60, () => FIXED_NOW);
+    const purger = new TrashPurger(
+      itemWrites(ctx.storage),
+      60,
+      () => FIXED_NOW,
+    );
     expect(await purger.runOnce()).toBe(0);
     expect(await rowExists(itemId)).toBe(true);
 
     // Advance the clock past the cutoff and re-run.
     const laterPurger = new TrashPurger(
-      ctx.storage.items,
+      itemWrites(ctx.storage),
       60,
       () => new Date(FIXED_NOW.getTime() + 31 * MS_PER_DAY),
     );
@@ -219,7 +232,7 @@ describe("TrashPurger — the instance config override", () => {
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
-      ctx.storage.items,
+      itemWrites(ctx.storage),
       30, // the instance default the override beats
       () => FIXED_NOW,
       retentionOverride,
@@ -248,7 +261,7 @@ describe("TrashPurger — the instance config override", () => {
       configField: "trash_retention_days",
     };
     const purger = new TrashPurger(
-      ctx.storage.items,
+      itemWrites(ctx.storage),
       60,
       () => FIXED_NOW,
       retentionOverride,
@@ -511,7 +524,7 @@ describe("DcrClientCleaner.runOnce — reaps grantless DCR clients", () => {
       clientId: oldWithAppGrant,
       createdAt: new Date(FIXED_NOW.getTime() - 90 * MS_PER_DAY),
     });
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       type: "system.connection",
       tier: "library",
       state: "active",
@@ -632,7 +645,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
    * nor the activity purge can reach it.
    */
   async function seedRevokedGrant(revokedAt: string) {
-    const item = await ctx.storage.items.create({
+    const item = await itemWrites(ctx.storage).create({
       type: "system.connection",
       properties: {
         kind: "app",
@@ -651,20 +664,21 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
 
   it("removes an app grant row revoked before the window", async () => {
     const id = await seedRevokedGrant(OLD);
-    const deleted =
-      await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    const deleted = await itemWrites(
+      ctx.storage,
+    ).purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(deleted).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
   });
 
   it("keeps one revoked inside the window", async () => {
     const id = await seedRevokedGrant(RECENT);
-    await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    await itemWrites(ctx.storage).purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
   it("leaves a live grant alone, whatever its age", async () => {
-    const live = await ctx.storage.items.create({
+    const live = await itemWrites(ctx.storage).create({
       type: "system.connection",
       properties: {
         kind: "app",
@@ -673,20 +687,20 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
         client_id: "live",
       },
     });
-    await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    await itemWrites(ctx.storage).purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(await ctx.storage.items.get(live.id)).not.toBeNull();
   });
 
   it("is a no-op at retentionDays 0, like every other housekeeping job here", async () => {
     const id = await seedRevokedGrant(OLD);
-    const purger = new RevokedGrantPurger(ctx.storage.items, 0);
+    const purger = new RevokedGrantPurger(itemWrites(ctx.storage), 0);
     expect(await purger.runOnce()).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 
   it("sweeps through the purger at its configured window", async () => {
     const id = await seedRevokedGrant(OLD);
-    const purger = new RevokedGrantPurger(ctx.storage.items, 90);
+    const purger = new RevokedGrantPurger(itemWrites(ctx.storage), 90);
     expect(await purger.runOnce()).toBe(1);
     await expect(ctx.storage.items.get(id)).resolves.toBeNull();
   });
@@ -702,7 +716,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     // shape should not occur. That is the argument for pinning it rather than
     // against: if it ever does occur, the row is a LIVE grant and sweeping it
     // deletes an app's access with no revocation behind it.
-    const resurrected = await ctx.storage.items.create({
+    const resurrected = await itemWrites(ctx.storage).create({
       type: "system.connection",
       properties: {
         kind: "app",
@@ -712,8 +726,9 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
         client_id: "revoked-then-reapproved",
       },
     });
-    const deleted =
-      await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    const deleted = await itemWrites(
+      ctx.storage,
+    ).purgeRevokedAppGrantsOlderThan(CUTOFF);
     expect(deleted).toBe(0);
     expect(await ctx.storage.items.get(resurrected.id)).not.toBeNull();
   });
@@ -723,7 +738,7 @@ describe("RevokedGrantPurger.runOnce — the revoked grant row sweep", () => {
     // way the trash purge is matches none of these, because an
     // ordinarily-revoked grant sits at `state: "active"`.
     const id = await seedRevokedGrant(OLD);
-    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await itemWrites(ctx.storage).purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 });

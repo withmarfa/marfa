@@ -8,8 +8,11 @@
  * can stay per-row.
  *
  * Authorization: matched_ids were resolved at job-create-time inside a
- * request context with full type-permission narrowing, and the worker
- * hands each chunk only the ids the queuing credential may still write.
+ * request context with full type-permission narrowing, the worker hands
+ * each chunk only the ids the queuing credential may still write, and the
+ * property-shaped and tag arms ask again of each row inside the chunk's
+ * transaction, as it stands when it is written: the first through the item
+ * write, the tag arm itself.
  *
  * Every chunk publishes what it wrote, on every action. The publish is
  * what appends to the event log, and the log is what a client rebuilding
@@ -20,27 +23,20 @@
  * Each publish happens after the chunk's transaction commits, and reuses
  * the rows the writes returned rather than reading them back.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { CascadeRoot, Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
-import {
-  getTypeSchema,
-  resolveEnforcement,
-  softDeleteState,
-  validateProperties,
-} from "@withmarfa/shared";
-import {
-  mergeUpdateProperties,
-  resolveIncomingProperties,
-} from "../storage/merge-properties.js";
+import { ErrorCode, MarfaError, softDeleteState } from "@withmarfa/shared";
+import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
-import { readInstanceConfig } from "../storage/instance-config.js";
-import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { blobProof } from "../routes/_blob-reach.js";
 import { sourceTypesFor } from "../routes/_edge-visibility.js";
 import type { LiveCredential } from "../auth/live-credential.js";
+import { writeItem } from "../storage/item-write.js";
+import type { ItemUpdate } from "../storage/item-write.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -140,12 +136,12 @@ async function runTransitionChunk({
             : null;
         const root = row?.state === "trashed" ? { id, type: row.type } : null;
         const back = root
-          ? (await storage.items.restoreBeneath(id)).map((item) => ({
+          ? (await itemWrites(storage).restoreBeneath(id)).map((item) => ({
               item,
               restoredWith: root,
             }))
           : [];
-        moved.push(await storage.items.transition(id, input.state));
+        moved.push(await itemWrites(storage).transition(id, input.state));
         for (const entry of back) {
           broughtBack.push(entry);
           backInChunk.add(entry.item.id);
@@ -217,7 +213,9 @@ async function runPurgeChunk({
       // restored since then is one the person took back, and the filter may
       // have matched a row that was never in the trash at all. Edges go
       // with the rows taken, in one DELETE per direction.
-      const taken = new Set(await storage.items.bulkPurge([...found.keys()]));
+      const taken = new Set(
+        await itemWrites(storage).bulkPurge([...found.keys()]),
+      );
       if (taken.size > 0) {
         cascaded.push(
           ...(await storage.edges.deleteBySourceBatch([...taken])),
@@ -321,6 +319,7 @@ async function runUpdateTagsChunk({
   storage,
   input,
   ids,
+  credential,
 }: RunChunkContext): Promise<ChunkOutcome> {
   if (input.action !== "update_tags")
     throw new Error("runUpdateTagsChunk: wrong action");
@@ -334,19 +333,30 @@ async function runUpdateTagsChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        let metadata: Metadata | undefined;
-        if (add.length > 0) {
-          metadata = await storage.metadata.addTags(id, add);
-        }
-        for (const tag of remove) {
-          // Announced whether or not the tag was there to remove. That is
-          // deliberate: the doors report on the request rather than on the
-          // diff, a caller cannot tell the two apart from the response
-          // either, and comparing before and after per tag would cost a
-          // read per row to suppress an event a subscriber treats as
-          // idempotent anyway.
-          metadata = await storage.metadata.removeTag(id, tag);
-        }
+        // A savepoint per row, holding the row's gate and its tag writes, so
+        // the gate is asked of the row as it stands when it is written and a
+        // row that fails leaves nothing behind.
+        const metadata = await storage.runInTransaction(async () => {
+          const row = await storage.items.getIncludingTrashed(id);
+          if (!row || !mayReadType(credential.key, row.type)) {
+            throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+          }
+          checkTypeAccess(credential.key, row.type, "write");
+          let written: Metadata | undefined;
+          if (add.length > 0) {
+            written = await storage.metadata.addTags(id, add);
+          }
+          for (const tag of remove) {
+            // Announced whether or not the tag was there to remove. That is
+            // deliberate: the doors report on the request rather than on
+            // the diff, a caller cannot tell the two apart from the
+            // response either, and comparing before and after per tag
+            // would cost a read per row to suppress an event a subscriber
+            // treats as idempotent anyway.
+            written = await storage.metadata.removeTag(id, tag);
+          }
+          return written;
+        });
         if (metadata) changed.set(id, metadata);
         succeeded.push(id);
       } catch (err) {
@@ -395,146 +405,55 @@ async function runUpdateTagsChunk({
   return { succeeded, errors };
 }
 
-async function runUpdateTierChunk({
-  storage,
-  input,
-  ids,
-}: RunChunkContext): Promise<ChunkOutcome> {
+async function runUpdateTierChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
+  const { input } = ctx;
   if (input.action !== "update_tier")
     throw new Error("runUpdateTierChunk: wrong action");
-  const succeeded: string[] = [];
-  const errors: BulkActionErrorEntry[] = [];
-  // Collected inside the transaction, published after it commits.
-  const updated: Item[] = [];
-  await storage.runInTransaction(async () => {
-    for (const id of ids) {
-      try {
-        const result = await storage.items.update(id, { tier: input.tier });
-        if ("error" in result) {
-          errors.push({
-            id,
-            code: "conflict",
-            message: "Version conflict during bulk update_tier",
-          });
-        } else {
-          updated.push(result);
-          succeeded.push(id);
-        }
-      } catch (err) {
-        errors.push(toErrorEntry(id, err));
-      }
-    }
-  });
-  await publishUpdated(updated, input);
-  return { succeeded, errors };
+  return await runUpdateChunk(ctx, { tier: input.tier }, "update_tier");
 }
 
-async function runUpdatePropertiesChunk({
-  storage,
-  input,
-  ids,
-  credential,
-}: RunChunkContext): Promise<ChunkOutcome> {
+async function runUpdatePropertiesChunk(
+  ctx: RunChunkContext,
+): Promise<ChunkOutcome> {
+  const { input, storage, credential } = ctx;
   if (input.action !== "update_properties")
     throw new Error("runUpdatePropertiesChunk: wrong action");
-  const succeeded: string[] = [];
-  const errors: BulkActionErrorEntry[] = [];
-  // Read when the chunk writes rather than when the job was queued, as every
-  // other write door reads the lever when it writes: a lever set while the
-  // job waited holds for the rows it has not yet reached.
-  const enforcement = resolveEnforcement(
-    await readInstanceConfig(storage.settings),
-    credential.key,
+  // The patch is judged against each row it lands on, as the row stands when
+  // the chunk writes it rather than when the job was queued: strict mode and
+  // the merged result's validity, both asked by the item write.
+  return await runUpdateChunk(
+    ctx,
+    {
+      properties: input.patch,
+      blob_proof: blobProof(storage, credential.key, credential.kind),
+    },
+    "update_properties",
   );
-  // Collected inside the transaction, published after it commits.
-  const updated: Item[] = [];
-  await storage.runInTransaction(async () => {
-    for (const id of ids) {
-      try {
-        // The patch is judged against the row it lands on, which means
-        // reading the row: this door takes a filter rather than a list, so
-        // the ids were frozen when the job was made and the rows may have
-        // moved since. The single-item door judges the merged result rather
-        // than the body, so a patch removing a required field is refused
-        // even though it names no invalid value, and this judges the same
-        // thing through the same helper.
-        //
-        // Nothing judged it before, and this is the widest of the six
-        // enumerated item-write doors: one patch reaches every row the
-        // filter matched, so a single call could leave thousands invalid
-        // against their own schemas.
-        //
-        // The schema guard is the single-item door's. `validateProperties`
-        // reports an absent schema as `Unknown type` rather than as no
-        // opinion, so judging unguarded would refuse every row of a type
-        // this worker's registry does not carry.
-        const before = await storage.items.get(id);
-        // Of the patch the caller sent, per row of a type the lever names,
-        // through the function the other item write doors ask.
-        const undeclared =
-          before &&
-          undeclaredPropertyRefusal(enforcement, before.type, input.patch);
-        if (undeclared) {
-          errors.push({
-            id,
-            code: undeclared.code,
-            message: undeclared.message,
-            ...(undeclared.details && { details: undeclared.details }),
-          });
-          continue;
-        }
-        if (before && getTypeSchema(before.type)) {
-          const merged = mergeUpdateProperties(
-            before.properties,
-            resolveIncomingProperties(before.type, input.patch) ?? {},
-            "merge",
-          );
-          const validation = validateProperties(before.type, merged);
-          if (!validation.success) {
-            // Errored per row rather than thrown for the chunk: this route's
-            // established answer is that one unreachable row must not fail an
-            // action over thousands, and the loop already reports a version
-            // conflict that way.
-            errors.push({
-              id,
-              code: "invalid_properties",
-              message: `Invalid properties: ${validation.errors
-                .map((e) => `${e.field}: ${e.message}`)
-                .join("; ")}`,
-            });
-            continue;
-          }
-        }
-        const result = await storage.items.update(id, {
-          properties: input.patch,
-          blob_proof: blobProof(storage, credential.key, credential.kind),
-        });
-        if ("error" in result) {
-          errors.push({
-            id,
-            code: "conflict",
-            message: "Version conflict during bulk update_properties",
-          });
-        } else {
-          updated.push(result);
-          succeeded.push(id);
-        }
-      } catch (err) {
-        errors.push(toErrorEntry(id, err));
-      }
-    }
-  });
-  await publishUpdated(updated, input);
-  return { succeeded, errors };
 }
 
-async function runUpdateOccurredAtChunk({
-  storage,
-  input,
-  ids,
-}: RunChunkContext): Promise<ChunkOutcome> {
+async function runUpdateOccurredAtChunk(
+  ctx: RunChunkContext,
+): Promise<ChunkOutcome> {
+  const { input } = ctx;
   if (input.action !== "update_occurred_at")
     throw new Error("runUpdateOccurredAtChunk: wrong action");
+  return await runUpdateChunk(
+    ctx,
+    { occurred_at: input.occurred_at },
+    "update_occurred_at",
+  );
+}
+
+/**
+ * The three property-shaped actions: the same change to every row, each row
+ * through the item write, which runs as a savepoint of the chunk's
+ * transaction, so a row that fails leaves nothing behind and the rest land.
+ */
+async function runUpdateChunk(
+  { storage, input, ids, credential }: RunChunkContext,
+  change: Omit<ItemUpdate, "op" | "id">,
+  action: string,
+): Promise<ChunkOutcome> {
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   // Collected inside the transaction, published after it commits.
@@ -542,18 +461,20 @@ async function runUpdateOccurredAtChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        const result = await storage.items.update(id, {
-          occurred_at: input.occurred_at,
-        });
-        if ("error" in result) {
+        const result = await writeItem(
+          storage,
+          { kind: "credential", key: credential.key },
+          { op: "update", id, ...change },
+        );
+        if (result.outcome === "updated") {
+          updated.push(result.item);
+          succeeded.push(id);
+        } else {
           errors.push({
             id,
             code: "conflict",
-            message: "Version conflict during bulk update_occurred_at",
+            message: `Version conflict during bulk ${action}`,
           });
-        } else {
-          updated.push(result);
-          succeeded.push(id);
         }
       } catch (err) {
         errors.push(toErrorEntry(id, err));
@@ -588,6 +509,14 @@ async function publishUpdated(
 }
 
 function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {
+  if (err instanceof MarfaError) {
+    return {
+      id,
+      code: err.code,
+      message: err.message,
+      ...(err.details && { details: err.details }),
+    };
+  }
   if (err instanceof Error && "code" in err && typeof err.code === "string") {
     return { id, code: err.code, message: err.message };
   }

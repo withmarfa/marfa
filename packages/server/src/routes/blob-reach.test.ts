@@ -7,6 +7,7 @@
  * a key, nothing lends them before the door under test writes the digest,
  * and a reader that may read every type is refused them until it has.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
@@ -593,8 +594,8 @@ describe("what proves holding the bytes", () => {
     expect(exported.status).toBe(200);
     const archive = Buffer.from(await exported.arrayBuffer());
 
-    await ctx.storage.items.transition(item.id, "trashed");
-    await ctx.storage.items.purge(item.id);
+    await itemWrites(ctx.storage).transition(item.id, "trashed");
+    await itemWrites(ctx.storage).purge(item.id);
     const restored = await ctx.app.request("/admin/restore-archive", {
       method: "POST",
       headers: {
@@ -846,9 +847,9 @@ describe("the reference index a blob door reads", () => {
     expect(await read(reader, first.hash)).toBe(404);
     expect(await read(reader, second.hash)).toBe(200);
 
-    await ctx.storage.items.transition(item.id, "trashed");
+    await itemWrites(ctx.storage).transition(item.id, "trashed");
     expect(await read(reader, second.hash)).toBe(200);
-    await ctx.storage.items.purge(item.id);
+    await itemWrites(ctx.storage).purge(item.id);
     expect((await indexed(item.id)).held).toEqual([]);
     expect(await read(reader, second.hash)).toBe(404);
   });

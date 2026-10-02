@@ -24,6 +24,7 @@
  * resolves through the same method. The shape is written onto the row, and
  * what that proves, that the predicate reads the field, is the point.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
@@ -144,7 +145,7 @@ async function approveDeviceFlow(
 async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
   const row = await c.storage.items.get(id);
   if (!row) throw new Error(`softDeleteGrantRow: no item ${id}`);
-  await c.storage.items.transition(id, "revoked");
+  await itemWrites(c.storage).transition(id, "revoked");
 }
 
 /** Every projected grant row, whatever either axis says. */

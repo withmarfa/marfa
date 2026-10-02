@@ -7,6 +7,7 @@
  * cascade has real tokens and a real consent row to remove, and the
  * projection is backdated afterwards the way time would have.
  */
+import { itemWrites } from "./item-writes.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import {
@@ -150,7 +151,7 @@ async function backdate(
   const then = new Date(Date.now() - daysAgo * DAY_MS).toISOString();
   const props = { ...grant.properties };
   for (const f of fields) props[f] = then;
-  await c.storage.items.update(grant.id, { properties: props });
+  await itemWrites(c.storage).update(grant.id, { properties: props });
 }
 
 async function tokenRows(c: TestContext, clientId: string): Promise<number> {
@@ -240,7 +241,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
     const props: Record<string, unknown> = { ...grant.properties };
     Reflect.deleteProperty(props, "last_used_at");
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
-    await ctx.storage.items.update(grant.id, {
+    await itemWrites(ctx.storage).update(grant.id, {
       properties: props,
       properties_mode: "replace",
     });
@@ -265,15 +266,25 @@ describe("GrantInactivityRetirer.runOnce", () => {
     const storageFailingWith = (code: string) => {
       const updated: string[] = [];
       const storage = {
+        runInTransaction: <T>(fn: () => Promise<T>) => fn(),
         items: {
           listInactiveAppGrants: () => Promise.resolve(inactive),
+          get: (id: string) =>
+            Promise.resolve({
+              id,
+              type: "system.connection",
+              state: "active",
+              properties: {},
+              version: 1,
+            }),
           update: (id: string) => {
             updated.push(id);
             return id === "grant-a"
               ? Promise.reject(Object.assign(new Error(code), { code }))
-              : Promise.resolve(null);
+              : Promise.resolve({ id });
           },
         },
+        metadata: { get: () => Promise.resolve(null) },
         audit: { log: () => Promise.resolve() },
       } as unknown as Storage;
       return { storage, updated };

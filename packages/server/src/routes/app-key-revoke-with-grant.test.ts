@@ -14,6 +14,7 @@
  * sweep that keys on the client id alone reaches keys the app did not mint,
  * because one client id can stand behind more than one grant.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   createTestContext,
@@ -61,7 +62,7 @@ async function seedKey(
 /** One active grant for `CLIENT`, plus a key that app made and a key the
  *  person made. */
 async function seedGrant() {
-  const grant = await ctx.storage.items.create({
+  const grant = await itemWrites(ctx.storage).create({
     type: "system.connection",
     tier: "library",
     state: "active",

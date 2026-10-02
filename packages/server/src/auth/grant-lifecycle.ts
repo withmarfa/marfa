@@ -1,5 +1,6 @@
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
+import { writeItem } from "../storage/item-write.js";
 import { withConsentLock } from "./consent-lock.js";
 import { log } from "../middleware/logger.js";
 
@@ -136,13 +137,19 @@ export async function revokeProjectedGrant(
       });
       for (const key of keys) await storage.keys.revoke(key.id);
     }
-    await storage.items.update(opts.itemId, {
-      properties: {
-        ...opts.properties,
-        status: "revoked",
-        revoked_at: new Date().toISOString(),
+    await writeItem(
+      storage,
+      { kind: "platform" },
+      {
+        op: "update",
+        id: opts.itemId,
+        properties: {
+          ...opts.properties,
+          status: "revoked",
+          revoked_at: new Date().toISOString(),
+        },
       },
-    });
+    );
   };
   // Without both ids there is no consent row and nothing to race over,
   // and no key to lock on either. The state flip still stands as the

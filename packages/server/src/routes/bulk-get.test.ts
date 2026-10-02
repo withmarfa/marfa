@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   request,
@@ -220,7 +221,7 @@ describe("POST /items/bulk-get and the system token", () => {
     // to the operator key, whose own type permissions are empty, so no
     // credential writes one. What this door does with the row afterwards is
     // the same either way.
-    const folder = await ctx.storage.items.create({
+    const folder = await itemWrites(ctx.storage).create({
       type: "system.folder",
       properties: { title: `bulk-sys-${marker}` },
       source: `bulk-get-system-${marker}`,

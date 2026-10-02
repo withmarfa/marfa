@@ -1,6 +1,6 @@
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
-import { wrapDbWithRequestContext, withSqliteTx } from "./request-context.js";
+import { wrapDbWithRequestContext } from "./request-context.js";
 import { SqliteItemStore } from "./item-store.js";
 import { SqliteMetadataStore } from "./metadata-store.js";
 import { SqliteVersionStore } from "./version-store.js";
@@ -166,15 +166,11 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     connectorState: new SqliteConnectorStateStore(db),
     inbound: new SqliteInboundStore(db),
     /**
-     * Genuinely transactional under libsql + ALS routing. Opens a libsql
-     * `BEGIN IMMEDIATE` via Drizzle's `db.transaction(async tx => …)`,
-     * stores `tx` on the per-request ALS so every store call inside `fn`
-     * resolves its executor to the transaction, and rolls back on throw.
+     * Through the wrapped handle, so a call made inside an open transaction
+     * becomes a savepoint of it, as the stores' own transactions do.
      */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
-      return await baseDb.transaction(async (tx) => {
-        return await withSqliteTx(tx, async () => fn());
-      });
+      return await db.transaction(async () => await fn());
     },
     betterAuthDb: baseDb,
     /** Raw query escape hatch for the storage tests; nothing outside a

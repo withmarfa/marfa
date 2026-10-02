@@ -7010,11 +7010,11 @@
             }
           },
           "403": {
-            "description": "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
+            "description": "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on; `forbidden` when the body changes `source_id` on a row whose source the key neither writes under nor claims, named in `details.source`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -10489,7 +10489,7 @@
             }
           },
           "403": {
-            "description": "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
+            "description": "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type; `forbidden` for a source the credential does not claim, or for an entry landing by `id` that would move a row's natural key under a source the key neither writes under nor claims. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal, `type_not_permitted` or `forbidden`, in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
             "content": {
               "application/json": {
                 "schema": {

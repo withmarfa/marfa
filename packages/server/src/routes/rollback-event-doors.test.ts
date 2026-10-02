@@ -54,6 +54,8 @@
  * would take the breakage on that one, never reach its real write, and pass
  * for the wrong reason.
  */
+import { itemWrites } from "../storage/item-writes.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,14 +129,22 @@ interface Injection {
  * record each door's shape as an observation rather than as a reading of
  * the source.
  */
+/**
+ * Set while a door's outermost transaction runs. A call made inside it is a
+ * savepoint of that transaction rather than one of its own, so neither the
+ * count nor the forced rollback below sees it.
+ */
+const outermost = new AsyncLocalStorage<true>();
+
 function countTransactions(): Injection {
   const original = ctx.storage.runInTransaction.bind(ctx.storage);
   let fired = 0;
   ctx.storage.runInTransaction = async <T>(
     fn: () => T | Promise<T>,
   ): Promise<T> => {
+    if (outermost.getStore()) return original(fn);
     fired += 1;
-    return original(fn);
+    return outermost.run(true, () => original(fn));
   };
   return {
     fired: () => fired,
@@ -158,11 +168,14 @@ function rollBackAfterTheWrite(): Injection {
   ctx.storage.runInTransaction = async <T>(
     fn: () => T | Promise<T>,
   ): Promise<T> => {
-    return original(async () => {
-      await fn();
-      fired += 1;
-      throw new ForcedFailure("the transaction body");
-    });
+    if (outermost.getStore()) return original(fn);
+    return outermost.run(true, () =>
+      original(async () => {
+        await fn();
+        fired += 1;
+        throw new ForcedFailure("the transaction body");
+      }),
+    );
   };
   return {
     fired: () => fired,
@@ -592,7 +605,7 @@ const doors: Door[] = [
     name: "POST /items/{id}/transition moves an item's state",
     family: "item",
     transactions: 1,
-    breakage: () => breakWrite(ctx.storage.items, "transition"),
+    breakage: () => breakWrite(itemWrites(ctx.storage), "transition"),
     setup: async () => ({ item: await makeNote("transitioning") }),
     act: async (s) => {
       const res = await request(
@@ -616,7 +629,7 @@ const doors: Door[] = [
     name: "POST /items/{id}/restore brings an item back",
     family: "item",
     transactions: 1,
-    breakage: () => breakWrite(ctx.storage.items, "restore"),
+    breakage: () => breakWrite(itemWrites(ctx.storage), "restore"),
     setup: async () => {
       const item = await makeNote("to restore");
       await request(ctx.app, "DELETE", `/items/${item}`, {
@@ -669,8 +682,8 @@ const doors: Door[] = [
   {
     name: "PUT /items/{id}/metadata replaces the tags",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "set"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "PUT", `/items/${s.item}/metadata`, {
@@ -687,8 +700,8 @@ const doors: Door[] = [
   {
     name: "PATCH /items/{id}/metadata merges the tags",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "merge"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "PATCH", `/items/${s.item}/metadata`, {
@@ -705,8 +718,8 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/tags adds tags",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "addTags"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", `/items/${s.item}/tags`, {
@@ -723,8 +736,8 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/tags/{tag} removes a tag",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "removeTag"),
+    transactions: 1,
+
     setup: async () => {
       const item = await makeNote("tagged");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
@@ -750,8 +763,8 @@ const doors: Door[] = [
   {
     name: "PUT /items/{id}/extensions/{namespace} writes a sidecar",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "setExtension"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("with sidecar") }),
     act: async (s) => {
       const res = await request(
@@ -771,8 +784,8 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/extensions/{namespace} drops a sidecar",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "deleteExtension"),
+    transactions: 1,
+
     setup: async () => {
       const item = await makeNote("with sidecar");
       await request(ctx.app, "PUT", `/items/${item}/extensions/${NAMESPACE}`, {
@@ -898,8 +911,7 @@ const doors: Door[] = [
   {
     name: "POST /folders creates a folder",
     family: "item",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.items, "create"),
+    transactions: 1,
     setup: () => Promise.resolve({ tag: uniq("folder") }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/folders", {

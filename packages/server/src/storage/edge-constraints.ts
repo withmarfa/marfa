@@ -6,7 +6,7 @@ import {
 } from "@withmarfa/shared";
 import type { Edge, EdgeTypeSchema } from "@withmarfa/shared";
 import { depthInsideFolder } from "../folder-path.js";
-import type { EdgeStore, ItemStore } from "./interface.js";
+import type { EdgeStore, ItemReader } from "./interface.js";
 
 /**
  * Edge types that can reach around and close a cycle over more than one
@@ -163,7 +163,7 @@ export interface EdgeProposal {
  */
 export async function assertEdgesCanBeCreated(
   edgeStore: EdgeStore,
-  itemStore: ItemStore,
+  itemStore: ItemReader,
   proposals: EdgeProposal[],
   mayRead: (type: string) => boolean,
   opts: { replay?: boolean; replacing?: Edge } = {},
@@ -464,7 +464,7 @@ export async function assertEdgesCanBeCreated(
 /** Thin single-edge wrapper — preserves the pre-batch call shape. */
 export async function assertEdgeCanBeCreated(
   edgeStore: EdgeStore,
-  itemStore: ItemStore,
+  itemStore: ItemReader,
   input: EdgeProposal,
   mayRead: (type: string) => boolean,
 ): Promise<EdgeTypeSchema> {

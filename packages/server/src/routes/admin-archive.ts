@@ -43,6 +43,7 @@ import {
   operatorOnly,
   requireAuth,
 } from "../middleware/auth.js";
+import { writeItem } from "../storage/item-write.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { HashingTransform } from "../storage/blob-store.js";
@@ -754,32 +755,37 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
         for (const { item, metadata: meta, lending_blobs: lending } of items) {
           const archiveId = typeof item.id === "string" ? item.id : undefined;
           try {
-            const created = await storage.items.create({
-              // A digest lends here exactly where it lent in the instance the
-              // archive was taken from, and a line naming none lends nothing.
-              blob_proof: (hash) =>
-                Promise.resolve(
-                  Array.isArray(lending) && lending.includes(hash),
-                ),
-              ...(archiveId !== undefined && { id: archiveId }),
-              // The row comes back under its archived id, so it comes
-              // back at its archived version too. Re-minting at 1 lets a
-              // client's stale precondition pass, later, against content
-              // it never read from.
-              ...(typeof item.version === "number" && {
-                version: item.version,
-              }),
-              type: item.type as string,
-              properties: (item.properties ?? {}) as Record<string, unknown>,
-              state: item.state as ItemState | undefined,
-              tier: item.tier as Tier | undefined,
-              occurred_at: item.occurred_at as string | undefined,
-              source: item.source as string | undefined,
-              source_id: item.source_id as string | undefined,
-              capture_latitude: item.capture_latitude as number | undefined,
-              capture_longitude: item.capture_longitude as number | undefined,
-              tags: archiveTags(meta),
-            });
+            const { item: created } = await writeItem(
+              storage,
+              { kind: "platform" },
+              {
+                op: "create",
+                // A digest lends here exactly where it lent in the instance the
+                // archive was taken from, and a line naming none lends nothing.
+                blob_proof: (hash) =>
+                  Promise.resolve(
+                    Array.isArray(lending) && lending.includes(hash),
+                  ),
+                ...(archiveId !== undefined && { id: archiveId }),
+                // The row comes back under its archived id, so it comes
+                // back at its archived version too. Re-minting at 1 lets a
+                // client's stale precondition pass, later, against content
+                // it never read from.
+                ...(typeof item.version === "number" && {
+                  version: item.version,
+                }),
+                type: item.type as string,
+                properties: (item.properties ?? {}) as Record<string, unknown>,
+                state: item.state as ItemState | undefined,
+                tier: item.tier as Tier | undefined,
+                occurred_at: item.occurred_at as string | undefined,
+                source: item.source as string | undefined,
+                source_id: item.source_id as string | undefined,
+                capture_latitude: item.capture_latitude as number | undefined,
+                capture_longitude: item.capture_longitude as number | undefined,
+                tags: archiveTags(meta),
+              },
+            );
             imported++;
             resolvableIds.add(created.id);
 

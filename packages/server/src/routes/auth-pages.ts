@@ -7,6 +7,7 @@ import { requirePermission, requireAuth } from "../middleware/auth.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
+import { writeItem } from "../storage/item-write.js";
 import type {
   DeviceCodeRefusal,
   MarfaAuth,
@@ -37,17 +38,16 @@ import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 
 /**
- * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
- * through `ItemStore.create` on first consent and `ItemStore.update` on
- * re-consent so the row gets full ItemStore treatment: search indexing, metadata-row insertion, versions snapshot on
- * re-consent, the `created`/`updated` event emission, and `source` /
- * `origin` stamping. Returns the connection-item id, whether the call
+ * Persist (or refresh) a `kind: app` connection through `writeItem`, which
+ * creates it on first consent and updates it on re-consent, so the row gets
+ * what every item write gets: validation, search indexing, metadata-row
+ * insertion, a versions snapshot on re-consent, and `source` stamping. Returns the connection-item id, whether the call
  * created vs updated the projection, and the scope list the record now
  * holds, which on re-consent is the union rather than the request, so the
  * caller's audit row can report both without recomputing it.
  *
- * Uses `findGrantItemId` to detect the re-consent case and routes through
- * `items.update` (same shape as the code-flow consent's
+ * Uses `findGrantItemId` to detect the re-consent case and updates through
+ * `writeItem` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
  * writes there are the standing grant plus this approval, never less: an
@@ -142,20 +142,26 @@ async function createUserAppGrant(
           ? (existing.properties.scopes as string[])
           : [];
       const mergedScopes = [...new Set([...standingScopes, ...scopes])];
-      const updated = await storage.items.update(existingItemId, {
-        properties: {
-          scopes: mergedScopes,
-          status: "active",
-          granted_at: now,
-          revoked_at: undefined,
+      const written = await writeItem(
+        storage,
+        { kind: "platform" },
+        {
+          op: "update",
+          id: existingItemId,
+          properties: {
+            scopes: mergedScopes,
+            status: "active",
+            granted_at: now,
+            revoked_at: undefined,
+          },
         },
-      });
-      if (!("error" in updated)) {
-        const metadata = await storage.metadata.get(updated.id);
+      );
+      if (written.outcome === "updated") {
+        const updated = written.item;
         await publish({
           type: "updated",
           item: updated,
-          metadata,
+          metadata: written.metadata,
         });
         return {
           id: updated.id,
@@ -169,22 +175,26 @@ async function createUserAppGrant(
   // First-time consent: insert a fresh row. No tier named: `tier` is a
   // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
   // writer of one leaves it to the store the way `POST /items` does.
-  const item = await storage.items.create({
-    type: "system.connection",
-    state: "active",
-    properties: {
-      kind: "app",
-      client_id: clientId,
-      // Store the consenting auth_user id so the revoke cascade
-      // (`revokeTokensForGrant(clientId, userId)`) can find the user.
-      user_id: consentingUser.id,
-      scopes,
-      status: "active",
-      granted_at: now,
+  const { item, metadata } = await writeItem(
+    storage,
+    { kind: "platform" },
+    {
+      op: "create",
+      type: "system.connection",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: clientId,
+        // Store the consenting auth_user id so the revoke cascade
+        // (`revokeTokensForGrant(clientId, userId)`) can find the user.
+        user_id: consentingUser.id,
+        scopes,
+        status: "active",
+        granted_at: now,
+      },
+      source,
     },
-    source,
-  });
-  const metadata = await storage.metadata.get(item.id);
+  );
   await publish({ type: "created", item, metadata });
   return { id: item.id, created: true, scopes };
 }
