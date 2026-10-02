@@ -841,7 +841,7 @@ describe("a purge cut short between the row and the bytes", () => {
     await reporter.runOnce();
     time.advance(1);
     failNextDelete(ctx);
-    await expect(reporter.runOnce()).rejects.toThrow("store unavailable");
+    expect(await reporter.runOnce()).toMatchObject({ purged: 0 });
     // The row went first: nothing names bytes that may be gone.
     expect(await ctx.storage.blobs.get(hash)).toBeNull();
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
@@ -849,6 +849,38 @@ describe("a purge cut short between the row and the bytes", () => {
     await reporter.runOnce();
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
     expect(await ctx.storage.blobs.listPendingPurges()).toEqual([]);
+  });
+
+  it("purges the rest of a run when one blob's purge fails", async () => {
+    ctx = await createTestContext();
+    const first = await upload(ctx, "its purge meets a busy database");
+    const second = await upload(ctx, "its purge goes ahead");
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    time.advance(1);
+    const registry = ctx.storage.blobs;
+    const claim = registry.claimOrphanPurge.bind(registry);
+    registry.claimOrphanPurge = (hash, before, runStartedAt) =>
+      hash === first
+        ? Promise.reject(new Error("SQLITE_BUSY: database is locked"))
+        : claim(hash, before, runStartedAt);
+    try {
+      expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 1 });
+    } finally {
+      registry.claimOrphanPurge = claim;
+    }
+    expect(await ctx.blobs.disk.has(second)).toBeNull();
+    expect(await ctx.blobs.disk.has(first)).not.toBeNull();
+    // Left for the next run, which purges it.
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
+    expect(await ctx.blobs.disk.has(first)).toBeNull();
   });
 
   it("keeps reporting while a store's deletes keep failing", async () => {
@@ -867,7 +899,7 @@ describe("a purge cut short between the row and the bytes", () => {
     const original = disk.delete.bind(disk);
     disk.delete = () => Promise.reject(new Error("store unavailable"));
     try {
-      await expect(reporter.runOnce()).rejects.toThrow("store unavailable");
+      expect(await reporter.runOnce()).toMatchObject({ purged: 0 });
       expect(await ctx.storage.blobs.listPendingPurges()).toEqual([stuck]);
       // The unfinished purge is retried and logged, and the run still
       // reports what is new.
@@ -901,7 +933,7 @@ describe("a purge cut short between the row and the bytes", () => {
     await reporter.runOnce();
     time.advance(1);
     failNextDelete(ctx);
-    await expect(reporter.runOnce()).rejects.toThrow("store unavailable");
+    expect(await reporter.runOnce()).toMatchObject({ purged: 0 });
     expect(await upload(ctx, content)).toBe(hash);
     time.advance(1);
     await reporter.runOnce();

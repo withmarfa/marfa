@@ -70,14 +70,23 @@ export class BlobOrphanReporter {
     const before = new Date(now.getTime() - this.graceMs).toISOString();
     const due = await this.storage.blobs.listOrphansToPurge(before, startedAt);
     let purged = 0;
+    // One blob's failure, a busy database or a failing store, is logged
+    // and left for the next run rather than ending this one.
     for (const hash of due) {
-      if (
-        await purgeBlob(this.storage, this.stores, hash, {
-          before,
-          runStartedAt: startedAt,
-        })
-      ) {
-        purged += 1;
+      try {
+        if (
+          await purgeBlob(this.storage, this.stores, hash, {
+            before,
+            runStartedAt: startedAt,
+          })
+        ) {
+          purged += 1;
+        }
+      } catch (err) {
+        log("error", "blob.purge_failed", {
+          hash,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     }
     const reported = (await this.storage.blobs.listOrphans()).length;
