@@ -1205,6 +1205,11 @@ export function eventRoutes(
                     // release a hold for.
                     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                     if (state.closed) return false;
+                    // Room first, then the row is judged and sent with
+                    // nothing between: a wait between the two would let a
+                    // heartbeat narrow the credential after the row was
+                    // judged under the wider one.
+                    if (!(await paced("a replay"))) return false;
                     const isEdge = event.edge_id !== null;
                     // The same rule the live path applies, and the
                     // reason it is written as one: an edge carries no
@@ -1339,7 +1344,6 @@ export function eventRoutes(
                       }
                     }
 
-                    if (!(await paced("a replay"))) return false;
                     const replayWireType = wireEventName(
                       event.event_type as
                         ItemEventWithId["type"] | EdgeEventWithId["type"],

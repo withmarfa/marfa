@@ -218,6 +218,69 @@ describe("a replay to a slow reader", () => {
     expect(text).toContain("ZZsteady599ZZ");
   });
 
+  it("judges each row by the credential as it stands once there is room for it", async () => {
+    const from = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        items: Array.from({ length: 30 }, (_, i) => ({
+          type: "core.task",
+          properties: { title: `ZZpaced${String(i)}ZZ${BODY}` },
+        })),
+      },
+    });
+    expect(res.status).toBe(200);
+    const viewer = await ctx.storage.keys.create(
+      {
+        label: "paced-narrowed",
+        source: `paced-narrowed-${String(Date.now())}`,
+        type_permissions: { "core.task": "read", "core.note": "read" },
+        extension_permissions: {},
+        edge_permissions: {},
+        metadata_permissions: {},
+        permissions: [],
+        is_operator: false,
+      },
+      "paced-narrowed-hash",
+    );
+    const app = new Hono<AppEnv>();
+    app.use("*", async (c, next) => {
+      c.set("apiKey", viewer);
+      await next();
+    });
+    app.route(
+      "/events",
+      eventRoutes(ctx.storage, {
+        maxUnsentBytes: BOUND,
+        readerStallMs: 5_000,
+        keepAliveMs: 100,
+      }),
+    );
+    const stream = await app.request("/events", {
+      headers: { "Last-Event-ID": String(from) },
+    });
+    // The replay fills the queue and waits for the reader, who has not
+    // read; the key loses tasks, and a heartbeat reads it again.
+    await settle(300);
+    await ctx.storage.keys.update(viewer.id, {
+      type_permissions: { "core.note": "read" },
+    });
+    await settle(400);
+    const { text } = await readSse(stream, {
+      until: (seen) => seen.includes("event: stream_live"),
+    });
+    // Everything at or past the bound was queued after the reader began
+    // reading, so after the key changed. The witness: tasks were sent
+    // before it.
+    const before = text.slice(0, BOUND);
+    expect(before).toContain("ZZpaced0ZZ");
+    const after = text.slice(text.indexOf("\n\n", BOUND));
+    expect(
+      after,
+      "a task frame was sent after the key lost tasks",
+    ).not.toContain('"type":"core.task"');
+  });
+
   it("ends when the reader takes nothing for the stall budget", async () => {
     const from = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
     await backlog("stalled");
