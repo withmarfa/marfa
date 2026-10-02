@@ -10,6 +10,8 @@ use crate::wire::WireEdgeType;
 
 struct Entry {
     parent: Option<String>,
+    /// Whether the type declares a `display_hints` block of its own.
+    hinted: bool,
     title_field: Option<String>,
     thumbnail_field: Option<String>,
     body_field: Option<String>,
@@ -180,9 +182,14 @@ fn field(name: &str, definition: &Value, declared_by: &str) -> Result<TypeField,
 }
 
 /// The server's resolution of `GET /types/{id}`: fields merged from the root
-/// down, the nearer declaration winning, and the hints of the nearest type
-/// that has any. The listing already answers `roles` resolved.
-fn resolve(id: &str, held: &HashMap<String, Map<String, Value>>) -> Result<ItemType, CoreError> {
+/// down, the nearer declaration winning, and the hints by the rule every
+/// reader of the copy takes them by. The listing already answers `roles`
+/// resolved.
+fn resolve(
+    id: &str,
+    held: &HashMap<String, Map<String, Value>>,
+    hints: &Catalog,
+) -> Result<ItemType, CoreError> {
     let mut chain: Vec<(&str, &Map<String, Value>)> = Vec::new();
     let mut current = Some(id);
     while let Some(at) = current {
@@ -206,9 +213,6 @@ fn resolve(id: &str, held: &HashMap<String, Map<String, Value>>) -> Result<ItemT
             }
         }
     }
-    let hints = chain
-        .iter()
-        .find_map(|(_, row)| row.get("display_hints").and_then(Value::as_object));
     Ok(ItemType {
         id: id.to_string(),
         label: text(own, "label"),
@@ -216,8 +220,8 @@ fn resolve(id: &str, held: &HashMap<String, Map<String, Value>>) -> Result<ItemT
         parent: text(own, "parent"),
         version: own.get("version").and_then(Value::as_f64).unwrap_or(0.0) as i64,
         fields: fields.into_values().collect(),
-        title_field: hints.and_then(|hints| text(hints, "title_field")),
-        body_field: hints.and_then(|hints| text(hints, "body_field")),
+        title_field: hints.title_field(id).map(str::to_string),
+        body_field: hints.body_field(id).map(str::to_string),
         link_field: text(own, "link_field"),
         roles: texts(own, "roles"),
         compatible_with: texts(own, "compatible_with"),
@@ -242,13 +246,16 @@ fn held_types(conn: &Connection) -> Result<HashMap<String, Map<String, Value>>, 
 /// By id.
 pub fn item_types(conn: &Connection) -> Result<Vec<ItemType>, CoreError> {
     let held = held_types(conn)?;
+    let hints = Catalog::load(conn)?;
     let mut ids: Vec<&String> = held.keys().collect();
     ids.sort();
-    ids.into_iter().map(|id| resolve(id, &held)).collect()
+    ids.into_iter()
+        .map(|id| resolve(id, &held, &hints))
+        .collect()
 }
 
 pub fn item_type(conn: &Connection, id: &str) -> Result<ItemType, CoreError> {
-    resolve(id, &held_types(conn)?)
+    resolve(id, &held_types(conn)?, &Catalog::load(conn)?)
 }
 
 fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
@@ -330,7 +337,8 @@ impl Catalog {
         let mut statement = conn.prepare(
             "SELECT id, parent, title_field, thumbnail_field,
                     json_extract(json, '$.display_hints.body_field'),
-                    (SELECT json_group_array(key) FROM json_each(types.json, '$.fields'))
+                    (SELECT json_group_array(key) FROM json_each(types.json, '$.fields')),
+                    json_type(json, '$.display_hints') IS NOT NULL
                FROM types",
         )?;
         let rows = statement.query_map([], |row| {
@@ -341,15 +349,17 @@ impl Catalog {
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
+                row.get::<_, bool>(6)?,
             ))
         })?;
         let mut entries = HashMap::new();
         for row in rows {
-            let (id, parent, title_field, thumbnail_field, body_field, fields) = row?;
+            let (id, parent, title_field, thumbnail_field, body_field, fields, hinted) = row?;
             entries.insert(
                 id,
                 Entry {
                     parent,
+                    hinted,
                     title_field,
                     thumbnail_field,
                     body_field,
@@ -397,13 +407,28 @@ impl Catalog {
         self.entries.contains_key(type_id)
     }
 
+    /// From the hints of the nearest type that declares any, taken whole as
+    /// `GET /types/{id}` resolves them: a subtype naming only its body
+    /// inherits no title.
     pub fn title_field(&self, type_id: &str) -> Option<&str> {
-        self.nearest(type_id, |entry| entry.title_field.as_deref())
+        self.hints(type_id)?.title_field.as_deref()
     }
 
-    /// The property a type's text lives in, its own or the one it inherits.
+    /// The property a type's text lives in, from the same hints as its title.
     pub fn body_field(&self, type_id: &str) -> Option<&str> {
-        self.nearest(type_id, |entry| entry.body_field.as_deref())
+        self.hints(type_id)?.body_field.as_deref()
+    }
+
+    fn hints(&self, type_id: &str) -> Option<&Entry> {
+        let mut current = type_id;
+        for _ in 0..MAX_PARENT_WALK {
+            let entry = self.entries.get(current)?;
+            if entry.hinted {
+                return Some(entry);
+            }
+            current = entry.parent.as_deref()?;
+        }
+        None
     }
 
     /// Every type the copy holds, with the properties each declares itself.
@@ -473,6 +498,7 @@ mod tests {
                         id.to_string(),
                         Entry {
                             parent: parent.map(str::to_string),
+                            hinted: false,
                             title_field: None,
                             thumbnail_field: None,
                             body_field: None,
@@ -556,6 +582,53 @@ mod tests {
         assert_eq!(leaf.label.as_deref(), Some("Leaf"));
         assert_eq!(leaf.parent.as_deref(), Some("acme.mid"));
         assert_eq!(item_types(&conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn every_reader_takes_the_nearest_hints_whole() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.base", "fields": { "name": { "type": "string" } },
+                  "display_hints": { "title_field": "name", "body_field": "text" } },
+                { "id": "acme.leaf", "parent": "acme.base",
+                  "fields": { "comment": { "type": "string" } },
+                  "display_hints": { "body_field": "comment" } },
+                { "id": "acme.bare", "parent": "acme.base", "fields": {} }
+            ]),
+            serde_json::json!([]),
+        );
+        let catalog = Catalog::load(&conn).unwrap();
+        assert_eq!(
+            (
+                catalog.title_field("acme.leaf"),
+                catalog.body_field("acme.leaf")
+            ),
+            (None, Some("comment")),
+            "a subtype naming only its body took its title from its parent's hints"
+        );
+        assert_eq!(catalog.indexing("acme.leaf").title_field, None);
+        // The witness: a subtype with no hints of its own takes its parent's.
+        assert_eq!(catalog.title_field("acme.bare"), Some("name"));
+        let leaf = item_type(&conn, "acme.leaf").unwrap();
+        assert_eq!(
+            (leaf.title_field, leaf.body_field.as_deref()),
+            (None, Some("comment"))
+        );
+    }
+
+    #[test]
+    fn a_catalog_that_cannot_be_written_whole_writes_nothing() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": "acme.base" }])).unwrap(),
+            edge_types: vec![serde_json::json!({ "cardinality": "many-to-many" })],
+        };
+        assert!(store::replace_catalog(&conn, &catalog).is_err());
+        assert_eq!(store::catalog_version(&conn).unwrap(), None);
+        assert!(
+            store::type_rows(&conn).unwrap().is_empty(),
+            "the item types were written though the edge types were refused"
+        );
     }
 
     #[test]
