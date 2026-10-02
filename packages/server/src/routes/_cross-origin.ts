@@ -86,10 +86,7 @@ export function crossOriginGuard(
 ): MiddlewareHandler<AppEnv> {
   return createMiddleware<AppEnv>(async (c, next) => {
     if (isCrossOriginPost(c.req.raw.headers, allowedOrigins)) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "Cross-origin request refused",
-      );
+      throw new MarfaError(ErrorCode.FORBIDDEN, "Cross-origin request refused");
     }
     await next();
   });

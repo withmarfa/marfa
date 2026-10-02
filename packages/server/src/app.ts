@@ -383,8 +383,6 @@ export function createApp(
           "/auth/authorize/decision": 30,
           "/auth/authorize": 60,
         },
-        trustedProxyCidrs: config.trustedProxyCidrs,
-        trustedProxyHeader: config.trustedProxyHeader ?? null,
         storage,
         // Aggregate per-identifier cap (defaultLimit × multiplier),
         // keyed on the identifier with no path split, so a key's budget
@@ -447,10 +445,6 @@ export function createApp(
       baseURL: config.authBaseUrl,
       secret: config.authSecret || undefined,
       trustedOrigins,
-      // The same header `clientIpMiddleware` and `rateLimitMiddleware`
-      // read. Better Auth runs a rate limiter of its own and cannot be
-      // told by either of them.
-      trustedProxyHeader: config.trustedProxyHeader ?? null,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
       // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
       // grants into system.connection).
@@ -586,10 +580,7 @@ export function createApp(
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under
   // /auth/oauth2/*.
-  app.route(
-    "/auth",
-    authConsentRoutes({ storage, auth }),
-  );
+  app.route("/auth", authConsentRoutes({ storage, auth }));
   // The plugin's management endpoints — consent rows, clients, the resource
   // registry — answer 404 here before the catch-all can serve them. Marfa's
   // own routes are the only writers of a grant's two records; the reasoning

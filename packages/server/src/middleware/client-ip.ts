@@ -180,21 +180,50 @@ export function getClientIp(
 export type { CidrRange };
 
 /**
- * Resolve the client IP once per request and stash it on
- * `c.var.clientIp` for downstream consumers.
+ * The header Better Auth reads the client address from. Better Auth resolves
+ * an address for its own limiter and its session rows, and left to itself it
+ * trusts whatever `X-Forwarded-For` a client sends. So it is told to read this
+ * header instead, and `clientIpMiddleware` writes it on every request with the
+ * address Marfa resolved, replacing anything the client sent under the name.
+ */
+export const CLIENT_ADDRESS_HEADER = "x-marfa-client-address";
+
+/**
+ * The key a per-address limit counts under. An IPv6 host is normally handed a
+ * whole /64 and can rotate through it at will, so an IPv6 address counts as
+ * its /64; an IPv4 address counts as itself.
+ */
+export function addressBucket(ip: string): string {
+  const parsed = normalize(ip);
+  if (!parsed) return ip;
+  if (parsed.kind() === "ipv4") return parsed.toString();
+  const parts = (parsed as ipaddr.IPv6).parts.slice(0, 4);
+  return `${parts.map((p) => p.toString(16)).join(":")}::/64`;
+}
+
+/**
+ * Resolve the client IP once per request, stash it on `c.var.clientIp`, and
+ * write it onto the request as {@link CLIENT_ADDRESS_HEADER}, which is how
+ * Better Auth learns it.
  *
- * Centralizing the resolution means routes don't have to thread the
- * `trustedProxyCidrs` config or call `getClientIp(c, ...)` themselves
- * every time they want to record an audit row. Run this BEFORE auth
- * so the resolved IP is available in any downstream middleware
- * (auth itself, rate limiting, route handlers).
+ * The request itself is rewritten, rather than the header added where each
+ * Better Auth call is made, so that every way a request reaches Better Auth
+ * (the catch-all, an in-process dispatch, a session lookup on the request's
+ * headers) carries the same answer without each having to remember it. Run
+ * this BEFORE auth so the resolved IP is available to every later
+ * middleware and handler.
  */
 export function clientIpMiddleware(
   trustedCidrs: CidrRange[],
   trustedHeader: string | null = null,
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    c.set("clientIp", getClientIp(c, trustedCidrs, trustedHeader));
+    const ip = getClientIp(c, trustedCidrs, trustedHeader);
+    c.set("clientIp", ip);
+    const headers = new Headers(c.req.raw.headers);
+    headers.delete(CLIENT_ADDRESS_HEADER);
+    if (ip !== null) headers.set(CLIENT_ADDRESS_HEADER, ip);
+    c.req.raw = new Request(c.req.raw, { headers });
     await next();
   };
 }

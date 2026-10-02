@@ -31,6 +31,8 @@ interface SignInPageParams {
 
 const ERROR_MESSAGES: Record<string, string> = {
   invalid_credentials: "That email or password is wrong. Try again.",
+  too_many_attempts:
+    "Too many sign-in attempts. Wait a few minutes and try again.",
   missing_field: "Please fill in every field.",
   invalid_return_to:
     "That sign-in link looked unsafe, so we ignored where it pointed. Please sign in again.",

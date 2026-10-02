@@ -59,7 +59,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   expired_code:
     "That code has expired. Restart the sign-in on your other device.",
   too_many_attempts:
-    "Too many attempts for that code. Restart the sign-in on your other device.",
+    "Too many codes have been tried. Wait a few minutes and try again.",
   another_account:
     "That code was started under a different account. Sign in as that account, or restart the sign-in on your other device.",
 };

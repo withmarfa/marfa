@@ -565,8 +565,8 @@ export function buildOauthProviderPlugin(
  *     code-bearing registered callback. The explicit handler retains the
  *     verified client context needed to gate those side effects.
  *   - revoke cascade + audit for the person's Disconnect:
- *     `DELETE /auth/grants/:id` and `POST /auth/grants/:id/revoke`
- *     (`routes/auth-pages.ts`) run `revokeProjectedGrant` with the client
+ *     `DELETE /auth/grants/:id` (`routes/auth-pages.ts`) runs
+ *     `revokeProjectedGrant` with the client
  *     and user already resolved from the grant record. The one revoke hook
  *     here, `cascadeClientRevoke`, is the client's side of the same
  *     transition: `/oauth2/revoke` takes a token in hand, and a refresh

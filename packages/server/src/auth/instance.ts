@@ -14,6 +14,8 @@ import {
   buildOauthProjectionPlugin,
 } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
+import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
+import { buildSignInThrottlePlugin } from "./sign-in-throttle.js";
 
 /**
  * The first parameter type of better-auth's `drizzleAdapter`, so the `db`
@@ -50,17 +52,6 @@ export interface MarfaAuthOptions {
    *  the auth surface. Defaults to the `baseURL` plus any `corsOrigins`
    *  from `AppConfig`. */
   trustedOrigins?: string[];
-  /** Header carrying the real client address, for deployments where a
-   *  proxy terminates the connection. Better Auth keys its own rate
-   *  limiter on the address it resolves, and reads `x-forwarded-for`
-   *  unless told otherwise; a platform that sends something else instead
-   *  leaves it with no address at all, and it then buckets every caller
-   *  in the world together on one shared key. Mirrors the value the
-   *  client-IP and rate-limit middleware already take, so one setting
-   *  answers for the whole server. Left unset, Better Auth's
-   *  `x-forwarded-for` default stands, which is what an ordinary reverse
-   *  proxy sends, so an operator configures nothing. */
-  trustedProxyHeader?: string | null;
   /** Storage handle threaded into the OAuth Provider plugin's
    *  `customAccessTokenClaims` and `hooks.after` matchers. Needed for the
    *  `system.connection` projection of the plugin's grant lifecycle. */
@@ -81,7 +72,7 @@ export interface MarfaAuthOptions {
  *
  * The trade has a cost worth stating: nothing checks this shape against
  * Better Auth's real one, so a rename in a minor bump compiles clean and
- * fails at runtime. `instance.test.ts` is what catches that, by signing in
+ * fails at runtime. `routes/owner.test.ts` is what catches that, by signing in
  * as an account this path created.
  */
 interface BetterAuthCredentialContext {
@@ -337,6 +328,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // have no secret. Auto-generates an RSA key pair on first use,
       // stored in `auth_jwks`.
       jwt(),
+      // The per-account limit on password sign-in; see `sign-in-throttle.ts`.
+      ...(options.storage ? [buildSignInThrottlePlugin(options.storage)] : []),
       ...(options.storage && options.apiKeySalt
         ? [
             buildOauthProviderPlugin({
@@ -383,18 +376,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // `false` matches what an unset value already resolves to outside
       // tests, so deployed behavior is unchanged.
       disableOriginCheck: false,
-      // Better Auth resolves a client address for its own rate limiter,
-      // and the limiter is the reason this matters: with no address it
-      // keys every request on one literal string, so three failed
-      // sign-ins from anyone lock out everyone. Its default header is
-      // `x-forwarded-for`, which is what an ordinary reverse proxy sends
-      // and why the fallback is the unset case rather than a named
-      // header. A platform that sends a different one configures it, and
-      // the same value already tells the client-IP and rate-limit
-      // middleware where to look.
-      ...(options.trustedProxyHeader && {
-        ipAddress: { ipAddressHeaders: [options.trustedProxyHeader] },
-      }),
+      // Better Auth resolves a client address for its limiter and its
+      // session rows, and by default trusts the `X-Forwarded-For` a client
+      // sends. It reads the address Marfa resolved instead, which
+      // `clientIpMiddleware` writes on every request; see
+      // `CLIENT_ADDRESS_HEADER`.
+      ipAddress: { ipAddressHeaders: [CLIENT_ADDRESS_HEADER] },
       // Cookies set on /auth/*; the data plane (/items, /edges, etc.)
       // remains bearer-only and does not consume this cookie.
       cookiePrefix: "marfa.auth",

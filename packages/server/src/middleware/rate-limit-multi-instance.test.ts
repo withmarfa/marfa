@@ -46,7 +46,6 @@ async function makeTwoInstances(opts: {
     defaultLimit: opts.defaultLimit,
     windowMs: 60_000,
     pathLimits: {},
-    trustedProxyCidrs: [],
     storage,
   };
   const handler = (c: Context<AppEnv>) => c.text("ok");

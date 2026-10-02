@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "hono";
 import {
+  addressBucket,
   getClientIp,
   parseTrustedProxyCidrs,
   parseTrustedProxyHeader,
@@ -224,5 +225,22 @@ describe("getClientIp with trustedHeader", () => {
       headers: { "x-real-ip": "::ffff:203.0.113.9" },
     });
     expect(getClientIp(c, [], header)).toBe("203.0.113.9");
+  });
+});
+
+describe("addressBucket", () => {
+  it("counts an IPv4 address as itself", () => {
+    expect(addressBucket("203.0.113.7")).toBe("203.0.113.7");
+    expect(addressBucket("::ffff:203.0.113.7")).toBe("203.0.113.7");
+  });
+
+  it("counts an IPv6 address as its /64", () => {
+    expect(addressBucket("2001:db8:1:2::1")).toBe("2001:db8:1:2::/64");
+    expect(addressBucket("2001:DB8:1:2:ffff:ffff:ffff:ffff")).toBe(
+      "2001:db8:1:2::/64",
+    );
+    expect(addressBucket("2001:db8:1:3::1")).not.toBe(
+      addressBucket("2001:db8:1:2::1"),
+    );
   });
 });

@@ -4,18 +4,20 @@
  * Several Marfa-owned auth routes wrap a Better Auth endpoint: they take
  * the browser's request, do Marfa-side work, then hand a synthesized
  * `Request` to `auth.handler(...)`. That inner request has to carry the
- * caller's session cookie, and it has to satisfy Better Auth's own
- * trusted-origins check.
+ * caller's session cookie and the client address Marfa resolved, and it
+ * has to satisfy Better Auth's own trusted-origins check.
  *
- * Forwarding the browser's headers verbatim does not achieve the second
+ * Forwarding the browser's headers verbatim does not achieve the last
  * part. Better Auth validates `Origin` (falling back to `Referer`) on
  * every cookie-bearing non-GET, and a top-level browser navigation sends
- * no `Origin` at all — so a wrapper reached by navigation would dispatch
+ * no `Origin` at all, so a wrapper reached by navigation would dispatch
  * an origin-less POST and be rejected. `fallbackOrigin` closes that: when
- * the inbound request has no usable `Origin`, the dispatch is stamped
- * with the issuer's own origin, which is what the internal hop actually
- * is.
+ * the inbound request has no `Origin`, the dispatch is stamped with the
+ * issuer's own origin, which is what the internal hop actually is. A
+ * foreign origin never reaches a wrapper: the cross-origin guard in front
+ * of each refuses it (`_cross-origin.ts`).
  */
+import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
 
 /** Headers copied from the inbound request onto the internal dispatch. */
 const PASSTHROUGH_HEADERS = [
@@ -23,19 +25,17 @@ const PASSTHROUGH_HEADERS = [
   "cookie",
   "user-agent",
   "accept-language",
+  CLIENT_ADDRESS_HEADER,
 ] as const;
 
 /**
  * Build the header set for an internal Better Auth dispatch: `base`
- * (typically `content-type`) plus the passthrough headers above.
- *
- * When `Origin` is absent or `"null"` (browsers serialize it as `"null"`
- * under strict referrer policies and in sandboxed iframes), fall back to
- * `fallbackOrigin` so Better Auth's trusted-origins check passes.
+ * (typically `content-type`) plus the passthrough headers above, and
+ * `fallbackOrigin` as the `Origin` when the inbound request sent none.
  *
  * Callers that deliberately want the inbound request's own origin to be
- * the one Better Auth judges — because a missing origin should be
- * rejected rather than papered over — omit `fallbackOrigin`.
+ * the one Better Auth judges, because a missing origin should be
+ * rejected rather than papered over, omit `fallbackOrigin`.
  */
 export function forwardHeaders(
   src: Headers,
@@ -47,8 +47,7 @@ export function forwardHeaders(
     const value = src.get(name);
     if (value) out.set(name, value);
   }
-  const incomingOrigin = out.get("origin");
-  if (fallbackOrigin && (!incomingOrigin || incomingOrigin === "null")) {
+  if (fallbackOrigin && !out.get("origin")) {
     out.set("origin", fallbackOrigin);
   }
   return out;

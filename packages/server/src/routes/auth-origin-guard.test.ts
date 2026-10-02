@@ -84,18 +84,19 @@ describe("the cross-origin guard on Marfa's /auth doors", () => {
     it(`${door} refuses a foreign Origin, and a foreign Referer when Origin is absent`, async () => {
       ctx = await createTestContext();
       const cookie = await signIn(ctx, "guard@example.com");
-      for (const headers of [
+      const foreign: Record<string, string>[] = [
         { origin: FOREIGN },
         { referer: `${FOREIGN}/page` },
-      ]) {
+      ];
+      for (const headers of foreign) {
         const res = await request(ctx.app, method, path, {
           form: { user_code: "ABCD2345", decision: "approve" },
           headers: { ...headers, cookie },
         });
         expect(res.status).toBe(403);
-        expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
-          "forbidden",
-        );
+        expect(
+          ((await res.json()) as { error: { code: string } }).error.code,
+        ).toBe("forbidden");
       }
       // The witness: the same request from this origin is not refused by
       // the guard, whatever the door then makes of it.
