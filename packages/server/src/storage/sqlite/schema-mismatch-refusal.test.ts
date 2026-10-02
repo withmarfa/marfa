@@ -69,6 +69,33 @@ describe("a database whose schema is not this build's", () => {
     expect(digest(path)).toBe(before);
   });
 
+  it("is refused when it holds this build's tables but lacks one, naming it", async () => {
+    // Created empty by the DDL, a missing index table would describe none of
+    // the rows the file already holds.
+    const path = scratch();
+    const start = SCHEMA_SQL.indexOf(
+      "CREATE TABLE IF NOT EXISTS `item_blob_references` (",
+    );
+    const end = SCHEMA_SQL.indexOf(
+      "\n",
+      SCHEMA_SQL.indexOf("idx_item_blob_references_item"),
+    );
+    expect(start).toBeGreaterThan(0);
+    await seed(path, SCHEMA_SQL.slice(0, start) + SCHEMA_SQL.slice(end));
+    const before = digest(path);
+
+    await expect(createConnection(path)).rejects.toThrow(
+      /the file lacks the item_blob_references table/,
+    );
+    expect(digest(path)).toBe(before);
+  });
+
+  it("opens a new file, which holds none of this build's tables", async () => {
+    const path = scratch();
+    const { close } = await createConnection(path);
+    await close();
+  });
+
   it("is refused when a table carries a column this build does not declare", async () => {
     const path = scratch();
     await seed(

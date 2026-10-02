@@ -118,7 +118,8 @@ function referenceSchema() {
 /**
  * How the file's schema differs from this build's, one phrase per object,
  * or none when every table, index and trigger this build declares and the
- * file holds is the one this build would create.
+ * file holds is the one this build would create, and a file holding any of
+ * this build's tables holds them all.
  *
  * **Every difference, because `IF NOT EXISTS` hides every difference.** A
  * missing column fails on the first read of it, a column this build no
@@ -173,6 +174,24 @@ async function schemaDifferences(client: Client): Promise<string[]> {
       differences.push(
         `the ${name} table differs from this build's definition of it`,
       );
+    }
+  }
+  // A table this build declares and the file lacks would be created empty
+  // by the DDL below, so a file written before the table existed opens with
+  // an index or a log that silently describes none of its rows. Only a file
+  // that already holds this build's tables is asked: a new file holds none.
+  const holdsThisBuild = [...found.keys()].some(
+    (name) => ref.objects.get(name)?.type === "table",
+  );
+  if (holdsThisBuild) {
+    for (const [name, object] of ref.objects) {
+      if (object.type !== "table" || found.has(name)) continue;
+      if (name.startsWith("sqlite_")) continue;
+      // The full-text table is applied apart from `schema.sql`, so its
+      // absence is no sign of which build wrote the file.
+      if (object.sql?.startsWith("CREATE VIRTUAL TABLE") === true) continue;
+      if (shadowPrefixes.some((prefix) => name.startsWith(prefix))) continue;
+      differences.push(`the file lacks the ${name} table`);
     }
   }
   return differences;
