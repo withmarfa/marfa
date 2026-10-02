@@ -84,9 +84,10 @@ const HEAD_READ_TIMED_OUT = Symbol("head-read-timed-out");
  * hold every later event for it. Live frames are not held back for a
  * slow reader: a live frame that finds this much still unread ends the
  * stream (`reader_behind`), and the reader resumes from its cursor, which
- * the log serves at the reader's own pace. A replay is paced instead,
- * reading its next page only once there is room, because it reads from
- * the log and can wait.
+ * the log serves at the reader's own pace. A replay, and the release of
+ * the frames held while the stream opened, are paced instead: each waits
+ * for room before every frame, because each can wait, so what a stream
+ * holds is this bound and at most the one frame that crosses it.
  *
  * Four MiB: an ordinary burst on a busy instance fits under it with room,
  * and a few hundred stalled streams cost the server a bounded, stated
@@ -97,13 +98,19 @@ const MAX_UNSENT_BYTES = 4 * 1024 * 1024;
 /**
  * How long a stream waits for a reader that is taking nothing.
  *
- * A replay waits this long for room before it ends `reader_behind`, and a
- * stream that has ended waits this long for its reader to take the frames
- * still queued, the terminal one among them, before it lets them and the
+ * A replay, or the release of the frames held while the stream opened,
+ * waiting for room ends `reader_behind` once its reader has taken no frame
+ * for this long; a reader taking frames, however slowly, is waited for. A
+ * stream that has ended keeps the frames still queued, the terminal one
+ * among them, this long from the close before it lets them and the
  * connection go. Without the second a reader that never reads again keeps
  * its unread frames in memory for as long as its socket lives.
  */
 const READER_STALL_MS = 30_000;
+
+/** How often a writer waiting for room looks at whether the reader took a
+ *  frame, which the stream says only once the queue is under the bound. */
+const ROOM_POLL_MS = 50;
 
 /**
  * The wire name of the frame refusing a cursor beyond the log's head.
@@ -252,8 +259,9 @@ type StreamIncompleteReason =
    *  reconnect with it is refused `401`; a reconnect with the token an app
    *  refreshed to resumes. */
   | "credential_ended"
-  /** The reader left {@link MAX_UNSENT_BYTES} of frames untaken, or took
-   *  nothing for {@link READER_STALL_MS} while a replay waited. */
+  /** A live frame found {@link MAX_UNSENT_BYTES} of frames untaken, or the
+   *  reader took no frame for {@link READER_STALL_MS} while the replay or
+   *  the opening's release waited for room. */
   | "reader_behind";
 
 /**
@@ -543,24 +551,37 @@ export function eventRoutes(
 
             /**
              * Wait until the reader has made room, for a writer that can
-             * wait: the replay, and the release of what the prologue held.
-             * False when the reader took nothing for the stall budget, or
-             * the stream ended meanwhile.
+             * wait: the replay and the release of what the prologue held,
+             * each before every frame. False when the reader took nothing
+             * for the stall budget, or the stream ended meanwhile.
+             *
+             * The queue is looked at as well as woken on: the stream asks
+             * for more only once the queue is back under the bound, so a
+             * reader taking frames slowly can be making progress for longer
+             * than the stall budget before it says so. Every rise in the
+             * room left is a frame taken, and restarts the budget.
              */
             const waitForRoom = async (): Promise<boolean> => {
               if (hasRoom()) return true;
-              let timer: ReturnType<typeof setTimeout> | undefined;
-              const roomMade = await new Promise<boolean>((resolve) => {
-                onRoom = () => {
-                  resolve(true);
-                };
-                timer = setTimeout(() => {
-                  resolve(false);
-                }, readerStallMs);
-              });
-              onRoom = null;
-              clearTimeout(timer);
-              return roomMade && !state.closed;
+              let room = controller.desiredSize ?? 0;
+              let tookAt = Date.now();
+              while (!state.closed) {
+                let timer: ReturnType<typeof setTimeout> | undefined;
+                await new Promise<void>((resolve) => {
+                  onRoom = resolve;
+                  timer = setTimeout(resolve, ROOM_POLL_MS);
+                });
+                onRoom = null;
+                clearTimeout(timer);
+                // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by cleanup() across the await above; TS narrows it to `false` but at runtime it can flip to true.
+                if (state.closed) return false;
+                if (hasRoom()) return true;
+                const now = controller.desiredSize ?? 0;
+                if (now > room) tookAt = Date.now();
+                room = now;
+                if (Date.now() - tookAt >= readerStallMs) return false;
+              }
+              return false;
             };
 
             // A ping keeps an idle connection open through proxies, so one is
@@ -802,10 +823,10 @@ export function eventRoutes(
 
             /**
              * Close the response body. Whatever is still queued is the
-             * reader's to take, the frame saying why among it, for as long as
-             * it is taking anything; past the stall budget the queue and the
-             * connection are let go, since a reader that never reads again
-             * would otherwise keep them for as long as its socket lives.
+             * reader's to take, the frame saying why among it, for the stall
+             * budget from the close; then the queue and the connection are
+             * let go, since a reader that never reads again would otherwise
+             * keep them for as long as its socket lives.
              */
             const closeBody = (): void => {
               try {
@@ -902,6 +923,24 @@ export function eventRoutes(
               send(`event: ${STREAM_INCOMPLETE_EVENT}\ndata: ${payload}\n\n`);
               heldFrames.length = 0;
               endStream();
+            };
+
+            /**
+             * Wait for room before one frame of the replay or of the
+             * opening's release, and end the stream `reader_behind` where the
+             * reader took nothing for the stall budget. Asked before every
+             * frame, so what the stream holds for a reader stays within the
+             * bound and the one frame that crosses it.
+             */
+            const paced = async (where: string): Promise<boolean> => {
+              if (hasRoom()) return true;
+              if (await waitForRoom()) return true;
+              if (state.closed) return false;
+              console.warn(
+                `[events] closing the stream: its reader took nothing for ${String(readerStallMs)}ms during ${where}`,
+              );
+              failStream("reader_behind");
+              return false;
             };
 
             // While a replay reads, the id it reads on to at least; the ids
@@ -1105,17 +1144,9 @@ export function eventRoutes(
                 };
                 while (!state.closed) {
                   // Paced by the reader: the next page is read only once
-                  // there is room for it, since the log can wait and memory
-                  // should not.
-                  if (!(await waitForRoom())) {
-                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by cleanup() across the await above; TS narrows it to `false` but at runtime it can flip to true.
-                    if (state.closed) return false;
-                    console.warn(
-                      `[events] closing the stream: its reader took nothing for ${String(readerStallMs)}ms during a replay`,
-                    );
-                    failStream("reader_behind");
-                    return false;
-                  }
+                  // there is room for it, and each row below waits too, since
+                  // the log can wait and memory should not.
+                  if (!(await paced("a replay"))) return false;
                   const batch = await storage.eventLog.getAfter(
                     lastReplayedId,
                     REPLAY_BATCH_SIZE,
@@ -1308,6 +1339,7 @@ export function eventRoutes(
                       }
                     }
 
+                    if (!(await paced("a replay"))) return false;
                     const replayWireType = wireEventName(
                       event.event_type as
                         ItemEventWithId["type"] | EdgeEventWithId["type"],
@@ -1412,17 +1444,6 @@ export function eventRoutes(
                 for (;;) {
                   if (state.closed) return;
                   if (heldFrames.length === 0) break;
-                  // A replay may have left the reader's queue full, and these
-                  // frames can wait for it as the replay did.
-                  if (!(await waitForRoom())) {
-                    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by cleanup() across the await above; TS narrows it to `false` but at runtime it can flip to true.
-                    if (state.closed) return;
-                    console.warn(
-                      `[events] closing the stream: its reader took nothing for ${String(readerStallMs)}ms while the opening drained`,
-                    );
-                    failStream("reader_behind");
-                    return;
-                  }
                   const batch = heldFrames.splice(0);
                   if (!(await refreshReach())) return;
                   for (const frame of batch) {
@@ -1432,6 +1453,9 @@ export function eventRoutes(
                     if (eventId !== undefined && replayedIds.has(eventId)) {
                       continue;
                     }
+                    // A replay may have left the reader's queue full, and
+                    // these frames wait for it as the replay's rows did.
+                    if (!(await paced("the opening's release"))) return;
                     sendFrame(frame);
                   }
                 }

@@ -159,6 +159,65 @@ describe("a replay to a slow reader", () => {
     expect(text).toContain("ZZslow599ZZ");
   });
 
+  it("holds no more than the bound and one frame for a stalled reader, however large the page", async () => {
+    const from = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    // One page of the log, many times the bound.
+    for (let i = 0; i < 4; i += 1) {
+      const res = await request(ctx.app, "POST", "/items/bulk", {
+        key: ctx.workingKey,
+        body: {
+          items: Array.from({ length: 15 }, (_, j) => ({
+            type: "core.note",
+            properties: { body: `ZZbig${String(i)}-${String(j)}ZZ${BODY}` },
+          })),
+        },
+      });
+      expect(res.status).toBe(200);
+    }
+    const res = await appWith({
+      maxUnsentBytes: BOUND,
+      readerStallMs: 300,
+    }).request("/events", {
+      headers: { "Last-Event-ID": String(from) },
+    });
+    // Nothing read until the replay has given up on the reader.
+    await settle(450);
+    const { text, closed } = await readSse(res, { untilClosed: true });
+    expect(closed).toBe(true);
+    expect(text).toContain('"reason":"reader_behind"');
+    // The witness: the replay sent rows before it stopped.
+    expect(text).toContain("ZZbig0-0ZZ");
+    const frame = BODY.length + 1_000;
+    expect(new TextEncoder().encode(text).byteLength).toBeLessThan(
+      BOUND + 2 * frame,
+    );
+  });
+
+  it("keeps a reader that takes frames slowly but steadily", async () => {
+    const from = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
+    await backlog("steady");
+    const res = await appWith({
+      maxUnsentBytes: BOUND,
+      readerStallMs: 300,
+    }).request("/events", {
+      headers: { "Last-Event-ID": String(from) },
+    });
+    // A reader taking one chunk at a time with a pause between, never
+    // pausing as long as the stall budget, but far slower than the replay.
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes("event: stream_live")) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      await settle(5);
+    }
+    await reader.cancel();
+    expect(text).not.toContain("stream_incomplete");
+    expect(text).toContain("ZZsteady599ZZ");
+  });
+
   it("ends when the reader takes nothing for the stall budget", async () => {
     const from = (await ctx.storage.eventLog.getMaxId()) ?? 0n;
     await backlog("stalled");
