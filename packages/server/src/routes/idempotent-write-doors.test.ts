@@ -135,7 +135,12 @@ function writerFiles(): Set<string> {
     const relative = full.slice(SERVER_SRC.length + 1);
     if (relative.startsWith("storage/")) continue;
     if (relative === "test-utils.ts") continue;
-    const text = readFileSync(full, "utf-8");
+    // The lifecycle writes are reached through `itemWrites(storage)`, the
+    // store's writer view, so read that as the store it is.
+    const text = readFileSync(full, "utf-8").replace(
+      /itemWrites\([^)]*\)\./g,
+      "items.",
+    );
     for (const method of WRITE_METHODS) {
       // The call, not the mention: a comment naming a method would
       // otherwise classify a file that writes nothing.
