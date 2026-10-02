@@ -173,7 +173,7 @@ such as the owner, boots its own server with `bootFreshServer` in
 ## CI
 
 The `conformance` job in `.github/workflows/ci.yml` is the gate, on every pull
-request and every push to `main`, on Ubuntu; it also runs on macOS every night
+request that can affect it and every push to `main`, on Ubuntu; it also runs on macOS every night
 and when the workflow is dispatched with `macos`. The tree under test is the tree the suite
 runs against and the device under test is the binary built from it: there is
 no pinned server commit and no second checkout. Typecheck, lint and formatting
