@@ -118,6 +118,8 @@ pub struct ScanReport {
     pub unsure: Vec<Unsure>,
     pub registry: Option<String>,
     pub skipped: usize,
+    /// Files that are not documents left for a later pass, still changing.
+    pub settling: usize,
     /// Counted in `created` too.
     pub requeued: usize,
     pub lost: usize,
@@ -830,16 +832,19 @@ enum Missing {
 
 impl Folder {
     pub fn scan(&self) -> Result<ScanReport> {
-        self.scan_as(true)
+        self.scan_as(true, None)
     }
 
-    /// Skips a file whose size, time and identity are as the last read left
-    /// them; a full pass catches what that misses.
-    pub fn scan_quick(&self) -> Result<ScanReport> {
-        self.scan_as(false)
+    /// A watch's pass. Short of `full`, it skips a file whose size, time and
+    /// identity are as the last read left them, which a full pass catches.
+    /// Either way it leaves for a later pass a file that is not a document
+    /// and changed within `settle`, which a copy or a download may still be
+    /// writing.
+    pub fn scan_watching(&self, full: bool, settle: Duration) -> Result<ScanReport> {
+        self.scan_as(full, Some(settle))
     }
 
-    fn scan_as(&self, full: bool) -> Result<ScanReport> {
+    fn scan_as(&self, full: bool, settle: Option<Duration>) -> Result<ScanReport> {
         if let Some(gone) = self.root_gone() {
             return Ok(ScanReport {
                 root_gone: Some(gone),
@@ -1013,6 +1018,13 @@ impl Folder {
         let identities = identity::resolve(&held);
         let mut files = Vec::new();
         for path in held {
+            if let Some(settle) = settle
+                && !is_document(&path)
+                && changed_within(&path, settle)
+            {
+                report.settling += 1;
+                continue;
+            }
             // Unreadable now, a dataless placeholder say: the next scan reads
             // it, and the folder holds what it last agreed with meanwhile.
             let bytes = match early.remove(&path) {
@@ -3955,6 +3967,32 @@ fn carries_frontmatter(path: &Path) -> bool {
 }
 
 /// What a quick pass compares with what its last read recorded.
+/// The status change time where the system keeps one, which an editor
+/// restoring the modification time does not move back.
+fn changed_within(path: &Path, settle: Duration) -> bool {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    let changed = {
+        use std::os::unix::fs::MetadataExt;
+        u64::try_from(metadata.ctime())
+            .ok()
+            .map(|seconds| {
+                std::time::UNIX_EPOCH
+                    + Duration::new(seconds, u32::try_from(metadata.ctime_nsec()).unwrap_or(0))
+            })
+            .or_else(|| metadata.modified().ok())
+    };
+    #[cfg(not(unix))]
+    let changed = metadata.modified().ok();
+    changed.is_some_and(|changed| {
+        std::time::SystemTime::now()
+            .duration_since(changed)
+            .is_ok_and(|since| since < settle)
+    })
+}
+
 fn stat_of(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let modified = metadata

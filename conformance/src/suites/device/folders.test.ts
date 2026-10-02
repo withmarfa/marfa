@@ -2759,6 +2759,64 @@ describe("files and items", () => {
     }
   });
 
+  it("sends a file being copied in only once it stops changing, while every other file goes on", async () => {
+    harness = await folderHarness("folder-watch-copying", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    const uploads = () =>
+      harness!.server.requests
+        .filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/blobs",
+        )
+        .map((request) => request.raw);
+    const copying = join(harness.dir, "movie.bin");
+    writeFileSync(copying, Buffer.alloc(0));
+    let written = 0;
+    // Faster than the watch's debounce, for longer than it waits for the
+    // folder to settle, so passes run while the copy is under way.
+    const writing = setInterval(() => {
+      written += 1;
+      appendFileSync(copying, Buffer.alloc(4096, written % 256));
+    }, 50);
+    const watching = harness.folder.watch();
+    let whole: Buffer;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      put(harness, "other.md", "---\ntitle: Other\n---\nwritten beside it\n");
+      // The witness: a pass ran, and sent a file, while the copy went on.
+      await vi.waitFor(
+        () => {
+          expect(
+            sentTitles(harness!),
+            "no pass ran while the copy went on, so nothing below shows a pass passing it over",
+          ).toContain("Other");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      clearInterval(writing);
+      whole = readFileSync(copying);
+      await vi.waitFor(
+        () => {
+          expect(sentTitles(harness!)).toContain("movie.bin");
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
+    }
+    expect(
+      uploads().map((bytes) => bytes.length),
+      "a file still being copied in was uploaded half-written",
+    ).toEqual([whole.length]);
+    expect(uploads()[0]).toEqual(whole);
+  });
+
   describe("a copy that falls behind the log", () => {
     const id = "01a00000-0000-7000-8000-0000000000c3";
     const agedOut: Answer = {
@@ -12355,6 +12413,47 @@ describe("what a folder takes", () => {
     expect(said.ok && said.value).toContain(
       "keys/server.pem: not taken, because its name is one a secret goes by",
     );
+  });
+
+  it("never takes an editor's or a download's temporary file", async () => {
+    harness = await folderHarness("folder-temporary", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    const temporary = [
+      "report.pdf.crdownload",
+      "page.html.crswap",
+      "archive.zip.part",
+      "movie.mov.download",
+      "#draft.md#",
+      "notes.txt___jb_tmp___",
+      "notes.txt___jb_old___",
+      ".#draft.md",
+      "draft.md.swp",
+      "~$Budget.xlsx",
+      "upload.tmp",
+    ];
+    for (const name of temporary) put(harness, name, `half of ${name}\n`);
+    // Safari's download is a directory holding the bytes as they arrive.
+    put(harness, "image.png.download/image.png", "half a picture\n");
+    // The witnesses: a finished download and a note beside them are taken.
+    writeFileSync(
+      join(harness.dir, "report.pdf"),
+      Buffer.from("%PDF-1.4\n%%EOF\n"),
+    );
+    put(harness, "draft.md", "---\ntitle: Draft\n---\nbody\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentTitles(harness).sort(),
+      "an editor's or a download's temporary file was sent as an item",
+    ).toEqual(["Draft", "report.pdf"]);
+    expect(
+      harness.server.requests.filter((request) =>
+        request.body.includes("half"),
+      ),
+    ).toEqual([]);
   });
 
   it("ignores what its ignore list names", async () => {

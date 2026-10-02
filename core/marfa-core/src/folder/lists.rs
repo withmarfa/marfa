@@ -21,7 +21,24 @@ const JUNK: &[&str] = &[
     "desktop.ini",
 ];
 
-const SWAP: &[&str] = &["*.swp", "*~", ".#*", "~$*", "*.tmp", ".~lock.*#"];
+/// What an editor keeps beside an open file, and what a download or a copy
+/// writes before its bytes are whole.
+const SWAP: &[&str] = &[
+    "*.swp",
+    "*~",
+    ".#*",
+    // Escaped, because a gitignore line opening with `#` is a comment.
+    "\\#*#",
+    "~$*",
+    "*.tmp",
+    ".~lock.*#",
+    "*___jb_tmp___",
+    "*___jb_old___",
+    "*.crswap",
+    "*.crdownload",
+    "*.part",
+    "*.download",
+];
 
 /// Files that exist to hold a secret in a form anyone holding the file can
 /// use: sent, it reaches every machine and key that reads the folder, and
@@ -354,11 +371,22 @@ mod tests {
             "~$report.docx",
             ".~lock.sheet.ods#",
             "draft.tmp",
+            "#note.md#",
+            "Deep/#note.md#",
+            "notes.txt___jb_tmp___",
+            "notes.txt___jb_old___",
+            "page.html.crswap",
+            "report.pdf.crdownload",
+            "archive.zip.part",
+            "movie.mov.download",
+            "image.png.download/image.png",
         ] {
             assert!(!reaching.takes(path), "{path:?} was taken");
         }
         assert!(reaching.takes("note.md"));
         assert!(reaching.takes("Icon"));
+        assert!(reaching.takes("#hashtag.md"));
+        assert!(!reaching.enters("image.png.download"));
     }
 
     #[test]
