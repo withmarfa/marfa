@@ -341,7 +341,8 @@ describe("the server sends the headers the spec declares", () => {
    * not, and six of them shipped without the headers the document promises.
    */
   describe("responses the handler builds itself", () => {
-    /** Uploaded once: both blob cases read it, neither is about the upload. */
+    /** Uploaded once and named by an item, so the working key may read it:
+     *  both blob cases read it, neither is about the upload. */
     let blobHash: string;
 
     beforeAll(async () => {
@@ -355,6 +356,14 @@ describe("the server sends the headers the spec declares", () => {
       });
       expect(uploaded.status).toBe(201);
       blobHash = ((await uploaded.json()) as { hash: string }).hash;
+      await ctx.storage.items.create({
+        type: "core.file",
+        properties: {
+          blob_ref: blobHash,
+          mime_type: "application/octet-stream",
+        },
+        tier: "library",
+      });
     }, 60_000);
 
     it("sends them on the NDJSON export stream", async () => {

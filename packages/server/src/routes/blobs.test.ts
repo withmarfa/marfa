@@ -35,6 +35,23 @@ async function upload(
   };
 }
 
+/**
+ * An upload an item names, so the working key may read it back: a blob
+ * borrows its reach from the items that reference it.
+ */
+async function uploadReferenced(
+  bytes: Uint8Array,
+  mimeType = "application/octet-stream",
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const uploaded = await upload(bytes, mimeType);
+  await ctx.storage.items.create({
+    type: "core.file",
+    properties: { blob_ref: hashOf(bytes), mime_type: mimeType },
+    tier: "library",
+  });
+  return uploaded;
+}
+
 function hashOf(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -179,7 +196,7 @@ describe("POST /blobs", () => {
 describe("GET /blobs/:hash", () => {
   it("streams a previously uploaded blob with its type and length", async () => {
     const original = new TextEncoder().encode("round-trip test data");
-    await upload(original, "text/plain");
+    await uploadReferenced(original, "text/plain");
 
     const res = await request(ctx.app, "GET", `/blobs/${hashOf(original)}`, {
       key: ctx.workingKey,
@@ -194,7 +211,7 @@ describe("GET /blobs/:hash", () => {
 
   it("honors one byte range", async () => {
     const original = new TextEncoder().encode("0123456789");
-    await upload(original, "text/plain");
+    await uploadReferenced(original, "text/plain");
     const res = await ctx.app.request(`/blobs/${hashOf(original)}`, {
       headers: {
         Authorization: `Bearer ${ctx.workingKey}`,
@@ -209,7 +226,7 @@ describe("GET /blobs/:hash", () => {
 
   it("serves an open-ended range to the last byte", async () => {
     const original = new TextEncoder().encode("0123456789");
-    await upload(original, "text/plain");
+    await uploadReferenced(original, "text/plain");
     const res = await ctx.app.request(`/blobs/${hashOf(original)}`, {
       headers: {
         Authorization: `Bearer ${ctx.workingKey}`,
@@ -223,7 +240,7 @@ describe("GET /blobs/:hash", () => {
 
   it("answers 416 with the size for a range outside the blob", async () => {
     const original = new TextEncoder().encode("0123456789");
-    await upload(original, "text/plain");
+    await uploadReferenced(original, "text/plain");
     // The witness: the last byte alone is a range the blob can satisfy.
     const inside = await ctx.app.request(`/blobs/${hashOf(original)}`, {
       headers: {
@@ -248,7 +265,7 @@ describe("GET /blobs/:hash", () => {
 
   it("serves the whole blob when the range is not one it reads", async () => {
     const original = new TextEncoder().encode("0123456789");
-    await upload(original, "text/plain");
+    await uploadReferenced(original, "text/plain");
     const res = await ctx.app.request(`/blobs/${hashOf(original)}`, {
       headers: {
         Authorization: `Bearer ${ctx.workingKey}`,
@@ -269,7 +286,7 @@ describe("GET /blobs/:hash", () => {
 
   it("returns 404 when the registry names a blob no store holds", async () => {
     const data = new TextEncoder().encode("bytes that will vanish");
-    expect((await upload(data)).status).toBe(201);
+    expect((await uploadReferenced(data)).status).toBe(201);
     const before = await request(ctx.app, "GET", `/blobs/${hashOf(data)}`, {
       key: ctx.workingKey,
     });
@@ -287,7 +304,7 @@ describe("GET /blobs/:hash", () => {
 describe("HEAD /blobs/:hash", () => {
   it("answers the headers without a body, from the registry alone", async () => {
     const data = new TextEncoder().encode("head check data");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
 
     // The bytes are gone from disk and the registry still answers: a HEAD
     // never opens a file, which is what keeps it from holding one open.
@@ -304,7 +321,7 @@ describe("HEAD /blobs/:hash", () => {
 
   it("answers a range's headers with 206", async () => {
     const data = new TextEncoder().encode("0123456789");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     const res = await ctx.app.request(`/blobs/${hashOf(data)}`, {
       method: "HEAD",
       headers: {
@@ -344,7 +361,7 @@ describe("HEAD /blobs/:hash", () => {
 describe("GET /blobs/:hash/url", () => {
   it("mints an instance-served link that fetches the bytes without a credential", async () => {
     const data = new TextEncoder().encode("linked bytes");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     const res = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/url`, {
       key: ctx.workingKey,
     });
@@ -364,7 +381,7 @@ describe("GET /blobs/:hash/url", () => {
 
   it("names the instance's base URL, not the origin the request arrived on", async () => {
     const data = new TextEncoder().encode("host of the link");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     // The request's own origin is the socket's, which behind an edge that
     // terminates TLS is `http` on some internal name; the link carries the
     // origin the instance is reached at.
@@ -378,7 +395,7 @@ describe("GET /blobs/:hash/url", () => {
 
   it("honors ttl and caps it at seven days", async () => {
     const data = new TextEncoder().encode("ttl bytes");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     const short = await request(
       ctx.app,
       "GET",
@@ -401,7 +418,7 @@ describe("GET /blobs/:hash/url", () => {
 
   it("refuses an unknown or malformed hash", async () => {
     const data = new TextEncoder().encode("a hash the instance knows");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     const known = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/url`, {
       key: ctx.workingKey,
     });
@@ -424,7 +441,7 @@ describe("GET /blobs/:hash/fetch", () => {
   /** A live link to freshly uploaded bytes, fetched once as it is: the
    *  witness every refusal below alters something to earn. */
   async function link(data: Uint8Array): Promise<URL> {
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     const res = await request(ctx.app, "GET", `/blobs/${hashOf(data)}/url`, {
       key: ctx.workingKey,
     });
@@ -453,7 +470,7 @@ describe("GET /blobs/:hash/fetch", () => {
       new TextEncoder().encode("the blob the link is for"),
     );
     const other = new TextEncoder().encode("a blob it is not for");
-    await upload(other, "text/plain");
+    await uploadReferenced(other, "text/plain");
     const res = await ctx.app.request(
       `/blobs/${hashOf(other)}/fetch${url.search}`,
     );
@@ -470,7 +487,7 @@ describe("GET /blobs/:hash/fetch", () => {
 
   it("serves a link its whole lifetime, however late in a second it was minted, and refuses it once expired", async () => {
     const data = new TextEncoder().encode("expiring link");
-    await upload(data, "text/plain");
+    await uploadReferenced(data, "text/plain");
     // The last millisecond of a second, where a link counted from the
     // second rounded down would have no life left at all.
     const minted = Math.floor(Date.now() / 1000) * 1000 + 999;
@@ -570,7 +587,7 @@ describe("GET /blobs/stores", () => {
 describe("GET /blobs/:hash/locations", () => {
   it("lists the log for a blob and 404s for one not registered", async () => {
     const data = new TextEncoder().encode("locations listed");
-    await upload(data);
+    await uploadReferenced(data);
     const res = await request(
       ctx.app,
       "GET",

@@ -114,6 +114,7 @@ pub enum UploadBlobSuccess {
 pub enum DownloadBlobError {
     Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::BlobNotFoundRefusal),
     Status416(models::RangeNotSatisfiableRefusal),
     Status429(models::RateLimitedRefusal),
@@ -141,6 +142,7 @@ pub enum DropBlobLocationError {
 pub enum GetBlobUrlError {
     Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::BlobNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -153,6 +155,7 @@ pub enum GetBlobUrlError {
 pub enum ListBlobLocationsError {
     Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status404(models::BlobNotFoundRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -187,12 +190,13 @@ pub enum ListBlobStoresError {
 pub enum UploadBlobError {
     Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
+    Status403(models::TypeNotPermittedRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
     UnknownValue(serde_json::Value),
 }
 
-/// Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`.
+/// Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
 pub fn download_blob(
     configuration: &configuration::Configuration,
     params: DownloadBlobParams,
@@ -275,7 +279,7 @@ pub fn drop_blob_location(
     }
 }
 
-/// Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days.
+/// Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.
 pub fn get_blob_url(
     configuration: &configuration::Configuration,
     params: GetBlobUrlParams,
@@ -321,7 +325,7 @@ pub fn get_blob_url(
     }
 }
 
-/// The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy.
+/// The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.
 pub fn list_blob_locations(
     configuration: &configuration::Configuration,
     params: ListBlobLocationsParams,
@@ -440,7 +444,7 @@ pub fn list_blob_stores(
     }
 }
 
-/// Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves.
+/// Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write on at least one type, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. An upload is readable once an item references it.
 pub fn upload_blob(
     configuration: &configuration::Configuration,
     params: UploadBlobParams,

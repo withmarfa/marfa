@@ -378,7 +378,7 @@ describe("POST /admin/restore-archive", () => {
     expect(await ctx.blobs.disk.has(carried.hash)).toBeNull();
     expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
     const absent = await request(ctx.app, "GET", `/blobs/${named.hash}`, {
-      key: ctx.workingKey,
+      key: ctx.operatorKey,
     });
     expect(absent.status).toBe(404);
 

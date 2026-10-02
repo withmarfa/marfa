@@ -18597,7 +18597,7 @@
           "Blobs"
         ],
         "summary": "Upload a blob",
-        "description": "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves.",
+        "description": "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write on at least one type, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. An upload is readable once an item references it.",
         "security": [
           {
             "bearerAuth": []
@@ -18694,6 +18694,36 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "The credential's type permissions reach no type, or, on an upload, grant write on none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
                 }
               }
             },
@@ -19125,7 +19155,7 @@
           "Blobs"
         ],
         "summary": "Download blob binary",
-        "description": "Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`.",
+        "description": "Streams the bytes of a blob as `application/octet-stream` from whichever store holds them, honoring one `Range`. `HEAD` answers the same headers with no body. A hash this instance does not hold answers `404`. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.",
         "security": [
           {
             "bearerAuth": []
@@ -19290,8 +19320,38 @@
               }
             }
           },
+          "403": {
+            "description": "The credential's type permissions reach no type, or, on an upload, grant write on none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
-            "description": "No blob with this hash, or no store holding its bytes.",
+            "description": "No blob with this hash that an item the credential may read references, or no store holding its bytes",
             "content": {
               "application/json": {
                 "schema": {
@@ -19429,7 +19489,7 @@
           "Blobs"
         ],
         "summary": "Get a time-limited link to a blob's bytes",
-        "description": "Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days.",
+        "description": "Answers a URL a client fetches the bytes from without a credential, and `expires_in`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. `ttl` is capped at seven days. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob. The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.",
         "security": [
           {
             "bearerAuth": []
@@ -19559,8 +19619,38 @@
               }
             }
           },
+          "403": {
+            "description": "The credential's type permissions reach no type, or, on an upload, grant write on none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
-            "description": "Blob not found",
+            "description": "No blob with this hash that an item the credential may read references",
             "content": {
               "application/json": {
                 "schema": {
@@ -19662,7 +19752,7 @@
           "Blobs"
         ],
         "summary": "List the stores holding a blob",
-        "description": "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy.",
+        "description": "The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (`verified_at`, `null` until one has). A store the configuration no longer names is shown `detached` and does not count as a copy. A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.",
         "security": [
           {
             "bearerAuth": []
@@ -19768,8 +19858,38 @@
               }
             }
           },
+          "403": {
+            "description": "The credential's type permissions reach no type, or, on an upload, grant write on none",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "404": {
-            "description": "Blob not found",
+            "description": "No blob with this hash that an item the credential may read references",
             "content": {
               "application/json": {
                 "schema": {
