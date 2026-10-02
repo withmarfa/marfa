@@ -424,6 +424,70 @@ describe("key management", () => {
     expect(second.error?.error.details?.source).toBe(source);
   });
 
+  it("answers mints racing for one source with one 201 and 409 conflict for the rest", async () => {
+    const label = `km-source-race-${ctx.runId}`;
+    const source = `${ctx.source}-${label}`;
+    const answers = await Promise.all(
+      [0, 1, 2, 3].map((i) =>
+        client.createKey({ label: `${label}-${String(i)}`, source }),
+      ),
+    );
+    for (const answer of answers) {
+      if (answer.ok) trackKey(ctx, answer.data.id);
+    }
+    expect(answers.map((a) => a.status).sort()).toEqual([201, 409, 409, 409]);
+    for (const refused of answers.filter((a) => !a.ok)) {
+      expect(refused.error?.error.code).toBe("conflict");
+      expect(refused.error?.error.details?.source).toBe(source);
+    }
+  });
+
+  it("refuses a key that may not use a door 403 before it reads the request", async () => {
+    const { key } = await createClientWithoutPermissions(
+      `km-standing-${ctx.runId}`,
+    );
+    // Each door asks the same of every caller: the operator key, or one
+    // permission. The request is one no validator would take, so a 400
+    // would be the body being read first.
+    const doors: [string, string][] = [
+      ["POST", "/owner"],
+      ["GET", "/metrics"],
+      ["GET", "/housekeeping"],
+      ["POST", "/admin/restore-archive"],
+      ["DELETE", "/admin/platform-types/not%20a%20type"],
+      ["DELETE", "/blobs/not-a-hash/locations/not-a-store"],
+      ["POST", "/webhooks"],
+      ["PATCH", "/webhooks/not%20an%20id"],
+      ["PUT", "/config"],
+      ["GET", "/audit?limit=not-a-number"],
+      ["POST", "/keys"],
+      ["PATCH", "/keys/not%20an%20id"],
+      ["DELETE", "/items/not%20an%20id/purge?version=not-a-number"],
+      ["POST", "/types"],
+      ["PUT", "/types/not%20a%20type"],
+      ["DELETE", "/types/not%20a%20type"],
+      ["POST", "/edge-types"],
+      ["DELETE", "/edge-types/not%20an%20edge%20type"],
+    ];
+    const wrong: string[] = [];
+    for (const [method, path] of doors) {
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body:
+          method === "GET" || method === "DELETE" ? undefined : "{ not json",
+      });
+      const body = (await response.json()) as { error?: { code?: string } };
+      if (response.status !== 403 || body.error?.code !== "forbidden") {
+        wrong.push(`${method} ${path} answered ${String(response.status)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
   it("the operator key is refused the data plane, reading as well as writing", async () => {
     const operator = getOperatorClient();
 

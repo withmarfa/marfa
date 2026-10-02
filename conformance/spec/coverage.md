@@ -187,12 +187,14 @@ Fixture paths are under `src/suites/`.
 
 ## Served but unpublished
 
-| Operation                                          | Status      | Fixture                       | Notes                                            |
-| -------------------------------------------------- | ----------- | ----------------------------- | ------------------------------------------------ |
-| `GET /health`                                      | unpublished | `compliance/instance.test.ts` |                                                  |
-| `GET /openapi.json`                                | unpublished | `compliance/instance.test.ts` |                                                  |
-| `GET /.well-known/oauth-authorization-server/auth` | unpublished | `compliance/oauth.test.ts`    | The authorization server metadata.               |
-| `POST /auth/oauth2/token`                          | unpublished | `compliance/oauth.test.ts`    | Refusals only: a grant needs a signed-in person. |
+| Operation                                          | Status      | Fixture                                                         | Notes                                                                                                         |
+| -------------------------------------------------- | ----------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GET /health`                                      | unpublished | `compliance/instance.test.ts`                                   |                                                                                                               |
+| `GET /openapi.json`                                | unpublished | `compliance/instance.test.ts`                                   |                                                                                                               |
+| `GET /.well-known/oauth-authorization-server/auth` | unpublished | `compliance/oauth.test.ts`                                      | The authorization server metadata.                                                                            |
+| `GET /auth/oauth2/authorize`                       | unpublished | `compliance/signed-in-apps.test.ts`                             | On a server of its own, with the owner signed in.                                                             |
+| `POST /auth/oauth2/token`                          | unpublished | `compliance/oauth.test.ts`, `compliance/signed-in-apps.test.ts` | Refusals on the run's server; a code exchange and a refresh on a server of its own, with the owner signed in. |
+| `POST /auth/oauth2/revoke`                         | unpublished | `compliance/oauth.test.ts`                                      | A token it does not hold, and none at all.                                                                    |
 
 ## Bodies outside the document's schemas
 
