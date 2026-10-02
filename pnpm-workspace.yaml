@@ -29,3 +29,22 @@ overrides:
   # `src/enrichment/pdf-reader-version.test.ts` is what notices if this line
   # is lost, since an override that stops applying breaks nothing visible.
   pdfjs-dist: "6.2.108"
+
+  # Build tooling pins an `esbuild` range that carries an advisory, and no
+  # published release of the tool that pulls it admits the fix: `tsup`
+  # (newest 8.5.1) takes `^0.27.0`, and `drizzle-kit`'s `@esbuild-kit`
+  # loader (drizzle-kit newest 0.31.11) takes `0.18.20`. Neither runs on a
+  # served request; both run at build and migration-generation time.
+  #
+  # Remove these when `tsup` and `drizzle-kit` publish releases whose
+  # `esbuild` ranges sit at or above 0.28.1 and 0.25.0 respectively.
+  "esbuild@<=0.24.2": "0.25.12"
+  "esbuild@>=0.27.3 <0.28.1": "0.28.2"
+
+  # `minimatch` 10 takes `brace-expansion` `^5.0.5`, which lets a lockfile
+  # keep a version with an advisory. A forced floor stops a stale lockfile
+  # from holding it, and costs nothing: the range already admits it.
+  #
+  # Remove this once every `minimatch` in the lockfile resolves a
+  # `brace-expansion` at or above 5.0.12 without it.
+  "brace-expansion@>=4.0.0 <5.0.12": "5.0.12"
