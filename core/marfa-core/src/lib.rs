@@ -1635,6 +1635,86 @@ mod tests {
         );
     }
 
+    /// The server moved `link` to start at `elsewhere`, a row the copy does
+    /// not hold, while a write of this device's to it waited.
+    fn moved_off_the_slice(core: &Core) {
+        let conn = core.conn().unwrap();
+        let mut moved = store::testing::wire_edge("link", "elsewhere", "row", "references");
+        moved.version = 2;
+        store::put_server_edge(&conn, &moved).unwrap();
+        store::lay_waiting_edge_writes_over(&conn, "link").unwrap();
+    }
+
+    #[test]
+    fn a_row_leaving_keeps_an_edge_a_waiting_write_moved_off_it() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+        }
+        core.update_edge(
+            "link",
+            &EdgeEdit {
+                base_version: Some(1),
+                source_id: Some("other".into()),
+                ..EdgeEdit::default()
+            },
+        )
+        .unwrap();
+        let conn = core.conn().unwrap();
+        store::evict_item(&conn, "row", &[]).unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link")
+                .unwrap()
+                .map(|edge| edge.source_id),
+            Some("other".to_string()),
+            "a row leaving took an edge a waiting write moved to a row the copy holds"
+        );
+        assert!(store::beneath_edge(&conn, "link").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_refused_edge_delete_never_brings_back_an_edge_moved_off_the_slice() {
+        let core = held_copy();
+        let unlinked = core.delete_edge("link").unwrap();
+        moved_off_the_slice(&core);
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused delete put back an edge whose source the copy does not hold"
+        );
+    }
+
+    #[test]
+    fn a_refused_edge_edit_lets_go_of_an_edge_moved_off_the_slice() {
+        let core = held_copy();
+        let edited = core
+            .update_edge(
+                "link",
+                &EdgeEdit {
+                    properties: serde_json::json!({ "note": "mine" })
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    base_version: Some(1),
+                    ..EdgeEdit::default()
+                },
+            )
+            .unwrap();
+        moved_off_the_slice(&core);
+        assert!(core.edges_from("elsewhere").unwrap().len() == 1);
+        refuse(&core, &edited);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused edit left an edge whose source the copy does not hold"
+        );
+    }
+
     #[test]
     fn a_refused_write_with_content_stays_through_a_clearing_until_it_is_discarded() {
         let core = held_copy();

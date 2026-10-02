@@ -1595,7 +1595,9 @@ fn remove_item(
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
     // An edge hidden behind this device's own waiting delete is in
-    // `beneath` alone, and leaves with the row all the same.
+    // `beneath` alone, and leaves with the row all the same. An edge still in
+    // `edges` is matched by its ends there, which a waiting write may have
+    // moved, never by the ones `beneath` recorded.
     let leaving: Vec<String> = conn
         .prepare(&format!(
             "SELECT id FROM (
@@ -1604,7 +1606,8 @@ fn remove_item(
                SELECT id, json_extract(row, '$.source_id') AS source_id,
                       json_extract(row, '$.target_id') AS target_id,
                       json_extract(row, '$.edge_type') AS edge_type
-                 FROM beneath WHERE subject = 'edge'
+                 FROM beneath
+                WHERE subject = 'edge' AND id NOT IN (SELECT id FROM edges)
              ) WHERE {edges}"
         ))?
         .query_map(
@@ -2445,6 +2448,9 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
             if !edge_write_waits(conn, id)? {
                 drop_beneath(conn, Subject::Edge, id)?;
             }
+            // Where the server moved it to a source the copy does not hold
+            // while the refused write waited.
+            let_go_of_untaken_edge(conn, id)?;
         }
         None => {}
     }
