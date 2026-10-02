@@ -27,7 +27,7 @@ A version exists only as a git tag, created only when a release is called for, e
 
 ## Commands
 
-`pnpm install`, `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev` (port 8600 unless `PORT` says otherwise); `packages/server/src/config.ts` reads the full list of settings. The core's commands are in `core/README.md`.
+`pnpm install`, `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev` (port 8600 unless `PORT` says otherwise); every setting is defined once, in the settings schema in `packages/server/src/config.ts`, and read nowhere else. The core's commands are in `core/README.md`.
 
 ## Secrets
 
