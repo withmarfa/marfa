@@ -146,6 +146,24 @@ const edgesBulkRoute = createRoute({
       description:
         "Write access denied for a source type the credential may read, or for an edge type; `type_not_permitted` also, before any entry is judged, where its type permissions reach no type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with the inner refusal in `details.code`, at this status rather than 400 for the reason `POST /items/bulk` gives.",
     },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an edge naming an end that is not there, with `item_not_found` in `details.code`.",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an edge whose row moved or whose id is taken, with `version_conflict` or `id_reused` in `details.code`.",
+    },
   },
 });
 

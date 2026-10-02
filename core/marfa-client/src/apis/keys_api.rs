@@ -180,7 +180,7 @@ pub fn create_key(
     }
 }
 
-/// Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources and its tier. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.
+/// Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.
 pub fn get_current_key(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<GetCurrentKeySuccess>, Error<GetCurrentKeyError>> {

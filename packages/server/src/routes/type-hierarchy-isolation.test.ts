@@ -70,14 +70,15 @@ describe("a registration does not retype existing rows", () => {
     });
     expect(note.status).toBe(201);
 
-    // A credential that may read notes and nothing else.
+    // A credential that may read notes, and write the one type it registers.
+    const child = childSchema();
     const suffix = Math.random().toString(36).slice(2, 10);
     const scoped = `marfa_k1_test_scoped_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `notes-only-${suffix}`,
         source: `test-scoped-${suffix}`,
-        type_permissions: { "core.note.*": "read" },
+        type_permissions: { "core.note.*": "read", [child.id]: "write" },
         metadata_permissions: { types: "write" },
         default_tier: "library",
         is_operator: false,
@@ -85,12 +86,12 @@ describe("a registration does not retype existing rows", () => {
       hashApiKey(scoped, TEST_API_KEY_SALT),
     );
 
-    // It registers a type under the subtree it holds. Widening which types a
-    // pattern matches must not widen which rows exist under those types: the
-    // bookmark was written as a bookmark and stays one.
+    // It registers a type that declares a parent it may read. Widening which
+    // types a pattern matches must not widen which rows exist under those
+    // types: the bookmark was written as a bookmark and stays one.
     const reg = await request(ctx.app, "POST", "/types", {
       key: scoped,
-      body: childSchema(),
+      body: child,
     });
     expect(reg.status).toBe(201);
 
