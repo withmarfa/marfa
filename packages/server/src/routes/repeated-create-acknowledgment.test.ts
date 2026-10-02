@@ -333,44 +333,36 @@ describe("a repeated edge create under concurrency", () => {
   });
 });
 
-describe("the item door's concurrency backstop", () => {
-  it("acknowledges when the row appears after the pre-check", async () => {
-    // The pre-check cannot see a row that does not exist yet, so two sends
-    // of one id can both miss it and the loser of the insert reaches the
-    // store's trap. Nothing else in this file exercises that path: every
-    // other repeat resolves at the pre-check and returns before the
-    // transaction opens.
-    //
-    // Blinded rather than raced, for the reason the edge twin gives: two
-    // concurrent writes against one in-memory SQLite deadlock rather than
-    // colliding.
+describe("a repeat sent while the first is in flight", () => {
+  it("acknowledges the row the first send wrote just before this one's transaction", async () => {
+    // The repeat is decided inside the transaction that would write, so the
+    // first send landing at the last moment before it is a repeat like any
+    // other rather than a collision.
     const id = generateId();
-    expect((await createNote(id)).status).toBe(201);
-
-    const store = ctx.storage.items;
-    const realGet = store.getIncludingTrashed.bind(store);
-    let blinded = false;
-    store.getIncludingTrashed = async (itemId: string) => {
-      if (!blinded) {
-        blinded = true;
-        return null;
+    const storage = ctx.storage;
+    const original = storage.runInTransaction.bind(storage);
+    let raced = false;
+    storage.runInTransaction = async <T>(
+      fn: () => T | Promise<T>,
+    ): Promise<T> => {
+      if (!raced) {
+        raced = true;
+        expect((await createNote(id)).status).toBe(201);
       }
-      return realGet(itemId);
+      return await original(fn);
     };
     let res: Response;
     try {
       res = await createNote(id, { properties: { body: "the racer" } });
     } finally {
-      store.getIncludingTrashed = realGet;
+      storage.runInTransaction = original;
     }
 
-    expect(blinded).toBe(true);
+    expect(raced).toBe(true);
     expect(res.status).toBe(200);
     const body = (await res.json()) as ItemBody;
     expect(body.acknowledged).toBe(true);
     expect(body.item.id).toBe(id);
-    // The first write's properties: the backstop acknowledged rather than
-    // writing the racer's body.
     expect(body.item.properties).toEqual({ body: "first" });
   });
 

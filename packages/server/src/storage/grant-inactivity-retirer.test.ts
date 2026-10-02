@@ -265,15 +265,25 @@ describe("GrantInactivityRetirer.runOnce", () => {
     const storageFailingWith = (code: string) => {
       const updated: string[] = [];
       const storage = {
+        runInTransaction: <T>(fn: () => Promise<T>) => fn(),
         items: {
           listInactiveAppGrants: () => Promise.resolve(inactive),
+          get: (id: string) =>
+            Promise.resolve({
+              id,
+              type: "system.connection",
+              state: "active",
+              properties: {},
+              version: 1,
+            }),
           update: (id: string) => {
             updated.push(id);
             return id === "grant-a"
               ? Promise.reject(Object.assign(new Error(code), { code }))
-              : Promise.resolve(null);
+              : Promise.resolve({ id });
           },
         },
+        metadata: { get: () => Promise.resolve(null) },
         audit: { log: () => Promise.resolve() },
       } as unknown as Storage;
       return { storage, updated };

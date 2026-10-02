@@ -794,13 +794,21 @@ export function requireResolvedRowWrite(
   c: Context<AppEnv>,
   row: { type: string },
 ): void {
-  if (!mayReadRow(c, row)) {
+  checkResolvedRowWrite(c.get("apiKey"), row);
+}
+
+/** `requireResolvedRowWrite` for a credential in hand. */
+export function checkResolvedRowWrite(
+  apiKey: ApiKey | undefined,
+  row: { type: string },
+): void {
+  if (!mayReadType(checkAuth(apiKey), row.type)) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
       "The natural key resolves a row of a type this credential may not reach",
     );
   }
-  requireTypeAccess(c, row.type, "write");
+  checkTypeAccess(apiKey, row.type, "write");
 }
 
 /** Whether the credential may read this row's type. */
@@ -906,7 +914,16 @@ export function requireEdgePermission(
   edgeType: string,
   level: "read" | "write",
 ): void {
-  const apiKey = checkAuth(c.get("apiKey"));
+  checkEdgePermission(c.get("apiKey"), edgeType, level);
+}
+
+/** `requireEdgePermission` for a credential in hand. */
+export function checkEdgePermission(
+  key: ApiKey | undefined,
+  edgeType: string,
+  level: "read" | "write",
+): void {
+  const apiKey = checkAuth(key);
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
   throw new MarfaError(
     ErrorCode.EDGE_PERMISSION_DENIED,

@@ -1,16 +1,9 @@
-import {
-  getResolvedFields,
-  getTypeSchema,
-  validateProperties,
-} from "@withmarfa/shared";
+import { ErrorCode, MarfaError, getResolvedFields } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
-import {
-  mergeUpdateProperties,
-  resolveIncomingProperties,
-} from "../storage/merge-properties.js";
+import { writeItem } from "../storage/item-write.js";
 import type { OcrEngine } from "./ocr.js";
 import { extractText, isEnrichableMime } from "./extract.js";
 import {
@@ -57,29 +50,6 @@ function derivableDimensionFields(
   }
   if (!fields) return [];
   return DIMENSION_FIELDS.filter((field) => field in fields);
-}
-
-/**
- * The validator's complaint about laying `patch` over `current`, or null
- * when the merged result is acceptable. Returns null for a type the
- * registry cannot resolve: no schema is no opinion, not a refusal.
- */
-function validationRefusal(
-  typeId: string,
-  current: Record<string, unknown>,
-  patch: Record<string, unknown>,
-): string | null {
-  if (!getTypeSchema(typeId)) return null;
-  const merged = mergeUpdateProperties(
-    current,
-    resolveIncomingProperties(typeId, patch) ?? {},
-    "merge",
-  );
-  const result = validateProperties(typeId, merged);
-  if (result.success) return null;
-  return `invalid properties: ${result.errors
-    .map((e) => `${e.field}: ${e.message}`)
-    .join("; ")}`;
 }
 
 /**
@@ -326,25 +296,38 @@ export class TextEnrichmentSweeper {
         return "skipped";
       }
 
-      // Judge the merged result before writing it. Neither store validates
-      // on update, only on create, so a server-internal writer reaching this
-      // door could put a row into a state no caller could have produced:
-      // text longer than the type's string ceiling, written successfully
-      // and refusing every later edit of the item on a property nobody
-      // had set. Same sequence as the bulk-action runner, through the same
-      // helpers, so there is one rule rather than two.
-      //
-      // Guarded on the schema resolving, because `validateProperties`
-      // reports an absent schema as `Unknown type` rather than as no
-      // opinion: judging unguarded would park every item of a type this
-      // worker's registry does not carry.
-      const refusal = validationRefusal(fresh.type, fresh.properties, kept);
-      if (refusal) {
+      let written;
+      try {
+        written = await writeItem(
+          storage,
+          { kind: "platform" },
+          {
+            op: "update",
+            id: candidate.item_id,
+            properties: kept,
+            version: fresh.version,
+          },
+        );
+      } catch (err) {
+        if (
+          !(err instanceof MarfaError) ||
+          err.code !== ErrorCode.INVALID_PROPERTIES
+        ) {
+          throw err;
+        }
         // A skip, never a transient failure. The refusal is a property of
         // the extractor output and the type, both fixed under a given
         // configuration, so retrying it would burn the whole attempt budget
         // to reach the same answer. The config signature is what re-offers
         // it once a ceiling moves.
+        const refusal = `invalid properties: ${
+          (
+            (err.details as { errors?: { field: string; message: string }[] })
+              .errors ?? []
+          )
+            .map((e) => `${e.field}: ${e.message}`)
+            .join("; ") || err.message
+        }`;
         await recordSkip(refusal);
         log("warn", "Text enrichment refused by validation", {
           item_id: candidate.item_id,
@@ -353,15 +336,11 @@ export class TextEnrichmentSweeper {
         });
         return "skipped";
       }
-
-      const updated = await storage.items.update(candidate.item_id, {
-        properties: kept,
-        version: fresh.version,
-      });
       // A conflict response means the item moved between the re-read and
       // the write. Nothing recorded: the row is re-offered next run and
       // judged against whatever the item has become.
-      if (!("id" in updated)) return "skipped";
+      if (written.outcome !== "updated") return "skipped";
+      const updated = written.item;
 
       if (textError !== null) {
         // Half of it landed. Recorded as a failure anyway, so the retry
@@ -375,11 +354,10 @@ export class TextEnrichmentSweeper {
         await record("done", reasons.length > 0 ? reasons.join("; ") : null);
       }
 
-      const metadata = await storage.metadata.get(candidate.item_id);
       await publish({
         type: "updated",
         item: updated,
-        metadata,
+        metadata: written.metadata,
       });
       return textError === null ? "extracted" : "failed";
     } catch (err) {
