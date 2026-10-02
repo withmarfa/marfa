@@ -409,16 +409,65 @@ describe("who may read and upload a blob", () => {
     expect(await readingDoors(client, sha256(unlent))).toEqual(UNKNOWN);
     expect((await operator.downloadBlob(sha256(unlent))).status).toBe(200);
 
-    // The repair: the owner sends the bytes and rewrites the row.
+    // The one repair: the owner sends the bytes, drops the digest from the
+    // row, and writes it again. Rewriting it in place changes nothing.
     expect((await client.uploadBlob(unlent, "text/plain")).status).toBe(201);
     const row = await client.getItem(lines[1]!.id);
     expect(row.ok, JSON.stringify(row.error)).toBe(true);
-    const repaired = await client.updateItem(lines[1]!.id, {
-      properties: { body: `![it](${sha256(unlent)}) repaired` },
+    const inPlace = await client.updateItem(lines[1]!.id, {
+      properties: { body: `![it](${sha256(unlent)}) in place` },
       version: row.data.item.version,
+    });
+    expect(inPlace.ok, JSON.stringify(inPlace.error)).toBe(true);
+    expect(await readingDoors(client, sha256(unlent))).toEqual(UNKNOWN);
+    const dropped = await client.updateItem(lines[1]!.id, {
+      properties: { body: "nothing linked" },
+      version: inPlace.data.item.version,
+    });
+    expect(dropped.ok, JSON.stringify(dropped.error)).toBe(true);
+    const repaired = await client.updateItem(lines[1]!.id, {
+      properties: { body: `![it](${sha256(unlent)})` },
+      version: dropped.data.item.version,
     });
     expect(repaired.ok, JSON.stringify(repaired.error)).toBe(true);
     expect(await readingDoors(client, sha256(unlent))).toEqual(SERVED);
+  });
+
+  it("keeps a planted digest dead through an export, a purge and a restore", async () => {
+    const hash = await upload("a private file an archive carries planted");
+    await fileNaming(hash);
+    const planter = await keyHolding({ "core.note": "write" });
+    const planted = await planter.client.createItem({
+      type: "core.note",
+      properties: { body: `![it](${hash})` },
+    });
+    expect(planted.ok, JSON.stringify(planted.error)).toBe(true);
+    const id = planted.data.item.id;
+    trackItem(ctx, id);
+    const own = await planter.client.getCurrentKey();
+    expect(own.ok, JSON.stringify(own.error)).toBe(true);
+
+    const archive = await client.exportArchive({
+      type: "core.note",
+      state: "any",
+      source: own.data.source,
+    });
+    expect(archive.status).toBe(200);
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    expect((await client.purgeItem(id)).ok).toBe(true);
+    const restored = await operator.restoreArchive(archive.data);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
+
+    // The suite's key, which reads every blob, edits the restored note.
+    const back = await client.getItem(id);
+    expect(back.ok, JSON.stringify(back.error)).toBe(true);
+    const edited = await client.updateItem(id, {
+      properties: { body: `![it](${hash}) edited` },
+      version: back.data.item.version,
+    });
+    expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
+    expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
   });
 
   it("refuses an upload to a key that may write no registered type, and takes one from a key that writes one", async () => {

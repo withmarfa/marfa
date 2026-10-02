@@ -124,4 +124,57 @@ describe("the enrichment sweep and a blob's reach", () => {
     );
     expect(await extracted(fileWriter, named.data.item.id)).toBeUndefined();
   });
+  it("keeps a digest the sweep wrote dead after a full key rewrites the file", async () => {
+    const secret = new TextEncoder().encode("the numbat ledger, sealed");
+    const secretUpload = await owner.uploadBlob(secret, "text/plain");
+    expect(secretUpload.status).toBe(201);
+    const lent = await owner.createItem({
+      type: "core.note",
+      properties: { body: `![it](${secretUpload.data.hash})` },
+    });
+    expect(lent.status).toBe(201);
+
+    const minted = await owner.createKey({
+      label: "files that name a secret",
+      source: "enrichment-reach-planter",
+      type_permissions: { "core.file": "write" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    const planter = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    });
+    const digest = secretUpload.data.hash.slice("sha256:".length);
+    const carrier = new TextEncoder().encode(`notes on ${digest}`);
+    const carrierUpload = await planter.uploadBlob(carrier, "text/plain");
+    expect(carrierUpload.status).toBe(201);
+    const file = await planter.createItem({
+      type: "core.file",
+      properties: {
+        blob_ref: carrierUpload.data.hash,
+        mime_type: "text/plain",
+        title: "carries a digest in its text",
+      },
+    });
+    expect(file.status, JSON.stringify(file.error)).toBe(201);
+
+    await sweep();
+    const swept = await owner.getItem(file.data.item.id);
+    expect(swept.ok).toBe(true);
+    expect(String(swept.data.item.properties.extracted_text)).toContain(digest);
+    expect((await planter.downloadBlob(secretUpload.data.hash)).status).toBe(
+      404,
+    );
+
+    // The owner, who reads every blob, rewrites the whole file.
+    const rewritten = await owner.updateItem(file.data.item.id, {
+      properties: swept.data.item.properties,
+      properties_mode: "replace",
+      version: swept.data.item.version,
+    });
+    expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
+    expect((await planter.downloadBlob(secretUpload.data.hash)).status).toBe(
+      404,
+    );
+  });
 });
