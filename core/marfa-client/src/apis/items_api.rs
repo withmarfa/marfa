@@ -433,6 +433,8 @@ pub enum BulkUpsertItemsError {
     Status400(models::BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::BulkAtomicRollbackOrForbiddenOrTypeNotPermittedRefusal),
+    Status404(models::BulkAtomicRollbackRefusal),
+    Status409(models::BulkAtomicRollbackRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),

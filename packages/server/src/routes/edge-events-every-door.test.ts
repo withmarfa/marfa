@@ -508,8 +508,8 @@ describe("an announcement never outlives the write it describes", () => {
           ],
         },
       });
-      // The batch is refused as a whole.
-      expect(res.status).toBe(400);
+      // The batch is refused as a whole, at the missing target's status.
+      expect(res.status).toBe(404);
     });
 
     expect(

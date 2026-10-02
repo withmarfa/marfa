@@ -1011,11 +1011,15 @@ export function validateProperties(
     };
   }
 
-  const result = schema.safeParse(properties);
+  // Without a prototype, a field named like an object's built-in member
+  // (`toString`, `constructor`) that the write leaves out reads as absent
+  // rather than as the inherited function.
+  const own = Object.assign(Object.create(null) as object, properties);
+  const result = schema.safeParse(own);
   if (result.success) {
     return {
       success: true,
-      data: result.data as Record<string, unknown>,
+      data: { ...(result.data as Record<string, unknown>) },
     };
   }
 

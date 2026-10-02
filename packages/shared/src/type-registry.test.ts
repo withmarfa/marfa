@@ -463,6 +463,52 @@ describe("validateProperties", () => {
   });
 });
 
+describe("validateProperties — fields named like an object's built-in members", () => {
+  const names = ["toString", "valueOf", "constructor", "hasOwnProperty"];
+
+  beforeEach(() => {
+    registerTypeSchema({
+      id: "acme.builtin_names",
+      version: 0,
+      fields: Object.fromEntries(
+        names.map((name) => [name, { type: "string" as const }]),
+      ),
+    });
+  });
+
+  afterEach(() => {
+    unregisterTypeSchema("acme.builtin_names");
+  });
+
+  it("reads a field the write leaves out as absent", () => {
+    const result = validateProperties("acme.builtin_names", {});
+    expect(result).toEqual({ success: true, data: {} });
+  });
+
+  it("lets a child require an inherited field of such a name", () => {
+    const result = validateTypeSchema({
+      id: "acme.builtin_names_child",
+      parent: "acme.builtin_names",
+      fields: {},
+      required: ["constructor"],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.fields).toEqual({
+      constructor: { type: "string", required: true },
+    });
+  });
+
+  it("keeps the values the write gives, on an ordinary object", () => {
+    const values = Object.fromEntries(names.map((name) => [name, name]));
+    const result = validateProperties("acme.builtin_names", values);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data).toEqual(values);
+    expect(Object.getPrototypeOf(result.data)).toBe(Object.prototype);
+  });
+});
+
 describe("coerceNullProperties", () => {
   it("drops null on optional fields", () => {
     const out = coerceNullProperties("core.bookmark", {

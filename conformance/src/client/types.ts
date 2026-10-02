@@ -182,6 +182,13 @@ export interface PaginatedResult<T> {
   next_cursor: string | null;
 }
 
+/** A key's own enforcement levers, each replacing the instance's for it. */
+export interface EnforcementOverride {
+  strict_mode?: { types: string[] };
+  source_allowlist?: { types: string[]; sources: string[] };
+  source_filter?: { types: string[]; sources: string[] };
+}
+
 export interface ApiKeyRequest {
   label: string;
   source: string;
@@ -199,6 +206,8 @@ export interface ApiKeyRequest {
   /** The sources the key may name on a write besides its own; omitted
    *  takes the creator's when no map is named either. */
   sources?: readonly string[];
+  /** `null` clears a key's levers on an update. */
+  enforcement_override?: EnforcementOverride | null;
 }
 
 /** The one account behind the instance's sign-in surface. */
@@ -224,6 +233,7 @@ export interface ApiKeyResponse {
   is_operator?: boolean;
   sources?: string[];
   oauth_client_id?: string;
+  enforcement_override?: EnforcementOverride;
   created_at: string;
   last_used_at?: string | null;
 }

@@ -854,7 +854,7 @@ export function validateTypeSchema(
   // refinement so it survives registration instead of disappearing when the
   // normalized schema replaces the submitted shape.
   for (const name of requiredNames) {
-    if (normalizedFields[name]) continue;
+    if (Object.hasOwn(normalizedFields, name)) continue;
     const inherited = ancestorFields.get(name)?.definition;
     if (inherited) {
       normalizedFields[name] = { ...inherited, required: true };
