@@ -25,6 +25,7 @@ import {
   requireAuth,
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
   standingPermission,
+  keysOnly,
 } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import {
@@ -329,6 +330,7 @@ const currentKeyRoute = createRoute({
   description:
     "Returns the key the request bears, without plaintext: its permissions, its maps, its claimed sources, its tier and its own enforcement levers, if it carries any. Any key may read itself, whatever it holds, so a process handed a key can check it holds what it should and no more; every other key stays behind `keys.mint`. A signed-in app's token is not a key, and is refused.",
   security: [{ bearerAuth: [] }],
+  middleware: keysOnly,
   responses: {
     200: {
       content: { "application/json": { schema: ApiKeySchema } },
@@ -1296,12 +1298,6 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(currentKeyRoute, (c) => {
     const key = requireAuth(c);
-    if (c.get("authType") === "oauth") {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "This credential is a signed-in app's token, not a key; its reach is its grant.",
-      );
-    }
     // The row the bearer check read, which carries no hash and no
     // revocation. It is read before this request's use is stamped, so its
     // `last_used_at` can trail the listing's by that one stamp. With the

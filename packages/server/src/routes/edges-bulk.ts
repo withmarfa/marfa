@@ -36,6 +36,7 @@ import {
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -91,6 +92,7 @@ const edgesBulkRoute = createRoute({
   description:
     "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type. A source or a target whose type the caller may not read is answered as a missing one, as `POST /edges` answers it.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     body: {
       content: {

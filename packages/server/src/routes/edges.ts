@@ -17,6 +17,7 @@ import {
   requireEdgePermission,
   requireReadableRow,
   requireTypeAccess,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -213,6 +214,7 @@ const listEdgesRoute = createRoute({
     "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no record of itself, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
     UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     query: z.object({
       edge_type: z
@@ -294,6 +296,7 @@ const createEdgeRoute = createRoute({
   description:
     "Creates a single typed edge between two existing items. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A source or a target whose type the caller may not read is answered exactly as a missing one, `404 item_not_found`, before any gate or constraint reads it, so the answer says nothing of whether it exists or what type it is. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `id_reused`, and one naming an edge the caller may not read says the id is taken and nothing of that edge.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     body: {
       content: {
@@ -400,6 +403,7 @@ const getEdgeRoute = createRoute({
   description:
     "Returns one edge by its id; an edge whose edge type or source item the caller may not read answers `404 edge_not_found`, exactly as a missing one. The other ways to read an edge all need something the caller may not have: every edge filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: { params: z.object({ id: z.string().describe("Edge id.") }) },
   responses: {
     200: {
@@ -440,6 +444,7 @@ const updateEdgeRoute = createRoute({
     "**Moving an end.** `target_id` moves the edge to another target where its type lets a source hold one edge (`one-to-one`, `many-to-one`), and `source_id` moves it to another source where its type lets a target hold one (`one-to-one`, `one-to-many`): the end that stays holds one edge of the type, and this replaces it. The edge keeps its id and its properties, takes any named here, and moves in one write, so no reader ever sees that end with no edge or with two. The edge as it would stand is judged as a create is: the ends exist, a new source's type is one the caller may write, a target the caller may not read answers exactly as a missing one, `404 item_not_found`, and the type constraints, cardinality at the new end, duplicates and cycles hold. One `edge.updated` announces the move, carrying the edge as it now stands. A type that holds more than one at the end that stays, or a body moving both ends, is refused `400 validation_error`; the edge type never changes.\n\n" +
     "`version` is required: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that, and a write naming none is refused 400 `missing_required_field`. The version moves on with every accepted write, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({ id: z.string().describe("Edge id.") }),
     body: {
@@ -542,6 +547,7 @@ const deleteEdgeRoute = createRoute({
   description:
     "Deletes a single edge by id. The edge type's `cascade_on_delete` setting decides what happens to the connected items: `cascade` deletes them, `orphan` leaves them, and `block` rejects the delete while endpoints remain.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: { params: z.object({ id: z.string().describe("Edge id.") }) },
   responses: {
     200: {
@@ -925,6 +931,7 @@ const listFromSourceRoute = createRoute({
   summary: "List outbound edges from an item",
   description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
     query: z.object({
@@ -997,6 +1004,7 @@ const listBackrefsRoute = createRoute({
   summary: "List inbound edges to an item",
   description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. Each row is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A row failing either is left out rather than refused, so a page can come back shorter than \`limit\` and can come back empty with a \`next_cursor\` still to follow. The cursor describes the whole listing rather than the page: stop on \`next_cursor: null\`, never on an empty page. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
     query: z.object({

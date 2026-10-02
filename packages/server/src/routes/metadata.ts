@@ -1,7 +1,11 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, getTypeFilter } from "../middleware/auth.js";
+import {
+  requireAuth,
+  getTypeFilter,
+  readsSomeType,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -31,6 +35,7 @@ const listTagsRoute = createRoute({
   description:
     "Returns every distinct tag in use across items the caller can read, each with a usage count, sorted by count descending then tag ascending. Scoped to the caller's type permissions and to the active state, which is the selection `GET /items` answers, so every tag listed here opens to rows.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {},
   responses: {
     200: {

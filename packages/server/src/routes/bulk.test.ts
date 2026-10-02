@@ -567,7 +567,8 @@ describe("POST /items/bulk", () => {
   });
 
   it("rejects a credential without write on the item's type (atomic 403)", async () => {
-    // No type_permissions → no writable types. The atomic pre-check aborts
+    // Write on another type and not this one. (A key reaching no type at all
+    // is refused before the batch is read.) The atomic pre-check aborts
     // the whole batch with bulk_atomic_rollback carrying type_not_permitted,
     // at the status that refusal has on its own: a caller sorts by status
     // before it reads a code, and a permission failure under 400 reads as a
@@ -578,7 +579,7 @@ describe("POST /items/bulk", () => {
       {
         label: "bulk-scoped-denied",
         source: `bulk-scoped-no-${rawKey.slice(-6)}`,
-        type_permissions: {},
+        type_permissions: { "core.task": "write" },
         is_operator: false,
       },
       keyHash,

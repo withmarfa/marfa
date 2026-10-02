@@ -774,6 +774,26 @@ export const operatorOnly = standingRule("operator key", (c) => {
   checkOperatorKey(c.get("apiKey"));
 });
 
+/**
+ * The data plane refuses a credential whose type map reaches no type at all,
+ * whatever the request names (`keys-and-oauth.md` 1). The operator key
+ * reaches none, so it is refused here too.
+ */
+export const readsSomeType = standingRule("reads some type", (c) => {
+  getTypeFilter(c);
+});
+
+/** Only a key opens the door: a signed-in app's token is refused `403`. */
+export const keysOnly = standingRule("a key, not a signed-in app", (c) => {
+  requireAuth(c);
+  if (c.get("authType") === "oauth") {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "This credential is a signed-in app's token, not a key; its reach is its grant.",
+    );
+  }
+});
+
 /** The door takes `permission` of every caller, and with `operatorToo` the
  *  operator key opens it as well. */
 export function standingPermission(

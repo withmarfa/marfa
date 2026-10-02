@@ -32,6 +32,7 @@ import {
   requireAuth,
   requireReadableRow,
   requireTypeAccess,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -66,6 +67,7 @@ const listExtensionsRoute = createRoute({
   description:
     "Returns every extension namespace attached to the item that the caller has permission to read. Requires read on the item's type: an item of a type the caller may not read answers `404 item_not_found`, as `GET /items/{id}` answers it. Namespaces the credential doesn't declare in its `extension_permissions` map are silently filtered out.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({
       id: z.string().describe("Item ID."),
@@ -124,6 +126,7 @@ const getExtensionRoute = createRoute({
   description:
     "Returns the JSON payload for one extension namespace on the item. Two gates, in order: read on the item's type, where an item of a type the caller may not read answers `404 item_not_found` as `GET /items/{id}` answers it, and then read on the namespace, refused `403 forbidden` whatever the caller holds on the type.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({
       id: z.string().describe("Item ID."),
@@ -184,6 +187,7 @@ const setExtensionRoute = createRoute({
   description:
     "Replaces the JSON payload for one extension namespace on the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. The body is capped at 100KB, and the reserved namespaces `core`, `marfa` and `system` are refused to every credential. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({
       id: z.string().describe("Item ID."),
@@ -255,6 +259,7 @@ const deleteExtensionRoute = createRoute({
   description:
     "Removes one extension namespace from the item, requiring write on the item's type, refused `403 type_not_permitted` as `PATCH /items/{id}` refuses it where the caller may read the type, while an item of a type it may not read answers `404 item_not_found` as a missing one, and then `write` on that namespace, refused `403 forbidden`. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. No namespace is exempt from the announcement.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({
       id: z.string().describe("Item ID."),

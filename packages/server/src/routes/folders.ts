@@ -26,6 +26,7 @@ import {
   itemProvenanceSource,
   requireAuth,
   typeReader,
+  standingRule,
 } from "../middleware/auth.js";
 import type { ResolvedItem, Storage } from "../storage/interface.js";
 import { depthInsideFolder } from "../folder-path.js";
@@ -276,6 +277,12 @@ function requireFolderWrite(c: Context<AppEnv>): void {
   }
 }
 
+/** Every folder door that writes takes write on `system.folder`. */
+const writesFolders = standingRule(
+  `write on ${FOLDER_TYPE}`,
+  requireFolderWrite,
+);
+
 async function requireFolder(storage: Storage, id: string): Promise<Item> {
   if (!isValidId(id)) {
     throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -376,6 +383,7 @@ const createFolderRoute = createRoute({
   description:
     "Creates a `system.folder` item holding a folder's settings and publishes it as `item.created`. Needs write on `system.folder` in the credential's type map; the item doors refuse every `system.*` write whatever the credential holds. Each setting is validated before the write, and a refusal names it.",
   security: [{ bearerAuth: [] }],
+  middleware: writesFolders,
   request: {
     body: {
       content: { "application/json": { schema: CreateFolderSchema } },
@@ -401,6 +409,7 @@ const updateFolderRoute = createRoute({
   description:
     "Changes the settings named in the body, each replaced whole, and publishes the folder as `item.updated`. `version` is required: at a stale version a change to a setting nobody changed since merges, and one to a setting changed since answers `409 version_conflict` with `conflicting_fields` naming it. This door takes no `conflict` parameter, so a stale change to the same setting is refused whatever the query says. A revoked folder does not change.",
   security: [{ bearerAuth: [] }],
+  middleware: writesFolders,
   request: {
     params: IdParam,
     body: {
@@ -437,6 +446,7 @@ const revokeFolderRoute = createRoute({
   description:
     "Moves the folder to `revoked`, its terminal state, stamps `revoked_at`, and publishes it as `item.state_changed`. Items placed in it keep their `in-folder` edges.",
   security: [{ bearerAuth: [] }],
+  middleware: writesFolders,
   request: { params: IdParam },
   responses: {
     200: {
@@ -466,7 +476,6 @@ export function folderRoutes(storage: Storage) {
 
   router.openapi(createFolderRoute, async (c) => {
     const body = c.req.valid("json");
-    requireFolderWrite(c);
     assertSettings(body);
     const credential = c.get("apiKey");
     const item = await storage.items.create({
@@ -493,7 +502,6 @@ export function folderRoutes(storage: Storage) {
   router.openapi(updateFolderRoute, async (c) => {
     const { id } = c.req.valid("param");
     const { version, ...settings } = c.req.valid("json");
-    requireFolderWrite(c);
     if (Object.keys(settings).length === 0) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -531,7 +539,6 @@ export function folderRoutes(storage: Storage) {
 
   router.openapi(revokeFolderRoute, async (c) => {
     const { id } = c.req.valid("param");
-    requireFolderWrite(c);
     const item = await storage.runInTransaction(async () => {
       refuseRevoked(await requireFolder(storage, id));
       await storage.items.update(id, {

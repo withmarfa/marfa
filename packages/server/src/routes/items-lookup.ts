@@ -17,6 +17,7 @@ import {
   checkTypeAccess,
   getTypeFilter,
   itemProvenanceSource,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -127,6 +128,7 @@ const lookupRoute = createRoute({
     "- `ids`: the rows with those ids, whatever their type.\n\n" +
     "A row whose type the credential may not read is left out, as are `system.*` rows. `tombstones` answers, for each link or natural key named, what the purge of the row holding it recorded under `type`, and is empty by `ids` and to a credential that may not read `type`. A key held by a row again has no tombstone. A read: nothing is announced or audited.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     body: {
       content: { "application/json": { schema: LookupRequestSchema } },
@@ -171,6 +173,7 @@ const tombstonesRoute = createRoute({
   description:
     "Moves the `settled_at` of the tombstones purges left under `type` to `settled_at`, for each named link or natural key whose tombstone holds an earlier time; a later one stands, so the time only ever moves later. An entry from the vendor naming a purged key comes back as a new row only if the vendor changed it after `settled_at`. A connector whose own carrying of the purge changed the vendor's copy, closing an issue it cannot delete say, moves the time to that change, so its own close does not bring the row back. Name exactly one of `links` or `source` with `source_ids`, at most 500 values. Needs write on `type`, and `source` is held as an item write holds it: the credential's own, or one its key claims.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     body: {
       content: { "application/json": { schema: TombstonesRequestSchema } },

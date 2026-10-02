@@ -493,6 +493,44 @@ describe("key management", () => {
       }
     }
     expect(wrong).toEqual([]);
+
+    // A key reaching no type is refused the data plane, the folder writes and
+    // the blob doors before its request is read, as a key without a
+    // permission is refused the doors above.
+    const { key: reachesNothing } = await createClientWithoutPermissions(
+      `km-standing-none-${ctx.runId}`,
+      {},
+    );
+    const typeDoors: [string, string][] = [
+      ["GET", "/items?limit=not-a-number"],
+      ["POST", "/items"],
+      ["GET", "/search"],
+      ["POST", "/edges/bulk"],
+      ["POST", "/folders"],
+      ["GET", "/blobs/not-a-hash"],
+      ["POST", "/blobs"],
+    ];
+    const notRefused: string[] = [];
+    for (const [method, path] of typeDoors) {
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${reachesNothing}`,
+          "Content-Type": "application/json",
+        },
+        body: method === "GET" ? undefined : "{ not json",
+      });
+      const body = (await response.json()) as { error?: { code?: string } };
+      if (
+        response.status !== 403 ||
+        body.error?.code !== "type_not_permitted"
+      ) {
+        notRefused.push(
+          `${method} ${path} answered ${String(response.status)}`,
+        );
+      }
+    }
+    expect(notRefused).toEqual([]);
   });
 
   it("the operator key is refused the data plane, reading as well as writing", async () => {

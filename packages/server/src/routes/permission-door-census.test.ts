@@ -16,7 +16,13 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import {
+  createTestContext,
+  mintWorkingKey,
+  request,
+  seedOauthBearer,
+} from "../test-utils.js";
+import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import type { TestContext } from "../test-utils.js";
 import { standingRuleOf } from "../middleware/auth.js";
 
@@ -24,6 +30,8 @@ let ctx: TestContext;
 /** A working key holding nothing at all, so every standing rule but the one
  *  asking for a working key refuses it. */
 let holdsNothing: string;
+/** A signed-in app's token holding every scope there is. */
+let appHoldingEverything: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
@@ -36,6 +44,9 @@ beforeAll(async () => {
     profile_permissions: {},
     sources: [],
   });
+  appHoldingEverything = (
+    await seedOauthBearer(ctx.storage, buildAllowedScopes())
+  ).token;
 });
 
 afterAll(async () => {
@@ -44,6 +55,48 @@ afterAll(async () => {
 
 const OPERATOR = "operator key";
 const WORKING_KEY = "a working key";
+const KEYS_ONLY = "a key, not a signed-in app";
+const READS = "reads some type";
+const READS_BLOBS = "reads some type, or the operator key";
+
+/** Every data-plane door, which a credential reaching no type is refused. */
+const DATA_PLANE = [
+  "DELETE /edges/:id",
+  "DELETE /items/:id",
+  "DELETE /items/:id/extensions/:namespace",
+  "DELETE /items/:id/tags/:tag",
+  "GET /edges",
+  "GET /edges/:id",
+  "GET /events",
+  "GET /export",
+  "GET /items",
+  "GET /items/:id",
+  "GET /items/:id/backrefs",
+  "GET /items/:id/edges",
+  "GET /items/:id/extensions",
+  "GET /items/:id/extensions/:namespace",
+  "GET /items/:id/metadata",
+  "GET /items/:id/versions",
+  "GET /items/stats",
+  "GET /metadata/tags",
+  "GET /occurrences",
+  "GET /search",
+  "PATCH /edges/:id",
+  "PATCH /items/:id",
+  "PATCH /items/:id/metadata",
+  "POST /edges",
+  "POST /edges/bulk",
+  "POST /items",
+  "POST /items/:id/restore",
+  "POST /items/:id/tags",
+  "POST /items/:id/transition",
+  "POST /items/bulk",
+  "POST /items/bulk-get",
+  "POST /items/lookup",
+  "POST /items/tombstones",
+  "PUT /items/:id/extensions/:namespace",
+  "PUT /items/:id/metadata",
+];
 
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
@@ -78,6 +131,15 @@ const STANDING: Record<string, string> = {
   "POST /edge-types": "metadata.edge_types:write",
   "DELETE /edge-types/:id": "schema.write",
   "POST /connectors": WORKING_KEY,
+  "GET /keys/current": KEYS_ONLY,
+  "POST /folders": "write on system.folder",
+  "PATCH /folders/:id": "write on system.folder",
+  "POST /folders/:id/revoke": "write on system.folder",
+  "GET /blobs/:hash": READS_BLOBS,
+  "GET /blobs/:hash/locations": READS_BLOBS,
+  "GET /blobs/:hash/url": READS_BLOBS,
+  "POST /blobs": "writes some type, or the operator key",
+  ...Object.fromEntries(DATA_PLANE.map((door) => [door, READS])),
 };
 
 /**
@@ -91,56 +153,13 @@ const ASKED_IN_PLACE: Record<string, string> = {
 };
 
 /**
- * Doors open to every credential, by why. What each may answer turns on the
- * request: the type, edge, namespace or row it names, or whose row it is.
+ * Doors open to every credential, by why. What each answers turns on the row
+ * the path names and whose it is, so each is driven with three credentials
+ * as different as there are, a key holding nothing, a signed-in app's token
+ * holding everything and the operator key, and must answer every one alike
+ * and never `403`.
  */
 const OPEN_TO_EVERY_CREDENTIAL: Record<string, readonly string[]> = {
-  "reach is the type, edge, namespace or source the request names, judged once it is read":
-    [
-      "DELETE /edges/:id",
-      "DELETE /items/:id",
-      "DELETE /items/:id/extensions/:namespace",
-      "DELETE /items/:id/tags/:tag",
-      "GET /blobs/:hash",
-      "GET /blobs/:hash/locations",
-      "GET /blobs/:hash/url",
-      "GET /edges",
-      "GET /edges/:id",
-      "GET /events",
-      "GET /export",
-      "GET /items",
-      "GET /items/:id",
-      "GET /items/:id/backrefs",
-      "GET /items/:id/edges",
-      "GET /items/:id/extensions",
-      "GET /items/:id/extensions/:namespace",
-      "GET /items/:id/metadata",
-      "GET /items/:id/versions",
-      "GET /items/stats",
-      "GET /metadata/tags",
-      "GET /occurrences",
-      "GET /search",
-      "PATCH /edges/:id",
-      "PATCH /folders/:id",
-      "PATCH /items/:id",
-      "PATCH /items/:id/metadata",
-      "POST /blobs",
-      "POST /edges",
-      "POST /edges/bulk",
-      "POST /folders",
-      "POST /folders/:id/revoke",
-      "POST /items",
-      "POST /items/:id/restore",
-      "POST /items/:id/tags",
-      "POST /items/:id/transition",
-      "POST /items/bulk",
-      "POST /items/bulk-actions",
-      "POST /items/bulk-get",
-      "POST /items/lookup",
-      "POST /items/tombstones",
-      "PUT /items/:id/extensions/:namespace",
-      "PUT /items/:id/metadata",
-    ],
   "a connector's doors answer the connector the path names, to its own key or a reader of it":
     [
       "DELETE /connectors/:id",
@@ -166,8 +185,13 @@ const OPEN_TO_EVERY_CREDENTIAL: Record<string, readonly string[]> = {
     ],
   "a bulk-action job answers the credential that started it, judged on the job the path names":
     ["DELETE /items/bulk-actions/jobs/:id", "GET /items/bulk-actions/jobs/:id"],
-  "reads every credential may make: itself, and the registries it writes against":
-    ["GET /keys/current", "GET /types", "GET /types/:id", "GET /edge-types"],
+  "a bulk action narrows what it matches to what the credential may write, and refuses nothing for it (keys-and-oauth.md 1)":
+    ["POST /items/bulk-actions"],
+  "the registries every credential writes against": [
+    "GET /types",
+    "GET /types/:id",
+    "GET /edge-types",
+  ],
 };
 
 /** Doors that take no credential at all, by why. */
@@ -217,7 +241,7 @@ const PERMISSION_CALLS: Record<
   "routes/_schema-reach.ts": {
     asks: { "schema.write": 1 },
     because:
-      "the schema guard, which the standing rule and the whole guard both call once the names are known",
+      "the whole schema guard, which asks schema.write again once it knows the names; the standing rule asks it first through standingPermission",
   },
   "routes/auth-pages.ts": {
     asks: { "grants.manage": 2 },
@@ -275,26 +299,144 @@ function read(rel: string): string {
   return readFileSync(join(import.meta.dirname, "..", rel), "utf8");
 }
 
-/** The request nothing would accept: an id no row has, in no shape any
- *  validator takes, a query value no door takes, and a body no parser reads. */
-function malformed(door: string, bearer: string): Promise<Response> {
-  const [method, path] = door.split(" ") as [string, string];
-  const concrete = path.replace(/:[a-z_]+/g, "not%20a%20valid%20id");
+/** A door's path with each parameter filled in. */
+function concrete(path: string, value: string): string {
+  return path.replace(/:[a-z_]+/g, value);
+}
+
+function send(
+  method: string,
+  path: string,
+  bearer: string,
+  body: string | undefined,
+): Promise<Response> {
   return Promise.resolve(
-    ctx.app.request(`${concrete}?limit=not-a-number`, {
+    ctx.app.request(path, {
       method,
       headers: {
         Authorization: `Bearer ${bearer}`,
         "Content-Type": "application/json",
       },
-      body: method === "GET" ? undefined : "{ not json",
+      body: method === "GET" ? undefined : body,
     }),
+  );
+}
+
+/** The request nothing would accept: an id no row has, in no shape any
+ *  validator takes, a query value no door takes, and a body no parser reads. */
+function malformed(door: string, bearer: string): Promise<Response> {
+  const [method, path] = door.split(" ") as [string, string];
+  return send(
+    method,
+    `${concrete(path, "not%20a%20valid%20id")}?limit=not-a-number`,
+    bearer,
+    "{ not json",
+  );
+}
+
+/** An id of the shape every id is, which no row holds. */
+const NO_ROW = "019537a0-7b80-7000-8000-000000000000";
+
+type Schema = Record<string, unknown>;
+
+/**
+ * The smallest value a schema in the served document accepts: required
+ * properties only, the first of an enum or a union, the shortest array.
+ */
+function sample(schema: Schema | undefined, doc: Schema): unknown {
+  if (!schema) return undefined;
+  const ref = schema.$ref;
+  if (typeof ref === "string") {
+    const name = ref.split("/").pop()!;
+    const components = (doc.components as { schemas: Record<string, Schema> })
+      .schemas;
+    return sample(components[name], doc);
+  }
+  for (const key of ["oneOf", "anyOf", "allOf"]) {
+    const options = schema[key];
+    if (Array.isArray(options)) return sample(options[0] as Schema, doc);
+  }
+  if (Array.isArray(schema.enum)) return schema.enum[0];
+  if (schema.const !== undefined) return schema.const;
+  switch (schema.type) {
+    case "object": {
+      const properties = (schema.properties ?? {}) as Record<string, Schema>;
+      const required = (schema.required ?? []) as string[];
+      return Object.fromEntries(
+        required.map((name) => [name, sample(properties[name], doc)]),
+      );
+    }
+    case "array": {
+      const count = typeof schema.minItems === "number" ? schema.minItems : 0;
+      return Array.from({ length: count }, () =>
+        sample(schema.items as Schema, doc),
+      );
+    }
+    case "integer":
+    case "number":
+      return typeof schema.minimum === "number" ? schema.minimum : 1;
+    case "boolean":
+      return false;
+    case "string":
+      return schema.format === "date-time"
+        ? new Date().toISOString()
+        : "x".repeat(
+            typeof schema.minLength === "number" ? schema.minLength : 1,
+          );
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * A request the door's own validators take, read off the served document:
+ * every path parameter an id no row holds, every required query parameter,
+ * and the smallest body the schema accepts. A door that refuses a credential
+ * by rule after reading the request answers this one with the refusal.
+ */
+function wellFormed(door: string, doc: Schema, bearer: string) {
+  const [method, path] = door.split(" ") as [string, string];
+  const template = path.replace(/:([a-z_]+)/g, "{$1}");
+  const operation = (doc.paths as Record<string, Record<string, Schema>>)[
+    template
+  ]?.[method.toLowerCase()];
+  if (!operation) throw new Error(`${door} is not in the served document`);
+  const query = new URLSearchParams();
+  for (const parameter of (operation.parameters ?? []) as Schema[]) {
+    if (parameter.in === "query" && parameter.required === true) {
+      query.set(
+        parameter.name as string,
+        String(sample(parameter.schema as Schema, doc)),
+      );
+    }
+  }
+  const content = (operation.requestBody as Schema | undefined)?.content as
+    Record<string, { schema?: Schema }> | undefined;
+  const body = content?.["application/json"]?.schema;
+  const search = query.size > 0 ? `?${query.toString()}` : "";
+  return send(
+    method,
+    `${concrete(path, NO_ROW)}${search}`,
+    bearer,
+    body === undefined ? undefined : JSON.stringify(sample(body, doc)),
   );
 }
 
 /** The credential a door's rule refuses. */
 function refusedBy(door: string): string {
-  return STANDING[door] === WORKING_KEY ? ctx.operatorKey : holdsNothing;
+  if (STANDING[door] === WORKING_KEY) return ctx.operatorKey;
+  if (STANDING[door] === KEYS_ONLY) return appHoldingEverything;
+  return holdsNothing;
+}
+
+/** The status and error code of an answer, reading no stream. */
+async function answer(res: Response): Promise<string> {
+  if (!(res.headers.get("content-type") ?? "").includes("json")) {
+    await res.body?.cancel();
+    return String(res.status);
+  }
+  const body = (await res.json()) as { error?: { code?: string } };
+  return `${String(res.status)} ${body.error?.code ?? ""}`.trim();
 }
 
 describe("every door asks what it asks of every caller before anything else", () => {
@@ -320,12 +462,35 @@ describe("every door asks what it asks of every caller before anything else", ()
       ...Object.keys(STANDING),
       ...Object.keys(ASKED_IN_PLACE),
     ]) {
-      const res = await malformed(door, refusedBy(door));
-      const body = (await res.json()) as { error?: { code?: string } };
-      if (res.status !== 403 || body.error?.code !== "forbidden") {
-        wrong.push(
-          `${door} answered ${String(res.status)} ${JSON.stringify(body)}`,
-        );
+      const got = await answer(await malformed(door, refusedBy(door)));
+      if (got !== "403 forbidden" && got !== "403 type_not_permitted") {
+        wrong.push(`${door} answered ${got}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("answers every credential alike on a door open to all of them, and never 403", async () => {
+    const doc = (await (
+      await ctx.app.request("/openapi.json")
+    ).json()) as Schema;
+    const credentials = [holdsNothing, appHoldingEverything, ctx.operatorKey];
+    const wrong: string[] = [];
+    for (const door of Object.values(OPEN_TO_EVERY_CREDENTIAL).flat()) {
+      for (const [shape, drive] of [
+        ["malformed", (bearer: string) => malformed(door, bearer)],
+        ["well-formed", (bearer: string) => wellFormed(door, doc, bearer)],
+      ] as const) {
+        const answers = [];
+        for (const bearer of credentials) {
+          answers.push(await answer(await drive(bearer)));
+        }
+        if (
+          answers.some((got) => got.startsWith("403")) ||
+          new Set(answers).size > 1
+        ) {
+          wrong.push(`${door}, ${shape}: ${answers.join(" | ")}`);
+        }
       }
     }
     expect(wrong).toEqual([]);

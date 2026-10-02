@@ -40,7 +40,12 @@ import {
   OkResponseSchema,
 } from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
-import { requireBlobUpload, requireReadableBlob } from "./_blob-reach.js";
+import {
+  requireBlobUpload,
+  requireReadableBlob,
+  readsBlobs,
+  uploadsBlobs,
+} from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -223,6 +228,7 @@ const uploadBlobRoute = createRoute({
   description:
     "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.",
   security: [{ bearerAuth: [] }],
+  middleware: uploadsBlobs,
   request: {
     body: {
       required: true,
@@ -315,6 +321,7 @@ const getBlobRoute = createRoute({
   summary: "Download blob binary",
   description: `Streams the bytes of a blob as \`application/octet-stream\` from whichever store holds them, honoring one \`Range\`. \`HEAD\` answers the same headers with no body. A hash this instance does not hold answers \`404\`. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsBlobs,
   request: {
     params: HashParam,
   },
@@ -352,6 +359,7 @@ const getBlobUrlRoute = createRoute({
   summary: "Get a time-limited link to a blob's bytes",
   description: `Answers a URL a client fetches the bytes from without a credential, and \`expires_in\`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. \`ttl\` is capped at seven days. ${READ_RULE} The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.`,
   security: [{ bearerAuth: [] }],
+  middleware: readsBlobs,
   request: {
     params: HashParam,
     query: z.object({
@@ -450,6 +458,7 @@ const listBlobLocationsRoute = createRoute({
   summary: "List the stores holding a blob",
   description: `The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (\`verified_at\`, \`null\` until one has). A store the configuration no longer names is shown \`detached\` and does not count as a copy. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsBlobs,
   request: {
     params: HashParam,
   },
