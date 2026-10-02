@@ -16,15 +16,19 @@ pub struct HoldConnector200Response {
     /// When the hold lapses.
     #[serde(rename = "expires_at")]
     pub expires_at: String,
+    /// The instance's hold window in milliseconds: `expires_at` is the server's clock plus this when it took the hold, so a process schedules its next renewal without reading the server's clock.
+    #[serde(rename = "ttl_ms")]
+    pub ttl_ms: i32,
     /// True only when this process's hold was still live when the call arrived; false on a first take and on a take after a lapse. A process answered false while it believed it held the registration re-reads the state and the agreements before writing again.
     #[serde(rename = "renewed")]
     pub renewed: bool,
 }
 
 impl HoldConnector200Response {
-    pub fn new(expires_at: String, renewed: bool) -> HoldConnector200Response {
+    pub fn new(expires_at: String, ttl_ms: i32, renewed: bool) -> HoldConnector200Response {
         HoldConnector200Response {
             expires_at,
+            ttl_ms,
             renewed,
         }
     }

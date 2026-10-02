@@ -158,6 +158,141 @@ describe("type registration and listing", () => {
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("property_shadows_field");
   });
+
+  it("keeps a list of strings with a type-naming format a list", async () => {
+    const id = `user.link-list-${ctx.runId}`;
+    const r = await client.registerType({
+      id,
+      fields: {
+        links: { type: "array", items_type: "string", format: "url" },
+        href: { type: "string", format: "url" },
+      },
+    });
+    expect(r.status).toBe(201);
+
+    const read = await client.getType(id);
+    expect(read.ok).toBe(true);
+    expect(read.data.fields.links).toMatchObject({
+      type: "array",
+      items_type: "url",
+    });
+    expect(read.data.fields.links?.format).toBeUndefined();
+    expect(read.data.fields.href?.type).toBe("url");
+
+    const item = await client.createItem({
+      type: id,
+      properties: { links: ["https://example.com/a", "https://example.com/b"] },
+      source: ctx.source,
+    });
+    expect(item.status).toBe(201);
+    trackItem(ctx, item.data.item.id);
+    expect(item.data.item.properties.links).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+    ]);
+  });
+
+  it("refuses a type-naming format on a field that is neither a string nor a list of strings", async () => {
+    const r = await client.registerType({
+      id: `user.number-url-${ctx.runId}`,
+      fields: { count: { type: "number", format: "url" } },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("invalid_schema");
+    const errors = r.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(errors?.some((e) => e.field === "fields.count.format")).toBe(true);
+  });
+
+  it("refuses a replacement whose property name shadows a first-class Item field, as registration does", async () => {
+    const id = `user.shadow-replace-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { name: { type: "string" } },
+    });
+    expect(registered.status).toBe(201);
+
+    const r = await client.updateType(id, {
+      fields: {
+        name: { type: "string" },
+        capture_latitude: { type: "number" },
+      },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("property_shadows_field");
+  });
+
+  it("refuses a replacement that breaks its compatible_with claim, as registration does", async () => {
+    const id = `user.compat-replace-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { body: { type: "string", required: true } },
+      compatible_with: "core.note",
+    });
+    expect(registered.status).toBe(201);
+
+    // core.note requires `body`; the replacement drops it.
+    const missingField = await client.updateType(id, {
+      fields: { extra: { type: "string" } },
+      compatible_with: "core.note",
+    });
+    expect(missingField.status).toBe(422);
+    expect(missingField.error?.error.code).toBe("compatible_with_violation");
+
+    const unknownTarget = await client.updateType(id, {
+      fields: { body: { type: "string", required: true } },
+      compatible_with: "no.such-type-exists",
+    });
+    expect(unknownTarget.status).toBe(422);
+    expect(unknownTarget.error?.error.code).toBe("compatible_with_violation");
+  });
+
+  it("writes and reads items of a type whose fields share a name with an object's built-in members", async () => {
+    const names = ["toString", "valueOf", "constructor", "hasOwnProperty"];
+    const id = `user.builtin-names-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: Object.fromEntries(
+        names.map((name) => [name, { type: "string" as const }]),
+      ),
+    });
+    expect(registered.status).toBe(201);
+    expect(Object.keys(registered.data.type.fields).sort()).toEqual(
+      [...names].sort(),
+    );
+
+    const bare = await client.createItem({
+      type: id,
+      properties: {},
+      source: ctx.source,
+    });
+    expect(bare.status).toBe(201);
+    trackItem(ctx, bare.data.item.id);
+    expect(bare.data.item.properties).toEqual({});
+
+    const values = Object.fromEntries(names.map((name) => [name, `${name}!`]));
+    const full = await client.createItem({
+      type: id,
+      properties: values,
+      source: ctx.source,
+    });
+    expect(full.status).toBe(201);
+    trackItem(ctx, full.data.item.id);
+
+    const read = await client.getItem(full.data.item.id);
+    expect(read.status).toBe(200);
+    expect(read.data.item.properties).toEqual(values);
+
+    const patched = await client.updateItem(full.data.item.id, {
+      properties: { valueOf: "changed" },
+      version: full.data.item.version,
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.data.item.properties).toEqual({
+      ...values,
+      valueOf: "changed",
+    });
+  });
 });
 
 // Per-type merge policy drives client-side conflict resolution.
