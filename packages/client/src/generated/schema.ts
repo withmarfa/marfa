@@ -555,7 +555,7 @@ export interface paths {
         };
         /**
          * List edge types
-         * @description Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.
+         * @description Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.
          */
         get: operations["listEdgeTypes"];
         put?: never;
@@ -2201,6 +2201,8 @@ export interface components {
             reverse_name?: string;
             /** @enum {string} */
             written_at: "source" | "target";
+            /** @description Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`. */
+            shipped: boolean;
         };
         EdgePropertyDefinition: {
             /** @description A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be. */
