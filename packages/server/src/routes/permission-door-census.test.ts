@@ -445,6 +445,24 @@ function rank(door: string): number {
   return door.startsWith("DELETE") ? 1 : 0;
 }
 
+/** A body naming the seeded rows where the door looks rows up by body. */
+function withSeededRows(door: string, body: unknown): unknown {
+  if (door === "POST /connectors/:id/deliveries/handled") {
+    return { ...(body as object), ids: [ROWS.delivery] };
+  }
+  return body;
+}
+
+/**
+ * Doors the well-formed drive cannot take past their lookup for every
+ * credential, and why. Each still asks nothing before the lookup, which the
+ * malformed drive holds.
+ */
+const STOPS_AT_LOOKUP: Record<string, string> = {
+  "DELETE /connectors/:id":
+    "the row's own key deletes the connector first, so the operator key, driven after it, finds no row and is answered 404",
+};
+
 /** The row a door's path parameter names. */
 function rowFor(path: string, parameter: string): string {
   if (parameter === "endpoint_id") return ROWS.endpoint!;
@@ -479,7 +497,9 @@ function wellFormed(door: string, doc: Schema, bearer: string) {
     method,
     `${path.replace(/:([a-z_]+)/g, (_, name: string) => rowFor(path, name))}${search}`,
     bearer,
-    body === undefined ? undefined : JSON.stringify(sample(body, doc)),
+    body === undefined
+      ? undefined
+      : JSON.stringify(withSeededRows(door, sample(body, doc))),
   );
 }
 
@@ -565,6 +585,13 @@ describe("every door asks what it asks of every caller before anything else", ()
       ][]) {
         const got = await answer(await wellFormed(door, doc, bearer));
         const refused = got.startsWith("403");
+        if (
+          got.startsWith("404") &&
+          admitted(OPEN_BY_ROW[door]!, who) &&
+          !(door in STOPS_AT_LOOKUP && who === "operator")
+        ) {
+          wrong.push(`${door}, well-formed, ${who}: ${got}, at the lookup`);
+        }
         if (got.startsWith("400 validation_error")) {
           wrong.push(`${door}, well-formed, ${who}: ${got}`);
         } else if (refused === admitted(OPEN_BY_ROW[door]!, who)) {
