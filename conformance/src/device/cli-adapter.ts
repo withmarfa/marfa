@@ -12,10 +12,12 @@ import {
   type DrainReport,
   type Edge,
   type EdgeDraft,
+  type EdgeType,
   type Edit,
   type FollowReport,
   type HydrateReport,
   type Item,
+  type ItemType,
   type ListFilters,
   type PinReport,
   type Outcome,
@@ -311,6 +313,22 @@ export class CliDevice implements DeviceUnderTest {
 
   async status(): Promise<Outcome<Status>> {
     return this.json<Status>(["status"]);
+  }
+
+  async itemTypes(): Promise<Outcome<ItemType[]>> {
+    return this.json<ItemType[]>(["types", "list"]);
+  }
+
+  async itemType(id: string): Promise<Outcome<ItemType>> {
+    return this.json<ItemType>(["types", "get", id]);
+  }
+
+  async edgeTypes(): Promise<Outcome<EdgeType[]>> {
+    return this.json<EdgeType[]>(["edge-types", "list"]);
+  }
+
+  async edgeType(id: string): Promise<Outcome<EdgeType>> {
+    return this.json<EdgeType>(["edge-types", "get", id]);
   }
 
   /**

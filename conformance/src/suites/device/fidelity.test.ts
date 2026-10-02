@@ -19,6 +19,8 @@ import {
   scriptedType,
   snapshotType,
   SCRIPTED_EDGE_TYPES,
+  edgeType,
+  type WireEdgeType,
   wireEdge,
   wireItem,
   wireType,
@@ -1781,7 +1783,7 @@ describe("the scripted answers match the server's", () => {
     );
   });
 
-  it("matches the edge types a folder reads its frontmatter lines by", async () => {
+  it("matches the edge types a working copy holds and a folder reads its frontmatter lines by", async () => {
     const listed = await client.rawRequest("/edge-types");
     expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
     const served = (
@@ -1791,6 +1793,19 @@ describe("the scripted answers match the server's", () => {
       }
     ).data;
     expect((listed.data as { next_cursor: unknown }).next_cursor).toBeNull();
+    // Every field the device reads (`device.md` 47), the description apart:
+    // it is prose the device passes through and nothing here asserts.
+    const read = (row: Record<string, unknown> | WireEdgeType | undefined) => ({
+      label: row?.label,
+      cardinality: row?.cardinality,
+      source_type_constraints: row?.source_type_constraints,
+      target_type_constraints: row?.target_type_constraints,
+      cascade_on_delete: row?.cascade_on_delete,
+      property_schema: row?.property_schema,
+      reverse_name: row?.reverse_name,
+      written_at: row?.written_at,
+      shipped: row?.shipped,
+    });
     for (const scripted of SCRIPTED_EDGE_TYPES) {
       const real = served.find((row) => row.id === scripted.id);
       expect(
@@ -1798,18 +1813,25 @@ describe("the scripted answers match the server's", () => {
         `the server lists no ${scripted.id}, which the scripted catalog serves`,
       ).toBeDefined();
       expect(
-        {
-          cardinality: real?.cardinality,
-          reverse_name: real?.reverse_name,
-          written_at: real?.written_at,
-        },
-        `the scripted ${scripted.id} and the server's disagree on what a folder reads a line by`,
-      ).toEqual({
-        cardinality: scripted.cardinality,
-        reverse_name: scripted.reverse_name,
-        written_at: scripted.written_at,
-      });
+        read(real),
+        `the scripted ${scripted.id} and the server's disagree on a field the device reads`,
+      ).toEqual(read(scripted));
     }
+    const id = `fidelity-${uuidv7().slice(-12)}`;
+    const registered = await client.rawRequest("/edge-types", {
+      method: "POST",
+      body: { id, cardinality: "many-to-many" },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    const again = await client.rawRequest("/edge-types");
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    const real = (
+      again.data as { data: Array<Record<string, unknown>> }
+    ).data.find((row) => row.id === id);
+    expect(
+      read(real),
+      "an edge type the scripted catalog registers is not the one the server lists after the same registration",
+    ).toEqual(read(edgeType(id)));
   });
 
   it("matches the name lookup a folder asks the server for a typed name", async () => {
@@ -2204,6 +2226,123 @@ describe("the scripted answers match the server's", () => {
         shape: ["row.label", "row.fields"],
       },
     );
+  });
+
+  it("reads a registered type and edge type from a working copy as the server answers them", async () => {
+    const base = `user.base-${ctx.runId}`;
+    const leaf = `user.leaf-${ctx.runId}`;
+    const mentor = `mentor-${ctx.runId}`;
+    for (const schema of [
+      {
+        id: base,
+        label: "Base of a family",
+        fields: { name: { type: "string", required: true } },
+        display_hints: { title_field: "name" },
+      },
+      {
+        id: leaf,
+        parent: base,
+        fields: {
+          rating: { type: "number", description: "Out of five" },
+          name: { type: "string", required: true },
+        },
+      },
+    ]) {
+      const registered = await client.registerType(
+        schema as unknown as Parameters<typeof client.registerType>[0],
+      );
+      expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    }
+    const registeredEdge = await client.rawRequest("/edge-types", {
+      method: "POST",
+      body: {
+        id: mentor,
+        cardinality: "one-to-many",
+        reverse_name: `mentee-${ctx.runId}`,
+        written_at: "target",
+        property_schema: { since: { type: "string" } },
+      },
+    });
+    expect(registeredEdge.ok, JSON.stringify(registeredEdge.error)).toBe(true);
+
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: newStore("fidelity-catalog"),
+      url: apiUrl,
+      key: apiKey,
+    });
+    const hydrated = await device.hydrate([leaf], "library");
+    expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
+
+    const served = await client.getType(leaf);
+    expect(served.ok, JSON.stringify(served.error)).toBe(true);
+    const resolved = served.data as unknown as Record<string, unknown> & {
+      fields: Record<string, unknown>;
+      display_hints?: { title_field?: string; body_field?: string };
+    };
+    const read = await device.itemType(leaf);
+    expect(read.ok, JSON.stringify(read)).toBe(true);
+    if (!read.ok) return;
+    expect(
+      {
+        label: read.value.label,
+        parent: read.value.parent,
+        title_field: read.value.title_field,
+        body_field: read.value.body_field,
+        fields: Object.fromEntries(
+          read.value.fields.map((field) => [field.name, field.definition]),
+        ),
+      },
+      "the copy resolved the type's inheritance otherwise than the server's own read of it",
+    ).toEqual({
+      label: resolved.label ?? null,
+      parent: resolved.parent ?? null,
+      title_field: resolved.display_hints?.title_field ?? null,
+      body_field: resolved.display_hints?.body_field ?? null,
+      fields: resolved.fields,
+    });
+    expect(
+      read.value.fields.map((field) => [field.name, field.declared_by]),
+      "the copy did not say which type declares each field",
+    ).toEqual([
+      ["name", leaf],
+      ["rating", leaf],
+    ]);
+
+    const listed = await client.rawRequest("/edge-types");
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    const row = (
+      listed.data as { data: Array<Record<string, unknown>> }
+    ).data.find((candidate) => candidate.id === mentor);
+    const edge = await device.edgeType(mentor);
+    expect(edge.ok, JSON.stringify(edge)).toBe(true);
+    if (!edge.ok) return;
+    expect(
+      {
+        label: edge.value.label,
+        cardinality: edge.value.cardinality,
+        reverse_name: edge.value.reverse_name,
+        written_at: edge.value.written_at,
+        source_type_constraints: edge.value.source_type_constraints,
+        target_type_constraints: edge.value.target_type_constraints,
+        cascade_on_delete: edge.value.cascade_on_delete,
+        property_schema: Object.fromEntries(
+          edge.value.properties.map((field) => [field.name, field.definition]),
+        ),
+        shipped: edge.value.shipped,
+      },
+      "the copy holds the registered edge type otherwise than the server lists it",
+    ).toEqual({
+      label: row?.label ?? null,
+      cardinality: row?.cardinality,
+      reverse_name: row?.reverse_name,
+      written_at: row?.written_at,
+      source_type_constraints: row?.source_type_constraints,
+      target_type_constraints: row?.target_type_constraints,
+      cascade_on_delete: row?.cascade_on_delete,
+      property_schema: row?.property_schema,
+      shipped: row?.shipped,
+    });
   });
 
   it("matches an item frame on the event stream", async (context) => {

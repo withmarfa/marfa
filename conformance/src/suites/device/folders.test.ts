@@ -25,6 +25,7 @@ import {
   catchupTooOld,
   connected,
   edgeEvent,
+  edgeType,
   edgesPage,
   headRead,
   itemEvent,
@@ -3749,27 +3750,21 @@ describe("edges in frontmatter", () => {
           ...SCRIPTED_EDGE_TYPES,
           ...(registered
             ? [
-                {
-                  id: "cites",
-                  cardinality: "many-to-many",
-                  written_at: "source",
-                },
-                {
-                  id: "mentor-of",
+                edgeType("cites"),
+                edgeType("mentor-of", {
                   cardinality: "one-to-many",
                   reverse_name: "mentored-by",
                   written_at: "target",
-                },
+                }),
               ]
             : []),
           ...(later
             ? [
-                {
-                  id: "sponsor-of",
+                edgeType("sponsor-of", {
                   cardinality: "one-to-many",
                   reverse_name: "sponsored-by",
                   written_at: "target",
-                },
+                }),
               ]
             : []),
         ],

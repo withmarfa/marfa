@@ -271,49 +271,114 @@ export function scriptedType(id: string): Record<string, unknown> {
   return found;
 }
 
-export function typeCatalog(): Answer {
+/** The scripted types, and any a fixture registers beside them. */
+export function typeCatalog(
+  registered: ReadonlyArray<Record<string, unknown>> = [],
+): Answer {
   return {
     kind: "json",
     status: 200,
-    body: { data: [...SCRIPTED_TYPES], next_cursor: null },
+    body: { data: [...SCRIPTED_TYPES, ...registered], next_cursor: null },
   };
+}
+
+/** An edge type as `GET /edge-types` lists it. */
+export interface WireEdgeType {
+  id: string;
+  label?: string;
+  cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
+  source_type_constraints: string[];
+  target_type_constraints: string[];
+  cascade_on_delete: "cascade" | "orphan" | "block";
+  property_schema: Record<string, unknown>;
+  reverse_name?: string;
+  written_at: "source" | "target";
+  shipped: boolean;
+}
+
+/**
+ * An edge type as the listing answers one registered through
+ * `POST /edge-types` (`edges.md` 18 and 20): every endpoint taken, orphaned
+ * on delete, no properties and written at its source unless named.
+ */
+export function edgeType(
+  id: string,
+  options: Partial<Omit<WireEdgeType, "id">> = {},
+): WireEdgeType {
+  return {
+    id,
+    cardinality: "many-to-many",
+    source_type_constraints: ["*"],
+    target_type_constraints: ["*"],
+    cascade_on_delete: "orphan",
+    property_schema: {},
+    written_at: "source",
+    shipped: false,
+    ...options,
+  };
+}
+
+function shipped(
+  id: string,
+  label: string,
+  options: Partial<Omit<WireEdgeType, "id" | "label" | "shipped">> = {},
+): WireEdgeType {
+  return edgeType(id, { label, shipped: true, ...options });
 }
 
 /** The shipped edge types as `GET /edge-types` lists them, which
  *  `fidelity.test.ts` holds to the real listing. */
-export const SCRIPTED_EDGE_TYPES: ReadonlyArray<{
-  id: string;
-  cardinality: string;
-  reverse_name?: string;
-  written_at: "source" | "target";
-}> = [
-  { id: "about", cardinality: "many-to-many", written_at: "source" },
-  {
-    id: "attached-to",
-    cardinality: "many-to-many",
-    reverse_name: "has-attachment",
-    written_at: "source",
-  },
-  { id: "authored-by", cardinality: "many-to-many", written_at: "source" },
-  { id: "derived-from", cardinality: "many-to-many", written_at: "source" },
-  { id: "in-collection", cardinality: "many-to-many", written_at: "source" },
-  { id: "in-folder", cardinality: "many-to-many", written_at: "source" },
-  { id: "in-thread", cardinality: "many-to-one", written_at: "source" },
-  {
-    id: "parent-of",
+export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
+  shipped("about", "About"),
+  shipped("attached-to", "Attached to", { reverse_name: "has-attachment" }),
+  shipped("authored-by", "Authored by"),
+  shipped("derived-from", "Derived from"),
+  shipped("in-collection", "In collection", {
+    target_type_constraints: ["role:container"],
+    property_schema: {
+      position: {
+        type: "number",
+        description: "Ordering within the collection (1-based).",
+      },
+    },
+  }),
+  shipped("in-folder", "In folder", {
+    target_type_constraints: ["system.folder"],
+    property_schema: {
+      path: {
+        type: "string",
+        description:
+          "The file's path relative to the folder's root, with `/` between names; required, and it may not climb out of the folder. The edge takes no other property.",
+      },
+    },
+  }),
+  shipped("in-thread", "In thread", {
+    cardinality: "many-to-one",
+    property_schema: {
+      position: {
+        type: "number",
+        description: "Ordering within the thread (1-based).",
+      },
+    },
+  }),
+  shipped("parent-of", "Parent of", {
     cardinality: "one-to-many",
+    cascade_on_delete: "cascade",
     reverse_name: "child-of",
     written_at: "target",
-  },
-  { id: "references", cardinality: "many-to-many", written_at: "source" },
-  { id: "supersedes", cardinality: "one-to-one", written_at: "source" },
+  }),
+  shipped("references", "References"),
+  shipped("supersedes", "Supersedes", { cardinality: "one-to-one" }),
 ];
 
-export function edgeTypeCatalog(): Answer {
+/** The shipped edge types, and any a fixture registers beside them. */
+export function edgeTypeCatalog(
+  registered: ReadonlyArray<WireEdgeType> = [],
+): Answer {
   return {
     kind: "json",
     status: 200,
-    body: { data: [...SCRIPTED_EDGE_TYPES], next_cursor: null },
+    body: { data: [...SCRIPTED_EDGE_TYPES, ...registered], next_cursor: null },
   };
 }
 
