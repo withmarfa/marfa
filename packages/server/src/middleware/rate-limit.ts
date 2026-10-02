@@ -1,7 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
-import { addressBucket } from "./client-ip.js";
 import type { Storage } from "../storage/interface.js";
 
 export interface RateLimitConfig {
@@ -67,8 +66,7 @@ export function rateLimitMiddleware(
     const apiKey = c.get("apiKey");
     // The address `clientIpMiddleware` resolved, which has to run first.
     const clientIp = c.var.clientIp;
-    const identifier =
-      apiKey?.id ?? (clientIp ? addressBucket(clientIp) : null) ?? "anon";
+    const identifier = apiKey?.id ?? clientIp ?? "anon";
     const path = c.req.path;
 
     let limit = config.defaultLimit;

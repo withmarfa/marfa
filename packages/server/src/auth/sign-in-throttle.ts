@@ -2,16 +2,18 @@
  * The per-account limit on password sign-in, beside Better Auth's own
  * per-address limiter.
  *
- * Better Auth's limiter holds one address to a few attempts every few
- * seconds, which still lets it try a password a second for as long as it
- * likes. This holds the attempts at one account, in two windows:
+ * Better Auth's limiter holds one address to three attempts every ten
+ * seconds, which still lets it try about a thousand passwords an hour for
+ * as long as it likes. This holds the attempts at one account, in two
+ * windows:
  *
  * - **Per account and address**, so one visitor guessing at the owner's
  *   account is stopped, and the owner signing in from anywhere else is not.
  *   An IPv6 address counts as its /64 (`addressBucket`).
  * - **Per account across every address**, so guessing spread over many
  *   addresses is bounded too. An attempt the first window refused is not
- *   counted here, so one visitor alone can never reach this cap.
+ *   counted here, so one address alone cannot reach this cap; ten can, and
+ *   so can one IPv6 /56, which holds 256 /64s.
  *
  * Every attempt counts, the right password included, because the answer has
  * to be given before the password is checked: a limit that only counted

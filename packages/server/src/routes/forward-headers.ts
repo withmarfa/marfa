@@ -15,8 +15,10 @@
  * an origin-less POST and be rejected. `fallbackOrigin` closes that: when
  * the inbound request has no `Origin`, the dispatch is stamped with the
  * issuer's own origin, which is what the internal hop actually is. A
- * foreign origin never reaches a wrapper: the cross-origin guard in front
- * of each refuses it (`_cross-origin.ts`).
+ * foreign origin never reaches a POST wrapper: the cross-origin guard in
+ * front of each refuses it (`_cross-origin.ts`). The GET wrappers, the
+ * consent skip on `GET /auth/authorize` and `GET /auth/oauth2/end-session`,
+ * have no such guard.
  */
 /** Headers copied from the inbound request onto the internal dispatch. */
 const PASSTHROUGH_HEADERS = [

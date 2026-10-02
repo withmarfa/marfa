@@ -4,9 +4,10 @@
  * A browser navigation carries no bearer, so a page a person is meant to
  * open is gated on a session cookie instead, and a form post under a cookie
  * has to prove it came from this origin before the cookie is honored. Better
- * Auth checks the origin of the requests it serves itself, but Marfa's doors
- * reach it in-process, where that check does not run, so the guard sits in
- * front of each Marfa door instead.
+ * Auth's own origin check covers only what reaches its handler. The device
+ * consent screen calls its verify, approve and deny endpoints in-process,
+ * where the check does not run, and every Marfa door does work of its own
+ * before it dispatches anything, so the guard sits in front of each.
  */
 import { createMiddleware } from "hono/factory";
 import type { MiddlewareHandler } from "hono";
