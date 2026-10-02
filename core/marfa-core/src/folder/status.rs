@@ -277,14 +277,19 @@ impl Folder {
             return entry.because("empty", "is empty, and a file item holds bytes");
         }
         // Held by the scan before anything binds it, so read as the scan reads.
-        if super::carries_frontmatter(path)
-            && let Some(reason) = bytes.and_then(|bytes| {
-                let read = super::document::read(&String::from_utf8_lossy(bytes));
-                read.unreadable
-                    .or_else(|| super::fields::read(&read.front, edge_types).err())
+        if is_document(path)
+            && let Some(reason) = bytes.and_then(|bytes| match std::str::from_utf8(bytes) {
+                Err(_) => Some(super::NOT_UTF8.to_string()),
+                Ok(_) if !super::carries_frontmatter(path) => None,
+                Ok(text) => {
+                    let read = super::document::read(text);
+                    read.unreadable
+                        .or_else(|| super::fields::read(&read.front, edge_types).err())
+                }
             })
         {
-            return FileStatus::new(key, None, "held").because("unreadable", reason);
+            let flagged = Flagged::of(key, &format!("{}{reason}", state::UNREADABLE));
+            return FileStatus::new(key, None, "held").because(flagged.flag, flagged.reason);
         }
         if self.pushes(path, settings, catalog) {
             return waits(FileStatus::new(key, None, "waiting"), vec!["scan"]);

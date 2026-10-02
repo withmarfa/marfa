@@ -66,8 +66,8 @@ impl Folder {
             if matches!(
                 self.departing(&row, &members, &settings, &lists)?,
                 Departing::Yes
-            ) {
-                self.take_away(&row)?;
+            ) && self.take_away(&row)?
+            {
                 confirmed.removed += 1;
             }
         }

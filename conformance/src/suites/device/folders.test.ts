@@ -16403,3 +16403,325 @@ describe("a file's permission", () => {
     ).toEqual([[plain, true]]);
   });
 });
+
+describe("what a folder never does to a person's text", () => {
+  it("writes a file whole beside it and renames it over, so a failed write leaves the old one", async () => {
+    const id = "01a00000-0000-7000-8000-00000000fa01";
+    harness = await folderHarness("folder-write-whole", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Whole", body: "as it was\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "Whole", body: "changed elsewhere\n" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const path = join(harness.dir, "Whole.md");
+    expect(read(harness, "Whole.md")).toContain("as it was");
+    const before = statSync(path).ino;
+    // The push's catch-up brings the change, and its pull writes it.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(read(harness, "Whole.md")).toContain("changed elsewhere");
+    expect(
+      statSync(path).ino,
+      "the pull wrote the file in place, so a write cut short by a full disk or a crash leaves it truncated, and the next scan sends what is left as the person's edit",
+    ).not.toBe(before);
+    expect(
+      readdirSync(harness.dir).filter((name) => name.endsWith(".tmp")),
+      "a write left its new file beside the old one",
+    ).toEqual([]);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness)).toEqual([]);
+  });
+
+  it("holds a document that is not UTF-8, and never sends or rewrites it", async () => {
+    const id = "01a00000-0000-7000-8000-00000000fa11";
+    harness = await folderHarness("folder-not-utf8", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id,
+              version: 1,
+              properties: { title: "Held", body: "as it was\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              id,
+              version: 2,
+              properties: { title: "Held", body: "changed elsewhere\n" },
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    // Latin-1, as an older editor saves it: an accent is one byte, 0xE9 for
+    // é, which is never a whole character in UTF-8.
+    const latin1 = (text: string) => Buffer.from(text, "latin1");
+    const held = latin1(
+      read(harness, "Held.md").replace("as it was", "café, edited"),
+    );
+    saveAtomically(harness, "Held.md", held);
+    const note = latin1("---\ntitle: Café\n---\nun café au lait\n");
+    writeFileSync(join(harness.dir, "Cafe.md"), note);
+    const text = latin1("naïve\n");
+    writeFileSync(join(harness.dir, "naive.txt"), text);
+    // The witness: a UTF-8 note with the same accent is sent.
+    put(harness, "Plain.md", "---\ntitle: Plain\n---\nun café\n");
+
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      [sentTitles(harness), sentUpdates(harness)],
+      "a document that is not UTF-8 was sent with its accents replaced",
+    ).toEqual([["Plain"], []]);
+    expect(
+      pushed.value.scan.flagged.map((file) => [file.path, file.flag]).sort(),
+    ).toEqual([
+      ["Cafe.md", "encoding"],
+      ["Held.md", "encoding"],
+      ["naive.txt", "encoding"],
+    ]);
+    expect(pushed.value.pull?.flagged).toEqual([
+      expect.objectContaining({ path: "Held.md", flag: "encoding" }),
+    ]);
+    // The push's pull met the change made elsewhere and left the file.
+    expect(
+      [
+        readFileSync(join(harness.dir, "Held.md")),
+        readFileSync(join(harness.dir, "Cafe.md")),
+        readFileSync(join(harness.dir, "naive.txt")),
+      ],
+      "a document that is not UTF-8 was written over, its accents lost on the disk too",
+    ).toEqual([held, note, text]);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files
+          .filter((file) => file.flag === "encoding")
+          .map((file) => [file.path, file.status]),
+    ).toEqual([
+      ["Cafe.md", "held"],
+      ["Held.md", "held"],
+      ["naive.txt", "held"],
+    ]);
+
+    // Saved as UTF-8, it is sent as any new file is.
+    put(harness, "Cafe.md", "---\ntitle: Café\n---\nun café au lait\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentTitles(harness)).toEqual(["Plain", "Café"]);
+  });
+
+  it("trashes nothing while its directory is gone, and says so", async () => {
+    const ids = [
+      "01a00000-0000-7000-8000-00000000fa21",
+      "01a00000-0000-7000-8000-00000000fa22",
+      "01a00000-0000-7000-8000-00000000fa23",
+    ];
+    harness = await folderHarness("folder-root-gone", {
+      rows: {
+        "core.note": ids.map((id, at) => ({
+          item: {
+            id,
+            version: 1,
+            properties: { title: `Note ${String(at)}`, body: "body\n" },
+          },
+        })),
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const deleted = () =>
+      harness!.server.requests
+        .filter(
+          (request) =>
+            request.method === "DELETE" &&
+            request.pathname.startsWith("/items/"),
+        )
+        .map((request) => request.pathname.split("/").at(-1));
+    const dir = harness.dir;
+    const away = `${dir}-away`;
+    const watching = harness.folder.watch();
+    try {
+      // The witness: a file deleted while the watch runs is sent as a delete
+      // once the grace has run.
+      rmSync(join(dir, "Note 0.md"));
+      await vi.waitFor(
+        () => {
+          expect(deleted()).toEqual([ids[0]]);
+        },
+        { timeout: 30_000, interval: 200 },
+      );
+      // The whole folder moves away, as a rename in the Finder or an
+      // ejected volume takes it.
+      renameSync(dir, away);
+      await vi.waitFor(
+        () => {
+          expect(
+            watching.stdout,
+            "the watch did not say its directory is gone",
+          ).toContain("cannot be found");
+        },
+        { timeout: 30_000, interval: 200 },
+      );
+      // Well past the rename grace, with a pass every second.
+      await new Promise((resolve) => setTimeout(resolve, 8_000));
+      expect(
+        deleted(),
+        "every file read as deleted when the folder's directory went away",
+      ).toEqual([ids[0]]);
+      expect(watching.running(), watching.stderr).toBe(true);
+      expect(
+        existsSync(dir),
+        "the watch wrote the folder anew where it used to be",
+      ).toBe(false);
+
+      // Back, it goes on where it left off.
+      renameSync(away, dir);
+      rmSync(join(dir, "Note 1.md"));
+      await vi.waitFor(
+        () => {
+          expect(deleted()).toEqual([ids[0], ids[1]]);
+        },
+        { timeout: 30_000, interval: 200 },
+      );
+      expect(read(harness, "Note 2.md")).toContain("body");
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      await watching.stop();
+      if (existsSync(away)) renameSync(away, dir);
+    }
+  });
+
+  it("marks each file a pull writes from the server's bytes as downloaded, so macOS asks before it runs one", async () => {
+    const [tool, later, note] = [
+      "01a00000-0000-7000-8000-00000000fa31",
+      "01a00000-0000-7000-8000-00000000fa32",
+      "01a00000-0000-7000-8000-00000000fa33",
+    ];
+    const fileItem = (
+      id: string,
+      title: string,
+      bytes: Buffer,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      id,
+      version: 1,
+      type: "core.file",
+      properties: {
+        title,
+        blob_ref: hashOf(bytes),
+        mime_type: "application/octet-stream",
+        ...extra,
+      },
+    });
+    const [toolBytes, laterBytes] = [1, 2].map((n) => Buffer.from([n, n, n]));
+    harness = await folderHarness("folder-quarantine", {
+      settings: { search: { types: ["core.file", "core.note"] } },
+      rows: {
+        "core.file": [
+          { item: fileItem(tool, "tool.bin", toolBytes, { executable: true }) },
+          { item: fileItem(later, "later.bin", laterBytes) },
+        ],
+        "core.note": [
+          {
+            item: {
+              id: note,
+              version: 1,
+              properties: { title: "Readme", body: "words\n" },
+            },
+          },
+        ],
+      },
+      events: [
+        liveReplay("2", [
+          itemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              ...fileItem(later, "later.bin", laterBytes, { executable: true }),
+              version: 2,
+            }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    for (const bytes of [toolBytes, laterBytes]) {
+      scriptBlob(harness.server, bytes);
+    }
+    const runs = (name: string) =>
+      (statSync(join(harness!.dir, name)).mode & 0o100) !== 0;
+    // Only macOS keeps the mark Gatekeeper reads; elsewhere the files are
+    // written as before.
+    const marks = process.platform === "darwin";
+    const marked = (name: string) => {
+      try {
+        execFileSync(
+          "xattr",
+          ["-p", "com.apple.quarantine", join(harness!.dir, name)],
+          { stdio: "pipe" },
+        );
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect([runs("tool.bin"), runs("later.bin")]).toEqual([true, false]);
+    if (marks) {
+      expect(
+        [marked("tool.bin"), marked("later.bin")],
+        "a file written from the server's bytes carries no quarantine mark, so one the server marks executable runs with no question asked",
+      ).toEqual([true, true]);
+      // A note is text the folder renders, never bytes to run.
+      expect(marked("Readme.md")).toBe(false);
+      // Unmarked, as a file the person made is, before the server says it runs.
+      execFileSync("xattr", [
+        "-d",
+        "com.apple.quarantine",
+        join(harness.dir, "later.bin"),
+      ]);
+      expect(marked("later.bin")).toBe(false);
+    }
+    // The push's catch-up makes the file in place runnable, and marks it.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(runs("later.bin")).toBe(true);
+    if (marks) {
+      expect(
+        marked("later.bin"),
+        "a file the server made runnable in place carries no quarantine mark",
+      ).toBe(true);
+    }
+    expect(sentUpdates(harness)).toEqual([]);
+  });
+});

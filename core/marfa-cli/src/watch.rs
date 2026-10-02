@@ -221,8 +221,9 @@ fn watch_files(
     Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct Standing {
+    root_gone: Option<String>,
     lost: usize,
     unreached: usize,
     directories: Vec<String>,
@@ -255,6 +256,23 @@ fn step(
     } else {
         folder.scan_quick()?
     };
+    // Said once, and every tick looks again, so the watch goes on where it
+    // left off once the directory is back.
+    if let Some(gone) = &scanned.root_gone {
+        let now = Standing {
+            root_gone: Some(gone.clone()),
+            ..Standing::default()
+        };
+        if standing.as_ref() != Some(&now) {
+            output::report(
+                &serde_json::json!({ "settings": settings, "scan": scanned }),
+                json,
+                || format!("waiting: {gone}"),
+            )?;
+        }
+        *standing = Some(now);
+        return Ok(());
+    }
     let drained = folder.drain()?;
     let pulled = folder.pull()?;
     let happened = scanned.created
@@ -277,6 +295,7 @@ fn step(
         + usize::from(settings.sent)
         > 0;
     let now = Standing {
+        root_gone: None,
         paused: (scanned.paused, pulled.paused),
         lost: scanned.lost,
         unreached: scanned.unreached,

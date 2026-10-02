@@ -5,6 +5,7 @@ mod embeds;
 mod executable;
 pub mod fields;
 pub mod identity;
+mod landing;
 mod lines;
 pub mod lists;
 mod names;
@@ -57,6 +58,9 @@ pub const REQUEST_LIMIT: usize = 1_048_576;
 
 pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
 
+/// Held as `encoding`, by the same binding an `unreadable` file is.
+const NOT_UTF8: &str = "it is not UTF-8 text; saved as UTF-8, it is sent";
+
 /// Measured as the JSON string the text is sent in; a file item's bytes go up
 /// outside the request.
 fn near_limit(key: &str, text: &str) -> Option<Flagged> {
@@ -80,6 +84,9 @@ pub struct Folder {
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
     permissions: std::sync::OnceLock<bool>,
+    /// The identity of the store this handle opened, which a directory
+    /// put in the folder's place does not hold.
+    store_mark: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -105,6 +112,8 @@ pub struct ScanReport {
     pub secrets: Vec<String>,
     pub paused: usize,
     pub warnings: Vec<Flagged>,
+    /// Why the pass read nothing, where the folder's directory is gone.
+    pub root_gone: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -123,7 +132,14 @@ pub struct Flagged {
 impl Flagged {
     fn of(path: &str, held: &str) -> Flagged {
         let (flag, reason) = if let Some(reason) = held.strip_prefix(state::UNREADABLE) {
-            ("unreadable", reason)
+            (
+                if reason == NOT_UTF8 {
+                    "encoding"
+                } else {
+                    "unreadable"
+                },
+                reason,
+            )
         } else if let Some(reason) = held
             .strip_prefix(state::EDGES)
             .or_else(|| held.strip_prefix(state::EDGES_WAITING))
@@ -183,6 +199,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
+            store_mark: store_mark(&state),
         };
         let row = added.row_on_server()?;
         // The catalog the hydration would read, so a default type the
@@ -206,7 +223,7 @@ impl Folder {
             });
         }
         settings_file::bind(&added.core, folder)?;
-        added.write_settings_file(&row.item.properties, row.item.version)?;
+        added.write_settings_file(&row.item.properties, row.item.version, None)?;
         // Unlisted, its moves would read as deletes to the others.
         if let Some(registry) = Registry::located() {
             let store = elsewhere::store_id(&added.core)?;
@@ -236,6 +253,7 @@ impl Folder {
             core,
             key: std::sync::Mutex::new(None),
             permissions: std::sync::OnceLock::new(),
+            store_mark: store_mark(&state),
         };
         // A lost registry is the scan's to notice before listing again.
         if let Some(registry) = Registry::located()
@@ -475,6 +493,35 @@ fn in_nested_folder(root: &Path, relative: &str) -> bool {
     false
 }
 
+fn store_mark(state: &Path) -> Option<String> {
+    std::fs::metadata(state.join("core.sqlite"))
+        .ok()
+        .as_ref()
+        .and_then(identity::of)
+        .map(|found| found.key())
+}
+
+impl Folder {
+    /// `Some` with why where the folder's directory is not where this handle
+    /// found it: moved, renamed, on a volume no longer mounted, or another
+    /// directory put in its place. Every file would then read as deleted, so
+    /// a pass reads and writes nothing until it is back.
+    fn root_gone(&self) -> Option<String> {
+        let state = self.root.join(STATE_DIR);
+        match std::fs::metadata(state.join("core.sqlite")) {
+            Ok(_) if self.store_mark.is_none() || store_mark(&state) == self.store_mark => None,
+            Ok(_) => Some(format!(
+                "{} is no longer the directory this folder opened, so nothing in it is read or written; open the folder again where it now is",
+                self.root.display()
+            )),
+            Err(_) => Some(format!(
+                "{} cannot be found: moved, renamed or on a volume no longer mounted, so nothing is read, written or deleted until it is back",
+                self.root.display()
+            )),
+        }
+    }
+}
+
 /// Held whole, since their other ends may lie outside the slice.
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = edge_types.written_at_targets();
@@ -514,11 +561,27 @@ impl Walked {
     }
 
     fn unreadable(&mut self, root: &Path, dir: &Path, error: &std::io::Error) {
-        self.directories.push(Flagged {
-            path: identity::relative(root, dir).unwrap_or_default(),
-            flag: "unreadable",
-            reason: format!("cannot be read ({error}), so the files bound in it are held"),
-        });
+        // Gone while the walk read it: moved or renamed, its files are
+        // somewhere this walk did not look.
+        let (flag, reason) = if error.kind() == std::io::ErrorKind::NotFound {
+            (
+                "gone",
+                "went away while the walk read it, so this pass journals no missing file".into(),
+            )
+        } else {
+            (
+                "unreadable",
+                format!("cannot be read ({error}), so the files bound in it are held"),
+            )
+        };
+        let path = identity::relative(root, dir).unwrap_or_default();
+        if !self.directories.iter().any(|dir| dir.path == path) {
+            self.directories.push(Flagged { path, flag, reason });
+        }
+    }
+
+    fn vanished(&self) -> bool {
+        self.directories.iter().any(|dir| dir.flag == "gone")
     }
 }
 
@@ -527,8 +590,6 @@ impl Walked {
 fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
-        // Gone mid-walk: the scan that follows will not find its files either.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
         Err(error) => return walked.unreadable(root, dir, &error),
     };
     for entry in entries {
@@ -540,8 +601,24 @@ fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
         let Ok(relative) = identity::relative(root, &path) else {
             continue;
         };
-        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-            continue;
+        let metadata = match std::fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            // A file deleted since the listing is gone, as the scan finds it;
+            // a directory's files may only have moved.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && !entry.file_type().is_ok_and(|kind| kind.is_dir()) =>
+            {
+                continue;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                walked.unreadable(root, &path, &error);
+                continue;
+            }
+            Err(error) => {
+                walked.unreadable(root, dir, &error);
+                continue;
+            }
         };
         // A symlink is neither: following one would give two paths one
         // identity on purpose.
@@ -659,6 +736,12 @@ impl Folder {
     }
 
     fn scan_as(&self, full: bool) -> Result<ScanReport> {
+        if let Some(gone) = self.root_gone() {
+            return Ok(ScanReport {
+                root_gone: Some(gone),
+                ..ScanReport::default()
+            });
+        }
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
@@ -737,14 +820,19 @@ impl Folder {
                 if let Some(stat) = stat {
                     stats.push((key.clone(), stat));
                 }
-                let text = String::from_utf8_lossy(&bytes);
-                let read = document::read(&text);
+                // Held below; its id line, which is ASCII, still names its item.
+                let Ok(text) = std::str::from_utf8(&bytes) else {
+                    named.extend(document::id_line(&String::from_utf8_lossy(&bytes)));
+                    early.insert(path.clone(), bytes);
+                    continue;
+                };
+                let read = document::read(text);
                 named.extend(
                     read.front
                         .get(ID_FIELD)
                         .and_then(Value::as_str)
                         .map(str::to_string)
-                        .or_else(|| document::id_line(&text)),
+                        .or_else(|| document::id_line(text)),
                 );
                 let mut found = Vec::new();
                 for embed in document::embeds(&read.body) {
@@ -830,15 +918,29 @@ impl Folder {
                 report.skipped += 1;
                 continue;
             }
-            let text = String::from_utf8_lossy(&bytes).into_owned();
-            let read = carries_frontmatter(&path).then(|| document::read(&text));
-            let unreadable = read.as_ref().and_then(|read| {
-                read.unreadable
-                    .clone()
-                    .or_else(|| fields::read(&read.front, &edge_types).err())
-            });
+            // A document whose bytes are not UTF-8 is held as one whose
+            // frontmatter does not parse is: decoded, it would be sent and
+            // written back with every byte that is not replaced.
+            let (text, decodes) = match String::from_utf8(bytes.clone()) {
+                Ok(text) => (text, true),
+                Err(error) => (
+                    String::from_utf8_lossy(error.as_bytes()).into_owned(),
+                    !is_document(&path),
+                ),
+            };
+            let read = (decodes && carries_frontmatter(&path)).then(|| document::read(&text));
+            let unreadable = if decodes {
+                read.as_ref().and_then(|read| {
+                    read.unreadable
+                        .clone()
+                        .or_else(|| fields::read(&read.front, &edge_types).err())
+                })
+            } else {
+                Some(NOT_UTF8.to_string())
+            };
             // An unreadable file still names its item, so a move keeps it.
             let id = match &read {
+                _ if !decodes && carries_frontmatter(&path) => document::id_line(&text),
                 Some(read) if read.unreadable.is_some() => document::id_line(&text),
                 Some(read) => read
                     .front
@@ -897,7 +999,19 @@ impl Folder {
                 });
                 continue;
             }
-            if let Some(reason) = &file.unreadable {
+            // A file item's file is its bytes, whatever its name says.
+            let bytes_item = || -> Result<bool> {
+                Ok(match &claim {
+                    Some(claim) => self
+                        .core
+                        .get(&claim.item_id)?
+                        .is_some_and(|item| bytes_of(&item, &catalog).is_some()),
+                    None => false,
+                })
+            };
+            if let Some(reason) = &file.unreadable
+                && (reason != NOT_UTF8 || !bytes_item()?)
+            {
                 self.hold_unreadable(file, claim.as_ref(), reason, &withheld)?;
                 report.flagged.push(Flagged::of(
                     &file.key,
@@ -1134,11 +1248,18 @@ impl Folder {
                 report.unreached += 1;
                 continue;
             }
+            // A directory that went away during the walk may have taken any
+            // file with it, so this pass trusts no absence.
+            if walked.vanished() {
+                continue;
+            }
             let conn = self.core.conn()?;
             state::journal_missing(&conn, &row.path, &row.item_id)?;
             report.missing += 1;
         }
-        self.sweep_journal(&settings, &peers, &mut report)?;
+        if !walked.vanished() {
+            self.sweep_journal(&settings, &peers, &mut report)?;
+        }
         Ok(report)
     }
 
@@ -2320,6 +2441,12 @@ impl Folder {
     /// Each file is bound before its bytes land, so the scan never reads it
     /// back.
     pub fn pull(&self) -> Result<PullReport> {
+        if let Some(gone) = self.root_gone() {
+            return Ok(PullReport {
+                root_gone: Some(gone),
+                ..PullReport::default()
+            });
+        }
         let mut report = PullReport::default();
         let settings = self.settings()?;
         let lists = settings.lists()?;
@@ -2602,7 +2729,12 @@ impl Folder {
             return Ok(());
         }
         let read = state::stat_of(&*self.core.conn()?, want)?;
-        if read.is_some() && read == stat_of(&path) {
+        // Made runnable by the server's word, it is marked as a file the pull
+        // wrote is, and left as it is where it cannot be.
+        if read.is_some()
+            && read == stat_of(&path)
+            && (!wanted || executable::quarantine(&path).is_ok())
+        {
             // As a write's is: a refused permission is not the pull's to fail.
             let _ = executable::set(&path, wanted);
         }
@@ -2810,17 +2942,34 @@ impl Folder {
             own: own.clone(),
             writes: writes.clone(),
         };
+        // What the file at the path was when this pull chose to write it: its
+        // own file as the scan last read it, or none.
+        let over = bound
+            .as_ref()
+            .filter(|_| ours && path.exists())
+            .map(|bound| bound.content_hash.clone());
+        let file_item = bytes_of(item, catalog).is_some();
         // Bound before the write, so the scan never reads it back; a path the
-        // filesystem refuses leaves the old file, and every other, as it was.
+        // filesystem refuses, or a write that fails part way, leaves the old
+        // file, and every other, as it was.
         state::bind(&*self.core.conn()?, &binding(None))?;
-        let written = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| std::fs::write(&path, &bytes));
-        if written.is_ok() && bytes_of(item, catalog).is_some() && self.keeps_permissions() {
-            // The bytes are written and bound whatever the permission does.
-            let _ = executable::set(&path, executable::held(item));
-        }
+        let written = landing::land(
+            &path,
+            |file, beside| {
+                std::io::Write::write_all(file, &bytes)?;
+                if file_item {
+                    // Unmarked, a file the server says runs would run with no
+                    // question asked.
+                    executable::quarantine(beside)?;
+                    if self.keeps_permissions() {
+                        // The bytes are written whatever the permission does.
+                        let _ = executable::set(beside, executable::held(item));
+                    }
+                }
+                Ok(())
+            },
+            |found| found.map(state::hash) == over,
+        );
         if written.is_err() {
             // A file of its own here keeps the binding it had, or a scan that
             // can reach it again would make it a new item.
@@ -2847,9 +2996,12 @@ impl Folder {
             && bound.path != want
         {
             // Unbound even where not removed: a bound path the walk cannot
-            // reach is journaled and deleted.
+            // reach is journaled and deleted. One changed since the scan read
+            // it holds the person's edit, and stays for the next scan.
             if plainly_inside(&self.root, &bound.path) {
-                let _ = std::fs::remove_file(self.root.join(&bound.path));
+                let _ = landing::remove(&self.root.join(&bound.path), |found| {
+                    state::hash(found) == bound.content_hash
+                });
             }
             let conn = self.core.conn()?;
             state::unbind(&conn, &bound.path)?;
@@ -2911,11 +3063,20 @@ impl Folder {
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| {
-                // Copied where a rename cannot cross volumes; a source left
-                // behind is still its folder's, which lets it go later.
+                // Copied where a rename cannot cross volumes, landing whole or
+                // not at all; a source left behind is still its folder's,
+                // which lets it go later.
                 std::fs::rename(from, &path).or_else(|_| {
-                    std::fs::copy(from, &path).map(|_| {
-                        let _ = std::fs::remove_file(from);
+                    landing::land(
+                        &path,
+                        |_, beside| std::fs::copy(from, beside).map(drop),
+                        |found| found.is_none(),
+                    )
+                    .map_err(std::io::Error::from)
+                    .map(|()| {
+                        let _ = landing::remove(from, |found| {
+                            state::hash(found) == theirs.content_hash
+                        });
                     })
                 })
             });
@@ -2945,9 +3106,14 @@ impl Folder {
         if !own || !plainly_inside(&self.root, &bound.path) || !peers.filed_elsewhere(item_id) {
             return Ok(false);
         }
-        std::fs::remove_file(&path).map_err(|error| {
-            CoreError::Store(format!("cannot remove {}: {error}", path.display()))
-        })?;
+        // Checked again as it goes, so an edit saved meanwhile stays.
+        let removed = landing::remove(&path, |found| {
+            bound.written_hash.as_deref() == Some(state::hash(found).as_str())
+        })
+        .map_err(|error| CoreError::Store(format!("cannot remove {}: {error}", path.display())))?;
+        if !removed {
+            return Ok(false);
+        }
         let conn = self.core.conn()?;
         state::unbind(&conn, &bound.path)?;
         state::journal_clear(&conn, &bound.path)?;
@@ -3018,8 +3184,11 @@ impl Folder {
         }
         state::set_paused(&*self.core.conn()?, state::Removal::Pull, &[])?;
         for row in going {
-            self.take_away(&row)?;
-            report.removed += 1;
+            if self.take_away(&row)? {
+                report.removed += 1;
+            } else {
+                report.kept += 1;
+            }
         }
         Ok(())
     }
@@ -3060,17 +3229,27 @@ impl Folder {
     }
 
     /// A journal row here is a file put back since its scan, so it asks for
-    /// nothing now.
-    fn take_away(&self, row: &state::Bound) -> Result<()> {
+    /// nothing now. Answers `false`, and keeps the file bound, where it
+    /// changed since it was found to be the folder's own: the person's edit
+    /// is theirs.
+    fn take_away(&self, row: &state::Bound) -> Result<bool> {
         let path = self.root.join(&row.path);
-        if path.exists() && plainly_inside(&self.root, &row.path) {
-            std::fs::remove_file(&path).map_err(|error| {
-                CoreError::Store(format!("cannot remove {}: {error}", path.display()))
-            })?;
+        if plainly_inside(&self.root, &row.path) {
+            let still =
+                |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
+            if path.exists()
+                && !landing::remove(&path, still).map_err(|error| {
+                    CoreError::Store(format!("cannot remove {}: {error}", path.display()))
+                })?
+                && path.exists()
+            {
+                return Ok(false);
+            }
         }
         let conn = self.core.conn()?;
         state::unbind(&conn, &row.path)?;
-        state::journal_clear(&conn, &row.path)
+        state::journal_clear(&conn, &row.path)?;
+        Ok(true)
     }
 
     fn deleted_as_agreed(
@@ -3637,6 +3816,8 @@ pub struct PullReport {
     pub flagged: Vec<Flagged>,
     pub uncarried: Vec<Uncarried>,
     pub embeds: Vec<Flagged>,
+    /// Why the pull wrote nothing, where the folder's directory is gone.
+    pub root_gone: Option<String>,
 }
 
 /// A guard, not a boundary: the write resolves the path again.

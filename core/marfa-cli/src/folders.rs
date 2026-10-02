@@ -261,6 +261,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                         lines.push(format!("could not catch up: {error}"));
                     }
                     lines.push(match &pulled {
+                        Some(pulled) if pulled.root_gone.is_some() => describe_pull(pulled),
                         Some(pulled) => format!(
                             "{} file(s) written{}",
                             pulled.written + pulled.rewritten,
@@ -387,6 +388,9 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 }
 
 fn describe_pull(report: &marfa_core::PullReport) -> String {
+    if let Some(gone) = &report.root_gone {
+        return format!("nothing written: {gone}");
+    }
     let mut line = format!(
         "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
         report.written, report.rewritten, report.moved, report.unchanged, report.skipped
@@ -528,6 +532,9 @@ pub fn paused_line(count: usize, from_pull: bool) -> String {
 }
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
+    if let Some(gone) = &report.root_gone {
+        return format!("nothing scanned: {gone}");
+    }
     let mut line = format!(
         "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
         report.created,

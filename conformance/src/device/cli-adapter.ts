@@ -776,7 +776,8 @@ export interface ScanReport {
    *  (`folders.md` 25, 26). */
   unreached: number;
   /** Directories the walk did not enter, each flagged `package` or
-   *  `unreadable` (`folders.md` 26). */
+   *  `unreadable` (`folders.md` 26), or `gone` where one went away while
+   *  the walk read it (`folders.md` 22). */
   directories: FlaggedFile[];
   /** Files the built-in secrets list refuses (`folders.md` 25). */
   secrets: string[];
@@ -785,6 +786,9 @@ export interface ScanReport {
   paused: number;
   /** Texts near the server's limit, each flagged `size` (`folders.md` 47). */
   warnings: FlaggedFile[];
+  /** Why the scan read nothing, where the folder's directory is gone
+   *  (`folders.md` 22). */
+  root_gone: string | null;
 }
 
 /** Where every file stands (`folders.md` 48). */
@@ -804,20 +808,24 @@ export interface StatusReport {
 
 /** A file the folder holds rather than sends, and why: `edges` for edge
  *  lines that change nothing (`folders.md` 11), `embed` for an embed read
- *  as nothing (`folders.md` 12), and `name` for a name another file holds
- *  in another case or form (`folders.md` 27). A directory the walk did not
- *  enter is `package` or `unreadable` (`folders.md` 26). */
+ *  as nothing (`folders.md` 12), `encoding` for a document that is not
+ *  UTF-8 (`folders.md` 10), and `name` for a name another file holds in
+ *  another case or form (`folders.md` 27). A directory the walk did not
+ *  enter is `package` or `unreadable` (`folders.md` 26), or `gone`
+ *  (`folders.md` 22). */
 export interface FlaggedFile {
   path: string;
   flag:
     | "unreadable"
+    | "encoding"
     | "refused"
     | "behind"
     | "edges"
     | "embed"
     | "waiting"
     | "name"
-    | "package";
+    | "package"
+    | "gone";
   reason: string;
 }
 
@@ -876,6 +884,9 @@ export interface PullReport {
   /** Embeds whose file this pull did not write where they say
    *  (`folders.md` 12), each flagged `embed`. */
   embeds: FlaggedFile[];
+  /** Why the pull wrote nothing, where the folder's directory is gone
+   *  (`folders.md` 22). */
+  root_gone: string | null;
 }
 
 /** What became of the folder's settings file (`folders.md` 1). */
