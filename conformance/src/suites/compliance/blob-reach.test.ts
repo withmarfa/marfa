@@ -246,18 +246,52 @@ describe("who may read and upload a blob", () => {
     trackItem(ctx, note.data.item.id);
     expect(await readingDoors(noteWriter.client, hash)).toEqual(UNKNOWN);
 
-    // Sending the bytes proves holding them, which knowing the hash does
-    // not, and the next write sending the digest is what lends it.
+    // Written without proof, the digest stays dead while the note names it,
+    // even once the key sends the bytes and writes it again. Dropping it and
+    // writing it anew with the proof is what lends it.
     expect(
       (await noteWriter.client.uploadBlob(bytes, "text/plain")).status,
     ).toBe(201);
-    expect(await readingDoors(noteWriter.client, hash)).toEqual(UNKNOWN);
-    const rewritten = await noteWriter.client.updateItem(note.data.item.id, {
+    const again = await noteWriter.client.updateItem(note.data.item.id, {
       properties: { body: `![it](${hash}) again` },
       version: note.data.item.version,
     });
+    expect(again.ok, JSON.stringify(again.error)).toBe(true);
+    expect(await readingDoors(noteWriter.client, hash)).toEqual(UNKNOWN);
+    const dropped = await noteWriter.client.updateItem(note.data.item.id, {
+      properties: { body: "nothing linked" },
+      version: again.data.item.version,
+    });
+    expect(dropped.ok, JSON.stringify(dropped.error)).toBe(true);
+    const rewritten = await noteWriter.client.updateItem(note.data.item.id, {
+      properties: { body: `![it](${hash})` },
+      version: dropped.data.item.version,
+    });
     expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
     expect(await readingDoors(noteWriter.client, hash)).toEqual(SERVED);
+  });
+
+  it("keeps a planted digest dead when a key holding every blob edits the note", async () => {
+    const hash = await upload("a private file a note will plant");
+    await fileNaming(hash);
+    const planter = await keyHolding({ "core.note": "write" });
+    const planted = await planter.client.createItem({
+      type: "core.note",
+      properties: { body: `a typo ![it](${hash})` },
+    });
+    expect(planted.ok, JSON.stringify(planted.error)).toBe(true);
+    trackItem(ctx, planted.data.item.id);
+    expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
+
+    // The suite's key, which reads every blob, fixes the typo and sends the
+    // body with the hash still in it.
+    const fixed = await client.updateItem(planted.data.item.id, {
+      properties: { body: `a fixed typo ![it](${hash})` },
+      version: planted.data.item.version,
+    });
+    expect(fixed.ok, JSON.stringify(fixed.error)).toBe(true);
+    expect(await readingDoors(client, hash)).toEqual(SERVED);
+    expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
   });
 
   it("lends through a digest written by a key that could read the blob", async () => {
@@ -374,6 +408,17 @@ describe("who may read and upload a blob", () => {
     expect(await readingDoors(client, sha256(lent))).toEqual(SERVED);
     expect(await readingDoors(client, sha256(unlent))).toEqual(UNKNOWN);
     expect((await operator.downloadBlob(sha256(unlent))).status).toBe(200);
+
+    // The repair: the owner sends the bytes and rewrites the row.
+    expect((await client.uploadBlob(unlent, "text/plain")).status).toBe(201);
+    const row = await client.getItem(lines[1]!.id);
+    expect(row.ok, JSON.stringify(row.error)).toBe(true);
+    const repaired = await client.updateItem(lines[1]!.id, {
+      properties: { body: `![it](${sha256(unlent)}) repaired` },
+      version: row.data.item.version,
+    });
+    expect(repaired.ok, JSON.stringify(repaired.error)).toBe(true);
+    expect(await readingDoors(client, sha256(unlent))).toEqual(SERVED);
   });
 
   it("refuses an upload to a key that may write no registered type, and takes one from a key that writes one", async () => {

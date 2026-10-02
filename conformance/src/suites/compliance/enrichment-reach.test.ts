@@ -103,19 +103,25 @@ describe("the enrichment sweep and a blob's reach", () => {
     );
     expect(await extracted(fileWriter, named.data.item.id)).toBeUndefined();
 
-    // Once the file's writer sends the bytes and rewrites the reference,
-    // its file lends them, and the next sweep reads them.
+    // Once the file's writer has sent the bytes, a file it writes naming
+    // them lends them, and the next sweep reads them; the first file's
+    // reference stays unproven while it names the digest.
     expect((await fileWriter.uploadBlob(hidden, "text/plain")).status).toBe(
       201,
     );
-    const rewritten = await fileWriter.updateItem(named.data.item.id, {
-      properties: { blob_ref: hiddenUpload.data.hash, title: "now sent" },
-      version: named.data.item.version,
+    const proven = await fileWriter.createItem({
+      type: "core.file",
+      properties: {
+        blob_ref: hiddenUpload.data.hash,
+        mime_type: "text/plain",
+        title: "named after sending",
+      },
     });
-    expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
+    expect(proven.status, JSON.stringify(proven.error)).toBe(201);
     await sweep();
-    expect(await extracted(fileWriter, named.data.item.id)).toBe(
+    expect(await extracted(fileWriter, proven.data.item.id)).toBe(
       "the quokka ledger, page one",
     );
+    expect(await extracted(fileWriter, named.data.item.id)).toBeUndefined();
   });
 });
