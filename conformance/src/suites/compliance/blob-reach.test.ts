@@ -9,6 +9,7 @@ import {
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
+import { readTarGzEntry } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let operator: MarfaClient;
@@ -221,6 +222,67 @@ describe("who may read and upload a blob", () => {
       // Held all the same, and kept by the sweep: only the read is refused.
       expect((await operator.downloadBlob(hash)).status).toBe(200);
     }
+
+    // The witness: the same key is served each one once a property names it.
+    for (const hash of [inExtension, inEdge, inVersion]) {
+      await noteSaying(`now a property names ![it](${hash})`);
+      expect(await readingDoors(client, hash)).toEqual(SERVED);
+    }
+  });
+
+  it("lends no reach through a digest written by a key that never sent the bytes", async () => {
+    const bytes = new TextEncoder().encode(`a file a note names ${ctx.runId}`);
+    const hash = sha256(bytes);
+    expect((await client.uploadBlob(bytes, "text/plain")).status).toBe(201);
+    await fileNaming(hash);
+    const noteWriter = await keyHolding({ "core.note": "write" });
+
+    const note = await noteWriter.client.createItem({
+      type: "core.note",
+      properties: { body: `![it](${hash})` },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    expect(await readingDoors(noteWriter.client, hash)).toEqual(UNKNOWN);
+
+    // Sending the bytes proves holding them, which knowing the hash does not.
+    expect(
+      (await noteWriter.client.uploadBlob(bytes, "text/plain")).status,
+    ).toBe(201);
+    expect(await readingDoors(noteWriter.client, hash)).toEqual(SERVED);
+  });
+
+  it("carries in an export archive only the bytes the blob doors would serve", async () => {
+    const inProperty = await upload("an archive carries this");
+    const inExtension = await upload("an archive leaves this, an extension");
+    const inEdge = await upload("an archive leaves this, an edge");
+    const named = await noteSaying(`![kept](${inProperty})`);
+    const other = await noteSaying("the edge's far end");
+    const ext = await client.setItemExtension(named.id, "blobreach", {
+      cover: inExtension,
+    });
+    expect(ext.ok, JSON.stringify(ext.error)).toBe(true);
+    const edge = await client.createEdge({
+      source_id: named.id,
+      target_id: other.id,
+      edge_type: "about",
+      properties: { cover: inEdge },
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+
+    const archive = await client.exportArchive({
+      type: "core.note",
+      source: ctx.source,
+    });
+    expect(archive.status).toBe(200);
+    const manifest = JSON.parse(
+      readTarGzEntry(archive.data, "manifest.json") ?? "{}",
+    ) as { blobs: Record<string, unknown> };
+    expect(Object.keys(manifest.blobs)).toContain(inProperty);
+    expect(Object.keys(manifest.blobs)).not.toContain(inExtension);
+    expect(Object.keys(manifest.blobs)).not.toContain(inEdge);
+    expect(readTarGzEntry(archive.data, `blobs/${inProperty}`)).not.toBeNull();
+    expect(readTarGzEntry(archive.data, `blobs/${inEdge}`)).toBeNull();
   });
 
   it("refuses an upload to a key that may write no type, and takes one from a key that writes any", async () => {

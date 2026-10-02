@@ -321,7 +321,8 @@ async function instanceId(api: Api): Promise<string> {
   return body.instance_id;
 }
 
-/** Every blob's bytes as the instance serves them, hashed. */
+/** Every blob's bytes as the instance serves them, hashed. Asked with the
+ *  operator's key, which reads every blob, the one nothing names included. */
 async function blobsOverHttp(
   api: Api,
   hashes: string[],
@@ -577,7 +578,7 @@ async function main(): Promise<void> {
     }
     const copiedB = await replicateToZero(sourceOperator);
     const sourceInstance = await instanceId(source);
-    const sourceOverHttp = await blobsOverHttp(source, hashes);
+    const sourceOverHttp = await blobsOverHttp(sourceOperator, hashes);
     say(
       `Phase B: ${String(hashes.length - 3)} more blob and 11 more items written, ${String(copiedB)} copies made by replication.`,
     );
@@ -627,7 +628,7 @@ async function main(): Promise<void> {
     const restored: Api = { url: restoredOperator.url, key: workingKey };
     const restoredInstance = await instanceId(restored);
     const copiedBack = await replicateToZero(restoredOperator);
-    const restoredOverHttp = await blobsOverHttp(restored, hashes);
+    const restoredOverHttp = await blobsOverHttp(restoredOperator, hashes);
     await stopServer({ state: restoredState });
     const restoredOnDisk = blobsOnDisk(join(restoredState, "blobs"));
     say(
