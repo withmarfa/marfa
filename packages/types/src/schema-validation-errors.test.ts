@@ -65,6 +65,14 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     atField: "fields.count.format",
   },
   {
+    name: "type-naming format on a field of another type",
+    input: {
+      id: "acme.e2",
+      fields: { count: { type: "integer", format: "url" } },
+    },
+    atField: "fields.count.format",
+  },
+  {
     name: "maxLength on a non-string field",
     input: {
       id: "acme.f",

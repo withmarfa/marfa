@@ -70,3 +70,7 @@ The registry of item types: identifiers, fields, inheritance, merge policy, and 
 ## Registration reach
 
 30. **A key registers only the types its own type map grants write on.** `metadata.types:write` (4) admits a key to `POST /types`; its type map, resolved by name as it is for an item write, decides which identifiers. An identifier the map leaves at `read` or `none` is refused `403 type_not_permitted`, its message naming the identifier, and nothing is registered, whether or not anything holds the identifier yet, so one key cannot take an identifier first and leave the key it was meant for unable to register it. A map reaching every type registers any identifier the grammar and the reserved roots (1, 2) admit. `compliance/type-registry.test.ts › registers only the ids the key's own type map grants write on`.
+
+## Formats
+
+31. A field's declared `type` stands beside a `format` that names a field type (`url`, `email`, `datetime`, `date`, `thumbnail`): on a `string` it is stored as that type, and on an `array` of strings as that `items_type`, so `{type: "array", items_type: "string", format: "url"}` reads back as an array of `url` and takes a list of strings. On a field already of that type it changes nothing, and on any other type it is refused `400 invalid_schema` naming the field's `format`, as is `thumbnail` on an array. `compliance/types.test.ts › keeps a list of strings with a type-naming format a list`, `› refuses a type-naming format on a field that is neither a string nor a list of strings`.
