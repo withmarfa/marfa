@@ -1478,37 +1478,6 @@
           "error"
         ]
       },
-      "EdgePermissionDeniedOrForbiddenRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "edge_permission_denied",
-                  "forbidden"
-                ]
-              },
-              "message": {
-                "type": "string"
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {}
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ]
-          }
-        },
-        "required": [
-          "error"
-        ]
-      },
       "BulkActionFilter": {
         "type": "object",
         "properties": {
@@ -2012,6 +1981,37 @@
                   "invalid_schema",
                   "missing_required_field",
                   "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "EdgePermissionDeniedOrForbiddenRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "edge_permission_denied",
+                  "forbidden"
                 ]
               },
               "message": {
@@ -11027,7 +11027,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },

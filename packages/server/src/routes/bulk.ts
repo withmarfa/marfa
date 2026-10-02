@@ -314,6 +314,7 @@ const bulkActionRoute = createRoute({
           schema: makeErrorResponseSchema([
             "edge_permission_denied",
             "forbidden",
+            "type_not_permitted",
           ]),
         },
       },

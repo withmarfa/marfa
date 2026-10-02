@@ -412,7 +412,7 @@ pub enum AddItemTagsError {
 pub enum ApplyBulkActionError {
     Status400(models::BulkCapExceededOrBulkConfirmationRequiredOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::EdgePermissionDeniedOrForbiddenRefusal),
+    Status403(models::EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal),
     Status409(models::IdempotencyKeyInFlightRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status422(models::IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal),

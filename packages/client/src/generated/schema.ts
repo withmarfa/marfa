@@ -2060,16 +2060,6 @@ export interface components {
                 };
             };
         };
-        EdgePermissionDeniedOrForbiddenRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "edge_permission_denied" | "forbidden";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         BulkActionFilter: {
             type?: string;
             state?: components["schemas"]["ItemState"] & unknown;
@@ -2228,6 +2218,16 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "invalid_schema" | "missing_required_field" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        EdgePermissionDeniedOrForbiddenRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "edge_permission_denied" | "forbidden";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -5800,7 +5800,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
