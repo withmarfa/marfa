@@ -235,6 +235,7 @@ impl Core {
     pub fn pin(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let http = self.http()?;
+        catch_up::refuse_another_instance(self, http)?;
         // Pinned before the read, so an event a follow applies meanwhile is kept.
         let added = {
             let conn = self.conn()?;
@@ -1094,6 +1095,7 @@ impl Core {
         };
         Ok(Status {
             server_origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
+            instance_id: store::meta_get(&conn, store::META_INSTANCE_ID)?,
             slice_types,
             slice_tier,
             slice_edge_types: store::whole_edge_types(&conn)?,
@@ -2762,8 +2764,8 @@ mod tests {
 
         let odd = made("odd.sqlite", "CREATE TABLE meta (key TEXT);");
         assert!(
-            matches!(refusal(&odd), CoreError::Store(message) if message.contains("no such column")),
-            "an error the reading open cannot name was called something it is not"
+            matches!(refusal(&odd), CoreError::WrongSchema { reason, .. } if reason.contains("meta")),
+            "a store of another shape was not refused by name"
         );
 
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
@@ -2772,15 +2774,19 @@ mod tests {
             &format!("{meta} INSERT INTO meta VALUES ('schema_version', '1');"),
         );
         let unversioned = made("unversioned.sqlite", meta);
-        for (path, found) in [(&older, "1"), (&unversioned, "none")] {
-            assert_eq!(
-                refusal(path),
+        for (path, found) in [(&older, "schema 1"), (&unversioned, "no schema version")] {
+            match refusal(path) {
                 CoreError::WrongSchema {
-                    expected: store::SCHEMA_VERSION.into(),
-                    found: found.into(),
-                    path: path.display().to_string(),
+                    path: named,
+                    reason,
+                    unsent,
+                } => {
+                    assert_eq!(named, path.display().to_string());
+                    assert!(reason.contains(found), "{reason}");
+                    assert_eq!(unsent, None, "a store with no queue was counted");
                 }
-            );
+                other => panic!("{} was refused as {other:?}", path.display()),
+            }
         }
         drop(Core::open(at("store.sqlite"), None).unwrap());
         assert!(Core::open_reader(at("store.sqlite")).is_ok());

@@ -46,7 +46,7 @@ The split is the whole of the classification, and it is closed. A device that re
 
 28. A device that cannot reach the server queues writes and reports them as queued. Nothing is lost and nothing is retried in a loop that a caller has to stop: a drain that cannot reach the server ends at the first write (17). `device/queue.test.ts › queues writes while the server is unreachable`.
 29. On reconnect the queue drains in order, and a write queued before the outage is answered before one queued during it. `device/queue.test.ts › drains in order on reconnect`.
-30. **A re-hydration leaves the queue intact.** An aged-out cursor clears the working copy and pulls the slice again (`device.md` 16), and a queue cleared with it would silently drop writes a caller had been told were queued. `device/queue.test.ts › keeps the queue through a re-hydration`.
+30. **A re-hydration leaves the queue intact.** A copy that expires, whether its cursor aged out, its server was restored behind it or another instance answers at its origin, clears the working copy and pulls the slice again (`device.md` 16), and a queue cleared with it would silently drop writes a caller had been told were queued. `device/queue.test.ts › keeps the queue through a re-hydration`, `device/catch-up.test.ts › hydrates again when the server's log ends behind its cursor, keeping the queue`, `device/queue.test.ts › sends nothing to another instance at the same address, keeping the queue`.
 31. A row the device wrote and has not yet had answered is visible to a local read, and is reconciled to the server's row when the verdict arrives. `device/queue.test.ts › shows an unanswered local write to a local read`.
 
 ## What a queue holds

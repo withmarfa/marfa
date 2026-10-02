@@ -207,7 +207,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                 ),
                 Err(error) => return Err(error.into()),
             };
-            // A failed hydration after an aged-out cursor leaves nothing to
+            // A failed hydration after an expired copy leaves nothing to
             // pull from; the next push hydrates first.
             let pulled = match folder.pull() {
                 Ok(pulled) => Some(pulled),

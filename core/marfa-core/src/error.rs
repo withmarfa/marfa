@@ -52,18 +52,18 @@ pub enum CoreError {
         "this is a reading handle: another process holds the writer handle for this store, and one store has one writer"
     )]
     ReadingHandle,
-    #[error(
-        "this store was written by schema {found} and this build expects {expected}; there are no migrations, so delete {path} and hydrate again"
-    )]
+    #[error("{}", wrong_schema(path, reason, *unsent))]
     WrongSchema {
-        expected: String,
-        found: String,
         path: String,
+        reason: String,
+        /// Writes in the store the server has not taken, waiting, blocked,
+        /// refused or dead; `None` where its queue cannot be read.
+        unsent: Option<u64>,
     },
-    #[error(
-        "the event log no longer holds the cursor (oldest retained id {min_retained_id}); hydrate again"
-    )]
-    CatchUpTooOld { min_retained_id: String },
+    /// The cursor is dropped, so the copy reports itself expired until a
+    /// hydration, which keeps the queue.
+    #[error("this working copy can no longer be kept current: {reason}; hydrate again")]
+    CopyExpired { reason: String },
     #[error("the event stream ended early: {reason}")]
     StreamIncomplete { reason: String },
     #[error("this file belongs to {expected}, not {got}")]
@@ -134,6 +134,20 @@ fn contract_mismatch(
             "{origin} answered {status} naming no contract, so it may not be a Marfa server: check the URL. This build of the core speaks contract {expected}{sent}"
         ),
     }
+}
+
+/// Never advises deleting the store: only the build that made it can send
+/// what it holds.
+fn wrong_schema(path: &str, reason: &str, unsent: Option<u64>) -> String {
+    let holds = match unsent {
+        Some(0) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
+        Some(count) => format!(
+            "It holds {count} {} the server has not taken, waiting, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store",
+            if count == 1 { "write" } else { "writes" }
+        ),
+        None => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
+    };
+    format!("{path} was made by another build of the core: {reason}. {holds}")
 }
 
 impl From<rusqlite::Error> for CoreError {

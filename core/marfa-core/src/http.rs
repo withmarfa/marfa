@@ -375,6 +375,15 @@ impl Http {
         }
     }
 
+    /// The instance the server says it is, which its root answers to anyone.
+    pub fn instance_id(&self) -> Result<String, CoreError> {
+        #[derive(serde::Deserialize)]
+        struct Root {
+            instance_id: String,
+        }
+        Ok(self.get_json::<Root>(&[], &[])?.instance_id)
+    }
+
     pub fn catalog(&self) -> Result<WireCatalog, CoreError> {
         Ok(WireCatalog {
             types: self.types()?,

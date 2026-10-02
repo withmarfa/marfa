@@ -11,6 +11,7 @@ import {
 import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   answers,
+  cursorAhead,
   edgesPage,
   itemEvent,
   liveReplay,
@@ -2527,6 +2528,41 @@ describe("the scripted answers match the server's", () => {
         first.event.startsWith("edge.") ||
         first.event === "metadata.changed",
     ).toBe(true);
+  });
+
+  it("matches the frame a cursor past the log's head gets", async (context) => {
+    // What a device holds after its server is restored behind it
+    // (`device.md` 16). Far enough past the head that no other file's
+    // writes reach it while this one runs.
+    const requested = "9000000000000000000";
+    const frames = await withStream(
+      apiUrl,
+      apiKey,
+      { lastEventId: requested },
+      async (stream) =>
+        (
+          await collectUntil(
+            stream,
+            (events) => events.some((event) => event.event === "cursor_ahead"),
+            "the frame a cursor past the head gets",
+            context.signal,
+          )
+        ).events,
+    );
+    const ahead = frames.find((event) => event.event === "cursor_ahead")!;
+    const head = frames.find((event) => event.event === "stream_cursor");
+    expect(ahead.id, "the frame carries no id").toBeUndefined();
+    expect(
+      head === undefined ||
+        BigInt((head.data as { cursor: string }).cursor) < BigInt(requested),
+      "the head the stream announced was not behind the cursor, so the device's reading of it says nothing",
+    ).toBe(true);
+    expectFidelity(
+      "the frame a cursor past the head gets",
+      { status: 200, body: ahead.data },
+      { kind: "json", status: 200, body: cursorAhead(requested, "1").data },
+      { same: ["type", "requested"], shape: ["head"] },
+    );
   });
 
   it("matches the marker that ends a replay whose rows were withheld", async (context) => {

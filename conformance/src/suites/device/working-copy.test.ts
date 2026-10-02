@@ -1428,6 +1428,78 @@ describe("the working copy belongs to one server", () => {
     if (!refused.ok) expect(refused.refusal.code).toBe("wrong_schema");
   });
 
+  it("refuses a store another build shaped, by name, with the writes it holds unsent", async () => {
+    harness = await hydratedHarness("store-shape", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const queued = await harness.device.create({
+      type: "core.note",
+      properties: { title: "unsent", body: "unsent" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    // The witness: the same store, in this build's shape, reads its queue.
+    const held = await harness.device.queue();
+    expect(held.ok ? held.value.length : held).toBe(1);
+
+    // What a build with another queue would have left: the same version,
+    // one column of the queue under another name.
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec("ALTER TABLE queue RENAME COLUMN follows TO after_write");
+    } finally {
+      store.close();
+    }
+    for (const [opened, device] of [
+      ["writer", harness.device],
+      ["reader", harness.device.reopen({ reader: true })],
+    ] as const) {
+      const refused = await device.queue();
+      expect(
+        refused.ok,
+        `a ${opened} opened a store of another shape as though this build had made it`,
+      ).toBe(false);
+      if (refused.ok) continue;
+      expect(
+        refused.refusal.code,
+        `the ${opened} refused the store with something other than its name: ${refused.refusal.raw}`,
+      ).toBe("wrong_schema");
+      expect(refused.refusal.raw).toContain(harness.device.store);
+      expect(
+        refused.refusal.raw,
+        "the refusal did not say the store holds a write waiting to be sent",
+      ).toContain("1 write");
+      expect(
+        refused.refusal.raw,
+        "the refusal advises deleting a store that holds a write nothing else can send",
+      ).not.toMatch(/delete/i);
+    }
+  });
+
+  it("opens a store made before a table this build adds, and adds it", async () => {
+    harness = await hydratedHarness("store-older", {
+      rows: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec("DROP TABLE beneath; DROP TABLE read_backs;");
+    } finally {
+      store.close();
+    }
+    const read = await harness.device.get("n1");
+    expect(read.ok, JSON.stringify(read)).toBe(true);
+    const reopened = new DatabaseSync(harness.device.store);
+    try {
+      const tables = reopened
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name IN ('beneath', 'read_backs') ORDER BY name",
+        )
+        .all() as Array<{ name: string }>;
+      expect(tables.map((row) => row.name)).toEqual(["beneath", "read_backs"]);
+    } finally {
+      reopened.close();
+    }
+  });
+
   it("gives a second opener a reading handle that refuses writes", async () => {
     harness = await hydratedHarness("one-writer", {
       rows: { "core.note": [{ item: { id: "n1" } }] },

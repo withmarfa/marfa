@@ -54,7 +54,9 @@ async function scripted() {
       });
       res.end(JSON.stringify(body));
     };
-    if (path === "/types") {
+    if (path === "/") {
+      json({ instance_id: "00000000-0000-7000-8000-000000000000" });
+    } else if (path === "/types") {
       json({
         data: [
           { id: "core.note", display_hints: { title_field: "title" } },
@@ -63,7 +65,21 @@ async function scripted() {
         next_cursor: null,
       });
     } else if (path === "/edge-types") {
-      json({ data: [], next_cursor: null });
+      json({
+        data: [
+          {
+            id: "parent-of",
+            cardinality: "one-to-many",
+            source_type_constraints: ["*"],
+            target_type_constraints: ["*"],
+            cascade_on_delete: "orphan",
+            property_schema: {},
+            written_at: "target",
+            shipped: true,
+          },
+        ],
+        next_cursor: null,
+      });
     } else if (path === "/keys/current") {
       json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {

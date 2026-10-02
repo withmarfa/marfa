@@ -256,6 +256,7 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = start(core)?;
+    same_instance(core, &http.instance_id()?)?;
     let (mut catalog, _) = adopt(core, &http.catalog()?)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
     // So a type the server will not describe costs one read of the catalog
@@ -299,7 +300,11 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                 connected = true;
                 prologue_seen = true;
                 let payload = payload_of(&data)?;
-                match name.as_deref().unwrap_or(&payload.r#type) {
+                let kind = name.as_deref().unwrap_or(&payload.r#type);
+                if let Some(reason) = diverged(kind, &payload, &report.cursor) {
+                    return Err(expire(core, reason)?);
+                }
+                match kind {
                     "stream_cursor" => {
                         head = payload.cursor.as_deref().and_then(|text| text.parse().ok());
                         if let (Some(head), Ok(have)) = (head, report.cursor.parse::<u64>())
@@ -318,7 +323,6 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                         report.reached_head = true;
                         break;
                     }
-                    "catchup_too_old" => return Err(aged_out(core, payload)?),
                     "stream_incomplete" => {
                         return Err(CoreError::StreamIncomplete {
                             reason: payload.reason.unwrap_or_default(),
@@ -353,13 +357,73 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
     Ok(report)
 }
 
-/// Forgetting the cursor is what sends the next caller to hydrate.
-fn aged_out(core: &Core, payload: EventPayload) -> Result<CoreError> {
+/// Forgetting the cursor is what sends the next caller to hydrate, and the
+/// queue is no part of what it forgets.
+fn expire(core: &Core, reason: String) -> Result<CoreError> {
     let conn = core.conn()?;
     store::meta_delete(&conn, store::META_EVENT_CURSOR)?;
-    Ok(CoreError::CatchUpTooOld {
-        min_retained_id: payload.min_retained_id.unwrap_or_default(),
-    })
+    Ok(CoreError::CopyExpired { reason })
+}
+
+/// Why a frame says the server's log does not continue from `held`: the log
+/// has aged past it, or ends behind it, as a server restored from an earlier
+/// point does. A position the server names that is behind `held` is the
+/// second, whichever frame names it.
+fn diverged(kind: &str, payload: &EventPayload, held: &str) -> Option<String> {
+    let behind = |head: Option<&str>| {
+        let (Ok(head), Ok(have)) = (head?.parse::<u64>(), held.parse::<u64>()) else {
+            return None;
+        };
+        (head < have).then(|| {
+            format!(
+                "the server's event log ends at {head}, behind the cursor {held} this copy holds, as a server restored from an earlier point does"
+            )
+        })
+    };
+    match kind {
+        "catchup_too_old" => Some(format!(
+            "the event log no longer holds the cursor {held} (oldest retained id {})",
+            payload.min_retained_id.as_deref().unwrap_or("unknown")
+        )),
+        "cursor_ahead" => Some(behind(payload.head.as_deref()).unwrap_or_else(|| {
+            format!(
+                "the server says the cursor {held} this copy holds is past its event log, as a server restored from an earlier point does"
+            )
+        })),
+        "stream_cursor" | "stream_live" => behind(payload.cursor.as_deref()),
+        _ => None,
+    }
+}
+
+/// For a call that sends or takes rows for a copy that names its instance:
+/// a write sent to another instance at the origin would land on rows the
+/// copy never held. A copy that names none learns it at its next hydration,
+/// which a catch-up sends it to. A server that cannot be asked is an error
+/// like any other, so nothing is sent while the instance is unconfirmed.
+pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
+    if store::meta_get(&*core.conn()?, store::META_INSTANCE_ID)?.is_none() {
+        return Ok(());
+    }
+    same_instance(core, &http.instance_id()?)
+}
+
+/// A copy names the instance it was hydrated from. Another instance at the
+/// same origin holds another log, which may have run past the cursor, so
+/// nothing in the stream would say so.
+fn same_instance(core: &Core, served: &str) -> Result<()> {
+    let held = store::meta_get(&*core.conn()?, store::META_INSTANCE_ID)?;
+    if held.as_deref() == Some(served) {
+        return Ok(());
+    }
+    let reason = match held {
+        Some(held) => format!(
+            "the server at this address is instance {served}, and this copy was hydrated from instance {held}"
+        ),
+        None => format!(
+            "this copy does not name the instance it was hydrated from, and the server at this address is instance {served}"
+        ),
+    };
+    Err(expire(core, reason)?)
 }
 
 /// `stop` is looked at at least every `PACE.stop_poll`, including while a
@@ -406,7 +470,7 @@ fn follow_paced(
         let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
             break;
         };
-        let (fetched, frames) = match reached {
+        let (instance, fetched, frames) = match reached {
             Ok(reached) => reached,
             Err(error) if error.is_environmental() => {
                 report.failed_opens += 1;
@@ -430,6 +494,7 @@ fn follow_paced(
             }
             Err(error) => return Err(error),
         };
+        same_instance(core, &instance)?;
         if reachable == Some(false) {
             on_change(&Change {
                 event: SERVER_REACHABLE.into(),
@@ -524,7 +589,11 @@ fn read_stream(
             continue;
         };
         let payload = payload_of(&data)?;
-        match name.as_deref().unwrap_or(&payload.r#type) {
+        let kind = name.as_deref().unwrap_or(&payload.r#type);
+        if let Some(reason) = diverged(kind, &payload, &report.cursor) {
+            return Err(expire(core, reason)?);
+        }
+        match kind {
             "stream_cursor" => {}
             "stream_live" => {
                 if let Some(cursor) =
@@ -533,7 +602,6 @@ fn read_stream(
                     report.cursor = cursor;
                 }
             }
-            "catchup_too_old" => return Err(aged_out(core, payload)?),
             "stream_incomplete" => return Ok(Ended::Over),
             kind => {
                 let Some(id) = id else { continue };
@@ -568,7 +636,8 @@ fn read_stream(
     }
 }
 
-type Reached = Result<(WireCatalog, Receiver<io::Result<Frame>>)>;
+/// The instance the server's root names, its catalog and its stream.
+type Reached = Result<(String, WireCatalog, Receiver<io::Result<Frame>>)>;
 
 /// `None` when `stop` was set first.
 fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
@@ -576,10 +645,12 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     let http = Arc::clone(http);
     let cursor = cursor.to_string();
     thread::spawn(move || {
-        let reached = http.catalog().and_then(|catalog| {
+        let reached = (|| {
+            let instance = http.instance_id()?;
+            let catalog = http.catalog()?;
             let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
-            Ok((catalog, frames))
-        });
+            Ok((instance, catalog, frames))
+        })();
         let _ = sender.send(reached);
     });
     loop {
@@ -752,6 +823,7 @@ mod tests {
         {
             let conn = core.conn().unwrap();
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
             store::replace_catalog(
@@ -1669,28 +1741,93 @@ mod tests {
         assert_eq!(report.cursor, "11");
     }
 
+    fn expired(ended: Result<impl std::fmt::Debug>, core: &Core, named: &str) {
+        match ended {
+            Err(CoreError::CopyExpired { reason }) => {
+                assert!(reason.contains(named), "{reason}");
+            }
+            other => panic!("a server that does not continue the copy's log ended {other:?}"),
+        }
+        assert_eq!(stored_cursor(core), None, "the cursor was kept");
+    }
+
+    fn cursor_ahead(requested: &str, head: &str) -> String {
+        format!(
+            "event: cursor_ahead\ndata: {{\"type\":\"cursor_ahead\",\"requested\":\"{requested}\",\"head\":\"{head}\"}}\n\n"
+        )
+    }
+
     #[test]
-    fn a_follow_keeps_its_cursor_when_the_marker_is_behind_it() {
-        // A server restored from a backup, whose log stops short of the
-        // cursor held.
+    fn a_catch_up_expires_the_copy_where_the_log_ends_behind_its_cursor() {
+        for frames in [
+            vec![connected(), stream_cursor("9"), cursor_ahead("10", "9")],
+            vec![connected(), cursor_ahead("10", "9")],
+            vec![connected(), stream_live(Some("9"))],
+        ] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on("/events", vec![stream(frames, Then::End)]);
+            let (_dir, core) = hydrated(&server);
+            expired(core.catch_up(), &core, "9");
+        }
+        // The witness: a log whose head is the cursor is one the copy is in
+        // step with.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![stream(vec![connected(), stream_cursor("10")], Then::End)],
+        );
+        let (_dir, core) = hydrated(&server);
+        assert!(core.catch_up().unwrap().reached_head);
+        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
+    }
+
+    #[test]
+    fn a_follow_expires_the_copy_where_the_log_ends_behind_its_cursor() {
+        for frames in [
+            vec![connected(), stream_cursor("9"), stream_live(Some("9"))],
+            vec![connected(), cursor_ahead("10", "9")],
+        ] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on("/events", vec![stream(frames, held())]);
+            let (_dir, core) = hydrated(&server);
+            let run = follow_on(&core, QUICK, None);
+            expired(run.ended(), &core, "9");
+            assert_eq!(server.seen("/events").len(), 1, "the follow asked again");
+        }
+    }
+
+    #[test]
+    fn a_copy_expires_where_another_instance_answers_at_its_origin() {
         let server = Scripted::start();
         server.on("/types", vec![types(&[(NOTE, None)])]);
         server.on(
             "/events",
             vec![stream(
-                vec![connected(), stream_cursor("9"), stream_live(Some("9"))],
-                Then::Hold {
-                    keepalive: None,
-                    lasting: None,
-                },
+                vec![connected(), stream_cursor("40"), stream_live(Some("40"))],
+                Then::End,
             )],
         );
         let (_dir, core) = hydrated(&server);
+        // The witness: the instance it was hydrated from catches up.
+        assert!(core.catch_up().unwrap().reached_head);
+
+        let other = "00000000-0000-7000-8000-0000000000ff";
+        server.on("/", vec![crate::scripted::root(other)]);
+        let streams = server.seen("/events").len();
+        expired(core.catch_up(), &core, other);
+        assert_eq!(server.seen("/events").len(), streams);
+
+        store::meta_set(&core.conn().unwrap(), store::META_EVENT_CURSOR, "40").unwrap();
         let run = follow_on(&core, QUICK, None);
-        thread::sleep(MS(300));
-        run.stop();
-        let report = run.ended().unwrap();
-        assert_eq!(report.cursor, "10");
-        assert_eq!(stored_cursor(&core).as_deref(), Some("10"));
+        expired(run.ended(), &core, other);
+
+        // A copy naming no instance cannot say this server is its own.
+        store::meta_set(&core.conn().unwrap(), store::META_EVENT_CURSOR, "40").unwrap();
+        store::meta_delete(&core.conn().unwrap(), store::META_INSTANCE_ID).unwrap();
+        server.on("/", vec![crate::scripted::root(crate::scripted::INSTANCE)]);
+        expired(core.catch_up(), &core, "does not name the instance");
     }
 }

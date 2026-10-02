@@ -462,6 +462,20 @@ export function catchupTooOld(
   };
 }
 
+/** The instance the scripted server's root names unless a fixture names another. */
+export const SCRIPTED_INSTANCE = "00000000-0000-7000-8000-000000000000";
+
+/**
+ * The terminal frame a cursor past the log's head gets, which is what a
+ * device holds after the server is restored behind it (`events.md` 3).
+ */
+export function cursorAhead(requested: string, head: string): SseFrame {
+  return {
+    event: "cursor_ahead",
+    data: { type: "cursor_ahead", requested, head },
+  };
+}
+
 /** The head read a hydration performs before it takes its snapshot. */
 export function headRead(cursor: string): Answer {
   return { kind: "sse", frames: [connected, streamCursor(cursor)] };
@@ -543,14 +557,17 @@ export interface ConflictSnapshotBody {
  * case.
  */
 export const answers = {
-  /** The root, answering the contract it is given. */
-  root: (contract: unknown): Answer => ({
+  /** The root, answering the contract it is given, as the instance named. */
+  root: (
+    contract: unknown,
+    instanceId: string = SCRIPTED_INSTANCE,
+  ): Answer => ({
     kind: "json",
     status: 200,
     body: {
       name: "marfa",
       version: "dev",
-      instance_id: "00000000-0000-7000-8000-000000000000",
+      instance_id: instanceId,
       contract,
       features: ["items"],
     },

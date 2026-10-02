@@ -68,7 +68,9 @@ async function scripted(streams) {
       });
       res.end(JSON.stringify(body));
     };
-    if (path === "/types") {
+    if (path === "/") {
+      json({ instance_id: "00000000-0000-7000-8000-000000000000" });
+    } else if (path === "/types") {
       json({
         data: [{ id: "core.note", display_hints: { title_field: "title" } }],
         next_cursor: null,
@@ -177,7 +179,7 @@ test(
     while (Date.now() < until);
     const { error, before } = await ended;
     assert.equal(before, 50, "onEnd ran before every change sent ahead of it");
-    assert.match(String(error), /^catch_up_too_old: /);
+    assert.match(String(error), /^copy_expired: /);
   },
 );
 

@@ -59,7 +59,7 @@ import {
   type FolderSettings,
   type PushReport,
 } from "../../device/cli-adapter.js";
-import { ScriptedServer } from "../../device/scripted-server.js";
+import { BUILT_FOR, ScriptedServer } from "../../device/scripted-server.js";
 import {
   CONFLICTED_COPY_TAG,
   FolderDoor,
@@ -1022,6 +1022,39 @@ describe("what a folder is", () => {
       "a server failure at the folder door was taken as a refusal, and the edit never sent again",
     ).toHaveLength(2);
     expect(second.value.settings).toMatchObject({ sent: true, flagged: null });
+  });
+
+  it("sends no settings edit while the server cannot say which instance it is", async () => {
+    harness = await folderHarness("folder-settings-instance", {
+      events: [liveReplay("1", [])],
+    });
+    scriptFolderWrites(harness);
+    const sent = scriptFolderChanges(harness);
+    let restarting = true;
+    harness.server.answer("GET", "/", () =>
+      restarting
+        ? refusal(503, "unavailable", "restarting")
+        : answers.root(Number(BUILT_FOR)),
+    );
+    writeFileSync(
+      settingsFile(harness),
+      readFileSync(settingsFile(harness), "utf8") +
+        "defaults:\n  tags:\n    - later\n",
+    );
+    const first = await harness.folder.push();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    if (!first.ok) return;
+    expect(
+      sent,
+      "a settings edit went to a server whose instance the folder could not confirm",
+    ).toHaveLength(0);
+    expect(first.value.settings.flagged).toContain("which instance");
+
+    // The witness: once the root answers, the same edit is sent.
+    restarting = false;
+    const second = await harness.folder.push();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    expect(sent).toHaveLength(1);
   });
 
   it("sends an edit to its settings file through the folder door", async () => {

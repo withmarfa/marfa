@@ -176,6 +176,8 @@ pub enum Hydration {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Status {
     pub server_origin: Option<String>,
+    /// The instance the copy was hydrated from.
+    pub instance_id: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
     pub slice_edge_types: Vec<String>,
@@ -629,20 +631,24 @@ pub enum MarfaError {
     NoCatalog {
         message: String,
     },
+    /// A store another build made. Carried rather than left in the message,
+    /// because a Swift caller showing this to a person has to be able to name
+    /// the file, and say what it holds, without parsing prose out of it.
     WrongSchema {
-        expected: String,
-        found: String,
-        /// The store the caller has to discard. Carried rather than left in
-        /// the message, because a Swift caller showing this to a person has
-        /// to be able to name the file without parsing prose out of it.
         path: String,
+        reason: String,
+        /// Writes still waiting to be sent, which only the build that made
+        /// the store can send; `None` where its queue cannot be read.
+        unsent: Option<u64>,
         message: String,
     },
     ReadingHandle {
         message: String,
     },
-    CatchUpTooOld {
-        min_retained_id: String,
+    /// The copy can no longer be kept current from its cursor: a hydration
+    /// is owed, and the queue survives it.
+    CopyExpired {
+        reason: String,
         message: String,
     },
     StreamIncomplete {
@@ -696,7 +702,7 @@ impl MarfaError {
             | MarfaError::NoCatalog { message }
             | MarfaError::WrongSchema { message, .. }
             | MarfaError::ReadingHandle { message }
-            | MarfaError::CatchUpTooOld { message, .. }
+            | MarfaError::CopyExpired { message, .. }
             | MarfaError::StreamIncomplete { message, .. }
             | MarfaError::WrongServer { message, .. }
             | MarfaError::BytesAbsent { message, .. }
@@ -745,20 +751,17 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::HydrationIncomplete => MarfaError::HydrationIncomplete { message },
             E::NoCatalog => MarfaError::NoCatalog { message },
             E::WrongSchema {
-                expected,
-                found,
                 path,
+                reason,
+                unsent,
             } => MarfaError::WrongSchema {
-                expected,
-                found,
                 path,
+                reason,
+                unsent,
                 message,
             },
             E::ReadingHandle => MarfaError::ReadingHandle { message },
-            E::CatchUpTooOld { min_retained_id } => MarfaError::CatchUpTooOld {
-                min_retained_id,
-                message,
-            },
+            E::CopyExpired { reason } => MarfaError::CopyExpired { reason, message },
             E::StreamIncomplete { reason } => MarfaError::StreamIncomplete { reason, message },
             E::WrongServer { expected, got } => MarfaError::WrongServer {
                 expected,
@@ -1307,6 +1310,7 @@ impl MarfaCore {
         let status = self.inner.status()?;
         Ok(Status {
             server_origin: status.server_origin,
+            instance_id: status.instance_id,
             slice_types: status.slice_types,
             slice_tier: status.slice_tier.map(Into::into),
             slice_edge_types: status.slice_edge_types,
@@ -1748,20 +1752,14 @@ mod tests {
             (E::ReadingHandle.into(), "ReadingHandle"),
             (
                 E::WrongSchema {
-                    expected: text(),
-                    found: text(),
                     path: text(),
+                    reason: text(),
+                    unsent: Some(1),
                 }
                 .into(),
                 "WrongSchema",
             ),
-            (
-                E::CatchUpTooOld {
-                    min_retained_id: text(),
-                }
-                .into(),
-                "CatchUpTooOld",
-            ),
+            (E::CopyExpired { reason: text() }.into(), "CopyExpired"),
             (
                 E::StreamIncomplete { reason: text() }.into(),
                 "StreamIncomplete",
@@ -1994,6 +1992,7 @@ mod tests {
                         "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Marfa-Contract: {contract}\r\nConnection: close\r\n\r\n: connected\n\n"
                     );
                     let _ = match (path.as_str(), resumed) {
+                        ("/", _) => stream.write_all(json(r#"{"instance_id":"00000000-0000-7000-8000-000000000000"}"#).as_bytes()),
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
                         ("/edge-types", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
                         ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),

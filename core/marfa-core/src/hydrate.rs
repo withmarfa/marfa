@@ -7,7 +7,7 @@ use crate::http::{Http, ItemsQuery};
 use crate::model::{Draft, EdgeDraft, HydrateReport, Tier, WriteKind};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{EventPayload, WireEdge, WireEdgeBlock, WireItemWithMetadata};
+use crate::wire::{EventPayload, WireCatalog, WireEdge, WireEdgeBlock, WireItemWithMetadata};
 use crate::{Core, Result};
 
 const HEAD_ATTEMPTS: usize = 3;
@@ -39,9 +39,14 @@ pub(crate) fn hydrate(
         }
     }
 
+    // Before the head, so an instance swapped between the two leaves the
+    // copy bound to the old instance, which its next catch-up expires,
+    // rather than to the new one with the old instance's cursor.
+    let instance = http.instance_id()?;
     let cursor = read_head(http)?;
     let catalog_rows = http.catalog()?;
     refuse_unreadable(http, &types)?;
+    refuse_unheld(&catalog_rows, &types, &edge_types)?;
 
     {
         let mut conn = core.conn()?;
@@ -162,6 +167,7 @@ pub(crate) fn hydrate(
         let tx = conn.transaction()?;
         lay_queue_over(&tx, &catalog, &edge_types)?;
         store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
+        store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
         store::meta_set(
             &tx,
             store::META_SLICE_TYPES,
@@ -250,13 +256,35 @@ fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog, whole: &[Strin
     Ok(())
 }
 
+/// The shape the server's type patterns take: two or more lowercase dotted
+/// segments, each a letter then letters, digits, hyphens and underscores, at
+/// most 128 characters, or a root of one or more such segments under `.*`.
+/// The server's rules for each root go further, and a name that passes here
+/// and breaks them is one the catalog does not hold.
+fn type_pattern(name: &str) -> bool {
+    let segment = |part: &str| {
+        let mut characters = part.chars();
+        characters
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+            && characters.all(|rest| {
+                rest.is_ascii_lowercase() || rest.is_ascii_digit() || rest == '-' || rest == '_'
+            })
+    };
+    let (root, least) = match name.strip_suffix(".*") {
+        Some(root) => (root, 1),
+        None => (name, 2),
+    };
+    name.len() <= 128 && root.split('.').count() >= least && root.split('.').all(segment)
+}
+
 fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
     for raw in types {
         let name = raw.trim();
-        if name.is_empty() || name == "*" || name.contains(char::is_whitespace) {
+        if !type_pattern(name) {
             return Err(CoreError::Invalid(format!(
-                "not a type to declare: {raw:?}"
+                "not a type to declare: {raw:?}; a type is two or more lowercase dotted segments, or a namespace under .*"
             )));
         }
         if !declared.iter().any(|seen| seen == name) {
@@ -299,6 +327,35 @@ fn refuse_unreadable(http: &Http, types: &[String]) -> Result<()> {
             unreadable.join(", ")
         ),
     })
+}
+
+/// Checked against the catalog just read, before the copy is cleared: the
+/// listing refuses a type nobody registered only once the copy is gone.
+fn refuse_unheld(catalog: &WireCatalog, types: &[String], edge_types: &[String]) -> Result<()> {
+    if let Some(unheld) = types.iter().find(|name| {
+        *name != store::EVERY_TYPE
+            && !name.ends_with(".*")
+            && !catalog.types.iter().any(|held| &held.id == *name)
+    }) {
+        return Err(CoreError::UnknownType {
+            message: format!(
+                "the server holds no type {unheld}, so a slice naming it would hold none of it: register it, or leave it out"
+            ),
+        });
+    }
+    if let Some(unheld) = edge_types.iter().find(|name| {
+        !catalog
+            .edge_types
+            .iter()
+            .any(|held| held.get("id").and_then(|id| id.as_str()) == Some(name.as_str()))
+    }) {
+        return Err(CoreError::UnknownType {
+            message: format!(
+                "the server holds no edge type {unheld}, so a slice holding it whole would hold none of it: register it, or leave it out"
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// A comma is refused because the listing reads one as a list of types.

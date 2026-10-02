@@ -494,10 +494,35 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         unclaimed_sources: Vec::new(),
         retry_after_seconds: None,
     };
-
+    // Confirmed once, and only where the pass talks to the server: a pass
+    // with nothing to send or read sends nothing at all, and one that cannot
+    // confirm the instance is a server that cannot take writes, since a
+    // restart is when another instance appears.
+    let mut confirmed = false;
+    let mut confirm = |report: &mut DrainReport| -> Result<bool> {
+        if confirmed {
+            return Ok(true);
+        }
+        match crate::catch_up::refuse_another_instance(core, http) {
+            Ok(()) => {
+                confirmed = true;
+                Ok(true)
+            }
+            Err(error) if error.is_environmental() => {
+                report.unavailable = Some(format!(
+                    "the server could not say which instance it is, so nothing was sent: {error}"
+                ));
+                waited(report, error.retry_after().map(|wait| wait.as_secs()));
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    };
+    let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
-    if let Some(why) = read_owed_backs(core)? {
+    let unconfirmed = owed && !confirm(&mut report)?;
+    if !unconfirmed && let Some(why) = read_owed_backs(core)? {
         report.unavailable = Some(why.reason);
         waited(&mut report, why.retry_after_seconds);
     }
@@ -551,6 +576,11 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
             // queue still says what waits on what, and nothing else is
             // touched or counted.
             _ if report.unavailable.is_some() => {
+                waiting.insert(row.id.clone());
+                report.undelivered += 1;
+                continue;
+            }
+            Readiness::RefusedWith(_) | Readiness::Ready if !confirm(&mut report)? => {
                 waiting.insert(row.id.clone());
                 report.undelivered += 1;
                 continue;

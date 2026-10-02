@@ -992,8 +992,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     }
                 };
                 format!(
-                    "server {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s)",
+                    "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s)",
                     status.server_origin.as_deref().unwrap_or("(none)"),
+                    status.instance_id.as_deref().unwrap_or("(none)"),
                     listed(&status.slice_types),
                     status
                         .slice_tier

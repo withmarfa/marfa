@@ -341,6 +341,20 @@ impl Folder {
         // The same edit keeps its key, so one whose answer was lost is
         // answered from the server's record.
         let key = format!("{}-settings-{}", self.folder, state::hash(body.as_bytes()));
+        // Held to the instance as a drain's sends are: never sent while it is
+        // unconfirmed.
+        match crate::catch_up::refuse_another_instance(&self.core, self.core.http()?) {
+            Ok(()) => {}
+            Err(error) if error.is_environmental() => {
+                return Ok(SettingsFileReport {
+                    flagged: Some(format!(
+                        "not sent yet: the server could not say which instance it is ({error})"
+                    )),
+                    ..Default::default()
+                });
+            }
+            Err(error) => return Err(error),
+        }
         let answer = self.core.http()?.send(&Outgoing {
             method: Method::Patch,
             segments: vec!["folders".into(), self.folder.clone()],
