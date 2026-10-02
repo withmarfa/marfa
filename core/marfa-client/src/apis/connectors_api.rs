@@ -979,7 +979,7 @@ pub fn heartbeat_connector(
     }
 }
 
-/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only.
+/// Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only.
 pub fn hold_connector(
     configuration: &configuration::Configuration,
     params: HoldConnectorParams,

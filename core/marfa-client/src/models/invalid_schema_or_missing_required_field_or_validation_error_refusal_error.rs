@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
+pub struct InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusalError {
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,12 +21,12 @@ pub struct InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
+impl InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusalError {
     pub fn new(
         code: Code,
         message: String,
-    ) -> InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
-        InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
+    ) -> InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusalError {
+        InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusalError {
             code,
             message,
             details: None,
@@ -36,16 +36,16 @@ impl InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
 ///
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Code {
-    #[serde(rename = "inheritance_violation")]
-    InheritanceViolation,
     #[serde(rename = "invalid_schema")]
     InvalidSchema,
+    #[serde(rename = "missing_required_field")]
+    MissingRequiredField,
     #[serde(rename = "validation_error")]
     ValidationError,
 }
 
 impl Default for Code {
     fn default() -> Code {
-        Self::InheritanceViolation
+        Self::InvalidSchema
     }
 }
