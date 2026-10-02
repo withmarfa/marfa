@@ -325,6 +325,61 @@ describe("export", () => {
     expect(wideIds).toContain(hidden.data.edge.id);
   });
 
+  it("carries on each row only the extension namespaces the key may read, on both output formats", async () => {
+    const seen = `export-seen-${ctx.runId}`;
+    const unseen = `export-unseen-${ctx.runId}`;
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(note.ok).toBe(true);
+    const id = note.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.setItemExtension(id, seen, { a: 1 })).ok).toBe(true);
+    expect((await client.setItemExtension(id, unseen, { secret: 2 })).ok).toBe(
+      true,
+    );
+
+    const keyResp = await client.createKey({
+      label: "export-one-namespace",
+      source: `${ctx.source}-export-one-namespace`,
+      permissions: [],
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { [seen]: "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const lineFor = (raw: string) =>
+      parseNdjson(raw).find((line) => line.item.id === id);
+    const archiveLineFor = (archive: Uint8Array) =>
+      lineFor(readTarGzEntry(archive, "items.ndjson") ?? "");
+
+    // The witness, on both formats: a key that may read the namespace is
+    // carried it.
+    const fullStream = await client.exportItems({ source: ctx.source });
+    expect(lineFor(fullStream.data)?.metadata.extensions?.[unseen]).toEqual({
+      secret: 2,
+    });
+    const fullArchive = await client.exportArchive({ source: ctx.source });
+    expect(fullArchive.ok).toBe(true);
+    expect(
+      archiveLineFor(fullArchive.data)?.metadata.extensions?.[unseen],
+    ).toEqual({ secret: 2 });
+
+    const stream = await narrow.exportItems({ source: ctx.source });
+    expect(stream.ok).toBe(true);
+    expect(lineFor(stream.data)?.metadata.extensions).toEqual({
+      [seen]: { a: 1 },
+    });
+    const archive = await narrow.exportArchive({ source: ctx.source });
+    expect(archive.ok).toBe(true);
+    expect(archiveLineFor(archive.data)?.metadata.extensions).toEqual({
+      [seen]: { a: 1 },
+    });
+  });
+
   it("refuses a format outside the two it offers", async () => {
     // `format` was `z.string()` under a description offering `ndjson` or
     // `archive`, an enumeration a reader takes as closed. `?format=bogus`
