@@ -1143,6 +1143,119 @@ describe("the contract the working copy was built for", () => {
     }
   });
 
+  it("counts a refusal that names no contract rather than ending the write", async () => {
+    const held = {
+      id: "01a00000-0000-7000-8000-00000000000a",
+      version: 3,
+      properties: { title: "held", body: "held" },
+    };
+    harness = await hydratedHarness("contract-proxy-refusal", {
+      rows: { "core.note": [{ item: held }] },
+    });
+    const { server: scripted, device } = harness;
+    scriptWrites(scripted, {
+      update: [
+        {
+          kind: "json",
+          status: 403,
+          body: {
+            error: { code: "forbidden", message: "blocked at the edge" },
+          },
+          contract: null,
+        },
+        refused(403, "forbidden", "the key may not write this"),
+      ],
+      read: [answers.updated(wireItem(held))],
+    });
+    expect(
+      (
+        await device.update(held.id, {
+          properties: { title: "edited" },
+          version: held.version,
+        })
+      ).ok,
+    ).toBe(true);
+    const proxied = await device.drain();
+    expect(proxied.ok, JSON.stringify(proxied)).toBe(true);
+    expect(
+      proxied.ok && [
+        proxied.value.verdicts[0]?.verdict,
+        proxied.value.verdicts[0]?.refusals,
+      ],
+      "a proxy's refusal ended a write the server never saw",
+    ).toEqual([null, 1]);
+    const reads = () =>
+      scripted.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${held.id}`,
+      ).length;
+    expect(reads(), "a proxy's refusal was reconciled as the server's").toBe(0);
+
+    // The witness: the server's own refusal, naming its contract, refuses.
+    const own = await device.drain();
+    expect(own.ok && own.value.verdicts[0]?.verdict).toBe("refused");
+  });
+
+  it("ends the pass when the read of the row a create landed on answers on another contract", async () => {
+    const THEIRS = "01a00000-0000-7000-8000-0000000000c9";
+    const current = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "landed.md",
+      type: "core.note",
+    };
+    harness = await hydratedHarness("contract-landed-read");
+    const { server: scripted, device } = harness;
+    for (const [title, sourceId] of [
+      ["mine", "landed.md"],
+      ["behind", "behind.md"],
+    ] as const) {
+      expect(
+        (
+          await device.create({
+            type: "core.note",
+            properties: { title },
+            source: "notes",
+            sourceId,
+            version: 0,
+          })
+        ).ok,
+      ).toBe(true);
+    }
+    scriptWrites(scripted, {
+      create: [answers.ancestorUnavailable(current, 0)],
+      read: [
+        naming(
+          answers.updated(
+            wireItem({ id: THEIRS, source: "notes", source_id: "landed.md" }),
+          ),
+          String(builtFor + 1),
+        ),
+      ],
+    });
+    const drained = await device.drain();
+    expect(
+      drained.ok,
+      "a drain read a landed row on another contract and went on as though it could not read it",
+    ).toBe(false);
+    if (!drained.ok) expect(drained.refusal.code).toBe("contract_mismatch");
+    expect(
+      scripted.requests.filter((request) => request.method === "POST").length,
+      "the pass went on past an answer on another contract",
+    ).toBe(1);
+    const queue = await device.queue();
+    expect(
+      queue.ok && queue.value.map((row) => [row.verdict, row.refusals]),
+      "the landed create was counted against an answer the core could not read",
+    ).toEqual([
+      [null, 0],
+      [null, 0],
+    ]);
+  });
+
   it("hands the working copy a refusal that names no contract, as a proxy's would", async () => {
     harness = await startHarness("contract-unnamed-refusal");
     const { server: scripted, device } = harness;

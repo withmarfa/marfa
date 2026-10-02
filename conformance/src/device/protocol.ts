@@ -60,6 +60,9 @@ export interface Change {
   item_id: string | null;
   edge_id: string | null;
   cursor: string;
+  /** Why the server cannot be reached, on `server.unreachable` alone
+   *  (`device.md` 40). */
+  reason: string | null;
 }
 
 /** What a held stream did before it was stopped. */
@@ -224,12 +227,18 @@ export interface Edge {
 
 /** What a drain did (`queue-and-verdicts.md` 6). */
 export interface DrainReport {
-  /** Rows the drain put on the wire. */
-  sent: number;
+  /** Writes the server answered this pass, whatever it answered
+   *  (`queue-and-verdicts.md` 6). */
+  answered: number;
   /** Rows it did not send because a write they depend on, or the write
    *  ahead of them to the same row or edge, has no answer yet
    *  (`queue-and-verdicts.md` 4, 42). */
   held: number;
+  /** Writes it could not deliver, each waiting for the next drain
+   *  (`queue-and-verdicts.md` 17). */
+  undelivered: number;
+  /** Why the pass ended before the queue was through, where it did. */
+  unavailable: string | null;
   verdicts: DrainVerdict[];
   /** Why the drain stopped before the queue was empty. A refused credential
    *  ends a pass early here (`queue-and-verdicts.md` 20); an answer on

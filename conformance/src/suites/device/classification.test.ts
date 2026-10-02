@@ -128,9 +128,184 @@ describe("an environmental failure retries and is never counted", () => {
     // The control: the attempts happened. Without it a device that stopped
     // sending after the first failure would satisfy everything above.
     expect(
-      reports.map((report) => report.sent),
+      harness.server.requests.filter((request) => request.method === "PATCH")
+        .length,
       "the drain stopped attempting, so the counts above are the counts of nothing",
-    ).toEqual([1, 1, 1, 1, 1, 1]);
+    ).toBe(6);
+    expect(
+      reports.map((report) => [report.answered, report.undelivered]),
+      "a write that met a dropped connection was counted as answered, or not as waiting",
+    ).toEqual(Array.from({ length: 6 }, () => [0, 1]));
+  });
+
+  it("ends the pass at the first write the server cannot take, leaving the rest untried and uncounted", async () => {
+    harness = await hydratedHarness("class-environmental-ends", {
+      rows: held(),
+    });
+    const { server, device } = harness;
+    for (const title of ["first", "second", "third"]) {
+      const queued = await device.create({
+        type: "core.note",
+        properties: { title },
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    }
+    const took = (request: { body: string }) => {
+      const sent = JSON.parse(request.body) as {
+        id: string;
+        properties: Record<string, unknown>;
+      };
+      return answers.created(
+        wireItem({ id: sent.id, properties: sent.properties }),
+      );
+    };
+    scriptWrites(server, {
+      create: [
+        { kind: "drop" },
+        refusal(503, "unavailable", "busy"),
+        {
+          kind: "json",
+          status: 429,
+          body: { error: { code: "rate_limited", message: "slow down" } },
+          headers: { "Retry-After": "9" },
+        },
+        took,
+      ],
+    });
+    const creates = () =>
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ).length;
+
+    const said: Array<string | null> = [];
+    for (const expected of [1, 2, 3]) {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
+      expect(
+        creates(),
+        "a drain went on to the writes behind one the server could not take, so an unreachable server costs a timeout for every write in the queue",
+      ).toBe(expected);
+      expect(
+        [drained.value.answered, drained.value.undelivered],
+        "a drain that reached no server counted a write as answered, or did not say three wait",
+      ).toEqual([0, 3]);
+      said.push(drained.value.unavailable);
+    }
+    expect(said[0], "a drain that reached no server did not say so").toMatch(
+      /could not be reached/,
+    );
+    expect(said[1]).toContain("503");
+    expect(said[2]).toContain("429");
+    const queue = await queueOf(harness);
+    expect(
+      queue.map((row) => [row.verdict, row.refusals]),
+      "a write the server never took was given a verdict or counted",
+    ).toEqual([
+      [null, 0],
+      [null, 0],
+      [null, 0],
+    ]);
+
+    // The witness: once the server takes writes, all three go in one drain.
+    const back = await device.drain();
+    expect(back.ok && [back.value.answered, back.value.undelivered]).toEqual([
+      3, 0,
+    ]);
+    expect(back.ok && back.value.unavailable).toBeNull();
+    expect(creates()).toBe(6);
+  });
+
+  it("counts only the writes the server answered, and says why the rest were not delivered", async () => {
+    harness = await hydratedHarness("class-counts", { rows: held() });
+    const { server, device } = harness;
+    for (const title of ["refused", "unsent"]) {
+      expect(
+        (await device.create({ type: "core.note", properties: { title } })).ok,
+      ).toBe(true);
+    }
+    scriptWrites(server, {
+      create: [
+        refusal(400, "invalid_properties", "no such property"),
+        { kind: "drop" },
+      ],
+      // A refused create is read back, and the server holds no such row.
+      read: [refusal(404, "item_not_found", "no such item")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      {
+        answered: drained.value.answered,
+        undelivered: drained.value.undelivered,
+      },
+      "the report counted a write the server never answered, so an app shows offline as saved",
+    ).toEqual({ answered: 1, undelivered: 1 });
+    expect(drained.value.unavailable).toMatch(/could not be reached/);
+    expect(drained.value.verdicts.map((verdict) => verdict.verdict)).toEqual([
+      "refused",
+      null,
+    ]);
+  });
+
+  it("ends the pass at a read the server cannot answer, sending nothing after it", async () => {
+    harness = await hydratedHarness("class-read-ends", { rows: held() });
+    const { server, device } = harness;
+    const edit = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "behind" },
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [refusal(400, "invalid_properties", "not a title")],
+      read: [{ kind: "drop" }, { kind: "drop" }, ...(serverRow() ?? [])],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          return answers.created(wireItem({ id: sent.id }));
+        },
+      ],
+    });
+    const creates = () =>
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ).length;
+
+    const first = await device.drain();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(
+      creates(),
+      "the pass went on to the write behind a refusal whose read could not reach the server",
+    ).toBe(0);
+    expect(first.ok && [first.value.answered, first.value.undelivered]).toEqual(
+      [1, 1],
+    );
+    expect(first.ok && first.value.unavailable).toMatch(/could not be reached/);
+
+    // The read owed is tried first, and still cannot reach the server.
+    const second = await device.drain();
+    expect(second.ok, JSON.stringify(second)).toBe(true);
+    expect(
+      creates(),
+      "a drain sent a write when the read owed before it could not reach the server",
+    ).toBe(0);
+    expect(second.ok && second.value.unavailable).toMatch(
+      /could not be reached/,
+    );
+
+    // The witness: once the read lands, the write behind it goes.
+    const third = await device.drain();
+    expect(third.ok && third.value.answered).toBe(1);
+    expect(creates()).toBe(1);
   });
 
   it("retries a 5xx and a 429 without counting them", async () => {
@@ -198,6 +373,52 @@ describe("a contract failure does not retry", () => {
 });
 
 describe("the class that is neither retries and is counted", () => {
+  it("counts a write whose answer the copy cannot take, and goes on to the next", async () => {
+    harness = await hydratedHarness("class-local", { rows: held() });
+    const { server, device } = harness;
+    const edit = await device.update(HELD.id, {
+      properties: { title: "edited" },
+      version: HELD.version,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "next" },
+        })
+      ).ok,
+    ).toBe(true);
+    // A state this build does not know: the server took the write, and the
+    // copy cannot hold the row it answered.
+    scriptWrites(server, {
+      update: [
+        answers.updated(wireItem({ id: HELD.id, version: 4, state: "frozen" })),
+      ],
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as { id: string };
+          return answers.created(wireItem({ id: sent.id }));
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(
+      drained.ok,
+      `a drain failed whole on an answer the copy could not take, so every write behind it waits on it for good: ${JSON.stringify(drained)}`,
+    ).toBe(true);
+    if (!drained.ok) return;
+    const [update, create] = drained.value.verdicts;
+    expect(
+      [update?.verdict, update?.refusals],
+      "a write whose answer the copy could not take was not counted, so it is retried forever",
+    ).toEqual([null, 1]);
+    expect(
+      create?.verdict,
+      "the write behind one the copy could not take was not sent",
+    ).toBe("accepted");
+  });
+
   it("retries an answer it cannot read, and counts it", async () => {
     harness = await hydratedHarness("class-unreadable", { rows: held() });
     const reports = await drainAgainst(
@@ -272,7 +493,7 @@ describe("the three refusals that park a write", () => {
     if (!drained.ok) return;
 
     expect(
-      drained.value.sent,
+      drained.value.answered,
       "the drain worked through a queue every row of which carries the same refused credential, spending a request per row to be told the same thing",
     ).toBe(1);
     expect(
@@ -377,7 +598,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe("dead");
     // The sixth drain does not send it at all, which is what terminal means.
     expect(
-      reports[5]?.sent,
+      reports[5]?.answered,
       "a dead write was sent again, so reaching the ceiling stopped nothing",
     ).toBe(0);
   });
@@ -490,7 +711,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     // And within one drain rather than needing a second, because the create
     // that released it was answered in this same pass.
     expect(
-      drained.value.sent,
+      drained.value.answered,
       "the create and the write it released did not both go in one pass, so every dependency costs an extra drain",
     ).toBe(2);
   });

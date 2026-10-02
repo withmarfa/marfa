@@ -39,7 +39,7 @@ interface PushReport {
     renamed: number;
     unchanged: number;
   };
-  drain: { sent: number; held: number };
+  drain: { answered: number; held: number };
   pull: { written: number; rewritten: number; unchanged: number };
 }
 
@@ -97,7 +97,7 @@ describe("a folder round trip", () => {
     const pushed = await c.cli.json<PushReport>(["folders", "push", dir]);
     expect(pushed.scan.created).toBe(1);
     // The create and its placement.
-    expect(pushed.drain.sent).toBe(2);
+    expect(pushed.drain.answered).toBe(2);
 
     // It is in Marfa under the id the folder minted, with no natural key.
     const queued = await c.cli.json<

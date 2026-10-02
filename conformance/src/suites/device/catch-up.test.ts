@@ -704,7 +704,10 @@ describe("catch-up replays from the cursor", () => {
     const lines = follow.stdout
       .split("\n")
       .filter((line) => line.trim() !== "")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      // The dropped connection is also told as the server lost and back,
+      // which has its own fixture.
+      .filter((change) => !String(change.event).startsWith("server."));
     expect(
       lines.map((change) => [change.event, change.item_id, change.cursor]),
       "the device did not report each event that changed the copy, and only those, in the order they arrived",
@@ -917,6 +920,71 @@ describe("catch-up replays from the cursor", () => {
       followed.value.changes.map((change) => change.item_id),
       "a row outside the slice was told as a change, or the row that left was not",
     ).toEqual(["declared", "leaving"]);
+  });
+
+  it("tells a held stream's caller once that the server cannot be reached, and once that it can again", async () => {
+    harness = await startHarness("follow-reach");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    // Had at once, then a failing server and a dropped connection, then a
+    // stream held open.
+    server.answer(
+      "GET",
+      "/events",
+      refusal(503, "unavailable", "busy"),
+      { kind: "drop" },
+      { kind: "sse", frames: [connected], hold: true },
+    );
+    const followed = await device.follow(10);
+    expect(followed.ok, JSON.stringify(followed)).toBe(true);
+    if (!followed.ok) return;
+    expect(
+      followed.value.report.failed_opens,
+      "the stream was never refused, so the changes below are about nothing",
+    ).toBe(2);
+    const told = followed.value.changes.map((change) => change.event);
+    expect(
+      told,
+      "the caller was not told once that the server was lost and once that it was back, so an app shows offline and online alike",
+    ).toEqual(["server.unreachable", "server.reachable"]);
+    const lost = followed.value.changes[0];
+    expect(
+      [lost?.item_id, lost?.edge_id],
+      "a change about the server named a row",
+    ).toEqual([null, null]);
+    expect(lost?.reason, "the caller was not told why").toContain("503");
+  });
+
+  it("refuses an event id that is not a number, keeping the cursor it had", async () => {
+    harness = await startHarness("catch-up-event-id");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const { edges: _edges, ...row } = wireItem({ id: "n11" });
+    server.answer(
+      "GET",
+      "/events",
+      replay("11", [itemEvent("eleven", "item.created", row)]),
+      replay("11", [itemEvent("11", "item.created", row)]),
+    );
+    // The hydration's own head read answers once more first.
+    expect((await device.catchUp()).ok).toBe(true);
+    const refused = await device.catchUp();
+    expect(
+      refused.ok,
+      "a catch-up took an event id that is not one as its cursor",
+    ).toBe(false);
+    const status = await device.status();
+    expect(
+      status.ok && status.value.event_cursor,
+      "the cursor moved to an id no start can resume from",
+    ).toBe("10");
+
+    // The witness: the same event under an id that is one is taken.
+    const taken = await device.catchUp();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    expect((await device.get("n11")).ok).toBe(true);
   });
 
   it("asks again at a falling rate when every stream ends at once, and ends on an answer no retry changes", async () => {
