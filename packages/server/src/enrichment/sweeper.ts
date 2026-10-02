@@ -1,4 +1,10 @@
-import { ErrorCode, MarfaError, getResolvedFields } from "@withmarfa/shared";
+import { createHash } from "node:crypto";
+import {
+  ErrorCode,
+  MarfaError,
+  getResolvedFields,
+  listTypes,
+} from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
@@ -84,12 +90,17 @@ export class TextEnrichmentSweeper {
    * but the write is validated, so a ceiling set above what the type will
    * accept parks the item instead of storing it, and lowering the ceiling
    * back has to re-offer exactly those rows.
+   *
+   * The registered types are another: the write is judged against the row's
+   * type, and refused outright where that type is not registered, so a type
+   * registered, changed or removed reconsiders what it parked.
    */
   private get configSignature(): string {
     return JSON.stringify({
       max_blob_bytes: this.opts.maxBlobBytes,
       max_text_chars: this.opts.maxTextChars,
       ocr: this.opts.ocr !== null,
+      types: registeredTypesFingerprint(),
     });
   }
 
@@ -319,10 +330,10 @@ export class TextEnrichmentSweeper {
         // A skip, never a transient failure. The refusal is a property of
         // the extractor output and the type, both fixed under a given
         // configuration, so retrying it would burn the whole attempt budget
-        // to reach the same answer. The config signature is what re-offers
-        // it once a ceiling moves. A row whose type a forced delete removed
-        // is refused every write until the type is back, the same kind of
-        // answer.
+        // to reach the same answer. The row stays skipped until its blob or
+        // the config signature changes: a ceiling moved, or the registered
+        // types, which is what offers a row whose type was not registered
+        // again once it is.
         const refusal =
           err.code === ErrorCode.UNKNOWN_TYPE
             ? `unknown type: ${fresh.type}`
@@ -463,4 +474,14 @@ async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
     return Buffer.concat(chunks);
   }
   return null;
+}
+
+/** The registered types, each at its version, as the config signature
+ *  carries them. */
+export function registeredTypesFingerprint(): string {
+  const listed = listTypes()
+    .map((type) => `${type.id}@${String(type.version)}`)
+    .sort()
+    .join(",");
+  return createHash("sha256").update(listed).digest("hex");
 }
