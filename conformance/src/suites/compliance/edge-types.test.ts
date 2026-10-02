@@ -263,6 +263,67 @@ describe("custom edge-type registration", () => {
     expect(r.error?.error.code).toBe("forbidden");
   });
 
+  it("registers only the edge type ids the key's own edge map grants write on", async () => {
+    const own = `mock.own-map.${ctx.runId}`;
+    const other = `mock.other-map.${ctx.runId}`;
+    const readOnly = `mock.read-map.${ctx.runId}`;
+    const ownSecond = `mock.own-map-reversed.${ctx.runId}`;
+    const minted = await client.createKey({
+      label: "edge-types-own-map",
+      source: `${ctx.source}-edge-own-map`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: {
+        [own]: "write",
+        [ownSecond]: "write",
+        [readOnly]: "read",
+      },
+      metadata_permissions: { edge_types: "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const scoped = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    const mine = await scoped.registerEdgeType({
+      id: own,
+      cardinality: "many-to-many",
+    });
+    expect(mine.status).toBe(201);
+    trackEdgeType(ctx, own);
+
+    const reversed = await scoped.registerEdgeType({
+      id: ownSecond,
+      cardinality: "many-to-many",
+      reverse_name: other,
+    });
+    expect(reversed.status).toBe(403);
+    expect(reversed.error?.error.code).toBe("edge_permission_denied");
+    expect(reversed.error?.error.details?.edge_type).toBe(other);
+
+    for (const id of [other, readOnly]) {
+      const refused = await scoped.registerEdgeType({
+        id,
+        cardinality: "many-to-many",
+      });
+      expect(refused.status, id).toBe(403);
+      expect(refused.error?.error.code).toBe("edge_permission_denied");
+      expect(refused.error?.error.details?.edge_type).toBe(id);
+      await expectMatchesSchema("POST", "/edge-types", 403, refused.error);
+
+      // The witness: the identifier itself registers, to a key whose map
+      // reaches it.
+      const registered = await client.registerEdgeType({
+        id,
+        cardinality: "many-to-many",
+      });
+      expect(registered.status).toBe(201);
+      trackEdgeType(ctx, id);
+    }
+  });
+
   it("rejects a custom type whose id collides with a core edge type", async () => {
     const r = await client.registerEdgeType({
       id: "about",
