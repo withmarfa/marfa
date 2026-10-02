@@ -2413,10 +2413,10 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal: {
+        InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "inheritance_violation" | "invalid_schema" | "validation_error";
+                code: "inheritance_violation" | "invalid_schema" | "property_shadows_field" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -8853,7 +8853,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeResponse"];
                 };
             };
-            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses. */
+            /** @description `validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8865,7 +8865,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */
@@ -8938,6 +8938,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description A `compatible_with` naming an unknown type or missing a required field of its target, as registration refuses it. */
+            422: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */

@@ -15,6 +15,7 @@ import {
   FIELD_FORMATS,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
+import type { SchemaValidationIssue } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -268,6 +269,35 @@ const refuseAsTheValidatorWould = (
     })),
   });
 };
+
+/** The refusal both authoring doors give a schema the validator refused. */
+function schemaRefusal(errors: SchemaValidationIssue[]): MarfaError {
+  const has = (code: string) => errors.some((e) => e.code === code);
+  if (has("property_shadows_field")) {
+    return new MarfaError(
+      ErrorCode.PROPERTY_SHADOWS_FIELD,
+      "Type schema declares a property whose name shadows a first-class Item field",
+      { errors },
+    );
+  }
+  if (has("inheritance_violation")) {
+    return new MarfaError(
+      ErrorCode.INHERITANCE_VIOLATION,
+      "Type gives a field a shape another type in its chain declares differently",
+      { errors },
+    );
+  }
+  if (has("compatible_with_violation")) {
+    return new MarfaError(
+      ErrorCode.COMPATIBLE_WITH_VIOLATION,
+      "Type does not satisfy the structural-superset of its compatible_with target",
+      { errors },
+    );
+  }
+  return new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid type schema", {
+    errors,
+  });
+}
 
 const TypeSchemaResponse = z
   .object({
@@ -529,12 +559,13 @@ const updateTypeRoute = createRoute({
           schema: makeErrorResponseSchema([
             "inheritance_violation",
             "invalid_schema",
+            "property_shadows_field",
             "validation_error",
           ]),
         },
       },
       description:
-        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
+        "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
     },
     401: {
       content: {
@@ -569,6 +600,15 @@ const updateTypeRoute = createRoute({
       },
       description:
         "The replacement names a `link_field` two of the type's rows, in any state, hold the same value in. Neither row is named: the door does not ask whether the caller may read them.",
+    },
+    422: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["compatible_with_violation"]),
+        },
+      },
+      description:
+        "A `compatible_with` naming an unknown type or missing a required field of its target, as registration refuses it.",
     },
   },
 });
@@ -726,34 +766,7 @@ export function typeRoutes(storage: Storage) {
         async () => {
           const result = validateTypeSchema(body);
           if (!result.success) {
-            // Surface specific error codes so clients can disambiguate from generic schema failures.
-            const hasPropertyShadowsField = result.errors.some(
-              (e) => e.code === "property_shadows_field",
-            );
-            const hasInheritanceViolation = result.errors.some(
-              (e) => e.code === "inheritance_violation",
-            );
-            const hasCompatibleWithViolation = result.errors.some(
-              (e) => e.code === "compatible_with_violation",
-            );
-            let code: ErrorCode;
-            let message: string;
-            if (hasPropertyShadowsField) {
-              code = ErrorCode.PROPERTY_SHADOWS_FIELD;
-              message =
-                "Type schema declares a property whose name shadows a first-class Item field";
-            } else if (hasInheritanceViolation) {
-              code = ErrorCode.INHERITANCE_VIOLATION;
-              message = "Child type redefines a field declared by an ancestor";
-            } else if (hasCompatibleWithViolation) {
-              code = ErrorCode.COMPATIBLE_WITH_VIOLATION;
-              message =
-                "Type does not satisfy the structural-superset of its compatible_with target";
-            } else {
-              code = ErrorCode.INVALID_SCHEMA;
-              message = "Invalid type schema";
-            }
-            throw new MarfaError(code, message, { errors: result.errors });
+            throw schemaRefusal(result.errors);
           }
 
           const schema = result.data;
@@ -808,20 +821,7 @@ export function typeRoutes(storage: Storage) {
         }
         const result = validateTypeSchema({ ...body, id });
         if (!result.success) {
-          // The inheritance rule is one rule from either end of the chain,
-          // so this door answers it with the code registration does.
-          if (result.errors.some((e) => e.code === "inheritance_violation")) {
-            throw new MarfaError(
-              ErrorCode.INHERITANCE_VIOLATION,
-              "Type gives a field a shape another type in its chain declares differently",
-              { errors: result.errors },
-            );
-          }
-          throw new MarfaError(
-            ErrorCode.INVALID_SCHEMA,
-            "Invalid type schema",
-            { errors: result.errors },
-          );
+          throw schemaRefusal(result.errors);
         }
 
         const schema = result.data;
