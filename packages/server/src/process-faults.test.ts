@@ -17,7 +17,9 @@ describe("an unhandled rejection", () => {
       reported.push(err);
     };
     expect(proc.listenerCount("unhandledRejection")).toBe(0);
-    installUnhandledRejectionReporter(proc as unknown as NodeJS.Process);
+    installUnhandledRejectionReporter((event, listener) => {
+      proc.on(event, listener);
+    });
     expect(proc.listenerCount("unhandledRejection")).toBe(1);
 
     const reason = new Error("nobody waited on this");

@@ -30,9 +30,12 @@ export function reportFault(
  * it. Each one is a bug, so it is logged and reported rather than swallowed.
  */
 export function installUnhandledRejectionReporter(
-  proc: Pick<NodeJS.Process, "on"> = process,
+  on: (
+    event: "unhandledRejection",
+    listener: (reason: unknown) => void,
+  ) => void,
 ): void {
-  proc.on("unhandledRejection", (reason) => {
+  on("unhandledRejection", (reason) => {
     reportFault("Unhandled promise rejection", reason, {
       source: "unhandled_rejection",
     });
