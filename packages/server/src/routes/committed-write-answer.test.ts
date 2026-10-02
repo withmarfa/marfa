@@ -2,12 +2,12 @@
  * A write and its event commit together, and a write that committed is never
  * answered with a failure.
  *
- * A failure between the commit and the answer used to leave the row written
- * and its event either missing or appended, and told the caller "nothing was
- * written; retry": the idempotency layer releases its key on a `5xx`, so the
- * retry wrote a second row. Every write's event row and every read its answer
- * needs now happen inside its transaction, so a failure anywhere before the
- * answer undoes the write, and the retry is the only write there is.
+ * A `5xx` tells the caller nothing was written, so it sends the write again,
+ * and a write that had in fact committed is written twice. An idempotency key
+ * does not catch it: a door that takes one releases it on a `5xx`, and the
+ * bulk doors take none. So every write's event row and every read its answer
+ * needs happen inside its transaction, a failure anywhere before the answer
+ * undoes the write, and the retry is the only write there is.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestContext, request } from "../test-utils.js";

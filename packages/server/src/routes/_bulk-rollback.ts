@@ -72,9 +72,10 @@ export function bulkAtomicRollback(
  * full disk) after earlier entries committed. Before any has, the failure
  * answers the page, nothing having been written. Answered as that entry's own
  * `errored` outcome, and the page as `200`, rather than failing the page:
- * a `5xx` tells the caller nothing was written, and the idempotency layer
- * releases its key on one, so a retry would write the committed entries
- * again. The entry itself wrote nothing, its transaction having rolled back.
+ * a `5xx` tells the caller nothing was written, so it sends the page again
+ * and the committed entries are written twice. No idempotency key stands in
+ * the way: the bulk doors take none. The entry itself wrote nothing, its
+ * transaction having rolled back.
  */
 export function failedEntry(err: unknown): { code: string; message: string } {
   if (err instanceof MarfaError)
