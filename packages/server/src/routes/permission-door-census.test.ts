@@ -44,7 +44,6 @@ afterAll(async () => {
 
 const OPERATOR = "operator key";
 const WORKING_KEY = "a working key";
-const WEBHOOK_WRITE = "webhooks.manage, reads every type";
 
 /** Every door with a standing rule, and the rule. */
 const STANDING: Record<string, string> = {
@@ -59,11 +58,11 @@ const STANDING: Record<string, string> = {
   "DELETE /admin/platform-types/:id": OPERATOR,
   "POST /admin/restore-archive": OPERATOR,
   "GET /metrics": OPERATOR,
-  "POST /webhooks": WEBHOOK_WRITE,
+  "POST /webhooks": "webhooks.manage",
   "GET /webhooks": "webhooks.manage",
   "GET /webhooks/:id": "webhooks.manage",
-  "PATCH /webhooks/:id": WEBHOOK_WRITE,
-  "DELETE /webhooks/:id": WEBHOOK_WRITE,
+  "PATCH /webhooks/:id": "webhooks.manage",
+  "DELETE /webhooks/:id": "webhooks.manage",
   "GET /webhooks/:id/deliveries": "webhooks.manage",
   "GET /config": "config.manage",
   "PUT /config": "config.manage",
