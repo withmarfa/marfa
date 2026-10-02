@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import { createTestContext, request, withSecondStore } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { BlobOrphanReporter } from "../housekeeping/blob-orphans.js";
+import type { BlobStore } from "../storage/blob-store.js";
 
 let ctx: TestContext;
 
@@ -102,6 +103,19 @@ describe("POST /blobs", () => {
     const second = await upload(data, "text/plain");
     expect(first.body.hash).toBe(second.body.hash);
     expect(second.status).toBe(201);
+  });
+
+  it("answers a second upload under another type with the type the first recorded", async () => {
+    const data = new TextEncoder().encode("typed once, sent twice");
+    const first = await upload(data, "text/plain");
+    expect(first.body.mime_type).toBe("text/plain");
+    const second = await upload(data, "text/html");
+    expect(second.status).toBe(201);
+    expect(second.body.mime_type).toBe("text/plain");
+    const head = await request(ctx.app, "HEAD", `/blobs/${hashOf(data)}`, {
+      key: ctx.operatorKey,
+    });
+    expect(head.headers.get("Content-Type")).toBe("text/plain");
   });
 
   it("leaves no spool behind, whether the bytes were new or already held", async () => {
@@ -380,6 +394,44 @@ describe("GET /blobs/:hash/url", () => {
     expect(fetched.status).toBe(200);
     expect(fetched.headers.get("Content-Type")).toBe("text/plain");
     expect(new Uint8Array(await fetched.arrayBuffer())).toEqual(data);
+  });
+
+  it("hands a store that signs its own links the type the blob is served with", async () => {
+    const data = new TextEncoder().encode("signed by the store");
+    await uploadReferenced(data, "text/html");
+    const link = vi.fn((hash: string, ttl: number, mimeType: string) =>
+      Promise.resolve(
+        `https://store.example/${hash}?${String(ttl)}${mimeType}`,
+      ),
+    );
+    const listed = vi
+      .spyOn(ctx.storage.blobs, "listLocations")
+      .mockResolvedValueOnce([
+        {
+          store_id: "signer",
+          kind: "s3",
+          policy: "all",
+          detached: false,
+          recorded_at: new Date().toISOString(),
+          verified_at: null,
+        },
+      ]);
+    // Only `link` is asked of a store the link door finds holding a copy.
+    const signer = { link } as Partial<BlobStore> as BlobStore;
+    const byId = vi.spyOn(ctx.blobs, "byId").mockReturnValueOnce(signer);
+    try {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/blobs/${hashOf(data)}/url?ttl=60`,
+        { key: ctx.workingKey },
+      );
+      expect(res.status).toBe(200);
+      expect(link).toHaveBeenCalledWith(hashOf(data), 60, "text/html");
+    } finally {
+      listed.mockRestore();
+      byId.mockRestore();
+    }
   });
 
   it("names the instance's base URL, not the origin the request arrived on", async () => {

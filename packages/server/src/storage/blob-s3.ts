@@ -15,6 +15,7 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { generateId } from "@withmarfa/shared";
 import {
   bareHex,
+  blobDisposition,
   spoolVerified,
   type BlobRead,
   type BlobSource,
@@ -218,10 +219,22 @@ export class S3BlobStore implements BlobStore {
     );
   }
 
-  async link(hash: string, ttlSeconds: number): Promise<string> {
+  async link(
+    hash: string,
+    ttlSeconds: number,
+    mimeType: string,
+  ): Promise<string> {
+    // Signed into the link rather than stored on the object, so the bucket
+    // answers the registry's type and disposition whenever the object was
+    // copied and whatever it was copied with.
     return getSignedUrl(
       this.client,
-      new GetObjectCommand({ Bucket: this.bucket, Key: this.key(hash) }),
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: this.key(hash),
+        ResponseContentType: mimeType,
+        ResponseContentDisposition: blobDisposition(hash),
+      }),
       { expiresIn: ttlSeconds },
     );
   }

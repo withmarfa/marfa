@@ -41,6 +41,13 @@ const OPERATOR_ONLY = [
   "DELETE /blobs/:hash/locations/:store",
 ];
 
+/**
+ * Doors that answer a blob's bytes. Each answer, whatever type the bytes
+ * were uploaded under, is a download a browser will not render as a page
+ * of the instance's origin.
+ */
+const BYTES = ["GET /blobs/:hash", "GET /blobs/:hash/fetch"];
+
 /** Doors with a rule of their own, each with what that rule is. */
 const OWN_RULE: Record<string, string> = {
   "POST /blobs":
@@ -146,6 +153,7 @@ describe("every blob door is held to the credential's reach", () => {
     expect(doors).toEqual(
       [...READING, ...OPERATOR_ONLY, ...Object.keys(OWN_RULE)].sort(),
     );
+    for (const door of BYTES) expect(doors).toContain(door);
   });
 
   it("answers a blob only an unreadable item references as unknown, on every reading door", async () => {
@@ -218,6 +226,58 @@ describe("every blob door is held to the credential's reach", () => {
     expect(await errorCode(res)).toBe("type_not_permitted");
     expect(await ctx.storage.blobs.get(hash)).toBeNull();
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
+  });
+
+  it("answers bytes only as an inert download, on every door that answers them", async () => {
+    const bytes = new TextEncoder().encode(
+      "<!doctype html><script>document.title = 'ran'</script>",
+    );
+    const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    const upload = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "text/html",
+      },
+      body: bytes,
+    });
+    expect(upload.status).toBe(201);
+    const minted = await request(ctx.app, "GET", `/blobs/${hash}/url`, {
+      key: ctx.operatorKey,
+    });
+    const link = new URL(((await minted.json()) as { url: string }).url);
+
+    // Every door the app serves a GET or HEAD on is driven, so a new door
+    // answering bytes is caught here rather than by remembering to list it.
+    const answered: string[] = [];
+    for (const door of blobDoors().filter((d) => d.startsWith("GET "))) {
+      let [, path] = pathFor(door, hash);
+      if (door === "GET /blobs/:hash/fetch") path += link.search;
+      for (const verb of ["GET", "HEAD"]) {
+        const res = await request(ctx.app, verb, path, {
+          key: ctx.operatorKey,
+        });
+        const type = res.headers.get("Content-Type") ?? "";
+        if (res.status >= 300 || type.startsWith("application/json")) continue;
+        answered.push(door.replace("GET", verb));
+        expect(type, `${verb} ${door}`).toBe("text/html");
+        expect(res.headers.get("Content-Disposition"), `${verb} ${door}`).toBe(
+          `attachment; filename="${hash.slice("sha256:".length)}"`,
+        );
+        expect(
+          res.headers.get("Content-Security-Policy"),
+          `${verb} ${door}`,
+        ).toBe("sandbox; default-src 'none'");
+        expect(
+          res.headers.get("X-Content-Type-Options"),
+          `${verb} ${door}`,
+        ).toBe("nosniff");
+      }
+    }
+    // The witness: each door classified as answering bytes did answer them.
+    expect(answered.sort()).toEqual(
+      BYTES.flatMap((door) => [door, door.replace("GET", "HEAD")]).sort(),
+    );
   });
 
   it("refuses a working key on every operator door", async () => {
