@@ -59,6 +59,11 @@ import { configRoutes } from "./routes/config.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
+import {
+  BROWSER_FORM_DOORS,
+  buildAllowedOrigins,
+  crossOriginGuard,
+} from "./routes/_cross-origin.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
@@ -410,6 +415,19 @@ export function createApp(
     app.on(method, path, idempotency);
   }
 
+  // Every browser door Marfa serves under `/auth` refuses a post from an
+  // origin it does not trust, registered per door like the idempotency
+  // middleware above so the census in `auth-origin-guard.test.ts` can hold
+  // the list to `app.routes`.
+  const originGuard = crossOriginGuard(
+    buildAllowedOrigins(config.corsOrigins, config.authBaseUrl),
+  );
+  for (const door of BROWSER_FORM_DOORS) {
+    const [method, path] = door.split(" ");
+    if (method === undefined || path === undefined) continue;
+    app.on(method, path, originGuard);
+  }
+
   // Better Auth setup. Instance is created up front so it can be passed
   // into authRoutes (the OAuth consent screen consumes its cookie-based
   // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
@@ -570,12 +588,7 @@ export function createApp(
   // /auth/oauth2/*.
   app.route(
     "/auth",
-    authConsentRoutes({
-      storage,
-      auth,
-      corsOrigins: config.corsOrigins,
-      authBaseUrl: config.authBaseUrl,
-    }),
+    authConsentRoutes({ storage, auth }),
   );
   // The plugin's management endpoints — consent rows, clients, the resource
   // registry — answer 404 here before the catch-all can serve them. Marfa's

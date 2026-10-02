@@ -102,7 +102,6 @@ import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import { auditGrantReused } from "../auth/grant-lifecycle.js";
-import { buildAllowedOrigins, isCrossOriginPost } from "./_cross-origin.js";
 import {
   findRegisteredResponseRedirect,
   hasAddedResponseParam,
@@ -161,32 +160,10 @@ type ConsentSkipAttempt =
 interface ConsentRouteDeps {
   storage: Storage;
   auth: MarfaAuth | undefined;
-  /**
-   * Operator-allowed origins (`CORS_ORIGINS`). Combined with the origin of
-   * `authBaseUrl` to form the allowlist the consent decision handler checks
-   * the request `Origin` / `Referer` against — independent defense beneath
-   * SameSite=Lax + the downstream better-auth Origin check.
-   */
-  corsOrigins: readonly string[];
-  /** Issuer URL the auth surface is reached at (`MARFA_AUTH_BASE_URL`). */
-  authBaseUrl: string;
 }
 
-/**
- * Derive the origin (scheme + host + port) of `authBaseUrl`. Returns
- * `undefined` for an unparseable value so a misconfigured base URL doesn't
- * throw inside the request path — the allowlist simply omits it.
- */
 export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-
-  // Origin allowlist for the consent decision CSRF guard: every operator
-  // CORS origin plus the auth issuer's own origin (a same-origin POST from
-  // the rendered consent page). Built once at construction.
-  const allowedOrigins = buildAllowedOrigins(
-    deps.corsOrigins,
-    deps.authBaseUrl,
-  );
 
   // ----- GET /auth/authorize (consent page render) -----
   app.get("/authorize", async (c) => {
@@ -595,17 +572,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
   app.post("/authorize/decision", async (c) => {
     if (!deps.auth) {
       return c.text("Auth not configured on this instance", 503);
-    }
-
-    // Defense-in-depth CSRF guard: reject a POST whose `Origin` (or, absent
-    // that, `Referer`) is present but not in the allowlist. SameSite=Lax and
-    // the downstream better-auth Origin check already cover this in normal
-    // operation; this is an independent fence the consent handler owns. A
-    // missing Origin/Referer is allowed through — a same-origin form POST may
-    // omit both, and better-auth rejects null-origin form POSTs at the proxy
-    // hop — so we only reject a *present, non-allowlisted* origin.
-    if (isCrossOriginPost(c.req.raw.headers, allowedOrigins)) {
-      return c.text("Cross-origin consent decision rejected", 403);
     }
 
     // Parse form FIRST (before the session check) so we can preserve
