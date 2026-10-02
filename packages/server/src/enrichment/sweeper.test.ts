@@ -1,3 +1,4 @@
+import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
@@ -6,7 +7,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { TextEnrichmentSweeper } from "./sweeper.js";
+import {
+  TextEnrichmentSweeper,
+  registeredTypesFingerprint,
+} from "./sweeper.js";
 import type { OcrEngine } from "./ocr.js";
 
 /**
@@ -115,11 +119,14 @@ async function readVersion(id: string): Promise<number> {
 }
 
 /** The signature the default-config sweeper stamps, for direct store reads. */
-const DEFAULT_SIGNATURE = JSON.stringify({
-  max_blob_bytes: 20 * 1024 * 1024,
-  max_text_chars: DEFAULT_MAX_STRING_LENGTH,
-  ocr: false,
-});
+function defaultSignature(): string {
+  return JSON.stringify({
+    max_blob_bytes: 20 * 1024 * 1024,
+    max_text_chars: DEFAULT_MAX_STRING_LENGTH,
+    ocr: false,
+    types: registeredTypesFingerprint(),
+  });
+}
 
 beforeEach(async () => {
   ctx = await createTestContext();
@@ -397,7 +404,7 @@ describe("skips", () => {
     const candidates = await ctx.storage.enrichment.listCandidates(
       3,
       100,
-      DEFAULT_SIGNATURE,
+      defaultSignature(),
     );
     expect(candidates.map((c) => c.item_id)).not.toContain(id);
   });
@@ -409,7 +416,7 @@ describe("skips", () => {
     );
     const candidateIds = async () =>
       (
-        await ctx.storage.enrichment.listCandidates(3, 100, DEFAULT_SIGNATURE)
+        await ctx.storage.enrichment.listCandidates(3, 100, defaultSignature())
       ).map((c) => c.item_id);
     // A candidate while it is live, and not once it is trashed.
     expect(await candidateIds()).toContain(id);
@@ -488,6 +495,25 @@ describe("skips", () => {
     const row = await ctx.storage.enrichment.get(id);
     expect(row?.status).toBe("skipped");
     expect(row?.error).toContain("core.file.retired_by_this_test");
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 0,
+      skipped: 0,
+      failed: 0,
+    });
+
+    // Its type registered again, the row is offered again and written.
+    registerTypeSchema({
+      id: "core.file.retired_by_this_test",
+      version: 1,
+      parent: "core.file",
+      fields: {},
+    });
+    try {
+      expect((await sweeper().runOnce()).extracted).toBe(1);
+      expect((await readItem(id)).extracted_text).toBe("orphaned text");
+    } finally {
+      unregisterTypeSchema("core.file.retired_by_this_test");
+    }
   });
 
   it("reconsiders a refused extraction once the ceiling is back under the validator's", async () => {
