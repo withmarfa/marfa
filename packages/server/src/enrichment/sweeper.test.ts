@@ -57,15 +57,19 @@ function sweeper(
   });
 }
 
-/** Puts bytes in the disk store and registers them, the way an upload would. */
+/** Uploads bytes with the working key, so the file items it writes naming
+ *  them lend their reach and the sweep may read them. */
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-  await ctx.blobs.disk.put(ref, {
-    stream: Readable.from(bytes),
-    size_bytes: bytes.length,
+  const res = await ctx.app.request("/blobs", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.workingKey}`,
+      "Content-Type": mimeType,
+    },
+    body: bytes,
   });
-  await ctx.storage.blobs.register(ref, mimeType, bytes.length);
-  await ctx.storage.blobs.recordLocation(ref, ctx.blobs.disk.id);
+  expect(res.status).toBe(201);
   return ref;
 }
 
