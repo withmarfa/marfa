@@ -62,12 +62,26 @@ export function isValidUrl(value: string): boolean {
   }
 }
 
-// Basic format check — not exhaustive.
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Basic format check, not exhaustive: one `@` with text before it, and a
+// domain holding a dot with text on both sides of it. Written as string
+// scans because the single-regex form backtracks polynomially on a long
+// input with many dots. 254 is the longest address SMTP carries.
+const EMAIL_MAX_LENGTH = 254;
+const WHITESPACE = /\s/;
 
 /** Returns true if the value looks like a valid email address. */
 export function isValidEmail(value: string): boolean {
-  return EMAIL.test(value);
+  if (value.length > EMAIL_MAX_LENGTH || WHITESPACE.test(value)) return false;
+  const at = value.indexOf("@");
+  if (at < 1 || at !== value.lastIndexOf("@")) return false;
+  const domain = value.slice(at + 1);
+  const lastDot = domain.lastIndexOf(".");
+  // A dot with text before and after it exists exactly when some dot sits
+  // past the first character and before the last.
+  return (
+    lastDot > 0 &&
+    (lastDot < domain.length - 1 || domain.lastIndexOf(".", lastDot - 1) > 0)
+  );
 }
 
 // BCP 47: primary tag + optional subtags, e.g. en, en-US, zh-Hans
