@@ -23,6 +23,7 @@ import {
   blobLocations,
   blobOrphans,
   blobStores,
+  blobUploaders,
   blobs,
   item_blob_references,
   items,
@@ -66,14 +67,29 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return rows.map((r) => r.hash);
   }
 
-  async referencingTypes(hash: string): Promise<string[]> {
+  async lendingTypes(hash: string): Promise<string[]> {
     const rows = await this.db
       .selectDistinct({ type: items.type })
       .from(item_blob_references)
       .innerJoin(items, eq(items.id, item_blob_references.item_id))
+      .innerJoin(
+        blobUploaders,
+        and(
+          eq(blobUploaders.hash, item_blob_references.hash),
+          eq(blobUploaders.uploader, item_blob_references.writer),
+        ),
+      )
       .where(eq(item_blob_references.hash, hash))
       .all();
     return rows.map((r) => r.type);
+  }
+
+  async recordUploader(hash: string, uploader: string): Promise<void> {
+    await this.db
+      .insert(blobUploaders)
+      .values({ hash, uploader })
+      .onConflictDoNothing()
+      .run();
   }
 
   async remove(hash: string): Promise<void> {

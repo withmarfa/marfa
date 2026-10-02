@@ -44,11 +44,14 @@ async function uploadReferenced(
   mimeType = "application/octet-stream",
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const uploaded = await upload(bytes, mimeType);
-  await ctx.storage.items.create({
-    type: "core.file",
-    properties: { blob_ref: hashOf(bytes), mime_type: mimeType },
-    tier: "library",
+  const named = await request(ctx.app, "POST", "/items", {
+    key: ctx.workingKey,
+    body: {
+      type: "core.file",
+      properties: { blob_ref: hashOf(bytes), mime_type: mimeType },
+    },
   });
+  expect(named.status).toBe(201);
   return uploaded;
 }
 

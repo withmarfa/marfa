@@ -231,6 +231,7 @@ async function insertConflictedSibling(
     row: { id: string; type: string; source: string | null; tier: string };
     now: string;
     properties: Record<string, unknown>;
+    writer: string | null;
     mayCopyEdge?: (
       edgeType: string,
       sourceType: string,
@@ -269,7 +270,7 @@ async function insertConflictedSibling(
   // indexing and the announcing, and doing either again would report a
   // create that did not happen.
   if (inserted.length === 0) return null;
-  await syncBlobReferences(tx, { id: siblingId, properties });
+  await syncBlobReferences(tx, { id: siblingId, properties }, args.writer);
 
   const [held] = await tx
     .select({ tags: metadata.tags })
@@ -666,7 +667,11 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       await syncLink(tx, { id, type: input.type, properties });
-      await syncBlobReferences(tx, { id, properties });
+      await syncBlobReferences(
+        tx,
+        { id, properties },
+        input.blob_writer ?? null,
+      );
       if (input.source && input.source_id) {
         await forgetNaturalKey(tx, input.source, input.source_id);
       }
@@ -826,9 +831,10 @@ export class SqliteItemStore implements ItemStore {
     after: { id: string; type: string; properties: Record<string, unknown> },
     before: { type: string; source: string | null; source_id: string | null },
     sourceId: string | undefined,
+    writer: string | null,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
-    await syncBlobReferences(tx, after);
+    await syncBlobReferences(tx, after, writer);
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }
@@ -1149,6 +1155,7 @@ export class SqliteItemStore implements ItemStore {
           { id, type: input.type ?? row.type, properties: merged },
           row,
           input.source_id,
+          input.blob_writer ?? null,
         );
 
         await this.searchStore.remove(id);
@@ -1333,6 +1340,7 @@ export class SqliteItemStore implements ItemStore {
             mayCopyEdge: input.may_copy_edge,
             row,
             now,
+            writer: input.blob_writer ?? null,
             properties: conflictedSiblingProperties({
               clientProperties: clientProps,
               currentProperties: currentProps,
@@ -1424,6 +1432,7 @@ export class SqliteItemStore implements ItemStore {
         { id, type: input.type ?? row.type, properties: resolvedProperties },
         row,
         resolvedFields.source_id ?? undefined,
+        input.blob_writer ?? null,
       );
 
       await this.searchStore.remove(id);

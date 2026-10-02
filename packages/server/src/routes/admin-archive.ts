@@ -54,6 +54,7 @@ import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
+import { blobPrincipal } from "./_blob-reach.js";
 
 const MAX_ARCHIVE_ITEMS = 5000;
 // Edges routinely outnumber items; a 4x multiple keeps the cap
@@ -252,6 +253,7 @@ async function restoreArchiveBlobs(
   storage: Storage,
   blobs: BlobLayer,
   pending: readonly PendingBlob[],
+  uploader: string,
 ): Promise<BlobRestore> {
   const wroteBytes: string[] = [];
   const wroteRows: string[] = [];
@@ -310,11 +312,13 @@ async function restoreArchiveBlobs(
           planned.push(blob);
         }
       }
-      if (planned.length === 0) return;
       for (const blob of planned) {
         await storage.blobs.register(blob.hash, blob.mimeType, blob.sizeBytes);
         await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
         wroteRows.push(blob.hash);
+      }
+      for (const blob of pending) {
+        await storage.blobs.recordUploader(blob.hash, uploader);
       }
     });
   } catch (err) {
@@ -350,7 +354,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    requireOperatorKey(c);
+    const uploader = blobPrincipal(requireOperatorKey(c));
 
     // The body streams to a spool on the disk store's filesystem, as an
     // upload's does, so an archive is as large as an archive is: nothing
@@ -698,6 +702,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       storage,
       blobs,
       pendingBlobs,
+      uploader,
     );
 
     // Filled inside the transaction, announced after it commits.
@@ -726,6 +731,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           const archiveId = typeof item.id === "string" ? item.id : undefined;
           try {
             const created = await storage.items.create({
+              blob_writer: uploader,
               ...(archiveId !== undefined && { id: archiveId }),
               // The row comes back under its archived id, so it comes
               // back at its archived version too. Re-minting at 1 lets a

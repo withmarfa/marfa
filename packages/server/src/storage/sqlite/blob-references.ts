@@ -11,10 +11,16 @@ type Executor = DrizzleDb | SqliteTxContext;
  * item. Runs in the transaction that writes the properties, so a reader
  * never sees a row whose references disagree with it. A row's purge takes
  * its entries by the foreign key's cascade.
+ *
+ * A digest the item already named keeps the writer that first named it, so
+ * a later write carrying it through unchanged, by anyone, neither lends nor
+ * withdraws reach; only a digest this write introduces is credited to
+ * `writer`.
  */
 export async function syncBlobReferences(
   db: Executor,
   row: { id: string; properties: Record<string, unknown> },
+  writer: string | null,
 ): Promise<void> {
   const named = new Set<string>();
   collectBlobHashes(row.properties, named);
@@ -43,7 +49,7 @@ export async function syncBlobReferences(
   if (added.length > 0) {
     await db
       .insert(item_blob_references)
-      .values(added.map((hash) => ({ hash, item_id: row.id })))
+      .values(added.map((hash) => ({ hash, item_id: row.id, writer })))
       .onConflictDoNothing()
       .run();
   }

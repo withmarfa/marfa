@@ -138,8 +138,9 @@ export const item_links = sqliteTable(
 );
 
 // The blobs an item's properties name, by the digest rule `collectBlobHashes`
-// applies, so a blob door finds the items that lend it their reach without
-// reading every row. Kept in step by every write of an item's properties.
+// applies, each with the credential whose write first named it there, so a
+// blob door finds the items that lend it their reach without reading every
+// row. `writer` is null for a write no credential made, which lends nothing.
 export const item_blob_references = sqliteTable(
   "item_blob_references",
   {
@@ -147,6 +148,7 @@ export const item_blob_references = sqliteTable(
     item_id: text("item_id")
       .notNull()
       .references(() => items.id, { onDelete: "cascade" }),
+    writer: text("writer"),
   },
   (table) => [
     primaryKey({ columns: [table.hash, table.item_id] }),
@@ -420,6 +422,20 @@ export const blobLocations = sqliteTable(
 // here with the time it was first reported, drops any referenced again, and
 // purges only what an earlier run reported longer ago than the grace.
 // ---------------------------------------------------------------------------
+// Every credential that has sent a blob's bytes, by the principal
+// `blobPrincipal` names. Sending them is the proof a reference's writer had
+// the bytes rather than only their hash.
+export const blobUploaders = sqliteTable(
+  "blob_uploaders",
+  {
+    hash: text("hash")
+      .notNull()
+      .references(() => blobs.hash, { onDelete: "cascade" }),
+    uploader: text("uploader").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.hash, table.uploader] })],
+);
+
 export const blobOrphans = sqliteTable("blob_orphans", {
   hash: text("hash")
     .primaryKey()

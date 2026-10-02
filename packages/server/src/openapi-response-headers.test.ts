@@ -356,14 +356,17 @@ describe("the server sends the headers the spec declares", () => {
       });
       expect(uploaded.status).toBe(201);
       blobHash = ((await uploaded.json()) as { hash: string }).hash;
-      await ctx.storage.items.create({
-        type: "core.file",
-        properties: {
-          blob_ref: blobHash,
-          mime_type: "application/octet-stream",
+      const named = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: {
+            blob_ref: blobHash,
+            mime_type: "application/octet-stream",
+          },
         },
-        tier: "library",
       });
+      expect(named.status).toBe(201);
     }, 60_000);
 
     it("sends them on the NDJSON export stream", async () => {

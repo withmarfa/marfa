@@ -330,7 +330,7 @@ describe("GET /export?format=archive", () => {
     expect(blobData.toString()).toBe("archive-export-blob");
   });
 
-  it("carries a blob named only in the properties of an edge it carries", async () => {
+  it("leaves out a blob named only in the properties of an edge it carries, until a property names it", async () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
@@ -360,27 +360,42 @@ describe("GET /export?format=archive", () => {
     });
     expect(edge.status).toBe(201);
 
-    const res = await request(ctx.app, "GET", "/export?format=archive", {
-      key: ctx.workingKey,
-    });
-    expect(res.status).toBe(200);
-    const archive = Buffer.from(await res.arrayBuffer());
-    const entries = new Map<string, Buffer>();
-    const extract = tar.extract();
-    await new Promise<void>((resolve, reject) => {
-      extract.on("entry", (header, stream, next) => {
-        const chunks: Buffer[] = [];
-        stream.on("data", (c: Buffer) => chunks.push(c));
-        stream.on("end", () => {
-          entries.set(header.name, Buffer.concat(chunks));
-          next();
-        });
-        stream.resume();
+    const archived = async (): Promise<Map<string, Buffer>> => {
+      const res = await request(ctx.app, "GET", "/export?format=archive", {
+        key: ctx.workingKey,
       });
-      extract.on("finish", resolve);
-      extract.on("error", reject);
-      Readable.from(archive).pipe(createGunzip()).pipe(extract);
+      expect(res.status).toBe(200);
+      const archive = Buffer.from(await res.arrayBuffer());
+      const entries = new Map<string, Buffer>();
+      const extract = tar.extract();
+      await new Promise<void>((resolve, reject) => {
+        extract.on("entry", (header, stream, next) => {
+          const chunks: Buffer[] = [];
+          stream.on("data", (c: Buffer) => chunks.push(c));
+          stream.on("end", () => {
+            entries.set(header.name, Buffer.concat(chunks));
+            next();
+          });
+          stream.resume();
+        });
+        extract.on("finish", resolve);
+        extract.on("error", reject);
+        Readable.from(archive).pipe(createGunzip()).pipe(extract);
+      });
+      return entries;
+    };
+
+    // An archive carries what `GET /blobs/{hash}` would serve the key, and an
+    // edge's properties lend no reach.
+    expect((await archived()).has(`blobs/${hash}`)).toBe(false);
+
+    const named = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: `![it](${hash})` } },
     });
-    expect(entries.get(`blobs/${hash}`)?.toString()).toBe("edge-property-blob");
+    expect(named.status).toBe(201);
+    expect((await archived()).get(`blobs/${hash}`)?.toString()).toBe(
+      "edge-property-blob",
+    );
   });
 });

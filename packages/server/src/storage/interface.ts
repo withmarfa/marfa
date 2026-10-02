@@ -607,7 +607,20 @@ export interface RestoredRowInput {
   version?: number;
 }
 
-export type StoredCreateItemInput = CreateItemInput & RestoredRowInput;
+/**
+ * The credential a write is made for, as `blobPrincipal` names it. A blob
+ * digest the write introduces into the row's properties is credited to it,
+ * and lends the row's reach only if it has uploaded those bytes. Absent for
+ * a write the server makes for no credential, whose references lend
+ * nothing.
+ */
+export interface BlobWriterInput {
+  blob_writer?: string;
+}
+
+export type StoredCreateItemInput = CreateItemInput &
+  RestoredRowInput &
+  BlobWriterInput;
 
 export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
 /**
@@ -622,7 +635,8 @@ export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
  * `update` still branches on an absent `version` to serve them.
  */
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
-  ConflictResolutionInput & { version?: number };
+  ConflictResolutionInput &
+  BlobWriterInput & { version?: number };
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */
@@ -1253,11 +1267,14 @@ export interface BlobRegistry {
   listAll(): Promise<string[]>;
   /**
    * The types of the items, in every lifecycle state, whose properties
-   * reference `hash` by the digest rule `collectBlobHashes` applies: the
-   * items a blob door asks the caller's reach of. Read through an index
-   * keyed by hash, so the cost is the references to this one blob.
+   * reference `hash` by the digest rule `collectBlobHashes` applies, counting
+   * only references written by a credential that has also uploaded the
+   * bytes: the items a blob door asks the caller's reach of. Read through
+   * an index keyed by hash, so the cost is the references to this one blob.
    */
-  referencingTypes(hash: string): Promise<string[]>;
+  lendingTypes(hash: string): Promise<string[]>;
+  /** Record that `uploader` sent this blob's bytes. Idempotent. */
+  recordUploader(hash: string, uploader: string): Promise<void>;
   remove(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 

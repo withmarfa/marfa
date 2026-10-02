@@ -11,9 +11,15 @@ import { collectBlobHashes } from "../storage/blob-utils.js";
 
 let ctx: TestContext;
 let seq = 0;
+/** The working key, as the uploads below credit it. */
+let writer: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  const current = await request(ctx.app, "GET", "/keys/current", {
+    key: ctx.workingKey,
+  });
+  writer = `key:${((await current.json()) as { id: string }).id}`;
 });
 
 afterAll(async () => {
@@ -36,6 +42,14 @@ async function upload(words: string): Promise<string> {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+async function sendAs(key: string, bytes: Uint8Array): Promise<Response> {
+  return ctx.app.request("/blobs", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "text/plain" },
+    body: bytes,
+  });
+}
+
 async function read(key: string, hash: string): Promise<number> {
   return (await request(ctx.app, "GET", `/blobs/${hash}`, { key })).status;
 }
@@ -56,11 +70,13 @@ describe("a signed-in app and the blob doors", () => {
     const asFile = await upload("named by a file");
     const asNote = await upload("linked from a note");
     await ctx.storage.items.create({
+      blob_writer: writer,
       type: "core.file",
       properties: { blob_ref: asFile, mime_type: "text/plain" },
       tier: "library",
     });
     await ctx.storage.items.create({
+      blob_writer: writer,
       type: "core.note",
       properties: { body: `see ![it](/blobs/${asNote})` },
       tier: "library",
@@ -82,6 +98,36 @@ describe("a signed-in app and the blob doors", () => {
       ((await refused.json()) as { error: { code: string } }).error.code,
     ).toBe("type_not_permitted");
     expect((await uploadAs(noteWriter)).status).toBe(201);
+  });
+});
+
+describe("a reference and the bytes behind it", () => {
+  it("lends no reach through a digest written by a key that never sent the bytes", async () => {
+    const bytes = new TextEncoder().encode("a file another key's note names");
+    const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    expect((await sendAs(ctx.workingKey, bytes)).status).toBe(201);
+    await ctx.storage.items.create({
+      blob_writer: writer,
+      type: "core.file",
+      properties: { blob_ref: hash, mime_type: "text/plain" },
+      tier: "library",
+    });
+    const noteWriter = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+    });
+    expect(await read(noteWriter, hash)).toBe(404);
+
+    const named = await request(ctx.app, "POST", "/items", {
+      key: noteWriter,
+      body: { type: "core.note", properties: { body: `![x](${hash})` } },
+    });
+    expect(named.status).toBe(201);
+    expect(await read(noteWriter, hash)).toBe(404);
+
+    // Sending the bytes is the proof the hash alone is not: the same note
+    // lends its reach once its writer has uploaded them.
+    expect((await sendAs(noteWriter, bytes)).status).toBe(201);
+    expect(await read(noteWriter, hash)).toBe(200);
   });
 });
 
@@ -110,6 +156,7 @@ describe("the reference index a blob door reads", () => {
     });
 
     const created = await ctx.storage.items.create({
+      blob_writer: writer,
       type: "core.note",
       properties: { body: `![a](${first})` },
       tier: "library",
@@ -122,6 +169,7 @@ describe("the reference index a blob door reads", () => {
     expect(await read(reader, second)).toBe(404);
 
     const moved = await ctx.storage.items.update(created.id, {
+      blob_writer: writer,
       properties: { body: `![b](${second})` },
       version: created.version,
     });
@@ -136,6 +184,7 @@ describe("the reference index a blob door reads", () => {
     // A write at a stale version takes the merge path, and a keep-both
     // resolution writes a sibling holding the losing write.
     const stale = await ctx.storage.items.update(created.id, {
+      blob_writer: writer,
       properties: { body: `![a](${first}) again` },
       version: created.version,
       conflict_mode: "auto",
@@ -169,19 +218,21 @@ describe("the reference index a blob door reads", () => {
       type_permissions: { "core.note": "read" },
     });
     const created = await ctx.storage.items.create({
+      blob_writer: writer,
       type: "core.note",
       properties: { body: `![a](${hash})` },
       tier: "library",
     });
     expect(await read(noteReader, hash)).toBe(200);
     const moved = await ctx.storage.items.update(created.id, {
+      blob_writer: writer,
       type: "core.bookmark",
       properties: { url: `https://example.com/${hash.slice(7)}` },
       properties_mode: "replace",
       version: created.version,
     });
     expect("error" in moved, JSON.stringify(moved)).toBe(false);
-    expect(await ctx.storage.blobs.referencingTypes(hash)).toEqual([
+    expect(await ctx.storage.blobs.lendingTypes(hash)).toEqual([
       "core.bookmark",
     ]);
     expect(await read(noteReader, hash)).toBe(404);

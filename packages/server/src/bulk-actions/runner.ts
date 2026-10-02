@@ -38,6 +38,7 @@ import {
 import { log } from "../middleware/logger.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
+import { blobPrincipal } from "../routes/_blob-reach.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -492,6 +493,9 @@ async function runUpdatePropertiesChunk({
         }
         const result = await storage.items.update(id, {
           properties: input.patch,
+          ...(credential !== undefined && {
+            blob_writer: blobPrincipal(credential),
+          }),
         });
         if ("error" in result) {
           errors.push({

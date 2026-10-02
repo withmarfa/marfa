@@ -11,6 +11,8 @@
  * not read the blob, which is what the classification alone cannot prove.
  */
 import { createHash } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -73,7 +75,58 @@ async function errorCode(res: Response): Promise<string | undefined> {
   return ((await res.json()) as { error?: { code?: string } }).error?.code;
 }
 
+/**
+ * Every module outside storage and housekeeping that is handed the blob
+ * layer, which is the only way to a store's bytes, with what it does with
+ * them. A byte-serving door outside `/blobs` is invisible to the route walk
+ * below, so it is caught here instead: a new holder fails until it is named.
+ */
+const BLOB_LAYER_HOLDERS: Record<string, string> = {
+  "app.ts": "wiring: hands the layer to the routes below",
+  "index.ts": "wiring: builds the layer at boot",
+  "openapi-published.ts": "wiring: builds an app to read its document",
+  "enrichment/sweeper.ts":
+    "housekeeping that acts for no credential and writes only to the row naming the bytes",
+  "routes/blobs.ts": "the doors this census walks",
+  "routes/export.ts":
+    "the export archive, which carries a blob's bytes only where mayReadBlob admits the caller",
+  "routes/admin-archive.ts": "the restore, operator key only, writes bytes",
+  "routes/health.ts": "a probe of the disk store under a fixed name",
+};
+
+function blobLayerHolders(): string[] {
+  const root = join(import.meta.dirname, "..");
+  const out: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+      const rel = dir ? `${dir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (rel === "storage" || rel === "housekeeping") continue;
+        walk(rel);
+      } else if (
+        entry.name.endsWith(".ts") &&
+        !entry.name.endsWith(".test.ts") &&
+        rel !== "test-utils.ts" &&
+        readFileSync(join(root, rel), "utf8").includes("BlobLayer")
+      ) {
+        out.push(rel);
+      }
+    }
+  };
+  walk("");
+  return out.sort();
+}
+
 describe("every blob door is held to the credential's reach", () => {
+  it("names every module holding the blob layer, and the export asks the read rule", () => {
+    expect(blobLayerHolders()).toEqual(Object.keys(BLOB_LAYER_HOLDERS).sort());
+    const exporter = readFileSync(
+      join(import.meta.dirname, "export.ts"),
+      "utf8",
+    );
+    expect(exporter).toContain("mayReadBlob(");
+  });
+
   it("classifies every door the app serves under /blobs, and no door it does not", () => {
     const doors = blobDoors();
     expect(doors.length).toBeGreaterThan(5);
@@ -96,11 +149,14 @@ describe("every blob door is held to the credential's reach", () => {
     });
     expect(upload.status).toBe(201);
     const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    await ctx.storage.items.create({
-      type: "core.file",
-      properties: { blob_ref: hash, mime_type: "text/plain" },
-      tier: "library",
+    const named = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.file",
+        properties: { blob_ref: hash, mime_type: "text/plain" },
+      },
     });
+    expect(named.status).toBe(201);
     const fileReader = await mintWorkingKey(ctx, {
       type_permissions: { "core.file": "read" },
     });

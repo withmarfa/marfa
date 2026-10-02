@@ -38,7 +38,11 @@ import {
   OkResponseSchema,
 } from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
-import { requireBlobUpload, requireReadableBlob } from "./_blob-reach.js";
+import {
+  blobPrincipal,
+  requireBlobUpload,
+  requireReadableBlob,
+} from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -165,7 +169,7 @@ const UNREADABLE_BLOB_RESPONSE = {
  * cannot drift apart.
  */
 const READ_RULE =
-  "A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.";
+  "A working key or a signed-in app reads a blob only when an item of a type it may read, in any lifecycle state, references the blob's digest in its properties, and only where the credential that wrote the digest there has uploaded the bytes itself; any other blob answers `404 blob_not_found` as an unknown hash does, and a credential whose type permissions reach no type is refused `403 type_not_permitted`. The operator key reads every blob.";
 
 const bytesResponses = {
   200: {
@@ -208,7 +212,7 @@ const uploadBlobRoute = createRoute({
   tags: ["Blobs"],
   summary: "Upload a blob",
   description:
-    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write on at least one type, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. An upload is readable once an item references it.",
+    "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write on at least one type, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them, written by a credential that uploaded them.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -670,7 +674,7 @@ export function blobRoutes(
 
   // POST /blobs — stream the body to the disk store, then register it
   router.openapi(uploadBlobRoute, async (c) => {
-    requireBlobUpload(c);
+    const uploader = blobPrincipal(requireBlobUpload(c));
 
     const contentType =
       c.req.header("Content-Type") ?? "application/octet-stream";
@@ -725,6 +729,7 @@ export function blobRoutes(
         await storage.runInTransaction(async () => {
           await storage.blobs.register(hash, mimeType, sizeBytes);
           await storage.blobs.recordLocation(hash, disk.id);
+          await storage.blobs.recordUploader(hash, uploader);
         });
       } catch (err) {
         // A file no row names is unreachable and nothing sweeps it. A failure

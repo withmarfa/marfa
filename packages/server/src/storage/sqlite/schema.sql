@@ -295,6 +295,13 @@ CREATE TABLE IF NOT EXISTS `blob_stores` (
 	`detached_at` text
 );
 
+CREATE TABLE IF NOT EXISTS `blob_uploaders` (
+	`hash` text NOT NULL,
+	`uploader` text NOT NULL,
+	PRIMARY KEY(`hash`, `uploader`),
+	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade
+);
+
 CREATE TABLE IF NOT EXISTS `blobs` (
 	`hash` text PRIMARY KEY NOT NULL,
 	`mime_type` text NOT NULL,
@@ -496,6 +503,7 @@ CREATE INDEX IF NOT EXISTS `idx_inbound_endpoints_connector` ON `inbound_endpoin
 CREATE TABLE IF NOT EXISTS `item_blob_references` (
 	`hash` text NOT NULL,
 	`item_id` text NOT NULL,
+	`writer` text,
 	PRIMARY KEY(`hash`, `item_id`),
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );
