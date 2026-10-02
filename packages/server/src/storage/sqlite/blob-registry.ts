@@ -29,6 +29,7 @@ import {
   items,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { allowedTypesCondition } from "./item-store.js";
 
 export class SqliteBlobRegistry implements BlobRegistry {
   constructor(private db: DrizzleDb) {}
@@ -67,38 +68,55 @@ export class SqliteBlobRegistry implements BlobRegistry {
     return rows.map((r) => r.hash);
   }
 
-  async lendingTypes(hash: string): Promise<string[]> {
-    const rows = await this.db
-      .selectDistinct({ type: items.type })
+  async readableThrough(
+    hash: string,
+    allowedTypes: readonly string[],
+    excludedTypes: readonly string[],
+  ): Promise<boolean> {
+    const admitted = allowedTypesCondition(
+      [...allowedTypes],
+      [...excludedTypes],
+    );
+    const row = await this.db
+      .select({ one: sql<number>`1` })
       .from(item_blob_references)
       .innerJoin(items, eq(items.id, item_blob_references.item_id))
-      .innerJoin(
-        blobUploaders,
+      .where(
         and(
-          eq(blobUploaders.hash, item_blob_references.hash),
-          eq(blobUploaders.uploader, item_blob_references.writer),
+          eq(item_blob_references.hash, hash),
+          eq(item_blob_references.lends, true),
+          admitted,
         ),
       )
-      .where(eq(item_blob_references.hash, hash))
-      .all();
-    return rows.map((r) => r.type);
+      .limit(1)
+      .get();
+    return row !== undefined;
   }
 
   async lendingHashesOf(itemId: string): Promise<string[]> {
     const rows = await this.db
       .select({ hash: item_blob_references.hash })
       .from(item_blob_references)
-      .innerJoin(
-        blobUploaders,
+      .where(
         and(
-          eq(blobUploaders.hash, item_blob_references.hash),
-          eq(blobUploaders.uploader, item_blob_references.writer),
+          eq(item_blob_references.item_id, itemId),
+          eq(item_blob_references.lends, true),
         ),
       )
-      .where(eq(item_blob_references.item_id, itemId))
       .orderBy(item_blob_references.hash)
       .all();
     return rows.map((r) => r.hash);
+  }
+
+  async uploadedBy(hash: string, uploader: string): Promise<boolean> {
+    const row = await this.db
+      .select({ one: sql<number>`1` })
+      .from(blobUploaders)
+      .where(
+        and(eq(blobUploaders.hash, hash), eq(blobUploaders.uploader, uploader)),
+      )
+      .get();
+    return row !== undefined;
   }
 
   async recordUploader(hash: string, uploader: string): Promise<void> {

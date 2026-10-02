@@ -503,7 +503,7 @@ CREATE INDEX IF NOT EXISTS `idx_inbound_endpoints_connector` ON `inbound_endpoin
 CREATE TABLE IF NOT EXISTS `item_blob_references` (
 	`hash` text NOT NULL,
 	`item_id` text NOT NULL,
-	`writer` text,
+	`lends` integer DEFAULT false NOT NULL,
 	PRIMARY KEY(`hash`, `item_id`),
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );

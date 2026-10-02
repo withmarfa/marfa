@@ -76,17 +76,25 @@ async function errorCode(res: Response): Promise<string | undefined> {
 }
 
 /**
- * Every module outside storage and housekeeping that is handed the blob
- * layer, which is the only way to a store's bytes, with what it does with
- * them. A byte-serving door outside `/blobs` is invisible to the route walk
- * below, so it is caught here instead: a new holder fails until it is named.
+ * Every module outside `storage/` and `housekeeping/` that names a type
+ * giving hold of a store's bytes, with what it does with them. A
+ * byte-serving door outside `/blobs` is invisible to the route walk below,
+ * so it is caught here instead: a new holder fails until it is named.
+ *
+ * What this sees is a module naming one of `BYTE_TYPES`; a module reaching
+ * bytes without naming any of them, through a value typed elsewhere, is
+ * not seen. `storage/` is the layer itself and `housekeeping/` holds the
+ * jobs that act on every blob for no row and no credential.
  */
+const BYTE_TYPES =
+  /\b(createBlobLayer|BlobLayer|BlobStore|DiskBlobStore|S3BlobStore|BlobRead|Stores)\b/;
+
 const BLOB_LAYER_HOLDERS: Record<string, string> = {
   "app.ts": "wiring: hands the layer to the routes below",
   "index.ts": "wiring: builds the layer at boot",
   "openapi-published.ts": "wiring: builds an app to read its document",
   "enrichment/sweeper.ts":
-    "housekeeping that acts for no credential and writes only to the row naming the bytes",
+    "reads a file's bytes for its own row, only where that row's blob_ref reference lends (listCandidates)",
   "routes/blobs.ts": "the doors this census walks",
   "routes/export.ts":
     "the export archive, which carries a blob's bytes only where mayReadBlob admits the caller",
@@ -107,7 +115,7 @@ function blobLayerHolders(): string[] {
         entry.name.endsWith(".ts") &&
         !entry.name.endsWith(".test.ts") &&
         rel !== "test-utils.ts" &&
-        readFileSync(join(root, rel), "utf8").includes("BlobLayer")
+        BYTE_TYPES.test(readFileSync(join(root, rel), "utf8"))
       ) {
         out.push(rel);
       }
@@ -125,6 +133,11 @@ describe("every blob door is held to the credential's reach", () => {
       "utf8",
     );
     expect(exporter).toContain("mayReadBlob(");
+    const candidates = readFileSync(
+      join(import.meta.dirname, "../storage/sqlite/enrichment-store.ts"),
+      "utf8",
+    );
+    expect(candidates).toContain("item_blob_references.lends");
   });
 
   it("classifies every door the app serves under /blobs, and no door it does not", () => {

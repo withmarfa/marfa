@@ -608,26 +608,19 @@ export interface RestoredRowInput {
 }
 
 /**
- * The credential a write is made for, as `blobPrincipal` names it. A blob
- * digest the write introduces into the row's properties is credited to it,
- * and lends the row's reach only if it has uploaded those bytes. Absent for
- * a write the server makes for no credential, whose references lend
- * nothing.
+ * Whether the credential a write is made for has proved it holds the bytes a
+ * digest names: it uploaded them, or could read the blob as the write was
+ * made. A digest the write leaves in the row's properties lends the row's
+ * reach once a write carrying it had this proof. Absent for a write the
+ * server makes for no credential, which proves nothing.
  */
-export interface BlobWriterInput {
-  blob_writer?: string;
-  /**
-   * On a create, the only digests `blob_writer` is credited with; any other
-   * the row names is credited to nobody. An archive restore names the
-   * digests that lent their row's reach where the archive was taken, so a
-   * restore lends no more than the instance it came from did.
-   */
-  blob_lenders?: readonly string[];
+export interface BlobProofInput {
+  blob_proof?: (hash: string) => Promise<boolean>;
 }
 
 export type StoredCreateItemInput = CreateItemInput &
   RestoredRowInput &
-  BlobWriterInput;
+  BlobProofInput;
 
 export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
 /**
@@ -643,7 +636,7 @@ export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
  */
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   ConflictResolutionInput &
-  BlobWriterInput & { version?: number };
+  BlobProofInput & { version?: number };
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */
@@ -1273,15 +1266,19 @@ export interface BlobRegistry {
   /** Every registered hash. */
   listAll(): Promise<string[]>;
   /**
-   * The types of the items, in every lifecycle state, whose properties
-   * reference `hash` by the digest rule `collectBlobHashes` applies, counting
-   * only references written by a credential that has also uploaded the
-   * bytes: the items a blob door asks the caller's reach of. Read through
-   * an index keyed by hash, so the cost is the references to this one blob.
+   * Whether an item, in any lifecycle state and of a type the filter admits,
+   * references `hash` in its properties with a reference that lends. Asked
+   * as one indexed existence test that stops at the first match.
    */
-  lendingTypes(hash: string): Promise<string[]>;
+  readableThrough(
+    hash: string,
+    allowedTypes: readonly string[],
+    excludedTypes: readonly string[],
+  ): Promise<boolean>;
   /** The digests in this item's properties that lend its reach. */
   lendingHashesOf(itemId: string): Promise<string[]>;
+  /** Whether `uploader` has sent this blob's bytes. */
+  uploadedBy(hash: string, uploader: string): Promise<boolean>;
   /** Record that `uploader` sent this blob's bytes. Idempotent. */
   recordUploader(hash: string, uploader: string): Promise<void>;
   remove(hash: string): Promise<void>;

@@ -13,6 +13,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker, runChunk } from "../bulk-actions/index.js";
 import type { BulkActionJob } from "../bulk-actions/types.js";
+import { resolveJobCredential } from "../bulk-actions/credential.js";
 
 let ctx: TestContext;
 
@@ -157,10 +158,19 @@ describe("a bulk purge takes only trashed rows", () => {
     const active = await connection();
     expect((await ctx.storage.items.get(revoked))?.state).toBe("revoked");
 
+    const current = await request(ctx.app, "GET", "/keys/current", {
+      key: ctx.workingKey,
+    });
+    const credential = await resolveJobCredential(
+      ctx.storage,
+      ((await current.json()) as { id: string }).id,
+    );
+    if (!credential) throw new Error("the working key does not resolve");
     const result = await runChunk({
       storage: ctx.storage,
       input: { action: "purge", confirm: "PURGE" },
       ids: [revoked, active],
+      credential,
     });
     expect(result.succeeded).toEqual([revoked]);
     expect(result.errors).toEqual([

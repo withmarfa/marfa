@@ -31,6 +31,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema, TierEnum } from "./_schemas.js";
 import { AncestorUnavailableSchema, ConflictResponseSchema } from "./items.js";
 import { filterMetadataForCaller } from "./util.js";
+import { requestBlobProof } from "./_blob-reach.js";
 
 const FOLDER_TYPE = "system.folder";
 const MAX_DEFAULT_EDGE_TYPES = 100;
@@ -468,6 +469,7 @@ export function folderRoutes(storage: Storage) {
       type: FOLDER_TYPE,
       properties: body,
       source: itemProvenanceSource(credential),
+      blob_proof: requestBlobProof(c, storage),
     });
     const metadata = await storage.metadata.get(item.id);
     await publish({ type: "created", item, metadata });
@@ -497,7 +499,11 @@ export function folderRoutes(storage: Storage) {
     assertSettings(settings);
     const item: FolderWrite = await storage.runInTransaction(async () => {
       refuseRevoked(await requireFolder(storage, id));
-      return await storage.items.update(id, { properties: settings, version });
+      return await storage.items.update(id, {
+        properties: settings,
+        version,
+        blob_proof: requestBlobProof(c, storage),
+      });
     });
     if ("error" in item) {
       c.header("X-Error-Code", item.error.code);
@@ -525,6 +531,7 @@ export function folderRoutes(storage: Storage) {
       refuseRevoked(await requireFolder(storage, id));
       await storage.items.update(id, {
         properties: { revoked_at: new Date().toISOString() },
+        blob_proof: requestBlobProof(c, storage),
       });
       return await storage.items.transition(id, "revoked");
     });

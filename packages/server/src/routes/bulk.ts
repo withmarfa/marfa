@@ -88,7 +88,7 @@ import {
   refuseUnknownFilterKeys,
   UNKNOWN_FILTER_FIELD_NOTE,
 } from "./_unknown-query-keys.js";
-import { blobPrincipal } from "./_blob-reach.js";
+import { requestBlobProof } from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -485,9 +485,9 @@ async function processBulkItem(
       named: string | undefined,
       type: string,
     ) => string | undefined;
-    /** The caller as `blobPrincipal` names it, credited with the blob
-     *  digests its entries introduce. */
-    blobWriter: string;
+    /** The caller's proof of holding the bytes a digest names, which a
+     *  digest its entries carry needs to lend (`blobProof`). */
+    blobProof: (hash: string) => Promise<boolean>;
     /**
      * Whether the caller has already opened the batch transaction (atomic
      * mode) or runs each item bare (best-effort mode). `applyInlineEdges`
@@ -609,7 +609,7 @@ async function processBulkItem(
   const {
     mode,
     resolveSource,
-    blobWriter,
+    blobProof,
     atomic,
     retype,
     checkWrite,
@@ -1000,7 +1000,7 @@ async function processBulkItem(
     let updated: Awaited<ReturnType<typeof storage.items.update>>;
     try {
       updated = await storage.items.update(existing.id, {
-        blob_writer: blobWriter,
+        blob_proof: blobProof,
         properties: raw.properties,
         ...(raw.properties_mode !== undefined && {
           properties_mode: raw.properties_mode,
@@ -1139,7 +1139,7 @@ async function processBulkItem(
     const createInput: CreateInput = {
       type: raw.type,
       properties: raw.properties ?? {},
-      blob_writer: blobWriter,
+      blob_proof: blobProof,
       ...(raw.id !== undefined && { id: raw.id }),
       ...(raw.state !== undefined && { state: raw.state }),
       ...(raw.tier !== undefined && { tier: raw.tier }),
@@ -1333,7 +1333,7 @@ export function bulkRoutes(storage: Storage) {
         const processed = await processBulkItem(storage, raw, i, {
           mode,
           resolveSource,
-          blobWriter: blobPrincipal(requireAuth(c)),
+          blobProof: requestBlobProof(c, storage),
           atomic,
           retype,
           checkWrite,

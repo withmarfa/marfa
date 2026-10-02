@@ -1,155 +1,451 @@
+/**
+ * Which writes make a reference lend a blob's reach, door by door.
+ *
+ * Each door that writes an item's properties for a credential hands the
+ * store the credential's proof of holding the bytes, and each case here is
+ * written so it fails if that one door stops doing so: the bytes are sent by
+ * a key, nothing lends them before the door under test writes the digest,
+ * and a reader that may read every type is refused them until it has.
+ */
 import { createHash } from "node:crypto";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
   mintWorkingKey,
   request,
+  runBulkActionAsync,
   seedOauthBearer,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { blobPrincipal } from "./_blob-reach.js";
+import { TextEnrichmentSweeper } from "../enrichment/sweeper.js";
+import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let seq = 0;
-/** The working key, as the uploads below credit it. */
-let writer: string;
+/** May read every type, and lends nothing of its own. */
+let reader: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  const current = await request(ctx.app, "GET", "/keys/current", {
-    key: ctx.workingKey,
-  });
-  writer = `key:${((await current.json()) as { id: string }).id}`;
+  reader = await mintWorkingKey(ctx, { type_permissions: { "*": "read" } });
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** Bytes no other test uploads, by the working key, answered by hash. */
-async function upload(words: string): Promise<string> {
-  seq += 1;
-  const bytes = new TextEncoder().encode(`${words} ${String(seq)}`);
-  const res = await ctx.app.request("/blobs", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${ctx.workingKey}`,
-      "Content-Type": "text/plain",
-    },
-    body: bytes,
-  });
-  expect(res.status).toBe(201);
+function hashOf(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-async function sendAs(key: string, bytes: Uint8Array): Promise<Response> {
-  return ctx.app.request("/blobs", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "text/plain" },
-    body: bytes,
-  });
+/** Fresh bytes sent by `key`, answered by their hash. */
+async function sent(
+  key: string,
+  words: string,
+  mimeType = "text/plain",
+): Promise<{ hash: string; bytes: Uint8Array }> {
+  seq += 1;
+  const bytes = new TextEncoder().encode(`${words} ${String(seq)}`);
+  const res = await sendAs(key, bytes, mimeType);
+  expect(res.status).toBe(201);
+  return { hash: hashOf(bytes), bytes };
+}
+
+function sendAs(
+  key: string,
+  bytes: Uint8Array,
+  mimeType = "text/plain",
+): Promise<Response> {
+  return Promise.resolve(
+    ctx.app.request("/blobs", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": mimeType },
+      body: bytes,
+    }),
+  );
 }
 
 async function read(key: string, hash: string): Promise<number> {
   return (await request(ctx.app, "GET", `/blobs/${hash}`, { key })).status;
 }
 
-async function uploadAs(key: string): Promise<Response> {
-  seq += 1;
-  return ctx.app.request("/blobs", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "text/plain" },
-    body: new TextEncoder().encode(
-      `sent by a narrow credential ${String(seq)}`,
-    ),
+async function json<T>(res: Response, status: number): Promise<T> {
+  const text = await res.text();
+  expect(res.status, text).toBe(status);
+  return JSON.parse(text) as T;
+}
+
+interface Written {
+  item: { id: string; version: number };
+}
+
+async function note(
+  key: string,
+  properties: Record<string, unknown>,
+  extra: Record<string, unknown> = {},
+): Promise<Written> {
+  return json<Written>(
+    await request(ctx.app, "POST", "/items", {
+      key,
+      body: { type: "core.note", properties, ...extra },
+    }),
+    201,
+  );
+}
+
+/** A key that may write notes and bookmarks, and nothing else. */
+function writer(): Promise<string> {
+  return mintWorkingKey(ctx, {
+    type_permissions: { "core.note": "write", "core.bookmark": "write" },
   });
 }
 
+describe("a door that writes an item's properties credits its caller's proof", () => {
+  it("POST /items", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "created");
+    expect(await read(reader, hash)).toBe(404);
+    await note(key, { body: `![x](${hash})` });
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("POST /items onto an existing natural key", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "upserted");
+    await note(key, { body: "first" }, { source_id: `upsert-${String(seq)}` });
+    expect(await read(reader, hash)).toBe(404);
+    const again = await request(ctx.app, "POST", "/items", {
+      key,
+      body: {
+        type: "core.note",
+        properties: { body: `![x](${hash})` },
+        source_id: `upsert-${String(seq)}`,
+      },
+    });
+    expect(again.status).toBeLessThan(300);
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("PATCH /items/{id} at the current version", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "patched");
+    const { item } = await note(key, { body: "plain" });
+    expect(await read(reader, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key,
+        body: { properties: { body: `![x](${hash})` }, version: item.version },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("PATCH /items/{id} at a stale version that merges", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "merged");
+    const { item } = await note(key, { title: "t", body: "b" });
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key,
+        body: { properties: { body: "moved on" }, version: item.version },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}?conflict=auto`, {
+        key,
+        body: { properties: { title: `![x](${hash})` }, version: item.version },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("PATCH /items/{id} that keeps both, on the sibling it writes", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "kept both");
+    const { item } = await note(key, { body: "original" });
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key,
+        body: { properties: { body: "the winner" }, version: item.version },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}?conflict=auto`, {
+        key,
+        body: {
+          properties: { body: `the loser ![x](${hash})` },
+          version: item.version,
+        },
+      }),
+      200,
+    );
+    const row = await ctx.storage.items.get(item.id);
+    expect(JSON.stringify(row?.properties)).not.toContain(hash.slice(7));
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("PATCH /items/{id} that moves the row to another type", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "retyped");
+    const { item } = await note(key, { body: "a note" });
+    expect(await read(reader, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key,
+        body: {
+          type: "core.bookmark",
+          retype: true,
+          properties: {
+            url: "https://example.com/retyped",
+            title: `![x](${hash})`,
+          },
+          properties_mode: "replace",
+          version: item.version,
+        },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("POST /items/bulk, on a create and on an update", async () => {
+    const key = await writer();
+    const created = await sent(key, "bulk created");
+    const updated = await sent(key, "bulk updated");
+    const sourceId = `bulk-${String(seq)}`;
+    await note(key, { body: "before" }, { source_id: sourceId });
+    expect(await read(reader, created.hash)).toBe(404);
+    expect(await read(reader, updated.hash)).toBe(404);
+    await json(
+      await request(ctx.app, "POST", "/items/bulk", {
+        key,
+        body: {
+          items: [
+            {
+              type: "core.note",
+              properties: { body: `![x](${created.hash})` },
+              source_id: `${sourceId}-new`,
+            },
+            {
+              type: "core.note",
+              properties: { body: `![x](${updated.hash})` },
+              source_id: sourceId,
+            },
+          ],
+        },
+      }),
+      200,
+    );
+    expect(await read(reader, created.hash)).toBe(200);
+    expect(await read(reader, updated.hash)).toBe(200);
+  });
+
+  it("POST /items/bulk-actions with update_properties", async () => {
+    const key = await writer();
+    const { hash } = await sent(key, "bulk action");
+    const tag = `blob-action-${String(seq)}`;
+    await note(key, { body: "tagged" }, { tags: [tag] });
+    expect(await read(reader, hash)).toBe(404);
+    const { initialStatus } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "update_properties",
+        patch: { title: `![x](${hash})` },
+        filter: { tags: [tag] },
+      },
+      key,
+    );
+    expect(initialStatus).toBe(202);
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("a signed-in app, through its granted scopes", async () => {
+    const { token: app } = await seedOauthBearer(ctx.storage, [
+      "core.note:write",
+    ]);
+    const { hash } = await sent(app, "sent by an app");
+    expect(await read(reader, hash)).toBe(404);
+    await note(app, { body: `![x](${hash})` });
+    expect(await read(reader, hash)).toBe(200);
+  });
+});
+
 describe("a signed-in app and the blob doors", () => {
   it("holds a signed-in app to its granted type scopes", async () => {
-    const asFile = await upload("named by a file");
-    const asNote = await upload("linked from a note");
-    await ctx.storage.items.create({
-      blob_writer: writer,
-      type: "core.file",
-      properties: { blob_ref: asFile, mime_type: "text/plain" },
-      tier: "library",
-    });
-    await ctx.storage.items.create({
-      blob_writer: writer,
-      type: "core.note",
-      properties: { body: `see ![it](/blobs/${asNote})` },
-      tier: "library",
-    });
+    const owner = await writer();
+    const asFile = await sent(ctx.workingKey, "named by a file");
+    const asNote = await sent(owner, "linked from a note");
+    await json(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: asFile.hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    await note(owner, { body: `see ![it](/blobs/${asNote.hash})` });
     const { token: noteReader } = await seedOauthBearer(ctx.storage, [
       "core.note:read",
     ]);
     const { token: noteWriter } = await seedOauthBearer(ctx.storage, [
       "core.note:write",
     ]);
+    expect(await read(reader, asFile.hash)).toBe(200);
+    expect(await read(noteReader, asFile.hash)).toBe(404);
+    expect(await read(noteReader, asNote.hash)).toBe(200);
 
-    expect(await read(ctx.workingKey, asFile)).toBe(200);
-    expect(await read(noteReader, asFile)).toBe(404);
-    expect(await read(noteReader, asNote)).toBe(200);
-
-    const refused = await uploadAs(noteReader);
+    const refused = await sendAs(noteReader, new TextEncoder().encode("no"));
     expect(refused.status).toBe(403);
     expect(
       ((await refused.json()) as { error: { code: string } }).error.code,
     ).toBe("type_not_permitted");
-    expect((await uploadAs(noteWriter)).status).toBe(201);
+    expect(
+      (await sendAs(noteWriter, new TextEncoder().encode("yes"))).status,
+    ).toBe(201);
   });
 });
 
-describe("a reference and the bytes behind it", () => {
-  it("lends no reach through a digest written by a key that never sent the bytes", async () => {
-    const bytes = new TextEncoder().encode("a file another key's note names");
-    const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    expect((await sendAs(ctx.workingKey, bytes)).status).toBe(201);
-    await ctx.storage.items.create({
-      blob_writer: writer,
-      type: "core.file",
-      properties: { blob_ref: hash, mime_type: "text/plain" },
-      tier: "library",
-    });
-    const noteWriter = await mintWorkingKey(ctx, {
+describe("what proves holding the bytes", () => {
+  it("lends nothing through a digest written by a key that neither sent the bytes nor could read them", async () => {
+    const owner = await writer();
+    const { hash, bytes } = await sent(owner, "a file only files reach");
+    await json(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    const noteKey = await mintWorkingKey(ctx, {
       type_permissions: { "core.note": "write" },
     });
-    expect(await read(noteWriter, hash)).toBe(404);
+    expect(await read(noteKey, hash)).toBe(404);
 
-    const named = await request(ctx.app, "POST", "/items", {
-      key: noteWriter,
-      body: { type: "core.note", properties: { body: `![x](${hash})` } },
-    });
-    expect(named.status).toBe(201);
-    expect(await read(noteWriter, hash)).toBe(404);
+    const { item } = await note(noteKey, { body: `![x](${hash})` });
+    expect(await read(noteKey, hash)).toBe(404);
 
-    // Sending the bytes is the proof the hash alone is not: the same note
-    // lends its reach once its writer has uploaded them.
-    expect((await sendAs(noteWriter, bytes)).status).toBe(201);
-    expect(await read(noteWriter, hash)).toBe(200);
+    // Sending the bytes, then rewriting the digest, upgrades the reference:
+    // the repair path for a row whose reference lends nothing. A write that
+    // leaves the digest where it was, sending none, upgrades nothing.
+    expect((await sendAs(noteKey, bytes)).status).toBe(201);
+    expect(await read(noteKey, hash)).toBe(404);
+    const titled = await json<Written>(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: noteKey,
+        body: {
+          properties: { title: "untouched body" },
+          version: item.version,
+        },
+      }),
+      200,
+    );
+    expect(await read(noteKey, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: noteKey,
+        body: {
+          properties: { body: `![x](${hash})` },
+          version: titled.item.version,
+        },
+      }),
+      200,
+    );
+    expect(await read(noteKey, hash)).toBe(200);
   });
-});
 
-/** The hashes the index holds for one item, beside what its row names. */
-async function indexed(
-  id: string,
-): Promise<{ held: string[]; named: string[] }> {
-  const raw = ctx.storage as unknown as {
-    __sqliteAll: (q: string) => Promise<{ hash: string }[]>;
-  };
-  const rows = await raw.__sqliteAll(
-    `SELECT hash FROM item_blob_references WHERE item_id = '${id}' ORDER BY hash`,
-  );
-  const item = await ctx.storage.items.getIncludingTrashed(id);
-  const named = new Set<string>();
-  collectBlobHashes(item?.properties ?? {}, named);
-  return { held: rows.map((r) => r.hash), named: [...named].sort() };
-}
+  it("counts reading the blob as the write is made as holding it", async () => {
+    const owner = await writer();
+    const { hash } = await sent(owner, "an image a second device embeds");
+    await note(owner, { body: `![x](${hash})` });
+    const device = await writer();
+    const bookmarksOnly = await mintWorkingKey(ctx, {
+      type_permissions: { "core.bookmark": "read" },
+    });
+    expect(await read(device, hash)).toBe(200);
+    expect(await read(bookmarksOnly, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "POST", "/items", {
+        key: device,
+        body: {
+          type: "core.bookmark",
+          properties: { url: "https://example.com/embed", title: hash },
+        },
+      }),
+      201,
+    );
+    expect(await read(bookmarksOnly, hash)).toBe(200);
+  });
 
-describe("who a reference is credited to", () => {
-  it("credits a stored key as itself, an app's own key whatever source it names", () => {
+  it("never withdraws a lending reference through a write that keeps the digest", async () => {
+    const owner = await writer();
+    const { hash } = await sent(owner, "kept by any later write");
+    const { item } = await note(owner, { body: `![x](${hash})`, title: "a" });
+    const other = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+    });
+    expect(await read(reader, hash)).toBe(200);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: other,
+        body: { properties: { title: "b" }, version: item.version },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(200);
+  });
+
+  it("upgrades nothing a writer with the proof did not itself send, on the row or a sibling", async () => {
+    const owner = await writer();
+    const { hash } = await sent(owner, "planted in a title");
+    const planter = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+    });
+    const { item } = await note(planter, { title: hash, body: "original" });
+    expect(await read(reader, hash)).toBe(404);
+
+    // The owner edits the body: the merge keeps the planted title, which
+    // the owner never sent.
+    const edited = await json<Written>(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: owner,
+        body: { properties: { body: "the winner" }, version: item.version },
+      }),
+      200,
+    );
+    expect(edited.item.version).toBeGreaterThan(item.version);
+    expect(await read(reader, hash)).toBe(404);
+
+    // A stale write that collides keeps both; the sibling copies the title.
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}?conflict=auto`, {
+        key: owner,
+        body: { properties: { body: "the loser" }, version: item.version },
+      }),
+      200,
+    );
+    const siblings = (await ctx.storage.items.list({ limit: 500 })).data.filter(
+      (row) => row.id !== item.id && row.properties.title === hash,
+    );
+    expect(siblings).toHaveLength(1);
+    expect((await indexed(siblings[0]!.id)).held).toEqual([hash]);
+    expect((await indexed(siblings[0]!.id)).lends).toEqual([]);
+    expect(await read(reader, hash)).toBe(404);
+  });
+
+  it("credits an app's own stored key as itself, whatever source it names", () => {
     const base = {
       id: "k1",
       label: "l",
@@ -165,173 +461,147 @@ describe("who a reference is credited to", () => {
       last_used_at: null,
     };
     expect(
-      blobPrincipal({ ...base, source: "key:another", oauth_client_id: "c" }),
+      blobPrincipal(
+        { ...base, source: "oauth:c:u", oauth_client_id: "c" },
+        "api_key",
+      ),
     ).toBe("key:k1");
-    expect(blobPrincipal({ ...base, source: "device" })).toBe("key:k1");
-    expect(
-      blobPrincipal({ ...base, source: "oauth:c:u", oauth_client_id: "c" }),
-    ).toBe("oauth:c:u");
-  });
-
-  it("keeps a sibling's inherited digests credited as the row credited them", async () => {
-    const hash = await upload("planted in a title");
-    const reader = await mintWorkingKey(ctx, {
-      type_permissions: { "core.note": "read" },
-    });
-    const planted = await ctx.storage.items.create({
-      blob_writer: "key:never-sent-the-bytes",
-      type: "core.note",
-      properties: { title: hash, body: "original" },
-      tier: "library",
-    });
-    expect(await read(reader, hash)).toBe(404);
-    const moved = await ctx.storage.items.update(planted.id, {
-      blob_writer: writer,
-      properties: { body: "from the winner" },
-      version: planted.version,
-    });
-    expect("error" in moved).toBe(false);
-    const stale = await ctx.storage.items.update(planted.id, {
-      blob_writer: writer,
-      properties: { body: "from the loser" },
-      version: planted.version,
-      conflict_mode: "auto",
-    });
-    expect("error" in stale).toBe(false);
-    const sibling = (await ctx.storage.items.list({ limit: 500 })).data.find(
-      (item) =>
-        item.id !== planted.id && item.properties.body === "from the loser",
+    expect(blobPrincipal({ ...base, source: "oauth:c:u" }, "oauth")).toBe(
+      "oauth:c:u",
     );
-    expect(sibling?.properties.title).toBe(hash);
-    expect(await read(reader, hash)).toBe(404);
-  });
-
-  it("restores a row's credit only for the digests its archive line says lent", async () => {
-    const lent = await upload("lent where the archive was taken");
-    const planted = await upload("planted where the archive was taken");
-    const reader = await mintWorkingKey(ctx, {
-      type_permissions: { "core.note": "read" },
-    });
-    const source = await ctx.storage.items.create({
-      blob_writer: writer,
-      type: "core.note",
-      properties: { body: `![a](${lent})` },
-      tier: "library",
-    });
-    await ctx.storage.items.update(source.id, {
-      blob_writer: "key:never-sent-the-bytes",
-      properties: { title: planted },
-    });
-    expect(await ctx.storage.blobs.lendingHashesOf(source.id)).toEqual([lent]);
-
-    const restored = await ctx.storage.items.create({
-      blob_writer: "key:operator",
-      blob_lenders: [lent],
-      type: "core.note",
-      properties: { title: planted, body: `![a](${lent})` },
-      tier: "library",
-    });
-    await ctx.storage.blobs.recordUploader(lent, "key:operator");
-    await ctx.storage.blobs.recordUploader(planted, "key:operator");
-    expect(await ctx.storage.blobs.lendingHashesOf(restored.id)).toEqual([
-      lent,
-    ]);
-    await ctx.storage.items.purge(
-      (await ctx.storage.items.transition(source.id, "trashed")).id,
-    );
-    expect(await read(reader, lent)).toBe(200);
-    expect(await read(reader, planted)).toBe(404);
   });
 });
 
-describe("the reference index a blob door reads", () => {
-  it("follows an item's properties through every write that changes them", async () => {
-    const first = await upload("first");
-    const second = await upload("second");
-    const reader = await mintWorkingKey(ctx, {
-      type_permissions: { "core.note": "read" },
+describe("an upload", () => {
+  it("takes write on a registered type, and not on a pattern naming none", async () => {
+    const nothingRegistered = await mintWorkingKey(ctx, {
+      type_permissions: { "user.nothing-registered": "write" },
     });
-
-    const created = await ctx.storage.items.create({
-      blob_writer: writer,
-      type: "core.note",
-      properties: { body: `![a](${first})` },
-      tier: "library",
-    });
-    expect(await indexed(created.id)).toEqual({
-      held: [first],
-      named: [first],
-    });
-    expect(await read(reader, first)).toBe(200);
-    expect(await read(reader, second)).toBe(404);
-
-    const moved = await ctx.storage.items.update(created.id, {
-      blob_writer: writer,
-      properties: { body: `![b](${second})` },
-      version: created.version,
-    });
-    expect("error" in moved).toBe(false);
-    expect(await indexed(created.id)).toEqual({
-      held: [second],
-      named: [second],
-    });
-    expect(await read(reader, first)).toBe(404);
-    expect(await read(reader, second)).toBe(200);
-
-    // A write at a stale version takes the merge path, and a keep-both
-    // resolution writes a sibling holding the losing write.
-    const stale = await ctx.storage.items.update(created.id, {
-      blob_writer: writer,
-      properties: { body: `![a](${first}) again` },
-      version: created.version,
-      conflict_mode: "auto",
-    });
-    expect("error" in stale).toBe(false);
-    const after = await indexed(created.id);
-    expect(after).toEqual({ held: [second], named: [second] });
-    const siblings = (await ctx.storage.items.list({ limit: 500 })).data.filter(
-      (item) =>
-        item.id !== created.id &&
-        JSON.stringify(item.properties).includes(first.slice(7)),
+    const refused = await sendAs(
+      nothingRegistered,
+      new TextEncoder().encode("no registered type"),
     );
-    expect(siblings).toHaveLength(1);
-    expect(await indexed(siblings[0]!.id)).toEqual({
-      held: [first],
-      named: [first],
-    });
-    expect(await read(reader, first)).toBe(200);
+    expect(refused.status).toBe(403);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("type_not_permitted");
 
-    await ctx.storage.items.transition(created.id, "trashed");
-    expect((await indexed(created.id)).held).toEqual([second]);
-    expect(await read(reader, second)).toBe(200);
-    await ctx.storage.items.purge(created.id);
-    expect((await indexed(created.id)).held).toEqual([]);
-    expect(await read(reader, second)).toBe(404);
+    const noteWriter = await writer();
+    const taken = await sendAs(
+      noteWriter,
+      new TextEncoder().encode("a registered type"),
+    );
+    expect(taken.status).toBe(201);
   });
+});
 
-  it("answers by the item's current type after a retype", async () => {
-    const hash = await upload("retyped");
-    const noteReader = await mintWorkingKey(ctx, {
-      type_permissions: { "core.note": "read" },
+describe("the enrichment sweep", () => {
+  it("reads only bytes a file's own reference lends", async () => {
+    const owner = await writer();
+    const hidden = await sent(
+      owner,
+      "the quokka ledger, never sent by the file's writer",
+    );
+    await note(owner, { body: `![x](${hidden.hash})` });
+    const own = await sent(
+      ctx.workingKey,
+      "the wombat ledger, sent by its writer",
+    );
+    const fileWriter = await mintWorkingKey(ctx, {
+      type_permissions: { "core.file": "write" },
     });
-    const created = await ctx.storage.items.create({
-      blob_writer: writer,
-      type: "core.note",
-      properties: { body: `![a](${hash})` },
-      tier: "library",
+    expect(await read(fileWriter, hidden.hash)).toBe(404);
+
+    const named = await json<Written>(
+      await request(ctx.app, "POST", "/items", {
+        key: fileWriter,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: hidden.hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    const witness = await json<Written>(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: own.hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+
+    await new TextEnrichmentSweeper({
+      storage: ctx.storage,
+      blobs: ctx.blobs,
+      ocr: null,
+      batchSize: 64,
+      itemTimeoutMs: 60_000,
+      maxBlobBytes: 20 * 1024 * 1024,
+      maxTextChars: DEFAULT_MAX_STRING_LENGTH,
+      maxAttempts: 3,
+    }).runOnce();
+
+    const read_ = async (id: string) =>
+      (await ctx.storage.items.get(id))?.properties.extracted_text;
+    expect(await read_(witness.item.id)).toContain("the wombat ledger");
+    expect(await read_(named.item.id)).toBeUndefined();
+  });
+});
+
+/** The digests the index holds for one item, and which of them lend. */
+async function indexed(
+  id: string,
+): Promise<{ held: string[]; named: string[]; lends: string[] }> {
+  const raw = ctx.storage as unknown as {
+    __sqliteAll: (q: string) => Promise<{ hash: string; lends: number }[]>;
+  };
+  const rows = await raw.__sqliteAll(
+    `SELECT hash, lends FROM item_blob_references WHERE item_id = '${id}' ORDER BY hash`,
+  );
+  const item = await ctx.storage.items.getIncludingTrashed(id);
+  const named = new Set<string>();
+  collectBlobHashes(item?.properties ?? {}, named);
+  return {
+    held: rows.map((r) => r.hash),
+    named: [...named].sort(),
+    lends: rows.filter((r) => r.lends === 1).map((r) => r.hash),
+  };
+}
+
+describe("the reference index a blob door reads", () => {
+  it("follows an item's properties, and a purge takes its rows", async () => {
+    const owner = await writer();
+    const first = await sent(owner, "first");
+    const second = await sent(owner, "second");
+    const { item } = await note(owner, { body: `![a](${first.hash})` });
+    expect(await indexed(item.id)).toMatchObject({
+      held: [first.hash],
+      named: [first.hash],
     });
-    expect(await read(noteReader, hash)).toBe(200);
-    const moved = await ctx.storage.items.update(created.id, {
-      blob_writer: writer,
-      type: "core.bookmark",
-      properties: { url: `https://example.com/${hash.slice(7)}` },
-      properties_mode: "replace",
-      version: created.version,
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: owner,
+        body: {
+          properties: { body: `![b](${second.hash})` },
+          version: item.version,
+        },
+      }),
+      200,
+    );
+    expect(await indexed(item.id)).toMatchObject({
+      held: [second.hash],
+      named: [second.hash],
     });
-    expect("error" in moved, JSON.stringify(moved)).toBe(false);
-    expect(await ctx.storage.blobs.lendingTypes(hash)).toEqual([
-      "core.bookmark",
-    ]);
-    expect(await read(noteReader, hash)).toBe(404);
+    expect(await read(reader, first.hash)).toBe(404);
+    expect(await read(reader, second.hash)).toBe(200);
+
+    await ctx.storage.items.transition(item.id, "trashed");
+    expect(await read(reader, second.hash)).toBe(200);
+    await ctx.storage.items.purge(item.id);
+    expect((await indexed(item.id)).held).toEqual([]);
+    expect(await read(reader, second.hash)).toBe(404);
   });
 });

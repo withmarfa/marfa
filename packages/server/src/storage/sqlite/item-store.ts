@@ -108,7 +108,12 @@ import {
   settleNaturalKeyTombstones,
   syncLink,
 } from "./item-links.js";
-import { blobCredits, syncBlobReferences } from "./blob-references.js";
+import {
+  blobLending,
+  digestsIn,
+  syncBlobReferences,
+  type BlobProof,
+} from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
@@ -173,7 +178,7 @@ function typePatternClause(pattern: string): SQL {
   return sql`(${items.type} = ${exact} OR ${items.type} LIKE ${descendantPattern} ESCAPE '\\')`;
 }
 
-function allowedTypesCondition(
+export function allowedTypesCondition(
   patterns: string[] | undefined,
   excluded: string[] = [],
 ): SQL | undefined {
@@ -231,7 +236,9 @@ async function insertConflictedSibling(
     row: { id: string; type: string; source: string | null; tier: string };
     now: string;
     properties: Record<string, unknown>;
-    writer: string | null;
+    proof: BlobProof;
+    /** The properties the losing write sent, whose digests are its own. */
+    sent: Record<string, unknown>;
     mayCopyEdge?: (
       edgeType: string,
       sourceType: string,
@@ -270,13 +277,17 @@ async function insertConflictedSibling(
   // indexing and the announcing, and doing either again would report a
   // create that did not happen.
   if (inserted.length === 0) return null;
-  // The sibling starts from the row's own properties, so a digest it carries
-  // from there keeps the credit the row gave it; only one the losing write
-  // brought is the writer's.
-  const inherited = await blobCredits(tx, row.id);
-  await syncBlobReferences(tx, { id: siblingId, properties }, (hash) =>
-    inherited.has(hash) ? (inherited.get(hash) ?? null) : args.writer,
+  // The sibling starts from the row's own properties, so a digest that
+  // lends there lends here; any other needs the losing writer's own proof.
+  const inherited = new Set(
+    [...(await blobLending(tx, row.id))]
+      .filter(([, lends]) => lends)
+      .map(([hash]) => hash),
   );
+  await syncBlobReferences(tx, { id: siblingId, properties }, args.proof, {
+    carried: digestsIn(args.sent),
+    inherited,
+  });
 
   const [held] = await tx
     .select({ tags: metadata.tags })
@@ -673,12 +684,10 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       await syncLink(tx, { id, type: input.type, properties });
-      const lenders =
-        input.blob_lenders === undefined ? null : new Set(input.blob_lenders);
-      await syncBlobReferences(tx, { id, properties }, (hash) =>
-        lenders === null || lenders.has(hash)
-          ? (input.blob_writer ?? null)
-          : null,
+      await syncBlobReferences(
+        tx,
+        { id, properties },
+        input.blob_proof ?? null,
       );
       if (input.source && input.source_id) {
         await forgetNaturalKey(tx, input.source, input.source_id);
@@ -839,10 +848,13 @@ export class SqliteItemStore implements ItemStore {
     after: { id: string; type: string; properties: Record<string, unknown> },
     before: { type: string; source: string | null; source_id: string | null },
     sourceId: string | undefined,
-    writer: string | null,
+    proof: BlobProof,
+    sent: Record<string, unknown> | undefined,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
-    await syncBlobReferences(tx, after, () => writer);
+    await syncBlobReferences(tx, after, proof, {
+      carried: digestsIn(sent ?? {}),
+    });
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }
@@ -1163,7 +1175,8 @@ export class SqliteItemStore implements ItemStore {
           { id, type: input.type ?? row.type, properties: merged },
           row,
           input.source_id,
-          input.blob_writer ?? null,
+          input.blob_proof ?? null,
+          incomingProps,
         );
 
         await this.searchStore.remove(id);
@@ -1348,7 +1361,8 @@ export class SqliteItemStore implements ItemStore {
             mayCopyEdge: input.may_copy_edge,
             row,
             now,
-            writer: input.blob_writer ?? null,
+            proof: input.blob_proof ?? null,
+            sent: clientProps,
             properties: conflictedSiblingProperties({
               clientProperties: clientProps,
               currentProperties: currentProps,
@@ -1440,7 +1454,8 @@ export class SqliteItemStore implements ItemStore {
         { id, type: input.type ?? row.type, properties: resolvedProperties },
         row,
         resolvedFields.source_id ?? undefined,
-        input.blob_writer ?? null,
+        input.blob_proof ?? null,
+        incomingProps,
       );
 
       await this.searchStore.remove(id);

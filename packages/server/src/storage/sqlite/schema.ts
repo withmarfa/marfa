@@ -138,9 +138,9 @@ export const item_links = sqliteTable(
 );
 
 // The blobs an item's properties name, by the digest rule `collectBlobHashes`
-// applies, each with the credential whose write first named it there, so a
-// blob door finds the items that lend it their reach without reading every
-// row. `writer` is null for a write no credential made, which lends nothing.
+// applies, so a blob door finds the items that lend it their reach without
+// reading every row. `lends` is set once a credential that wrote the digest
+// into the row proved it held the bytes, and only leaves with the digest.
 export const item_blob_references = sqliteTable(
   "item_blob_references",
   {
@@ -148,7 +148,7 @@ export const item_blob_references = sqliteTable(
     item_id: text("item_id")
       .notNull()
       .references(() => items.id, { onDelete: "cascade" }),
-    writer: text("writer"),
+    lends: integer("lends", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [
     primaryKey({ columns: [table.hash, table.item_id] }),

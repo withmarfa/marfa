@@ -354,7 +354,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    const uploader = blobPrincipal(requireOperatorKey(c));
+    const uploader = blobPrincipal(requireOperatorKey(c), "api_key");
 
     // The body streams to a spool on the disk store's filesystem, as an
     // upload's does, so an archive is as large as an archive is: nothing
@@ -736,11 +736,12 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           const archiveId = typeof item.id === "string" ? item.id : undefined;
           try {
             const created = await storage.items.create({
-              blob_writer: uploader,
-              // A line naming none lent nothing where it was taken.
-              blob_lenders: Array.isArray(lending)
-                ? lending.filter((h): h is string => typeof h === "string")
-                : [],
+              // A digest lends here only where it lent in the instance the
+              // archive was taken from; a line naming none lends nothing.
+              blob_proof: (hash) =>
+                Promise.resolve(
+                  Array.isArray(lending) && lending.includes(hash),
+                ),
               ...(archiveId !== undefined && { id: archiveId }),
               // The row comes back under its archived id, so it comes
               // back at its archived version too. Re-minting at 1 lets a
