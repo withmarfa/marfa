@@ -93,7 +93,8 @@ export class TextEnrichmentSweeper {
    *
    * The registered types are another: the write is judged against the row's
    * type, and refused outright where that type is not registered, so a type
-   * registered, changed or removed reconsiders what it parked.
+   * registered, removed, or changed in its definition at any version
+   * reconsiders what it parked.
    */
   private get configSignature(): string {
     return JSON.stringify({
@@ -476,12 +477,28 @@ async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
   return null;
 }
 
-/** The registered types, each at its version, as the config signature
- *  carries them. */
+/** The registered types' definitions, as the config signature carries
+ *  them. The definitions rather than their versions, because a type
+ *  re-registered through `PUT /types/{id}` keeps its version whatever
+ *  changed. */
 export function registeredTypesFingerprint(): string {
   const listed = listTypes()
-    .map((type) => `${type.id}@${String(type.version)}`)
+    .map((type) => stableJson(type))
     .sort()
-    .join(",");
+    .join("\n");
   return createHash("sha256").update(listed).digest("hex");
+}
+
+/** JSON with every object's keys in order, so one definition always reads
+ *  the same however it was built. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

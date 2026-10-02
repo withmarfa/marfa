@@ -516,6 +516,43 @@ describe("skips", () => {
     }
   });
 
+  it("offers a skipped row again when its type changes at the same version", async () => {
+    // A type re-registered through `PUT /types/{id}` keeps its version, so
+    // the change is seen in the definition rather than the number.
+    const id = "core.file.changed_by_this_test";
+    registerTypeSchema({
+      id,
+      version: 1,
+      parent: "core.file",
+      fields: { reviewer: { type: "string", required: true } },
+    });
+    try {
+      const item = await createFileItem(
+        await seedBlob(Buffer.from("parked text"), "text/plain"),
+        "text/plain",
+      );
+      const raw = ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      };
+      await raw.__sqliteRun("UPDATE items SET type = ? WHERE id = ?", [
+        id,
+        item,
+      ]);
+      expect(await sweeper().runOnce()).toEqual({
+        extracted: 0,
+        skipped: 1,
+        failed: 0,
+      });
+      expect((await ctx.storage.enrichment.get(item))?.status).toBe("skipped");
+
+      registerTypeSchema({ id, version: 1, parent: "core.file", fields: {} });
+      expect((await sweeper().runOnce()).extracted).toBe(1);
+      expect((await readItem(item)).extracted_text).toBe("parked text");
+    } finally {
+      unregisterTypeSchema(id);
+    }
+  });
+
   it("reconsiders a refused extraction once the ceiling is back under the validator's", async () => {
     const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
     const id = await createFileItem(
