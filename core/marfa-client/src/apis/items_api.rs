@@ -61,6 +61,8 @@ pub struct CreateItemParams {
 pub struct DeleteItemParams {
     /// Item id
     pub id: String,
+    /// The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is.
+    pub version: Option<i32>,
     /// A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.
     pub idempotency_key: Option<String>,
 }
@@ -486,7 +488,7 @@ pub enum DeleteItemError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
-    Status409(models::IdempotencyKeyInFlightRefusal),
+    Status409(models::DeleteItem409Response),
     Status413(models::RequestTooLargeRefusal),
     Status422(models::IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal),
     Status429(models::RateLimitedRefusal),
@@ -589,7 +591,7 @@ pub enum PurgeItemError {
     Status401(models::UnauthorizedRefusal),
     Status403(models::ForbiddenOrTypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
-    Status409(models::PurgeItem409Response),
+    Status409(models::DeleteItem409Response),
     Status413(models::RequestTooLargeRefusal),
     Status422(models::IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal),
     Status429(models::RateLimitedRefusal),
@@ -937,7 +939,7 @@ pub fn create_item(
     }
 }
 
-/// Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
+/// Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
 pub fn delete_item(
     configuration: &configuration::Configuration,
     params: DeleteItemParams,
@@ -951,6 +953,9 @@ pub fn delete_item(
         .client
         .request(reqwest::Method::DELETE, &uri_str);
 
+    if let Some(ref param_value) = params.version {
+        req_builder = req_builder.query(&[("version", &param_value.to_string())]);
+    }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
