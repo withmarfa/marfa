@@ -232,26 +232,28 @@ describe("what a change runs", () => {
     expect(tracked().filter(unnamed)).toEqual([]);
   });
 
-  it("treats Markdown as documentation but the contract, package READMEs, fixtures and generated trees", () => {
+  it("treats Markdown as documentation but the contract and package READMEs", () => {
     const beyond = (path: string) =>
       [...affected(path)].filter((job) => job !== "ci-sqlite");
-    const markdown = tracked().filter((path) => path.endsWith(".md"));
+    // The rule fixtures and generated trees fall through on purpose.
+    const docs = RULES.find(([pattern]) => pattern.test("README.md"))?.[0];
+    expect(docs?.test("packages/server/src/fixtures/note.md")).toBe(false);
     // The witnesses: the contract and a package's README reach a job.
     expect(beyond("conformance/spec/items.md")).toEqual(["conformance"]);
     expect(beyond("packages/client/README.md")).toEqual(["version-fields"]);
-    expect(
-      markdown.filter((path) => {
-        const jobs = beyond(path);
-        if (jobs.length === 0) return false;
-        if (path.startsWith("conformance/spec/")) {
-          return jobs.join() !== "conformance";
-        }
-        if (/^(packages|core)\/.+\/README[^/]*$/.test(path)) {
-          return jobs.join() !== "version-fields";
-        }
-        return true;
-      }),
-    ).toEqual([]);
+    const markdown = tracked().filter((path) => path.endsWith(".md"));
+    expect(markdown.length).toBeGreaterThan(0);
+    for (const path of markdown) {
+      if (path.startsWith("conformance/spec/")) {
+        expect(beyond(path), path).toEqual(["conformance"]);
+      } else if (docs?.test(path)) {
+        expect(beyond(path), path).toEqual(
+          /^(packages|core)\/.+\/README[^/]*$/.test(path)
+            ? ["version-fields"]
+            : [],
+        );
+      }
+    }
   });
 
   it("holds Markdown in every generated tree to its freshness check", () => {

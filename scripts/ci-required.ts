@@ -21,8 +21,8 @@ import { fileURLToPath } from "node:url";
 /** Each output, named for the job that reads it. */
 export const JOBS = [
   // `CI (SQLite)`. It runs the format check and this classifier's test for
-  // any change outside `core/`, and its build, typecheck, lint and tests
-  // only for `workspace`.
+  // any change outside `core/` but the licence, and for a crate manifest,
+  // and its build, typecheck, lint and tests only for `workspace`.
   "ci-sqlite",
   "workspace",
   "core-checks",
@@ -142,6 +142,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/Cargo\.lock$/, [...RUST, "clients-freshness"]],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
   [/^core\/\.config\//, ["core-checks", "core", "workspace"]],
+  [/^core\/\.gitignore$/, []],
   [/^core\/scripts\/test-limits\.sh$/, ["core-checks", "core", "workspace"]],
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
