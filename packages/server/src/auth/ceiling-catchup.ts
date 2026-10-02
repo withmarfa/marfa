@@ -52,11 +52,10 @@ export type CeilingCatchUpSurface = "authorize" | "device";
  * row and audit-logged as a scope, which is a false record rather than a
  * live grant, and the cheaper of the two to prevent.
  *
- * Off-by-default bundles are included on purpose. The widening runs before
- * either surface knows who is asking, so one unauthenticated request can
- * add an off-by-default bundle's scopes to a stored registration — and that
- * is the point, because letting an already-registered client reach a scope
- * it was never registered for, without re-registering, is the case an
+ * Off-by-default bundles are included on purpose. One request can add an
+ * off-by-default bundle's scopes to a stored registration, and that is the
+ * point, because letting an already-registered client reach a scope it was
+ * never registered for, without re-registering, is the case an
  * off-by-default bundle exists to serve. Narrowing here would defeat it.
  *
  * What keeps that safe is not this function. A ceiling is permission to ask,
@@ -80,6 +79,23 @@ export function bundlePublishedScopes(
   // repairing the damage the wider one had already stored.
   return new Set(
     publishableBundleScopes(bundles, (scope) => isValidScope(scope)),
+  );
+}
+
+/**
+ * The scopes a catch-up would add to this ceiling for this request: the
+ * requested ones the bundles publish and the ceiling does not yet hold. A
+ * null ceiling already tracks the live set and an empty one is a deliberate
+ * ceiling, so neither has anything waiting.
+ */
+export function scopesAwaitingCatchUp(
+  ceiling: readonly string[] | null,
+  requested: readonly string[],
+  bundleScopes: ReadonlySet<string>,
+): string[] {
+  if (ceiling === null || ceiling.length === 0) return [];
+  return requested.filter(
+    (scope) => bundleScopes.has(scope) && !ceiling.includes(scope),
   );
 }
 
@@ -126,12 +142,10 @@ export async function catchUpClientScopeCeiling(opts: {
   const { storage, clientId, requested, ceiling, bundleScopes, surface } = opts;
   const oauth = storage.oauthProvider;
   if (!oauth) return ceiling;
-  if (ceiling === null || ceiling.length === 0) return ceiling;
+  if (ceiling === null) return ceiling;
 
   const held = ceiling;
-  const missing = requested.filter(
-    (scope) => bundleScopes.has(scope) && !held.includes(scope),
-  );
+  const missing = scopesAwaitingCatchUp(held, requested, bundleScopes);
   if (missing.length === 0) return ceiling;
 
   const widened = [...held, ...missing];
@@ -156,12 +170,9 @@ export async function catchUpClientScopeCeiling(opts: {
   });
   // Audited rather than only logged, and audited separately from whatever
   // the caller does next, because this one is the registration row changing.
-  // It also happens before either surface has resolved a session, so it is
-  // the one event on these paths that no signed-in identity is attached to —
-  // which makes it the one most worth a record rather than the one least
-  // worth it. The surface is part of the row for the same reason it is part
-  // of the log line: two callers write this action and the trail has to say
-  // which.
+  // The surface is part of the row for the same reason it is part of the log
+  // line: two callers write this action and the trail has to say which, and
+  // a device catch-up has no signed-in person behind it.
   void storage.audit.log({
     action: "auth.client.scopes_widened",
     resource_type: "oauth_client",

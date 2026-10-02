@@ -242,7 +242,9 @@ export class Housekeeping {
   /**
    * One pass over what is due. Runs are started, not awaited. Nothing
    * here throws: a poll that fails to read or claim is logged and the next
-   * poll asks again, because a rejection out of a timer ends the process.
+   * poll asks again, because a rejection out of a timer is nobody's to
+   * answer: it would reach the process as an unhandled rejection, reported
+   * as a fault.
    */
   async poll(): Promise<void> {
     if (this.stopped) return;

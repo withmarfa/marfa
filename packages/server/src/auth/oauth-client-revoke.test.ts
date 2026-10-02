@@ -449,9 +449,10 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     ]);
 
     const res = await revoke(ctx, first.refresh_token as string, clientId);
-    // The plugin treats the stale token as a replay and answers 400 while
-    // deleting every token of the grant; the grant records follow.
-    expect(res.status).toBe(400);
+    // The plugin treats the stale token as a replay, deleting every token of
+    // the grant, and the grant records follow. The token was already revoked,
+    // which RFC 7009 answers 200.
+    expect(res.status).toBe(200);
     const after = await grantRows(ctx, clientId, authUserId);
     expect(after.consents).toBe(0);
     expect(after.accessTokens).toBe(0);
@@ -583,6 +584,71 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     expect(rows.refreshTokens).toEqual([{ revoked: false }]);
     expect((await onlyGrant(ctx)).properties.status).toBe("active");
     expect((await revokedAudits(ctx)).data).toEqual([]);
+  });
+});
+
+describe("POST /auth/oauth2/revoke answers 200 for a token that is already gone", () => {
+  it("answers 200 for a token this server never issued, of either kind or none", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx, "Forgetful App");
+    for (const token of [
+      `marfa_rt_${randomBytes(16).toString("hex")}`,
+      `marfa_at_${randomBytes(16).toString("hex")}`,
+      "not a token of any kind",
+    ]) {
+      for (const hint of [
+        undefined,
+        "refresh_token",
+        "access_token",
+      ] as const) {
+        const res = await revoke(ctx, token, clientId, hint);
+        expect(res.status, `${token} ${String(hint)}`).toBe(200);
+      }
+    }
+  });
+
+  it("answers 200 for a token revoked before, and still refuses a request with no token", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx, "Twice Revoking App");
+    const cookie = await signInUser(ctx, "twice@example.com");
+    const tokens = await codeGrant(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+    const accessToken = tokens.access_token as string;
+    expect((await revoke(ctx, accessToken, clientId)).status).toBe(200);
+    expect((await revoke(ctx, accessToken, clientId)).status).toBe(200);
+
+    const missing = await request(ctx.app, "POST", "/auth/oauth2/revoke", {
+      form: { client_id: clientId },
+      headers: { origin: ORIGIN },
+    });
+    expect(missing.status).toBe(400);
+  });
+
+  it("keeps the plugin's refusal of a live token it did not revoke", async () => {
+    // The witness that the 200 is decided by the token being gone, not by
+    // the refusal: a live access token named as a refresh token is refused
+    // by the plugin and is still live afterwards, so a 200 would report a
+    // revocation that did not happen.
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx, "Mislabeling App");
+    const cookie = await signInUser(ctx, "mislabel@example.com");
+    const tokens = await codeGrant(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+    const accessToken = tokens.access_token as string;
+    const res = await revoke(ctx, accessToken, clientId, "refresh_token");
+    expect(res.status).toBe(400);
+    const still = await request(ctx.app, "GET", "/items?type=core.note", {
+      headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(still.status).toBe(200);
   });
 });
 

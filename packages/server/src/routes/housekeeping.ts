@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import { operatorOnly } from "../middleware/auth.js";
 import type { Housekeeping } from "../housekeeping/scheduler.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { nullableRef, pageOf } from "./_schemas.js";
@@ -89,6 +89,7 @@ const listHousekeepingRoute = createRoute({
   description:
     "Every housekeeping job the server runs on itself, with its cadence, when it is next due, whether a run holds it now, and what its last run did. One switched off by configuration is not listed; one whose retention `/config` can set is listed whatever the instance default. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   responses: {
     200: {
       content: {
@@ -111,6 +112,7 @@ const runHousekeepingRoute = createRoute({
   description:
     "Runs the housekeeping job inline and answers what it did, including a failure, which is reported as the run's `outcome` rather than as this door's. A housekeeping job never overlaps itself: one in the middle of a run answers `409`. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   request: { params: NameParam },
   responses: {
     200: {
@@ -153,13 +155,11 @@ export function housekeepingRoutes(housekeeping: Housekeeping) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listHousekeepingRoute, async (c) => {
-    requireOperatorKey(c);
     const data = await housekeeping.list();
     return c.json({ data, next_cursor: null }, 200);
   });
 
   router.openapi(runHousekeepingRoute, async (c) => {
-    requireOperatorKey(c);
     const { name } = c.req.valid("param");
     const result = await housekeeping.runNow(name);
     if (result.kind === "unknown") {

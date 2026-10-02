@@ -30,8 +30,8 @@ import {
 import { assertParentChain } from "./_parent-chain.js";
 import { writeTypesInTransaction } from "./_type-write.js";
 import {
-  requireSchemaChange,
-  requireSchemaRegistration,
+  changesSchema,
+  registersType,
   requireTypeSchemaWrite,
 } from "./_schema-reach.js";
 import { MergePolicySchema, pageOf } from "./_schemas.js";
@@ -413,12 +413,7 @@ const registerTypeRoute = createRoute({
   operationId: "registerType",
   method: "post",
   path: "/",
-  middleware: [
-    (c: Context<AppEnv>, next: Next) => {
-      requireSchemaRegistration(c, "types");
-      return next();
-    },
-  ] as const,
+  middleware: registersType,
   tags: ["Types"],
   summary: "Register a type",
   description:
@@ -503,9 +498,8 @@ const updateTypeRoute = createRoute({
   method: "put",
   path: "/{id}",
   middleware: [
+    changesSchema,
     (c: Context<AppEnv>, next: Next) => {
-      requireAuth(c);
-      requireSchemaChange(c);
       // The path parameter, before the route's own validator has run: the
       // router matched this route on it, so it is present.
       const id = c.req.param("id") ?? "";
@@ -627,6 +621,7 @@ const deleteTypeRoute = createRoute({
   description:
     "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).\n\nThe tombstones purges left under the type go with it.",
   security: [{ bearerAuth: [] }],
+  middleware: changesSchema,
   request: {
     params: z.object({
       id: z.string().describe("Type identifier."),
@@ -857,8 +852,6 @@ export function typeRoutes(storage: Storage) {
   );
 
   router.openapi(deleteTypeRoute, async (c) => {
-    requireAuth(c);
-    requireSchemaChange(c);
     const { id } = c.req.valid("param");
 
     if (isLockedPlatformType(id)) {

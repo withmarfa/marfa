@@ -16,7 +16,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import { operatorOnly, requireAuth } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { CreateEmailAccountResult, MarfaAuth } from "../auth/instance.js";
 import { log } from "../middleware/logger.js";
@@ -69,6 +69,7 @@ const getOwnerRoute = createRoute({
   tags: ["Owner"],
   summary: "Who owns this instance",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   description:
     "Answers the owner: the one account on this instance's sign-in surface, which is the person the OAuth consent screen asks. `404 owner_not_found` on an instance that has none yet, which is the state every instance boots in; `POST /owner` is what changes it. Operator key only.",
   responses: {
@@ -96,6 +97,7 @@ const createOwnerRoute = createRoute({
   tags: ["Owner"],
   summary: "Create the owner",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   description:
     "Creates the one account on this instance's sign-in surface, with an email address and a password. Sign-up is disabled on every instance, so this is the only way a person comes to exist behind the consent screen, and the account can sign in at `POST /auth/sign-in/email` the moment this answers. Refused `409 owner_exists` once an owner exists, for any body the schema accepts; the password is judged by the sign-in surface's own length rule and a refusal is `400 validation_error` naming `password` and the bound. Operator key only: the operator key is what proves the person running the instance, and it outlives the bootstrap secret.",
   request: {
@@ -211,7 +213,6 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getOwnerRoute, async (c) => {
-    requireOperatorKey(c);
     const found = await owner.find();
     if (!found) {
       throw new MarfaError(
@@ -223,7 +224,7 @@ export function ownerRoutes(storage: Storage, auth: MarfaAuth) {
   });
 
   router.openapi(createOwnerRoute, async (c) => {
-    const operator = requireOperatorKey(c);
+    const operator = requireAuth(c);
     const body = c.req.valid("json");
     if (await owner.find()) throw ownerExists();
     await take(storage.settings);

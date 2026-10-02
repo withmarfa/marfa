@@ -68,6 +68,20 @@ describe("OAuth provider", () => {
     expect((r.data.scope as string).length).toBeGreaterThan(0);
   });
 
+  it("registers a client naming a scope at that scope, once each", async () => {
+    const r = await client.registerOAuthClient({
+      client_name: `conformance-scoped-${ctx.runId}`,
+      application_type: "native",
+      redirect_uris: ["http://127.0.0.1:9/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+      scope: "core.note:read openid core.note:read",
+    });
+    expect(r.status).toBe(201);
+    expect(r.data.scope).toBe("core.note:read openid");
+  });
+
   it("registers a web client, whose redirect URI must be https and off the loopback", async () => {
     const accepted = await client.registerOAuthClient({
       client_name: `conformance-web-${ctx.runId}`,
@@ -119,6 +133,40 @@ describe("OAuth provider", () => {
     expect(r.status).toBe(400);
     const body = (await r.json()) as { error?: string };
     expect(body.error).toBe("invalid_request");
+  });
+
+  it("answers 200 to revoking a token it does not hold, and 400 to a revocation naming no token", async () => {
+    const registered = await client.registerOAuthClient({
+      client_name: `conformance-revoke-${ctx.runId}`,
+      application_type: "native",
+      redirect_uris: ["http://127.0.0.1:9/callback"],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    });
+    expect(registered.status).toBe(201);
+    const clientId = registered.data.client_id as string;
+    const revoke = (form: Record<string, string>) =>
+      fetch(`${apiUrl}/auth/oauth2/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, ...form }),
+      });
+    for (const token of [
+      `marfa_rt_never-issued-${ctx.runId}`,
+      `marfa_at_never-issued-${ctx.runId}`,
+    ]) {
+      for (const hint of ["", "refresh_token", "access_token"]) {
+        const r = await revoke(
+          hint === "" ? { token } : { token, token_type_hint: hint },
+        );
+        await r.body?.cancel();
+        expect(r.status, `${token} ${hint}`).toBe(200);
+      }
+    }
+    const none = await revoke({});
+    await none.body?.cancel();
+    expect(none.status).toBe(400);
   });
 
   it("refuses a grant type it does not support", async () => {

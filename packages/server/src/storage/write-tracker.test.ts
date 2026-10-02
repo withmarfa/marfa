@@ -24,7 +24,7 @@ describe("WriteTracker", () => {
     // A write that rejects (e.g. the connection pool was torn down mid-write)
     // must not propagate. This is the unhandled-rejection guard: callers fire
     // `void log(...)` with no `.catch()`, so a rejecting write would otherwise
-    // crash the process / pollute the test run.
+    // be reported as a fault and fail the test run.
     await expect(
       tracker.track(() => Promise.reject(new Error("write CONNECTION_ENDED"))),
     ).resolves.toBeUndefined();

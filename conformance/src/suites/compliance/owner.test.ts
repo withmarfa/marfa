@@ -106,6 +106,38 @@ describe("the owner", () => {
     expect((await operator.getOwner()).status).toBe(404);
   });
 
+  it("refuses a working key 403 whatever its body", async () => {
+    for (const body of [
+      "{ not json",
+      JSON.stringify({ email: "not an address" }),
+    ]) {
+      const response = await fetch(`${server!.apiUrl}/owner`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${server!.workingKey}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+      expect(response.status, body).toBe(403);
+      expect(((await response.json()) as ErrorResponse).error.code).toBe(
+        "forbidden",
+      );
+    }
+    // The same body from the operator key is refused on its merits, which is
+    // what makes the 403 above the door's answer rather than the body's.
+    const fromOperator = await fetch(`${server!.apiUrl}/owner`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${server!.operatorKey}`,
+        "Content-Type": "application/json",
+      },
+      body: "{ not json",
+    });
+    expect(fromOperator.status).toBe(400);
+    expect((await operator.getOwner()).status).toBe(404);
+  });
+
   it("refuses a password outside the sign-in surface's rule, naming the bound", async () => {
     const short = await operator.createOwner({
       email: OWNER.email,

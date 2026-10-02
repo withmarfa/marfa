@@ -5,7 +5,7 @@ import {
   MIN_PAGE_LIMIT,
 } from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requirePermission, requireAuth } from "../middleware/auth.js";
+import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
@@ -39,6 +39,7 @@ const listAuditRoute = createRoute({
   summary: "List audit log entries",
   description: `Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires \`audit.read\`. The operator key holds no permission, so it is refused rather than shown the trail. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: standingPermission("audit.read"),
   request: {
     query: z.object({
       action: z.string().optional().describe("Filter to a single action."),
@@ -115,7 +116,6 @@ export function auditRoutes(storage: Storage) {
 
   router.openapi(listAuditRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "audit.read");
     refuseUnknownQueryParams(c.req.raw.url, listAuditRoute.request.query);
     const {
       action,

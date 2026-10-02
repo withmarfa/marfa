@@ -318,9 +318,9 @@ const TIMED_OUT = Symbol("column-aggregate-timed-out");
  * Race one column's aggregate against the budget.
  *
  * A losing query's eventual rejection is swallowed deliberately: it
- * belongs to an answer nothing is waiting for any more, and an unhandled
- * rejection would take the process down at boot over a check whose entire
- * design is that it never does that.
+ * belongs to an answer nothing is waiting for any more, and left unhandled
+ * it would be reported as a fault at boot over a check whose entire design
+ * is that it never fails the boot.
  */
 async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
   let timer: NodeJS.Timeout | undefined;

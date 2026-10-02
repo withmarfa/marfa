@@ -6,6 +6,7 @@ import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { createBlobLayer } from "../storage/blob-layer.js";
 import { Housekeeping } from "../housekeeping/scheduler.js";
 import { hashApiKey } from "./auth.js";
+import { seedOauthBearer } from "../test-utils.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -182,6 +183,37 @@ describe("rate-limit keying", () => {
     // would also get 429.
     const bFirst = await hitB();
     expect(bFirst.status).toBe(200);
+  });
+
+  it("limits a signed-in app by its grant, so a refreshed token does not start a fresh window", async () => {
+    const first = await seedOauthBearer(ctx.storage, ["core.note:read"]);
+    const row = await ctx.storage.oauthProvider?.validateAccessToken(
+      hashApiKey(first.token.slice("marfa_at_".length), SALT),
+    );
+    expect(row?.userId).toBeTruthy();
+    // What a refresh hands back: a new access-token row under the same
+    // client and the same person.
+    const refreshed = `marfa_at_refreshed_${Math.random().toString(36).slice(2)}`;
+    await ctx.storage.oauthProvider?.mintTokenPair({
+      accessTokenHash: hashApiKey(refreshed.slice("marfa_at_".length), SALT),
+      clientId: first.clientId,
+      authUserId: row!.userId!,
+      scopes: ["core.note:read"],
+      accessTtlMs: 3600_000,
+    });
+    const hit = (token: string) =>
+      ctx.app.request("/items?type=core.note", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    for (let i = 0; i < 4; i++) {
+      expect((await hit(first.token)).status).toBe(200);
+    }
+    expect((await hit(first.token)).status).toBe(429);
+    expect((await hit(refreshed)).status).toBe(429);
+
+    // The witness: another app's token is not in the same window.
+    const other = await seedOauthBearer(ctx.storage, ["core.note:read"]);
+    expect((await hit(other.token)).status).toBe(200);
   });
 
   it("judges a GET against the cap the path was given, even when it equals the default", async () => {

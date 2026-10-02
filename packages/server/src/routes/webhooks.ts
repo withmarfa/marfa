@@ -4,7 +4,7 @@ import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { requirePermission, requireAuth } from "../middleware/auth.js";
+import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type {
   Storage,
   StoredWebhook,
@@ -118,6 +118,9 @@ const DeliverySchema = z
 // Route definitions
 // ---------------------------------------------------------------------------
 
+/** Every webhook door takes `webhooks.manage`. */
+const managesWebhooks = standingPermission("webhooks.manage");
+
 const createWebhookRoute = createRoute({
   operationId: "createWebhook",
   method: "post",
@@ -127,6 +130,7 @@ const createWebhookRoute = createRoute({
   description:
     "Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.",
   security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
   request: {
     body: {
       content: {
@@ -197,6 +201,7 @@ const listWebhooksRoute = createRoute({
   description:
     "Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.",
   security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
   responses: {
     200: {
       content: {
@@ -235,6 +240,7 @@ const getWebhookRoute = createRoute({
   description:
     "Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.",
   security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
   request: {
     params: z.object({
       id: z.string().describe("Id of the webhook to fetch."),
@@ -286,6 +292,7 @@ const updateWebhookRoute = createRoute({
   description:
     "Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.",
   security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
   request: {
     params: z.object({
       id: z.string().describe("Id of the webhook to update."),
@@ -359,6 +366,7 @@ const deleteWebhookRoute = createRoute({
   description:
     "Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.",
   security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
   request: {
     params: z.object({
       id: z.string().describe("Id of the webhook to delete."),
@@ -409,6 +417,7 @@ const listDeliveriesRoute = createRoute({
   description:
     "Returns recent delivery attempts for one subscription, newest first, with each attempt's response status, attempt count, and next retry time. Use to debug delivery failures.",
   security: [{ bearerAuth: [] }],
+  middleware: managesWebhooks,
   request: {
     params: z.object({
       id: z.string().describe("Id of the webhook whose deliveries to list."),
@@ -548,7 +557,6 @@ export function webhookRoutes(
 
   router.openapi(createWebhookRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "webhooks.manage");
     const body = c.req.valid("json");
     assertUrlAccepted(body.url, options.allowPrivateAddresses);
 
@@ -572,7 +580,6 @@ export function webhookRoutes(
 
   router.openapi(listWebhooksRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "webhooks.manage");
     const webhooks = await storage.outboundWebhooks.list();
     return c.json(
       {
@@ -587,7 +594,6 @@ export function webhookRoutes(
 
   router.openapi(getWebhookRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
     const webhook = await ownedWebhook(storage, c, id);
     return c.json(wireWebhook(webhook), 200);
@@ -595,7 +601,6 @@ export function webhookRoutes(
 
   router.openapi(updateWebhookRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -637,7 +642,6 @@ export function webhookRoutes(
 
   router.openapi(deleteWebhookRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
 
     await storage.runInTransaction(async () => {
@@ -660,7 +664,6 @@ export function webhookRoutes(
 
   router.openapi(listDeliveriesRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "webhooks.manage");
     const { id } = c.req.valid("param");
     const { limit, cursor } = c.req.valid("query");
 

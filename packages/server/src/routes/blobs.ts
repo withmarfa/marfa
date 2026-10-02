@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import type { AppConfig } from "../config.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import { operatorOnly } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -40,7 +40,12 @@ import {
   OkResponseSchema,
 } from "../openapi.js";
 import { refuseUnknownQueryParams } from "./_unknown-query-keys.js";
-import { requireBlobUpload, requireReadableBlob } from "./_blob-reach.js";
+import {
+  requireBlobUpload,
+  requireReadableBlob,
+  readsBlobs,
+  uploadsBlobs,
+} from "./_blob-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -223,6 +228,7 @@ const uploadBlobRoute = createRoute({
   description:
     "Takes the raw bytes as the body, with `Content-Type` naming their MIME type, and answers `201` with the `sha256:<hex>` content-addressed hash. The body streams to disk as it arrives and has no size cap. Uploading bytes already held answers the existing hash. `multipart/form-data` is refused: send the bytes themselves. Takes write, through the item doors, on at least one type registered when the request is made, since an item of any type can reference a blob; a credential with none is refused `403 type_not_permitted` before the body is read. The operator key uploads without one. Bytes become readable through an item whose properties name them once a write sending the digest is made for a credential that uploaded them or could read them.",
   security: [{ bearerAuth: [] }],
+  middleware: uploadsBlobs,
   request: {
     body: {
       required: true,
@@ -272,6 +278,7 @@ const listBlobStoresRoute = createRoute({
   description:
     "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least: a drop that would leave fewer is refused. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   responses: {
     200: {
       content: {
@@ -314,6 +321,7 @@ const getBlobRoute = createRoute({
   summary: "Download blob binary",
   description: `Streams the bytes of a blob as \`application/octet-stream\` from whichever store holds them, honoring one \`Range\`. \`HEAD\` answers the same headers with no body. A hash this instance does not hold answers \`404\`. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsBlobs,
   request: {
     params: HashParam,
   },
@@ -351,6 +359,7 @@ const getBlobUrlRoute = createRoute({
   summary: "Get a time-limited link to a blob's bytes",
   description: `Answers a URL a client fetches the bytes from without a credential, and \`expires_in\`, the seconds until it stops working. When an object store holds the blob the link is the store's own signed link, so the bytes never pass through the instance; otherwise the instance serves it. \`ttl\` is capped at seven days. ${READ_RULE} The link is checked when it is minted: it serves the bytes for its lifetime whatever happens to the credential afterwards.`,
   security: [{ bearerAuth: [] }],
+  middleware: readsBlobs,
   request: {
     params: HashParam,
     query: z.object({
@@ -449,6 +458,7 @@ const listBlobLocationsRoute = createRoute({
   summary: "List the stores holding a blob",
   description: `The location log for one blob: every store recorded as holding its bytes, with when the copy was recorded and when a check last found it present and intact (\`verified_at\`, \`null\` until one has). A store the configuration no longer names is shown \`detached\` and does not count as a copy. ${READ_RULE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsBlobs,
   request: {
     params: HashParam,
   },
@@ -491,6 +501,7 @@ const dropBlobLocationRoute = createRoute({
   description:
     "Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   request: { params: HashAndStoreParam },
   responses: {
     200: {
@@ -554,6 +565,7 @@ const listBlobOrphansRoute = createRoute({
   description:
     "The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   responses: {
     200: {
       content: {
@@ -793,7 +805,6 @@ export function blobRoutes(
   // GET /blobs/orphans — the report the orphan sweep writes. Registered
   // ahead of `/{hash}` so the literal segment is never read as a hash.
   router.openapi(listBlobOrphansRoute, async (c) => {
-    requireOperatorKey(c);
     const data = await storage.blobs.listOrphans();
     return c.json({ data, next_cursor: null }, 200);
   });
@@ -801,7 +812,6 @@ export function blobRoutes(
   // GET /blobs/stores — the attached stores (operator key only). Registered
   // ahead of `/{hash}` so the literal segment is never read as a hash.
   router.openapi(listBlobStoresRoute, async (c) => {
-    requireOperatorKey(c);
     const data = await storage.blobs.listStores();
     return c.json({ data, next_cursor: null, min_copies: minCopies }, 200);
   });
@@ -885,7 +895,6 @@ export function blobRoutes(
 
   // DELETE /blobs/:hash/locations/:store — drop one store's copy
   router.openapi(dropBlobLocationRoute, async (c) => {
-    requireOperatorKey(c);
     const params = c.req.valid("param");
     const hash = normalizeHash(params.hash);
     if (!(await storage.blobs.get(hash))) {

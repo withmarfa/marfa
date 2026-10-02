@@ -7,6 +7,7 @@ import {
   requireAuth,
   requireReadableRow,
   requireTypeAccess,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type { CascadeRoot, Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
@@ -35,6 +36,7 @@ const restoreItemRoute = createRoute({
   description:
     "Restores a trashed item to active, and with it every row its trash took through a cascading edge such as `parent-of`, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type; a row that was already in the bin when it was trashed stays there. Trashed items are auto-purged after the retention window, so a restore only succeeds while the row still exists.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
   },
@@ -94,6 +96,7 @@ const transitionItemRoute = createRoute({
   description:
     "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
     body: {

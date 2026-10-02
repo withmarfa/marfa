@@ -40,7 +40,8 @@ import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   isReservedCredentialSource,
-  requireOperatorKey,
+  operatorOnly,
+  requireAuth,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -143,6 +144,7 @@ const restoreArchiveRoute = createRoute({
   description:
     "Ingests a `marfa-archive-v0.tar.gz` produced by `GET /export?format=archive`. The archive's type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision, or a link another item of the row's type holds, counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   request: {
     body: {
       required: true,
@@ -358,7 +360,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    const uploader = blobPrincipal(requireOperatorKey(c), "api_key");
+    const uploader = blobPrincipal(requireAuth(c), "api_key");
 
     // The body streams to a spool on the disk store's filesystem, as an
     // upload's does, so an archive is as large as an archive is: nothing

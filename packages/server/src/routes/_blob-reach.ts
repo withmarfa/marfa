@@ -12,6 +12,7 @@ import {
   mayWriteReserved,
   requireAuth,
   type AppEnv,
+  standingRule,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 
@@ -136,3 +137,21 @@ export function requireBlobUpload(c: Context<AppEnv>): string {
   }
   return blobPrincipal(key, kind);
 }
+
+/** Asked of every caller of a door that reads a blob, before the request is
+ *  read: a credential reaching no type reads no blob, and the operator key
+ *  reads every one. */
+export const readsBlobs = standingRule(
+  "reads some type, or the operator key",
+  (c) => {
+    if (!requireAuth(c).is_operator) getTypeFilter(c);
+  },
+);
+
+/** Asked of every caller of the upload door, before the request is read. */
+export const uploadsBlobs = standingRule(
+  "writes some type, or the operator key",
+  (c) => {
+    requireBlobUpload(c);
+  },
+);

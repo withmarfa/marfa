@@ -44,22 +44,23 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
-  requireAuth,
-  requirePermission,
-  requireTypeAccess,
-  requireReadableRow,
-  mayReadRow,
-  mayWriteEdge,
-  requireResolvedRowWrite,
-  itemProvenanceSource,
-  requireDeclaredTypeMatches,
   checkTypeAccess,
   checkTypePermission,
-  requireEdgePermission,
   getTypeFilter,
+  itemProvenanceSource,
   mayReadEdgeEnd,
+  mayReadRow,
   typeReader,
   mayReadType,
+  mayWriteEdge,
+  requireAuth,
+  requireDeclaredTypeMatches,
+  requireEdgePermission,
+  requireReadableRow,
+  requireResolvedRowWrite,
+  requireTypeAccess,
+  standingPermission,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -271,6 +272,7 @@ const createItemRoute = createRoute({
   description:
     "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version and `source`: the credential's own, or one the credential's key claims when the body names it, and a body naming any other source is refused `403 forbidden` with `details.source`. Passing a `source_id` that already exists under that source upserts the existing item and returns 200 instead of 201, whichever credential wrote it, so two keys claiming one source share its natural keys. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     body: {
       content: {
@@ -524,6 +526,7 @@ const getItemStatsRoute = createRoute({
   summary: "Get item counts",
   description: `Returns a count of items, grouped on one axis. \`by=state\` (the default) counts per lifecycle state; \`by=type\` names the types actually in use, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read. The door takes every filter \`GET /items\` takes, with the same meaning, and counts the rows that listing would walk: the \`edge[<type>]\` and \`backref[<type>]\` shorthands among them, and \`include=system\` to count \`system.*\` items, which are left out by default as they are from the listing. One default differs: naming no \`state\` counts every state, so the listing's own count for the same filters is the \`active\` bucket of \`by=state\`, or the bucket of the state it names. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     query: z.object({
       by: z
@@ -595,6 +598,7 @@ const listItemsRoute = createRoute({
   summary: "List items",
   description: `Returns a paginated list of items, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. Every edge carried on a response is held to the two permissions \`GET /edges/{id}\` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     query: z.object({
       ...listingNarrowingKeys,
@@ -704,6 +708,7 @@ const getItemRoute = createRoute({
     "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the first page of the item's version snapshots the caller may read, oldest first, which `GET /items/{id}/versions` continues from its `next_cursor`. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
     query: z.object({
@@ -766,6 +771,7 @@ const updateItemRoute = createRoute({
   description:
     "Updates an item's properties, tier, own time, edges, or natural key. Properties merge shallowly with existing values by default; when `properties_mode` is `replace` the body is the whole of the caller's properties, so a field it leaves out is cleared. `version` is required, and a write naming none is refused 400 `missing_required_field`. At the current version the write lands as sent. At a stale one the caller's genuine changes, a cleared field included, merge over the row where nothing collides, and a collision on a property, `tier`, `occurred_at` or `source_id` answers 409 with the conflict context to resolve, or is resolved by the type's merge policy under `?conflict=auto`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it, with or without `properties`, and at a stale version as at the current one where nothing collides; a type nothing registered is refused `400 unknown_type` as a create refuses it, the properties the row ends up with are held to the type it enters, `400 invalid_properties` where they fall short, and a colliding stale move answers 409 whatever `?conflict` asks, a move onto a row another writer moved since colliding on `type`; that requires write on the type being entered as well as the one being left. `retype` naming the type the row already has changes nothing and takes no version step. Where the instance's strict-mode lever names the type, a property the type does not declare is refused `400 invalid_properties` with `details.code` `unknown_property`, judged on the properties this request carries.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
     query: z.object({
@@ -954,6 +960,7 @@ const deleteItemRoute = createRoute({
   description:
     "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
   },
@@ -1025,6 +1032,7 @@ const getMetadataRoute = createRoute({
   description:
     "Returns the metadata layer for one item without fetching the full item. For bulk reads, list items with the metadata include to hydrate it across a page instead.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
   },
@@ -1074,6 +1082,7 @@ const putMetadataRoute = createRoute({
   description:
     "Replaces the item's tag set with the supplied array, where an empty array clears all tags. Only tags are touched; tier and state are unaffected and change through their own endpoints.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
     body: {
@@ -1136,6 +1145,7 @@ const patchMetadataRoute = createRoute({
   description:
     "Set-union-merges the supplied tags into the existing tag set, preserving current tags and deduping. Use this to add tags without clobbering ones another source attached; replace the full set through the PUT endpoint instead.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
     body: {
@@ -1198,6 +1208,7 @@ const addTagsRoute = createRoute({
   description:
     "Adds one or more tags to the item. Idempotent — tags already present are not duplicated.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: IdParam,
     body: {
@@ -1262,6 +1273,7 @@ const removeTagRoute = createRoute({
   description:
     "Removes one tag from the item. Idempotent — removing a tag the item doesn't carry returns 200 with the unchanged metadata.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     params: z.object({
       id: z.string().describe("Item id"),
@@ -1313,6 +1325,7 @@ const purgeItemRoute = createRoute({
   summary: "Permanently delete an item",
   description: `Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires \`items.purge\` and write on the item's type. Each edge it takes is announced \`edge.deleted\` with \`purged_with\` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live \`system.connection\` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a \`link_field\` and the row held a value there, and its natural key, where it had one, each with the purge time as \`purged_at\` and \`settled_at\`. \`POST /items/lookup\` reads them and \`POST /items/tombstones\` moves \`settled_at\` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n\`version\` makes the purge conditional on the row being where the caller read it: at any other version it answers \`409 version_conflict\` with the row as it now stands under \`current\`, and deletes nothing. Without it the purge applies to the row as it is. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: standingPermission("items.purge"),
   request: {
     params: IdParam,
     query: z.object({
@@ -3135,8 +3148,6 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireAuth(c);
-    requirePermission(c, "items.purge");
     // A misspelled `version` stripped by the validator would purge
     // unconditionally, which is the act the parameter exists to guard.
     refuseUnknownQueryParams(c.req.raw.url, purgeItemRoute.request.query);

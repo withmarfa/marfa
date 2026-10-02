@@ -108,6 +108,7 @@ import {
   isRegisteredResponseRedirect,
 } from "../auth/redirect-params.js";
 import { publish } from "../pubsub.js";
+import { reportFault } from "../process-faults.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -1318,10 +1319,16 @@ async function projectGrantOnConsent(
     eventType = "created";
   }
 
-  // Fire-and-forget — a publish failure must not block consent.
-  void publish({
+  // Not awaited: the grant is written and the person is on their way back
+  // to the app, so a failed announcement is reported rather than answered.
+  publish({
     type: eventType,
     item: projectedItem,
+  }).catch((err: unknown) => {
+    reportFault("consent: the grant's event could not be written", err, {
+      client_id: opts.clientId,
+      grant_item_id: projectedItem.id,
+    });
   });
 
   void storage.audit.log({

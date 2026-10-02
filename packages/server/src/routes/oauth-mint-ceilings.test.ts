@@ -202,7 +202,7 @@ describe("dynamic client registration scope ceiling", () => {
     }
   });
 
-  it("a narrower request does not narrow the ceiling, and one outside the allowlist is refused", async () => {
+  it("registers a narrower request at the scope it asked for, and refuses one outside the allowlist", async () => {
     ctx = await createTestContext({});
     const narrow = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
@@ -211,14 +211,17 @@ describe("dynamic client registration scope ceiling", () => {
         redirect_uris: ["http://localhost/cb"],
         grant_types: ["authorization_code"],
         client_name: "scope-narrow",
-        scope: "core.note:read openid",
+        scope: "core.note:read openid core.note:read",
       },
     });
     expect(narrow.status).toBe(201);
-    const body = (await narrow.json()) as { scope: string };
-    expect(body.scope.split(" ").filter(Boolean).sort()).toEqual(
-      await advertisedScopes(ctx),
-    );
+    const body = (await narrow.json()) as { client_id: string; scope: string };
+    // The answer and the stored row both say what was asked for, once each,
+    // and neither says the catalog the plugin stores by default.
+    expect(body.scope).toBe("core.note:read openid");
+    const stored = await ctx.storage.oauthProvider?.getClient(body.client_id);
+    expect(stored?.scopes).toEqual(["core.note:read", "openid"]);
+    expect((await advertisedScopes(ctx)).length).toBeGreaterThan(2);
 
     const outside = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {

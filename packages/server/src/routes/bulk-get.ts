@@ -22,6 +22,7 @@ import {
   requireAuth,
   checkTypeAccess,
   getTypeFilter,
+  readsSomeType,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -101,6 +102,7 @@ const bulkGetRoute = createRoute({
     "than returned empty, so a response can carry fewer kinds of " +
     "relationship than the item has.",
   security: [{ bearerAuth: [] }],
+  middleware: readsSomeType,
   request: {
     body: {
       content: {

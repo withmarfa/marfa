@@ -424,6 +424,115 @@ describe("key management", () => {
     expect(second.error?.error.details?.source).toBe(source);
   });
 
+  it("answers mints racing for one source with one 201 and 409 conflict for the rest", async () => {
+    const label = `km-source-race-${ctx.runId}`;
+    const source = `${ctx.source}-${label}`;
+    const answers = await Promise.all(
+      [0, 1, 2, 3].map((i) =>
+        client.createKey({ label: `${label}-${String(i)}`, source }),
+      ),
+    );
+    for (const answer of answers) {
+      if (answer.ok) trackKey(ctx, answer.data.id);
+    }
+    expect(answers.map((a) => a.status).sort()).toEqual([201, 409, 409, 409]);
+    for (const refused of answers.filter((a) => !a.ok)) {
+      expect(refused.error?.error.code).toBe("conflict");
+      expect(refused.error?.error.details?.source).toBe(source);
+    }
+  });
+
+  it("refuses a key that may not use a door 403 before it reads the request", async () => {
+    const { key } = await createClientWithoutPermissions(
+      `km-standing-${ctx.runId}`,
+    );
+    // Each door asks the same of every caller: the operator key, or one
+    // permission. The request is one no validator would take, so a 400
+    // would be the body being read first.
+    const doors: [string, string][] = [
+      ["POST", "/owner"],
+      ["GET", "/metrics"],
+      ["GET", "/housekeeping"],
+      ["POST", "/admin/restore-archive"],
+      ["DELETE", "/admin/platform-types/not%20a%20type"],
+      ["DELETE", "/blobs/not-a-hash/locations/not-a-store"],
+      ["POST", "/webhooks"],
+      ["PATCH", "/webhooks/not%20an%20id"],
+      ["PUT", "/config"],
+      ["GET", "/audit?limit=not-a-number"],
+      ["POST", "/keys"],
+      ["PATCH", "/keys/not%20an%20id"],
+      ["DELETE", "/items/not%20an%20id/purge?version=not-a-number"],
+      ["POST", "/types"],
+      ["PUT", "/types/not%20a%20type"],
+      ["DELETE", "/types/not%20a%20type"],
+      ["POST", "/edge-types"],
+      ["DELETE", "/edge-types/not%20an%20edge%20type"],
+    ];
+    // Registering a connector takes a working key of its own, so the
+    // operator key is the credential that door refuses.
+    const operatorKey = process.env.MARFA_OPERATOR_KEY;
+    expect(operatorKey).toBeTruthy();
+    const refusing = (path: string) =>
+      path === "/connectors" ? operatorKey! : key;
+    doors.push(["POST", "/connectors"]);
+    const wrong: string[] = [];
+    for (const [method, path] of doors) {
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${refusing(path)}`,
+          "Content-Type": "application/json",
+        },
+        body:
+          method === "GET" || method === "DELETE" ? undefined : "{ not json",
+      });
+      const body = (await response.json()) as { error?: { code?: string } };
+      if (response.status !== 403 || body.error?.code !== "forbidden") {
+        wrong.push(`${method} ${path} answered ${String(response.status)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+
+    // A key reaching no type is refused the data plane, the folder writes and
+    // the blob doors before its request is read, as a key without a
+    // permission is refused the doors above.
+    const { key: reachesNothing } = await createClientWithoutPermissions(
+      `km-standing-none-${ctx.runId}`,
+      {},
+    );
+    const typeDoors: [string, string][] = [
+      ["GET", "/items?limit=not-a-number"],
+      ["POST", "/items"],
+      ["GET", "/search"],
+      ["POST", "/edges/bulk"],
+      ["POST", "/folders"],
+      ["GET", "/blobs/not-a-hash"],
+      ["POST", "/blobs"],
+    ];
+    const notRefused: string[] = [];
+    for (const [method, path] of typeDoors) {
+      const response = await fetch(`${apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${reachesNothing}`,
+          "Content-Type": "application/json",
+        },
+        body: method === "GET" ? undefined : "{ not json",
+      });
+      const body = (await response.json()) as { error?: { code?: string } };
+      if (
+        response.status !== 403 ||
+        body.error?.code !== "type_not_permitted"
+      ) {
+        notRefused.push(
+          `${method} ${path} answered ${String(response.status)}`,
+        );
+      }
+    }
+    expect(notRefused).toEqual([]);
+  });
+
   it("the operator key is refused the data plane, reading as well as writing", async () => {
     const operator = getOperatorClient();
 
@@ -535,37 +644,44 @@ describe("key management", () => {
     ).toBe(200);
   });
 
-  it("narrows a bulk action to nothing rather than refusing it, where a read is refused", async () => {
-    // `POST /items/bulk-actions` asks the same filter at `"write"` level,
-    // and the refusal is deliberately read-level only: this door narrows a
-    // match set rather than refusing a row, so a credential that can write
-    // nothing matches nothing and does nothing. Held here because nothing
-    // else holds it, and a later simplification of the level check would
-    // otherwise turn every narrow key's bulk action into a hard refusal
-    // with no test to notice.
+  it("refuses a bulk action to a key reaching no type, and narrows one for a key writing none", async () => {
+    // A key reaching no type at all, the operator key among them, is refused
+    // the bulk action as it is every other door of the data plane: a dry run
+    // answering it `200` with nothing matched said "there is nothing here",
+    // which is not what happened.
     const operator = getOperatorClient();
-    const dryRun = await operator.rawRequest<{ matched: number }>(
+    const dryRunBody = JSON.stringify({
+      action: "transition",
+      filter: { type: "core.note" },
+      state: "archived",
+      dry_run: true,
+    });
+    const refused = await operator.rawRequest<{ matched: number }>(
       "/items/bulk-actions",
       {
         method: "POST",
-        body: JSON.stringify({
-          action: "transition",
-          filter: { type: "core.note" },
-          state: "archived",
-          dry_run: true,
-        }),
+        body: dryRunBody,
         headers: { "Content-Type": "application/json" },
       },
     );
-    expect(dryRun.ok).toBe(true);
-    expect(dryRun.status).toBe(200);
+    expect(refused.status).toBe(403);
 
-    // The witness. The same credential reading the same filter is refused,
-    // so the `200` above is the write level answering its own way and not
-    // the refusal having gone.
-    const read = await operator.listItems({ type: "core.note", limit: 1 });
-    expect(read.ok).toBe(false);
-    expect(read.status).toBe(403);
+    // A key that reads every type and writes none still has the action
+    // narrowed to what it may write, which is nothing, rather than refused.
+    const { client: reader } = await createClientWithoutPermissions(
+      `km-bulk-reader-${ctx.runId}`,
+      { "*": "read" },
+    );
+    const narrowed = await reader.rawRequest<{ matched: number }>(
+      "/items/bulk-actions",
+      {
+        method: "POST",
+        body: dryRunBody,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(narrowed.status).toBe(200);
+    expect(narrowed.data.matched).toBe(0);
   });
 
   it("the operator key mints past its own reach, which is how a run is provisioned", async () => {

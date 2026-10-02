@@ -35,8 +35,8 @@ const TIMED_OUT = Symbol("probe-timed-out");
  * Race a probe against the budget. A probe that loses keeps running — it
  * holds a handle or a socket we cannot reclaim — so its eventual
  * rejection is swallowed deliberately: it belongs to an answer nobody is
- * waiting for any more, and an unhandled rejection would take the process
- * down over a health check.
+ * waiting for any more, and left unhandled it would be reported as a fault
+ * over a health check.
  */
 async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
   let timer: NodeJS.Timeout | undefined;

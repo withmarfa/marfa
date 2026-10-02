@@ -8,7 +8,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, standingRule } from "../middleware/auth.js";
 import type { InboundEndpoint, Storage } from "../storage/interface.js";
 import {
   INBOUND_PREFIX,
@@ -186,6 +186,28 @@ export const ownKeyResponses = {
 // Route definitions
 // ---------------------------------------------------------------------------
 
+/**
+ * A connector registers under a working key of its own. A session token's
+ * synthetic key is the token row, renewed on every refresh, so a
+ * registration keyed to it would be orphaned by the next; and the operator
+ * key runs the instance rather than feeding it.
+ */
+const workingKeyOnly = standingRule("a working key", (c) => {
+  const key = requireAuth(c);
+  if (c.get("authType") === "oauth") {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "A connector registers under a key, not under an app's session token",
+    );
+  }
+  if (key.is_operator) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "The operator key runs the instance and does not register as a connector",
+    );
+  }
+});
+
 const registerConnectorRoute = createRoute({
   operationId: "registerConnector",
   method: "post",
@@ -195,6 +217,7 @@ const registerConnectorRoute = createRoute({
   description:
     "Registers the key this request carries as a connector, with a name and a description, and answers `201`. The key is the identity, one registration per key: the same key registering again updates the name and the description and answers `200` with the same `id`. A session token an app holds is not a key and is refused `403 forbidden`: it is renewed on every refresh, and a registration keyed to one would be orphaned by the next. The operator key is refused `403 forbidden` too: it runs the instance and never acts as a connector. Nothing runs here; a registration is a name for a process outside the server that heartbeats and reports its runs.",
   security: [{ bearerAuth: [] }],
+  middleware: workingKeyOnly,
   request: {
     body: { content: { "application/json": { schema: RegisterSchema } } },
   },
@@ -641,20 +664,6 @@ export function connectorRoutes(storage: Storage) {
 
   router.openapi(registerConnectorRoute, async (c) => {
     const key = requireAuth(c);
-    // A session token's synthetic key is the token row, renewed on every
-    // refresh: a registration keyed to it would be orphaned by the next.
-    if (c.get("authType") === "oauth") {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "A connector registers under a key, not under an app's session token",
-      );
-    }
-    if (key.is_operator) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "The operator key runs the instance and does not register as a connector",
-      );
-    }
     const body = c.req.valid("json");
     const { connector, created } = await storage.connectors.register(
       { id: key.id, source: key.source },

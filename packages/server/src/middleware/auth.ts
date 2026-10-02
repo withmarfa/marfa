@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { createMiddleware } from "hono/factory";
-import type { Context } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 import {
   MarfaError,
   ErrorCode,
@@ -266,8 +266,9 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
  *
  * An OAuth principal's `id` is the access-token row, and every refresh
  * replaces it, so anything that has to hold across a refresh keys on this:
- * an idempotent retry the app makes after refreshing, and the bulk-action
- * job it comes back to read.
+ * an idempotent retry the app makes after refreshing, the bulk-action job
+ * it comes back to read, and the rate limit, which it could otherwise reset
+ * by refreshing.
  *
  * **A revoke followed by a fresh consent from the same app and person lands
  * on the same handle**, and an idempotent replay is served before the door's
@@ -728,8 +729,85 @@ export function requireAuth(c: Context<AppEnv>): ApiKey {
   return checkAuth(c.get("apiKey"));
 }
 
-export function requireOperatorKey(c: Context<AppEnv>): ApiKey {
-  return checkOperatorKey(c.get("apiKey"));
+/**
+ * What a door asks of every caller whatever the request says, held ahead of
+ * the request's validation as the credential check is (see
+ * {@link requireDeclaredCredential}).
+ *
+ * **A caller that may not use a door is told so before anything about its
+ * request.** Checked inside a handler, the operator key or a door's own
+ * permission is reached only after the router has validated the path, the
+ * query and the body, so a key that may not use the door learns what shape
+ * the door wants, and which of its inputs are wrong, before it is told it
+ * may not use it at all. Hung off a route as its `middleware`, the check
+ * runs after the credential check and before the validators.
+ *
+ * Every rule is recorded against the middleware that holds it, so the door
+ * census reads which doors carry one from the app's own route table.
+ */
+const standingRules = new WeakMap<object, string>();
+
+/** The standing rule a route handler holds, if it is one of these. */
+export function standingRuleOf(handler: unknown): string | undefined {
+  return typeof handler === "function" ? standingRules.get(handler) : undefined;
+}
+
+/**
+ * A standing rule named `name`, checked by `check`, which throws to refuse.
+ * The first `POST /keys`, which presents the bootstrap secret instead of a
+ * credential, is admitted as the credential check admits it.
+ */
+export function standingRule(
+  name: string,
+  check: (c: Context<AppEnv>) => void,
+): MiddlewareHandler<AppEnv> {
+  const rule = createMiddleware<AppEnv>(async (c, next) => {
+    if (!c.get("isBootstrap")) check(c);
+    await next();
+  });
+  standingRules.set(rule, name);
+  return rule;
+}
+
+/** Only the operator key opens the door; a working key is refused `403`. */
+export const operatorOnly = standingRule("operator key", (c) => {
+  checkOperatorKey(c.get("apiKey"));
+});
+
+/**
+ * The data plane refuses a credential whose type map reaches no type at all,
+ * whatever the request names (`keys-and-oauth.md` 1). The operator key
+ * reaches none, so it is refused here too.
+ */
+export const readsSomeType = standingRule("reads some type", (c) => {
+  getTypeFilter(c);
+});
+
+/** Only a key opens the door: a signed-in app's token is refused `403`. */
+export const keysOnly = standingRule("a key, not a signed-in app", (c) => {
+  requireAuth(c);
+  if (c.get("authType") === "oauth") {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "This credential is a signed-in app's token, not a key; its reach is its grant.",
+    );
+  }
+});
+
+/** The door takes `permission` of every caller, and with `operatorToo` the
+ *  operator key opens it as well. */
+export function standingPermission(
+  permission: Permission,
+  opts: { operatorToo?: boolean } = {},
+): MiddlewareHandler<AppEnv> {
+  const operatorToo = opts.operatorToo === true;
+  return standingRule(
+    operatorToo ? `${permission} or operator key` : permission,
+    (c) => {
+      if (operatorToo && checkAuth(c.get("apiKey")).is_operator) return;
+      requirePermission(c, permission);
+    },
+  );
 }
 
 /**
@@ -962,18 +1040,17 @@ export function requireMetadataPermission(
  * rather than this function's.** Bootstrap presents no credential at all:
  * `apiKey` is undefined and `authType` unset, so `checkAuth` throws before the
  * OAuth question is reached. That is the right answer for a helper that cannot
- * see the sentinel, and it means a call site on the mint path has to sit
- * inside its own `if (!isBootstrap)` block, where every other authority check
- * on that route already is. Do not weaken this to admit the shape; put the
- * call in the right place.
+ * see the sentinel; {@link standingRule} is what admits bootstrap on the mint
+ * path, and a call on that path from anywhere else has to sit behind the same
+ * test. Do not weaken this to admit the shape; put the call in the right
+ * place.
  *
  * **This is the whole of the check on the surface, not a second half.**
  * Nothing admits a caller to an administrative door on what kind of
  * credential it is, so a door that should ask this and does not stands open
- * to any authenticated caller. No scan can find one either, because
- * `requireAuth` sits on nearly every handler and leaves no signature to key
- * on; `routes/permission-door-census.test.ts` holds the doors that do
- * ask to asking for the right surface.
+ * to any authenticated caller. A door asking it of every caller asks it
+ * through {@link standingPermission}; `routes/permission-door-census.test.ts`
+ * holds those doors and the few that ask it inside a handler.
  *
  * **A missing carrier fails closed.** An OAuth request that reached a gate
  * with no `oauthGrant` set is a defect in the bearer middleware, and the safe
@@ -1016,10 +1093,10 @@ export function requirePermission(
  * credential may not see it. The single-row doors refuse it too, through
  * `requireReadableRow`, so one question gets one answer however many rows.
  *
- * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
- * where it narrows a match set rather than refusing a row, and a key
- * holding read across the board matching nothing there is its own settled
- * behavior.
+ * **Only at read level.** `POST /items/bulk-actions` also asks at
+ * `"write"`, where it narrows a match set rather than refusing a row, so a
+ * key that reads every type and writes none matches nothing there. A key
+ * reaching no type at all is refused that door first, by `readsSomeType`.
  *
  * **In the wrapper and not in `computeTypeFilter`**, which stays a pure
  * predicate for the callers that answer an empty reach their own way.

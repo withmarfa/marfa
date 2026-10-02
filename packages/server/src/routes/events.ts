@@ -14,6 +14,7 @@ import {
   getTypeFilter,
   mayReadType,
   requireAuth,
+  readsSomeType,
 } from "../middleware/auth.js";
 import { resolveLiveCredential } from "../auth/live-credential.js";
 import {
@@ -473,7 +474,7 @@ export function eventRoutes(
   let liveViewers = 0;
 
   // GET /events — Server-Sent Events stream with replay support
-  router.get("/", (c) => {
+  router.get("/", readsSomeType, (c) => {
     const apiKey = requireAuth(c);
     const typeParam = parseTypeFilter(c.req.query("type"));
     const edgeMode = parseEdgeMode(c.req.query("edges"));

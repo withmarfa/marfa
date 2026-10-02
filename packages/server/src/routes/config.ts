@@ -2,7 +2,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { InstanceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requirePermission, requireAuth } from "../middleware/auth.js";
+import { requireAuth, standingPermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
@@ -73,6 +73,9 @@ const InstanceConfigWriteSchema = z.strictObject({
   ...instanceConfigShape(true),
 });
 
+/** Both configuration doors take `config.manage`. */
+const managesConfig = standingPermission("config.manage");
+
 const getConfigRoute = createRoute({
   operationId: "getConfig",
   method: "get",
@@ -82,6 +85,7 @@ const getConfigRoute = createRoute({
   description:
     "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides — under `instance_id`, the identifier this deployment answers to. Only `instance_id` is present when nothing is configured. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
+  middleware: managesConfig,
   responses: {
     200: {
       content: {
@@ -117,6 +121,7 @@ const putConfigRoute = createRoute({
   description:
     "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. `instance_id` may be sent back as read, so a body taken from `GET /config` round trips; it sets nothing, and one naming a different instance answers `400 validation_error` rather than being ignored. Requires `config.manage`.",
   security: [{ bearerAuth: [] }],
+  middleware: managesConfig,
   request: {
     body: {
       content: {
@@ -166,7 +171,6 @@ export function configRoutes(storage: Storage, instanceId: string) {
 
   router.openapi(getConfigRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "config.manage");
     const config = await readInstanceConfig(storage.settings);
     // The identity last, so a stored row carrying the key cannot shadow it.
     // `readInstanceConfig` parses without a runtime schema, so whatever is
@@ -177,7 +181,6 @@ export function configRoutes(storage: Storage, instanceId: string) {
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireAuth(c);
-    requirePermission(c, "config.manage");
     const { instance_id: addressed, ...rest } = c.req.valid("json");
     if (addressed !== undefined && addressed !== instanceId) {
       throw new MarfaError(

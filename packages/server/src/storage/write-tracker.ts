@@ -8,7 +8,8 @@
  * same for both: the returned promise is never awaited and carries no
  * `.catch()` — so if the underlying write rejects (e.g. the connection pool
  * was torn down while it was still in flight), it surfaces as an unhandled
- * promise rejection that can crash the process or pollute a test run.
+ * promise rejection, which the server reports as a fault and a test run
+ * fails on.
  *
  * This tracker is the owning store's seam for two guarantees that hold the
  * fire-and-forget contract unchanged from the caller's side:
