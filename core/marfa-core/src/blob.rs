@@ -10,7 +10,7 @@ use ureq::Agent;
 
 use crate::Result;
 use crate::error::CoreError;
-use crate::http::{Call, CallBody, Http, Method, refusal};
+use crate::http::{Call, CallBody, Http, Method};
 
 const PREFIX: &str = "sha256:";
 
@@ -268,7 +268,12 @@ pub(crate) fn fetch(cache: &Cache, http: &Http, hash: &str) -> Result<PathBuf> {
         return Err(absent(format!("the server holds none: {text}")));
     }
     if !(200..300).contains(&reply.status) {
-        return Err(refusal(reply.status, &text, reply.retry_after_seconds));
+        return Err(http.refused(
+            reply.status,
+            reply.contract.is_some(),
+            &text,
+            reply.retry_after_seconds,
+        ));
     }
     let link: serde_json::Value = serde_json::from_str(&text)?;
     let link = link
@@ -360,6 +365,27 @@ pub fn file_type_for(mime_type: &str, given: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_link_refused_naming_no_contract_is_the_network() {
+        let server = crate::scripted::Scripted::start();
+        let http = Http::new(&server.url(), "k").unwrap();
+        let hash = name_of(b"bytes");
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Cache::beside(&dir.path().join("core.sqlite"));
+        let door = format!("/blobs/{hash}/url");
+        server.on(&door, vec![crate::scripted::unnamed(401, "access_denied")]);
+        let refused = fetch(&cache, &http, &hash).unwrap_err();
+        assert!(
+            matches!(refused, CoreError::Unnamed { status: 401, .. }),
+            "a gateway's 401 on a blob's link was read as the credential refused: {refused:?}"
+        );
+        server.on(&door, vec![crate::scripted::refusal(401, "unauthorized")]);
+        assert!(matches!(
+            fetch(&cache, &http, &hash).unwrap_err(),
+            CoreError::Unauthorized { .. }
+        ));
+    }
 
     const EMPTY: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 

@@ -24,12 +24,16 @@ pub struct DrainReport {
     /// and every write left behind it, and one whose bytes could not be
     /// opened. Each waits, uncounted, for the next drain.
     pub undelivered: usize,
-    /// Writes this pass settled without the server answering them: refused
-    /// for a write they waited on or for bytes no longer held, settled by
-    /// another write's answer, or counted for a request that could not be
-    /// made. With `answered`, `held` and `undelivered`, every write the pass
-    /// came to.
+    /// Writes this pass gave a verdict without sending them: refused for a
+    /// write they waited on or for bytes no longer held, or settled by
+    /// another write's answer.
     pub unsent: usize,
+    /// Writes whose request could not be made, such as a header the
+    /// transport would not build: each is counted against its write and
+    /// waits for the next drain, or is dead at the ceiling. With `answered`,
+    /// `held`, `undelivered` and `unsent`, every write the pass came to; the
+    /// writes a refused credential parks are counted in `stopped`.
+    pub unmade: usize,
     /// Why the pass ended before the queue was through: the server could not
     /// be reached, failed, or asked to be left alone for a while.
     pub unavailable: Option<String>,
@@ -188,20 +192,14 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         return Classified::Success;
     }
     match (answer.status, answer.code.as_str()) {
-        // Not the server's: something in front of it, a proxy, a tunnel or
-        // an access gateway, which says nothing of the write or the key.
-        // Were it counted, a proxy restarting under a watch that drains each
-        // second would kill every write in the queue within seconds; were
-        // it refused, it would end writes the server never saw.
-        _ if !answer.contract_named => Classified::Environmental,
+        // Naming no contract, it says nothing of the write or the key: were
+        // it counted, a proxy restarting under a watch that drains each
+        // second would kill every queued write within seconds. And 408 is a
+        // proxy's about the network, 425 asks for the same request again.
+        _ if answer.is_environmental() => Classified::Environmental,
         // Looks environmental, but clears only when a person replaces the
         // credential.
         (401, _) => Classified::BlockQueue(BlockedReason::CredentialRefused),
-        (429, _) => Classified::Environmental,
-        (500..=599, _) => Classified::Environmental,
-        // Environmental despite the 4xx: a proxy emits 408 about the
-        // network, and 425 asks for the same request again.
-        (408 | 425, _) => Classified::Environmental,
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
@@ -489,6 +487,7 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         held: 0,
         undelivered: 0,
         unsent: 0,
+        unmade: 0,
         unavailable: None,
         verdicts: Vec::new(),
         stopped: None,
@@ -675,8 +674,7 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
         if answer.is_ok() && (settled.unavailable.is_none() || settled.verdict.is_some()) {
             report.answered += 1;
         } else if answer.is_err() && settled.unavailable.is_none() {
-            // A request that could not be made, counted against its write.
-            report.unsent += 1;
+            report.unmade += 1;
         }
         waited(&mut report, settled.retry_after_seconds);
         answers.insert(row.id.clone(), settled.verdict);
@@ -754,7 +752,7 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
     match answer {
         Err(error) => unavailable_by(error),
         Ok(answer) if !answer.contract_named && !answer.is_success() => Some(format!(
-            "something in front of the server, a proxy or a gateway, answered {} naming no contract, so the server was not reached",
+            "an answer of {} naming no contract, taken as from something in front of the server; if it repeats while the server otherwise answers, its refusals are losing the contract header on the way",
             answer.status
         )),
         Ok(answer) => match answer.status {
@@ -782,6 +780,7 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
 fn unavailable_by(error: &CoreError) -> Option<String> {
     match error {
         CoreError::Network(reason) => Some(format!("the server could not be reached: {reason}")),
+        CoreError::Unnamed { .. } => Some(error.to_string()),
         CoreError::RateLimited { .. } | CoreError::Server { .. } if error.is_environmental() => {
             Some(format!(
                 "the server could not take the request now: {error}"
@@ -2004,6 +2003,39 @@ mod tests {
             core.delete_item(id).unwrap();
         }
         (dir, core)
+    }
+
+    #[test]
+    fn a_read_reconciling_a_refusal_refused_naming_no_contract_ends_the_pass() {
+        let server = crate::scripted::Scripted::start();
+        let rows = ["a", "b"];
+        // `a` is refused and read back; the read meets a proxy, so `b` waits.
+        server.on(
+            "/items/a",
+            vec![
+                crate::scripted::refusal(400, "invalid"),
+                crate::scripted::unnamed(400, "bad_request"),
+            ],
+        );
+        server.on(
+            "/items/b",
+            vec![crate::scripted::json(200, r#"{"ok":true}"#)],
+        );
+        let (_dir, core) = deleting(&server, &rows);
+        let report = core.drain().unwrap();
+        assert_eq!(
+            server.seen("/items/b").len(),
+            0,
+            "the pass went on past a read something in front of the server refused"
+        );
+        assert!(
+            report
+                .unavailable
+                .as_deref()
+                .is_some_and(|why| why.contains("naming no contract")),
+            "{report:?}"
+        );
+        assert_eq!((report.answered, report.undelivered), (1, 1));
     }
 
     #[test]

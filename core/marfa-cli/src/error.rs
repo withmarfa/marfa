@@ -96,6 +96,7 @@ impl CliError {
                 CoreError::RateLimited { .. } => "rate_limited",
                 CoreError::Server { .. } => "server",
                 CoreError::Network(_) => "network",
+                CoreError::Unnamed { .. } => "unnamed_answer",
                 CoreError::Decoding(_) => "decoding",
                 CoreError::Store(_) => "store",
                 CoreError::NoServer => "no_server",
@@ -150,6 +151,7 @@ impl CliError {
                 CoreError::RateLimited { .. }
                 | CoreError::Server { .. }
                 | CoreError::Network(_)
+                | CoreError::Unnamed { .. }
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. }
                 | CoreError::BytesAbsent { .. } => Exit::Environment,
@@ -195,7 +197,9 @@ impl CliError {
                 CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
                 CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
                 CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
-                CoreError::ContractMismatch { status, .. } => Some((Some(*status), None, None)),
+                CoreError::ContractMismatch { status, .. } | CoreError::Unnamed { status, .. } => {
+                    Some((Some(*status), None, None))
+                }
                 _ => None,
             },
             CliError::Refused {
@@ -272,14 +276,14 @@ Exit codes:
   0  done
   1  the request was refused, by the server, by the binary before sending, or for an answer on another contract; a retry does not change it
   2  the command line was wrong, or named no store or server
-  3  the environment failed (unreachable, timed out, a 5xx, a 429); try again
+  3  the environment failed (unreachable, timed out, a 5xx, a 429, an answer naming no contract); try again
   4  the working copy or the queue refused under the device rules, or this system has no keychain
   5  no credential, the credential was refused, or the sign-in ended; `marfa login` starts one
 
 With --json a refusal is one JSON object on stderr:
   {\"error\":{\"code\":...,\"message\":...,\"server\":{\"status\":...,\"code\":...,\"details\":...}|null,\"retry_after_seconds\":...},\"exit\":N}
 where error.code is one of: usage, invalid, not_found, unauthorized, forbidden, validation, conflict,
-too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
+too_large, unknown_type, rate_limited, server, network, unnamed_answer, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
 no_catalog, reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
 contract_mismatch, redirect.";
@@ -350,6 +354,11 @@ mod tests {
             })
             .code(),
             CliError::Core(CoreError::Network(String::new())).code(),
+            CliError::Core(CoreError::Unnamed {
+                origin: String::new(),
+                status: 401,
+            })
+            .code(),
             CliError::Core(CoreError::Decoding(String::new())).code(),
             CliError::Io(io::Error::other("x")).code(),
             CliError::Watch(String::new()).code(),

@@ -219,16 +219,7 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             }
             lines.push(line);
         }
-        lines.push(format!(
-            "answered {}, held {}{}",
-            drain.answered,
-            drain.held,
-            if drain.unsent > 0 {
-                format!(", {} settled without being sent", drain.unsent)
-            } else {
-                String::new()
-            }
-        ));
+        lines.push(counts(drain));
         lines.extend(undelivered(drain));
         if let Some(wait) = drain.retry_after_seconds {
             lines.push(format!(
@@ -266,6 +257,22 @@ fn refused(refusal: &marfa_core::Refusal) -> String {
         said.push_str(&format!(" {}: {}", field.field, field.message));
     }
     said
+}
+
+/// Every write the pass came to, but those `stopped` names, which says how
+/// many a refused credential parked.
+pub fn counts(drain: &DrainReport) -> String {
+    let mut line = format!("answered {}, held {}", drain.answered, drain.held);
+    if drain.unsent > 0 {
+        line.push_str(&format!(", {} given a verdict unsent", drain.unsent));
+    }
+    if drain.unmade > 0 {
+        line.push_str(&format!(
+            ", {} whose request could not be made, counted",
+            drain.unmade
+        ));
+    }
+    line
 }
 
 /// Said apart from the answered count, so writes that went nowhere never

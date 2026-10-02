@@ -546,10 +546,14 @@ pub struct DrainReport {
     /// Writes it could not deliver, each still waiting, uncounted, for the
     /// next drain.
     pub undelivered: u64,
-    /// Writes it settled without the server answering them: refused for a
-    /// write they waited on or for bytes no longer held, settled by another
-    /// write's answer, or counted for a request that could not be made.
+    /// Writes it gave a verdict without sending them: refused for a write
+    /// they waited on or for bytes no longer held, or settled by another
+    /// write's answer.
     pub unsent: u64,
+    /// Writes whose request could not be made: each is counted against its
+    /// write and waits for the next drain, or is dead at the ceiling. The
+    /// writes a refused credential parks are counted in `stopped`.
+    pub unmade: u64,
     /// Why the drain ended before the queue was through: the server could
     /// not be reached, failed, or asked to be left alone for a while.
     pub unavailable: Option<String>,
@@ -598,6 +602,12 @@ pub enum MarfaError {
         message: String,
     },
     Network {
+        message: String,
+    },
+    /// Something in front of the server answered `status` naming no
+    /// contract: taken as the network failing, never as the server's word.
+    Unnamed {
+        status: u16,
         message: String,
     },
     Decoding {
@@ -677,6 +687,7 @@ impl MarfaError {
             | MarfaError::RateLimited { message, .. }
             | MarfaError::Server { message, .. }
             | MarfaError::Network { message }
+            | MarfaError::Unnamed { message, .. }
             | MarfaError::Decoding { message }
             | MarfaError::Store { message }
             | MarfaError::NoServer { message }
@@ -726,6 +737,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 message,
             },
             E::Network(_) => MarfaError::Network { message },
+            E::Unnamed { status, .. } => MarfaError::Unnamed { status, message },
             E::Decoding(_) => MarfaError::Decoding { message },
             E::Store(_) => MarfaError::Store { message },
             E::NoServer => MarfaError::NoServer { message },
@@ -1041,6 +1053,7 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
         held: report.held as u64,
         undelivered: report.undelivered as u64,
         unsent: report.unsent as u64,
+        unmade: report.unmade as u64,
         unavailable: report.unavailable,
         verdicts,
         stopped: report.stopped,
@@ -1781,6 +1794,14 @@ mod tests {
                 "ContractMismatch",
             ),
             (E::Invalid(text()).into(), "Invalid"),
+            (
+                E::Unnamed {
+                    origin: text(),
+                    status: 401,
+                }
+                .into(),
+                "Unnamed",
+            ),
         ];
         for (error, name) in &crossed {
             let debug = format!("{error:?}");
@@ -1796,6 +1817,10 @@ mod tests {
         assert!(matches!(
             &crossed[20].0,
             MarfaError::ContractMismatch { served: Some(served), expected: 3, .. } if served == "4"
+        ));
+        assert!(matches!(
+            &crossed[22].0,
+            MarfaError::Unnamed { status: 401, .. }
         ));
     }
 
@@ -2000,6 +2025,7 @@ mod tests {
             held: 1,
             undelivered: 3,
             unsent: 4,
+            unmade: 5,
             unavailable: Some("the server could not be reached".into()),
             verdicts: Vec::new(),
             stopped: None,
@@ -2013,6 +2039,7 @@ mod tests {
                 report.held,
                 report.undelivered,
                 report.unsent,
+                report.unmade,
                 report.unavailable.as_deref(),
                 report.unclaimed_sources,
                 report.retry_after_seconds,
@@ -2022,6 +2049,7 @@ mod tests {
                 1,
                 3,
                 4,
+                5,
                 Some("the server could not be reached"),
                 vec!["notes".to_string()],
                 Some(7)

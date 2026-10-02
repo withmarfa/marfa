@@ -128,7 +128,8 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
                 let (wait, next) = retry_schedule(retry, &error);
                 if !said {
                     eprintln!(
-                        "could not hydrate ({error}); trying again after a wait that doubles to {RETRY_MOST:?}"
+                        "could not hydrate ({error}); trying again in {wait:?}, and after each failure \
+                         a wait that doubles to {RETRY_MOST:?}, or longer where the server names one"
                     );
                     said = true;
                 }
