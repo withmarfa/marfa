@@ -12,6 +12,12 @@ pub enum CliError {
     Io(io::Error),
     #[error("{0} is not in the local copy")]
     NotHeld(String),
+    /// The core's `ReadingHandle`, said of the folder rather than its store.
+    #[error(
+        "{} is being worked by another process, such as a running `folders watch`; one process works a folder at a time, so stop it and run this again",
+        .0.display()
+    )]
+    FolderHeld(std::path::PathBuf),
     #[error("{0}")]
     Watch(String),
     #[error("output closed")]
@@ -113,6 +119,7 @@ impl CliError {
             },
             CliError::Io(_) => "io",
             CliError::NotHeld(_) => "not_held",
+            CliError::FolderHeld(_) => "reading_handle",
             CliError::Watch(_) => "watch",
             CliError::ClosedOutput => "closed_output",
             CliError::Refused { status, .. } => match status {
@@ -180,7 +187,7 @@ impl CliError {
             | CliError::NoStoreAt(_)
             | CliError::NoServerNamed => Exit::Usage,
             CliError::NoCredential { .. } | CliError::SignedOut { .. } => Exit::Credential,
-            CliError::NoKeychain(_) => Exit::Local,
+            CliError::NoKeychain(_) | CliError::FolderHeld(_) => Exit::Local,
         }
     }
 

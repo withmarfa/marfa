@@ -97,7 +97,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
     match command {
         FoldersCommand::Add { dir, folder } => {
             let session = named.session()?;
-            let folder = Folder::add(&dir, &folder, Some(session.server))?;
+            let folder = Folder::add(&dir, &folder, Some(session.server)).map_err(held(&dir))?;
             renewing(folder.core(), session.renew);
             output::report(
                 &serde_json::json!({
@@ -138,7 +138,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
         }
         FoldersCommand::Remove { dir } => {
             if dir.join(marfa_core::folder::STATE_DIR).exists() || !Folder::forget(&dir)? {
-                Folder::open(&dir, None)?.remove()?;
+                Folder::open(&dir, None).map_err(held(&dir))?.remove()?;
             }
             output::report(
                 &serde_json::json!({ "dir": dir, "removed": true }),
@@ -151,7 +151,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(&report, json, || describe_status(&report))
         }
         FoldersCommand::Confirm { dir } => {
-            let confirmed = Folder::open(&dir, None)?.confirm()?;
+            let confirmed = Folder::open(&dir, None).map_err(held(&dir))?.confirm()?;
             output::report(&confirmed, json, || {
                 format!(
                     "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away{}",
@@ -183,7 +183,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Scan { dir } => {
-            let report = Folder::open(&dir, None)?.scan()?;
+            let report = Folder::open(&dir, None).map_err(held(&dir))?.scan()?;
             output::report(&report, json, || describe_scan(&report))
         }
         FoldersCommand::Pull { dir } => {
@@ -318,9 +318,18 @@ pub fn unplaced_line(unplaced: usize) -> Option<String> {
     })
 }
 
+/// A folder another process holds is refused at its open, and said of the
+/// folder.
+fn held(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
+    move |error| match error {
+        CoreError::ReadingHandle => CliError::FolderHeld(dir.to_path_buf()),
+        other => other.into(),
+    }
+}
+
 pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     let (server, renew) = Session::split(session);
-    let folder = Folder::open(dir, server)?;
+    let folder = Folder::open(dir, server).map_err(held(dir))?;
     renewing(folder.core(), renew);
     Ok(folder)
 }

@@ -15363,6 +15363,7 @@ describe("folders on one Mac", () => {
       ).toBe(false);
       if (refused.ok) return;
       expect(refused.refusal.code).toBe("reading_handle");
+      expect(refused.refusal.raw).toContain("folders watch");
       expect(existsSync(join(harness.dir, ".marfa"))).toBe(true);
     } finally {
       await watch.stop();
@@ -15415,7 +15416,7 @@ describe("folders on one Mac", () => {
           false,
         );
       });
-      expect(another.stderr).toContain("reading handle");
+      expect(another.stderr).toContain("folders watch");
       // Status writes nothing, so it answers beside the watch.
       const status = await harness.folder.status();
       expect(status.ok, JSON.stringify(status)).toBe(true);
