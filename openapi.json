@@ -1948,7 +1948,7 @@
         "properties": {
           "type": {
             "type": "string",
-            "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
+            "description": "A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be."
           },
           "description": {
             "type": "string"
@@ -1964,7 +1964,7 @@
           },
           "items_type": {
             "type": "string",
-            "description": "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail."
+            "description": "A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be."
           },
           "format": {
             "type": "string",
@@ -1975,7 +1975,7 @@
           "type"
         ]
       },
-      "MissingRequiredFieldOrValidationErrorRefusal": {
+      "InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1984,6 +1984,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "invalid_schema",
                   "missing_required_field",
                   "validation_error"
                 ]
@@ -2603,7 +2604,7 @@
         ],
         "additionalProperties": {}
       },
-      "InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal": {
+      "InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -2614,6 +2615,7 @@
                 "enum": [
                   "inheritance_violation",
                   "invalid_schema",
+                  "property_shadows_field",
                   "validation_error"
                 ]
               },
@@ -2976,6 +2978,37 @@
         "required": [
           "starts_at",
           "item"
+        ]
+      },
+      "MissingRequiredFieldOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "missing_required_field",
+                  "validation_error"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
         ]
       },
       "TagCountPage": {
@@ -15970,7 +16003,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -17303,11 +17336,11 @@
             }
           },
           "400": {
-            "description": "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
+            "description": "`validation_error` for a malformed identifier, a body of the wrong shape, or a parent chain that is circular, too deep or unresolved; `property_shadows_field` for a field name a first-class `Item` field already holds; `inheritance_violation` for a field whose shape differs from the one a type above or below it in the chain declares under the same name; `invalid_schema` for any other schema the validator refuses.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidSchemaOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -17467,6 +17500,36 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "422": {
+            "description": "A `compatible_with` naming an unknown type or missing a required field of its target, as registration refuses it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
