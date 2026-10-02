@@ -105,7 +105,7 @@ describe("the enrichment sweep and a blob's reach", () => {
 
     // Once the file's writer has sent the bytes, a file it writes naming
     // them lends them, and the next sweep reads them; the first file's
-    // reference stays unproven while it names the digest.
+    // reference lends nothing while it names the digest.
     expect((await fileWriter.uploadBlob(hidden, "text/plain")).status).toBe(
       201,
     );

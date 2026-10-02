@@ -433,6 +433,50 @@ describe("who may read and upload a blob", () => {
     expect(await readingDoors(client, sha256(unlent))).toEqual(SERVED);
   });
 
+  it("credits a stale write only for digests its base version lacked", async () => {
+    const hash = await upload("a secret a stale edit echoes");
+    await fileNaming(hash);
+    const planter = await keyHolding({ "core.note": "write" });
+    const planted = await planter.client.createItem({
+      type: "core.note",
+      properties: { body: `a typo ![it](${hash})` },
+    });
+    expect(planted.ok, JSON.stringify(planted.error)).toBe(true);
+    trackItem(ctx, planted.data.item.id);
+    // The suite's key holds this version; the planter then removes the hash.
+    const removed = await planter.client.updateItem(planted.data.item.id, {
+      properties: { body: "nothing here" },
+      version: planted.data.item.version,
+    });
+    expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
+
+    // The suite's edit, made on the old version, still carries the hash.
+    const stale = await client.rawRequest<{ item: { id: string } }>(
+      `/items/${planted.data.item.id}?conflict=auto`,
+      {
+        method: "PATCH",
+        body: {
+          properties: { body: `a fixed typo ![it](${hash})` },
+          version: planted.data.item.version,
+        },
+      },
+    );
+    expect(stale.ok, JSON.stringify(stale.error)).toBe(true);
+    const own = await planter.client.getCurrentKey();
+    expect(own.ok, JSON.stringify(own.error)).toBe(true);
+    const notes = await client.listItems({
+      type: "core.note",
+      source: own.data.source,
+      limit: 200,
+    });
+    expect(
+      notes.data.data.some((row) =>
+        JSON.stringify(row.properties).includes(hash.slice("sha256:".length)),
+      ),
+    ).toBe(true);
+    expect(await readingDoors(planter.client, hash)).toEqual(UNKNOWN);
+  });
+
   it("keeps a planted digest dead through an export, a purge and a restore", async () => {
     const hash = await upload("a private file an archive carries planted");
     await fileNaming(hash);
