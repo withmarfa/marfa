@@ -87,7 +87,7 @@ const ITEM_WRITERS: Record<string, string> = {
     "the one item write; it creates and updates through the store, which asks validateProperties of every result",
 };
 
-const WRITES_ITEMS = /\bitems\.(create|update)\(/;
+const WRITES_ITEMS = /\b(?:items|itemWrites\([^)]*\))\.(create|update)\(/;
 
 function itemWriters(): string[] {
   const root = join(import.meta.dirname, "..");
