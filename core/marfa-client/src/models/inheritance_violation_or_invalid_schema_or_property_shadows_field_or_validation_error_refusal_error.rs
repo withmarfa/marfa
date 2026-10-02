@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
+pub struct InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusalError {
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,12 +21,13 @@ pub struct InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
+impl InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusalError {
     pub fn new(
         code: Code,
         message: String,
-    ) -> InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
-        InheritanceViolationOrInvalidSchemaOrValidationErrorRefusalError {
+    ) -> InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusalError
+    {
+        InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusalError {
             code,
             message,
             details: None,
@@ -40,6 +41,8 @@ pub enum Code {
     InheritanceViolation,
     #[serde(rename = "invalid_schema")]
     InvalidSchema,
+    #[serde(rename = "property_shadows_field")]
+    PropertyShadowsField,
     #[serde(rename = "validation_error")]
     ValidationError,
 }
