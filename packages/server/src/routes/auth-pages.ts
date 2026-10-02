@@ -381,7 +381,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     //     the user lands on `/` after the credential check.
     //     Detect that shape and synthesize `return_to=/auth/authorize?<full original query>`
     //     so the existing form-round-trip path takes over.
-    let returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    let returnTo = validateReturnTo(
+      url.searchParams.get("return_to"),
+      c.var.config.authBaseUrl,
+    );
     if (returnTo === "/" && url.searchParams.has("response_type")) {
       returnTo = synthesizeOauthReturnTo(url.searchParams);
     }
@@ -400,7 +403,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     }
 
     const formData = await c.req.formData();
-    const returnTo = validateReturnTo(formData.get("return_to"));
+    const returnTo = validateReturnTo(
+      formData.get("return_to"),
+      c.var.config.authBaseUrl,
+    );
     const email = formData.get("email");
     const emailStr = typeof email === "string" ? email.trim() : "";
 

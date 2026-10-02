@@ -16,10 +16,9 @@ import { escapeHtml } from "./auth-html.js";
 
 interface SignInPageParams {
   /**
-   * Where to send the user after a successful sign-in. Validated by the
-   * caller — only relative paths starting with `/` are accepted. The
-   * value is passed through to the form's hidden field so it survives
-   * the round-trip.
+   * Where to send the user after a successful sign-in, already passed
+   * through `validateReturnTo`. Carried in the form's hidden field so it
+   * survives the round-trip.
    */
   returnTo: string;
   /**
@@ -109,23 +108,27 @@ export function renderSignInPage(params: SignInPageParams): string {
 }
 
 /**
- * Validate a `return_to` query param. Only same-origin relative paths
- * starting with `/` are accepted. Anything else (absolute URL,
- * protocol-relative URL, empty string) falls back to `/`.
+ * Where a sign-in may send the browser afterwards: `raw` resolved against the
+ * issuer, kept only when it lands on the issuer's own origin, and answered as
+ * the normalized path, query and fragment. Anything else is `/`.
  *
- * Exposed as a separate function so the wrapper POST handler can apply
- * the same check before issuing its 302.
+ * Resolved rather than pattern-matched because the browser resolves it: it
+ * strips tabs and newlines and reads a backslash as a slash before it looks
+ * at the URL, so `/\t/evil.example` is `//evil.example` by the time it
+ * navigates. The one function every door that redirects after sign-in asks.
  */
-export function validateReturnTo(raw: unknown): string {
+export function validateReturnTo(raw: unknown, issuer: string): string {
   if (typeof raw !== "string" || raw.length === 0) return "/";
-  // Reject anything that could resolve off-origin: protocol-relative
-  // (`//evil.com`), schema (`http://`, `javascript:`), or empty.
-  if (!raw.startsWith("/")) return "/";
-  if (raw.startsWith("//")) return "/";
-  // Reject backslash-after-slash sequences that some browsers parse as
-  // path separators on Windows / via the WHATWG URL parser (`/\evil.com`).
-  if (raw.startsWith("/\\")) return "/";
-  return raw;
+  let base: URL;
+  let target: URL;
+  try {
+    base = new URL(issuer);
+    target = new URL(raw, base);
+  } catch {
+    return "/";
+  }
+  if (target.origin !== base.origin) return "/";
+  return `${target.pathname}${target.search}${target.hash}`;
 }
 
 /**
@@ -144,8 +147,8 @@ export function validateReturnTo(raw: unknown): string {
  * re-encoding — they belong to the sign-in page's UX state, not to the
  * OAuth request.
  *
- * The return value is always same-origin (it starts with
- * `/auth/authorize?`), so it satisfies `validateReturnTo`.
+ * The return value always starts with `/auth/authorize`, so it
+ * satisfies `validateReturnTo`.
  */
 const SIGN_IN_LOCAL_PARAMS = new Set(["error", "return_to"]);
 

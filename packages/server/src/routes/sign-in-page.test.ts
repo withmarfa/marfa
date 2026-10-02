@@ -114,23 +114,42 @@ describe("renderSignInPage", () => {
 });
 
 describe("validateReturnTo", () => {
-  it("accepts relative paths starting with /", () => {
-    expect(validateReturnTo("/auth/authorize?client_id=abc")).toBe(
+  const ISSUER = "http://localhost:0";
+
+  it("accepts a path on the instance, normalized", () => {
+    expect(validateReturnTo("/auth/authorize?client_id=abc", ISSUER)).toBe(
       "/auth/authorize?client_id=abc",
     );
-    expect(validateReturnTo("/")).toBe("/");
-    expect(validateReturnTo("/foo/bar")).toBe("/foo/bar");
+    expect(validateReturnTo("/", ISSUER)).toBe("/");
+    expect(validateReturnTo("/foo/bar#frag", ISSUER)).toBe("/foo/bar#frag");
+    expect(validateReturnTo("/a/../b", ISSUER)).toBe("/b");
+    expect(validateReturnTo(`${ISSUER}/auth/device`, ISSUER)).toBe(
+      "/auth/device",
+    );
   });
 
-  it("falls back to / for unsafe values", () => {
-    expect(validateReturnTo("https://evil.com/")).toBe("/");
-    expect(validateReturnTo("//evil.com/path")).toBe("/");
-    expect(validateReturnTo("javascript:alert(1)")).toBe("/");
-    expect(validateReturnTo("foo")).toBe("/");
-    expect(validateReturnTo("")).toBe("/");
-    expect(validateReturnTo(undefined)).toBe("/");
-    expect(validateReturnTo(null)).toBe("/");
-    expect(validateReturnTo(42)).toBe("/");
+  it("falls back to / for anything that lands off the instance", () => {
+    for (const raw of [
+      "https://evil.com/",
+      "//evil.com/path",
+      "/\\evil.com",
+      "\\\\evil.com",
+      "/\t/evil.example",
+      "/\n/evil.example",
+      "/\r/evil.example",
+      "\t//evil.example",
+      " //evil.example",
+      "/\t\\evil.example",
+      "javascript:alert(1)",
+      "data:text/html,hi",
+      "http://localhost:1/",
+      "",
+      undefined,
+      null,
+      42,
+    ]) {
+      expect(validateReturnTo(raw, ISSUER), JSON.stringify(raw)).toBe("/");
+    }
   });
 });
 
@@ -185,7 +204,7 @@ describe("synthesizeOauthReturnTo", () => {
       sig: "x",
     });
     const returnTo = synthesizeOauthReturnTo(params);
-    expect(validateReturnTo(returnTo)).toBe(returnTo);
+    expect(validateReturnTo(returnTo, "http://localhost:0")).toBe(returnTo);
   });
 });
 
@@ -493,43 +512,28 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
   });
 
-  it("succeeds when browser sends Origin: null (privacy-strict referrer policy)", async () => {
-    // Regression test for the bug where Chrome serializes Origin as the
-    // literal string "null" on form-POST navigations under strict
-    // referrer policies — Better Auth's CSRF check was rejecting these
-    // with MISSING_OR_NULL_ORIGIN before the wrapper learned to fall
-    // back to auth.baseURL on null/missing Origin.
+  it("refuses a sign-in whose Origin is the opaque null", async () => {
+    // A sandboxed frame on any page sends `Origin: null`, so it says nothing
+    // about where the post came from. This server's own pages are served
+    // under a referrer policy that keeps a real Origin on the form post.
     ctx = await createTestContext();
     await createTestAccount(ctx, "edgar@example.com", "correct horse", "Edgar");
-
-    const formBody = new URLSearchParams({
-      email: "edgar@example.com",
-      password: "correct horse",
-      return_to: "/",
-    });
     const res = await ctx.app.fetch(
       new Request(`${ORIGIN}/auth/sign-in`, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
-          // Browser-style: literal "null" Origin from a privacy-strict
-          // referrer policy. The wrapper should fall back to
-          // auth.baseURL when dispatching to Better Auth.
           origin: "null",
         },
-        body: formBody.toString(),
+        body: new URLSearchParams({
+          email: "edgar@example.com",
+          password: "correct horse",
+          return_to: "/",
+        }).toString(),
       }),
     );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
-    const cookies =
-      typeof (res.headers as Headers & { getSetCookie?: () => string[] })
-        .getSetCookie === "function"
-        ? (
-            res.headers as Headers & { getSetCookie: () => string[] }
-          ).getSetCookie()
-        : [res.headers.get("set-cookie") ?? ""];
-    expect(cookies.some((c) => c.includes("marfa.auth"))).toBe(true);
+    expect(res.status).toBe(403);
+    expect(res.headers.get("set-cookie")).toBeNull();
   });
 
   it("succeeds when browser omits the Origin header entirely", async () => {
@@ -551,6 +555,35 @@ describe("POST /auth/sign-in (form wrapper)", () => {
           // No Origin header.
         },
         body: formBody.toString(),
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/");
+  });
+
+  it("never redirects off the instance on a return_to a browser would strip into one", async () => {
+    ctx = await createTestContext();
+    await createTestAccount(ctx, "tab@example.com", "correct horse", "Tab");
+    // A browser removes tabs and newlines from a URL before resolving it, so
+    // `/\t/evil.example` reaches it as `//evil.example`.
+    const page = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?return_to=${encodeURIComponent("/\t/evil.example")}`,
+    );
+    expect(await page.text()).toContain('name="return_to" value="/"');
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+        },
+        body: new URLSearchParams({
+          email: "tab@example.com",
+          password: "correct horse",
+          return_to: "/\t/evil.example",
+        }).toString(),
       }),
     );
     expect(res.status).toBe(302);
