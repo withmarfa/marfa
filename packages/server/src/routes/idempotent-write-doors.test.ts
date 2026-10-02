@@ -13,7 +13,7 @@
  * with no route" is exactly the shape that has been missed here before.
  *
  * So the enumeration is a grep over the storage-layer write calls —
- * `writeItem`, `items.{delete,purge,restore,transition,bulkPurge}` and
+ * `writeItem` and
  * `edges.{createRaw,updateProperties,delete,deleteBySource*,
  * deleteByTarget*}` — and every file it names is classified below. The
  * test re-runs that grep, so a new writer added anywhere in the server
@@ -48,19 +48,14 @@ const SERVER_SRC = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * The store methods that write an item or an edge.
  *
  * Read off `ItemStore` and `EdgeStore` in `storage/interface.ts` rather
- * than off the routes, an item's create and update being reached only
- * through `writeItem` (`storage/item-write-census.test.ts`). A method added to either interface and not listed
+ * than off the routes, an item being written only through `writeItem`
+ * (`storage/item-write-census.test.ts`). A method added to either interface and not listed
  * here is invisible to this file, which is the one gap left — and it is a
  * narrower one than the route walk's, because an interface is a single
  * file somebody is already editing.
  */
 const WRITE_METHODS: readonly string[] = [
   "writeItem",
-  "items.delete",
-  "items.purge",
-  "items.bulkPurge",
-  "items.restore",
-  "items.transition",
   "edges.createRaw",
   "edges.updateProperties",
   "edges.delete",
@@ -135,12 +130,7 @@ function writerFiles(): Set<string> {
     const relative = full.slice(SERVER_SRC.length + 1);
     if (relative.startsWith("storage/")) continue;
     if (relative === "test-utils.ts") continue;
-    // The lifecycle writes are reached through `itemWrites(storage)`, the
-    // store's writer view, so read that as the store it is.
-    const text = readFileSync(full, "utf-8").replace(
-      /itemWrites\([^)]*\)\./g,
-      "items.",
-    );
+    const text = readFileSync(full, "utf-8");
     for (const method of WRITE_METHODS) {
       // The call, not the mention: a comment naming a method would
       // otherwise classify a file that writes nothing.

@@ -40,12 +40,6 @@ const WRITERS: Record<string, string> = {
   "storage/retention.ts":
     "the trash and revoked-grant sweeps the store runs on itself, each typed to its one method",
   "housekeeping/registrations.ts": "hands those sweeps their one method each",
-  "routes/items.ts":
-    "the delete and purge doors' moves, which the next layer of this work routes through the item write",
-  "routes/items-lifecycle.ts":
-    "the restore and transition doors' moves, likewise",
-  "routes/folders.ts": "a folder's revoke transition, likewise",
-  "bulk-actions/runner.ts": "the transition and purge chunks, likewise",
 };
 
 /** A statement written against the `items` table itself. */

@@ -769,19 +769,9 @@ export interface ItemStore {
   delete(id: string, trashedWith?: CascadeRoot): Promise<void>;
   /** The row each cascaded row's trash named, while the bin holds it. */
   cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>>;
-  /** Hard-deletes a trashed row, leaving its tombstones. So do `bulkPurge`
-   *  and `purgeTrashedOlderThan`. */
+  /** Hard-deletes a trashed row, leaving its tombstones. So does
+   *  `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;
-  /**
-   * Hard-delete every row in `ids` that is in its type's soft-deleted
-   * state, the gate single-item `purge` enforces, and return the ids it
-   * took. A row in any other state and an unknown id are skipped, and the
-   * caller reports them. Cascades metadata and versions via ON DELETE
-   * CASCADE; the caller removes the taken rows' edges (source and target
-   * directions) in the same transaction. Cleans the search index for each
-   * row taken.
-   */
-  bulkPurge(ids: string[]): Promise<string[]>;
   restore(id: string): Promise<Item>;
   /**
    * Restores the rows a trash took with it through cascading edges that lie
@@ -840,7 +830,7 @@ export interface ItemStore {
    * so measuring from it would restart the retention clock on an edit made
    * in the bin.
    *
-   * Unlike `bulkPurge`, this drops the purged items' edges itself (both
+   * Unlike `purge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
    * the automatic trash lifecycle with no route layer above it to do the
    * cleanup, and edges have no FK to items to fall back on.

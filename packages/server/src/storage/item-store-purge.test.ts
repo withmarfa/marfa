@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { itemWrites } from "./item-writes.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { writeItem } from "./item-write.js";
 
 let ctx: TestContext;
 
@@ -99,7 +100,7 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
 }
 
 describe("ItemStore purge methods — FTS coverage", () => {
-  it("bulkPurge removes items and their FTS entries", async () => {
+  it("purge removes the item and its FTS entry", async () => {
     const itemId = id("aaa1");
     await itemWrites(ctx.storage).create({
       id: itemId,
@@ -113,8 +114,7 @@ describe("ItemStore purge methods — FTS coverage", () => {
     expect(before.some((h) => h.item.id === itemId)).toBe(true);
 
     await itemWrites(ctx.storage).delete(itemId);
-    const deleted = await itemWrites(ctx.storage).bulkPurge([itemId]);
-    expect(deleted).toEqual([itemId]);
+    await itemWrites(ctx.storage).purge(itemId);
 
     // The FTS row is gone.
     expect(await ftsRowCount(itemId)).toBe(0);
@@ -236,8 +236,8 @@ describe("ItemStore.purgeTrashedOlderThan — edge cleanup", () => {
   });
 });
 
-describe("ItemStore.bulkPurge — the trash gate", () => {
-  it("takes only rows in their type's soft-deleted state, and says which", async () => {
+describe("ItemStore.purge — the trash gate", () => {
+  it("takes only a row in its type's soft-deleted state", async () => {
     const make = async (type: string, properties: Record<string, unknown>) =>
       (await itemWrites(ctx.storage).create({ type, properties })).id;
     const connection = {
@@ -252,64 +252,50 @@ describe("ItemStore.bulkPurge — the trash gate", () => {
     await itemWrites(ctx.storage).delete(revoked);
     const live = await make("system.connection", connection);
 
-    const taken = await itemWrites(ctx.storage).bulkPurge([
-      trashedNote,
-      activeNote,
-      revoked,
-      live,
-      id("ffff"),
-    ]);
-    expect(taken.slice().sort()).toEqual([trashedNote, revoked].sort());
-    expect(await ctx.storage.items.getIncludingTrashed(trashedNote)).toBeNull();
-    expect(await ctx.storage.items.getIncludingTrashed(revoked)).toBeNull();
-    expect((await ctx.storage.items.get(activeNote))?.state).toBe("active");
-    expect((await ctx.storage.items.get(live))?.state).toBe("active");
+    for (const taken of [trashedNote, revoked]) {
+      await itemWrites(ctx.storage).purge(taken);
+      expect(await ctx.storage.items.getIncludingTrashed(taken)).toBeNull();
+    }
+    for (const kept of [activeNote, live]) {
+      await expect(itemWrites(ctx.storage).purge(kept)).rejects.toMatchObject({
+        code: "invalid_transition",
+      });
+      expect((await ctx.storage.items.get(kept))?.state).toBe("active");
+    }
+    await expect(
+      itemWrites(ctx.storage).purge(id("ffff")),
+    ).rejects.toMatchObject({
+      code: "item_not_found",
+    });
   });
 });
 
-describe("ItemStore.bulkPurge — atomicity", () => {
+describe("a purge through the item write — atomicity", () => {
   // `items_fts` is a virtual table mutated separately from `items`, so
-  // without a transaction a mid-purge failure would leave rows present but
-  // unsearchable.
-  it("rolls back the items DELETE if a mid-purge FTS removal fails", async () => {
+  // without a transaction a failure after the DELETE would leave the row
+  // gone and still searchable, or present and unsearchable.
+  it("rolls the row back if its FTS removal fails", async () => {
     const id1 = id("bbb1");
-    const id2 = id("bbb2");
     await itemWrites(ctx.storage).create({
       id: id1,
       type: "core.note",
       properties: { body: "rollbackalpha searchable" },
       tier: "library",
     });
-    await itemWrites(ctx.storage).create({
-      id: id2,
-      type: "core.note",
-      properties: { body: "rollbackbravo searchable" },
-      tier: "library",
-    });
-
     await itemWrites(ctx.storage).delete(id1);
-    await itemWrites(ctx.storage).delete(id2);
 
-    // Force the second FTS removal to throw, mid-transaction.
     const search = ctx.storage.search as unknown as {
       remove: (id: string) => Promise<void>;
     };
-    const orig = search.remove.bind(search);
-    let calls = 0;
-    vi.spyOn(search, "remove").mockImplementation(async (targetId: string) => {
-      calls += 1;
-      if (calls === 2) throw new Error("simulated FTS failure");
-      await orig(targetId);
-    });
-
-    await expect(itemWrites(ctx.storage).bulkPurge([id1, id2])).rejects.toThrow(
-      /simulated FTS failure/,
+    vi.spyOn(search, "remove").mockImplementationOnce(() =>
+      Promise.reject(new Error("simulated FTS failure")),
     );
 
-    // Both items must still be present — the items DELETE never ran, and
-    // the first FTS removal must have been rolled back.
+    await expect(
+      writeItem(ctx.storage, { kind: "platform" }, { op: "purge", id: id1 }),
+    ).rejects.toThrow(/simulated FTS failure/);
+
     expect(await ctx.storage.items.getIncludingTrashed(id1)).not.toBeNull();
-    expect(await ctx.storage.items.getIncludingTrashed(id2)).not.toBeNull();
   });
 });
 
