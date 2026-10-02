@@ -179,7 +179,7 @@ describe("an item the key cannot read answers as a missing one", () => {
     });
   };
   const pageRolledBack = (seen: Seen): void => {
-    expect(seen.status).toBe(400);
+    expect(seen.status).toBe(404);
     expect(seen.body).toMatchObject({
       error: {
         code: "bulk_atomic_rollback",

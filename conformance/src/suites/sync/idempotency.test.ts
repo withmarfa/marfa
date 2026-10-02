@@ -478,7 +478,7 @@ describe("a create that resolves an existing row", () => {
     // every other per-entry refusal on this door does, with the inner code
     // in `details.code`. The batch is refused, not the entry.
     const atomic = await client.bulkItems(entries);
-    expect(atomic.status).toBe(400);
+    expect(atomic.status).toBe(409);
     expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
     expect(atomic.error?.error.details?.code).toBe("version_conflict");
     expect(atomic.error?.error.details?.index).toBe(1);
