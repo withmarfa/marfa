@@ -44,10 +44,10 @@ pub use folder::{
 };
 pub use lock::Handle;
 pub use model::{
-    Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit, Edit,
-    HydrateReport, Hydration, Item, ItemState, ListFilters, MetadataWrite, Outcome, QueuedWrite,
-    SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier, Verdict,
-    WriteKind,
+    Added, Attached, Attachment, BlockedReason, CatchUpReport, Draft, Edge, EdgeDraft, EdgeEdit,
+    Edit, HydrateReport, Hydration, Item, ItemState, ListFilters, MetadataWrite, Outcome,
+    QueuedWrite, SearchFilters, SearchHit, Sort, SortDirection, SortField, Status, Thumbnail, Tier,
+    Verdict, WriteKind,
 };
 pub use store::CEILING;
 
@@ -1050,20 +1050,7 @@ impl Core {
                 });
             }
         }
-        let mime_type = blob::mime_type_for(path, attachment.mime_type.as_deref());
-        let title = attachment.title.clone().unwrap_or_else(|| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "file".into())
-        });
-        let mut properties = serde_json::Map::new();
-        properties.insert("title".into(), title.into());
-        let mut draft = Draft {
-            r#type: blob::file_type_for(&mime_type, attachment.r#type.as_deref()),
-            properties,
-            tier: attachment.tier,
-            ..Default::default()
-        };
+        let (mime_type, mut draft) = file_draft(path, attachment, &[]);
         self.refuse_unknown_type(&draft.r#type)?;
         self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
             name_bytes(&mut draft.properties, hash, &mime_type);
@@ -1081,6 +1068,25 @@ impl Core {
                 upload: upload.clone(),
                 item,
                 edge,
+            })
+        })
+    }
+
+    /// Adds a file as an item of its own (`device.md` 46): its upload, and a
+    /// file item naming the bytes, which waits on it, typed and titled as an
+    /// attachment is. Each tag is a write of its own, waiting on the file
+    /// item, as a create's tags are.
+    pub fn add_file(&self, path: &Path, attachment: &Attachment, tags: &[String]) -> Result<Added> {
+        self.lock.refuse_unless_writer()?;
+        store::refuse_unless_hydrated(&*self.conn()?)?;
+        let (mime_type, mut draft) = file_draft(path, attachment, tags);
+        self.refuse_unknown_type(&draft.r#type)?;
+        self.with_upload(path, &mime_type, |tx, catalog, upload, hash| {
+            name_bytes(&mut draft.properties, hash, &mime_type);
+            let item = queue_create(tx, catalog, &draft, std::slice::from_ref(&upload.id))?;
+            Ok(Added {
+                upload: upload.clone(),
+                item,
             })
         })
     }
@@ -1571,6 +1577,28 @@ fn queue_edge_delete(tx: &Connection, held: &model::Edge) -> Result<QueuedWrite>
             depends_on: &depends_on,
         },
     )
+}
+
+/// The MIME type a file is sent under, and the file item that names it,
+/// before the bytes are named: the type, title and tier `attachment` gives,
+/// else the defaults it states.
+fn file_draft(path: &Path, attachment: &Attachment, tags: &[String]) -> (String, Draft) {
+    let mime_type = blob::mime_type_for(path, attachment.mime_type.as_deref());
+    let title = attachment.title.clone().unwrap_or_else(|| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".into())
+    });
+    let mut properties = serde_json::Map::new();
+    properties.insert("title".into(), title.into());
+    let draft = Draft {
+        r#type: blob::file_type_for(&mime_type, attachment.r#type.as_deref()),
+        properties,
+        tags: tags.to_vec(),
+        tier: attachment.tier,
+        ..Default::default()
+    };
+    (mime_type, draft)
 }
 
 /// A file item's two properties that name its bytes: their hash, and the
@@ -2250,6 +2278,12 @@ mod tests {
                     .attach("x", Path::new("no-such-file.png"), &Attachment::default())
                     .unwrap_err(),
             ),
+            (
+                "add_file",
+                reader
+                    .add_file(Path::new("no-such-file.png"), &Attachment::default(), &[])
+                    .unwrap_err(),
+            ),
             // The two a folder queues a file through.
             (
                 "create_file_item",
@@ -2309,7 +2343,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            31,
+            32,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

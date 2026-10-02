@@ -8,7 +8,8 @@ import type { CliContext, ItemEnvelope, Refusal } from "./harness.js";
 
 /**
  * A file attached to a note: its bytes stored by hash, a file item carrying
- * the reference, and an `attached-to` edge from the file to the note.
+ * the reference, and an `attached-to` edge from the file to the note. And a
+ * file added on its own: the same bytes and file item, and no edge.
  */
 
 let c: CliContext;
@@ -151,6 +152,85 @@ describe("attaching a file", () => {
       attached.blob.hash,
     ]);
     expect(still.data.map((copy) => copy.store_id)).toContain(kept!.store);
+  });
+
+  it("adds a file as an item of its own, typed by its extension, under the title, tags and tier given, and links it to nothing", async () => {
+    const path = join(dir, "talk.pptx");
+    writeFileSync(path, Buffer.from("PK\u0003\u0004 slides\n"));
+    const pptx =
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    const title = unique("cli-add");
+
+    const added = await c.cli.json<{
+      blob: { hash: string; mime_type: string };
+      item: {
+        id: string;
+        type: string;
+        tier: string;
+        properties: Record<string, unknown>;
+      };
+    }>([
+      "items",
+      "add",
+      path,
+      "--title",
+      title,
+      "--tag",
+      "slides",
+      "--tier",
+      "feed",
+    ]);
+    trackItem(c.ctx, added.item.id);
+    expect(added.blob.mime_type).toBe(pptx);
+    expect(added.item.type).toBe("core.file");
+    expect(added.item.tier).toBe("feed");
+    expect(added.item.properties).toMatchObject({
+      blob_ref: added.blob.hash,
+      mime_type: pptx,
+      title,
+    });
+    const read = await c.cli.json<ItemEnvelope>([
+      "items",
+      "get",
+      added.item.id,
+      "--include",
+      "metadata",
+    ]);
+    expect(read.metadata?.tags).toEqual(["slides"]);
+
+    // The witness: an attachment of the same file draws an edge from it,
+    // so an empty listing below is the command's and not the door's.
+    const note = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: unique("cli-add-note"), body: "b" }),
+    ]);
+    trackItem(c.ctx, note.item.id);
+    const attached = await c.cli.json<{ item: { id: string } }>([
+      "items",
+      "attach",
+      note.item.id,
+      path,
+    ]);
+    trackItem(c.ctx, attached.item.id);
+    const drawn = await c.cli.json<{ data: unknown[] }>([
+      "items",
+      "edges",
+      attached.item.id,
+    ]);
+    expect(drawn.data).toHaveLength(1);
+    const none = await c.cli.json<{ data: unknown[] }>([
+      "items",
+      "edges",
+      added.item.id,
+    ]);
+    expect(
+      none.data,
+      "a file added on its own was linked to something",
+    ).toEqual([]);
   });
 
   it("refuses a file that is not there before anything is sent", async () => {

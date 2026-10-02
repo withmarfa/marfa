@@ -559,6 +559,26 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<QueuedWrite[]>(args);
   }
 
+  async addFile(
+    path: string,
+    options: {
+      mimeType?: string;
+      title?: string;
+      type?: string;
+      tier?: Tier;
+      tags?: string[];
+    } = {},
+  ): Promise<Outcome<QueuedWrite[]>> {
+    const args = ["items", "add", path];
+    if (options.tier !== undefined) args.push("--tier", options.tier);
+    if (options.mimeType !== undefined)
+      args.push("--mime-type", options.mimeType);
+    if (options.title !== undefined) args.push("--title", options.title);
+    if (options.type !== undefined) args.push("--type", options.type);
+    for (const tag of options.tags ?? []) args.push("--tag", tag);
+    return this.json<QueuedWrite[]>(args);
+  }
+
   private server(): string[] {
     const args: string[] = [];
     if (this.options.url !== undefined) args.push("--url", this.options.url);

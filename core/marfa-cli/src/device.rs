@@ -227,6 +227,9 @@ pub enum ItemsCommand {
         #[arg(long)]
         state: ItemState,
     },
+    /// Add a file as an item of its own: its upload and a file item naming
+    /// the bytes, two queued writes, and one for each tag.
+    Add(AddArgs),
     /// Attach a file to an item: its upload, a file item naming the bytes,
     /// and an `attached-to` edge, three queued writes.
     Attach(AttachArgs),
@@ -239,6 +242,27 @@ pub enum ItemsCommand {
         #[arg(long, value_name = "FILE")]
         out: Option<PathBuf>,
     },
+}
+
+#[derive(Debug, Args)]
+pub struct AddArgs {
+    /// The file to add.
+    pub file: PathBuf,
+    /// The MIME type; the default comes from the file's extension.
+    #[arg(long)]
+    pub mime_type: Option<String>,
+    /// The file item's title; the default is the file's name.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// The file item's type; the default comes from the MIME type.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub type_: Option<String>,
+    /// A tag, repeatable. Each is queued as a write of its own.
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
+    /// The tier to write the file item at.
+    #[arg(long)]
+    pub tier: Option<Tier>,
 }
 
 #[derive(Debug, Args)]
@@ -707,6 +731,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 ItemsCommand::Restore { id } => output::queued_one(&core.restore_item(&id)?, json),
                 ItemsCommand::Transition { id, state } => {
                     output::queued_one(&core.transition_item(&id, state.into())?, json)
+                }
+                ItemsCommand::Add(args) => {
+                    let attachment = Attachment {
+                        mime_type: args.mime_type,
+                        title: args.title,
+                        r#type: args.type_,
+                        tier: args.tier.map(Into::into),
+                    };
+                    let added = core.add_file(&args.file, &attachment, &args.tags)?;
+                    output::queued(&[added.upload, added.item], json)
                 }
                 ItemsCommand::Attach(args) => {
                     let attachment = Attachment {
