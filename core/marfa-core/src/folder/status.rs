@@ -86,7 +86,11 @@ impl Folder {
         let (snapshot, disk, pull, unmatched) = {
             let conn = self.core.conn()?;
             (
-                state::every_bound(&conn)?,
+                // As the next scan settles any write a crash cut off.
+                state::every_bound(&conn)?
+                    .into_iter()
+                    .filter_map(|row| state::settled(&row, &self.root).unwrap_or(Some(row)))
+                    .collect::<Vec<_>>(),
                 state::paused(&conn, state::Removal::Disk)?,
                 state::paused(&conn, state::Removal::Pull)?,
                 state::unmatched(&conn)?,
@@ -280,9 +284,9 @@ impl Folder {
         // Held by the scan before anything binds it, so read as the scan reads.
         if is_document(path)
             && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
-                None => Some(super::NOT_UTF8.to_string()),
-                Some(_) if !super::carries_frontmatter(path) => None,
-                Some(text) => {
+                Err(reason) => Some(reason.to_string()),
+                Ok(_) if !super::carries_frontmatter(path) => None,
+                Ok(text) => {
                     let read = super::document::read(text);
                     read.unreadable
                         .or_else(|| super::fields::read(&read.front, edge_types).err())

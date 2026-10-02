@@ -89,17 +89,7 @@ pub(crate) fn land(
         if !still(found.as_deref()) {
             return Err(Unlanded::Changed);
         }
-        if super::fault::named("crash-before-rename").is_some_and(|name| {
-            target
-                .file_name()
-                .is_some_and(|file| file.to_string_lossy() == name)
-        }) {
-            eprintln!(
-                "crashing before {} lands, as MARFA_TEST_FAULT asks",
-                target.display()
-            );
-            std::process::abort();
-        }
+        crash_if_asked(target);
         std::fs::rename(&beside, target)?;
         Ok(())
     })();
@@ -129,6 +119,21 @@ pub(crate) fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Re
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
+    }
+}
+
+/// A crash between a write's record and its rename, where a fixture asks.
+pub(crate) fn crash_if_asked(target: &Path) {
+    if super::fault::named("crash-before-rename").is_some_and(|name| {
+        target
+            .file_name()
+            .is_some_and(|file| file.to_string_lossy() == name)
+    }) {
+        eprintln!(
+            "crashing before {} lands, as MARFA_TEST_FAULT asks",
+            target.display()
+        );
+        std::process::abort();
     }
 }
 

@@ -160,19 +160,22 @@ impl Folder {
         self.put_settings_back()
     }
 
-    /// The text, and whether the bytes were UTF-8: the text of bytes that
-    /// were not only names the edit, and is never sent.
-    fn edited_settings(&self) -> Result<Option<(String, bool)>> {
+    /// The text, and why the bytes are not text where they are not: the text
+    /// of bytes that are not only names the edit, and is never sent.
+    fn edited_settings(&self) -> Result<Option<(String, Option<&'static str>)>> {
         self.settle_settings()?;
         let Ok(found) = std::fs::read(self.settings_path()) else {
             return Ok(None);
         };
-        let (found, utf8) = match super::text_of(&found) {
-            Some(text) => (text.to_string(), true),
-            None => (String::from_utf8_lossy(&found).into_owned(), false),
+        let (found, not_text) = match super::text_of(&found) {
+            Ok(text) => (text.to_string(), None),
+            Err(reason) => (String::from_utf8_lossy(&found).into_owned(), Some(reason)),
         };
         let written = store::meta_get(&*self.core.conn()?, META_WRITTEN)?;
-        Ok((!utf8 || written.as_deref() != Some(found.as_str())).then_some((found, utf8)))
+        Ok(
+            (not_text.is_some() || written.as_deref() != Some(found.as_str()))
+                .then_some((found, not_text)),
+        )
     }
 
     fn refused_for(&self, text: &str) -> Result<Option<String>> {
@@ -239,7 +242,7 @@ impl Folder {
         if self.root_gone().is_some() {
             return Ok(SettingsFileReport::default());
         }
-        let Some((text, utf8)) = self.edited_settings()? else {
+        let Some((text, not_text)) = self.edited_settings()? else {
             return Ok(SettingsFileReport::default());
         };
         if let Some(reason) = self.refused_for(&text)? {
@@ -248,11 +251,8 @@ impl Folder {
                 ..Default::default()
             });
         }
-        if !utf8 {
-            return self.flag(
-                &text,
-                "the file is not UTF-8 text, so it is held and not sent; save it as UTF-8".into(),
-            );
+        if let Some(reason) = not_text {
+            return self.flag(&text, format!("the file is held and not sent: {reason}"));
         }
         let edited = match document::read_map(&text) {
             Ok(edited) => edited,

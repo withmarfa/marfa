@@ -53,30 +53,33 @@ pub struct Landing {
     pub before: Option<Box<Bound>>,
 }
 
-/// Settles every write a crash cut off between its binding and its landing:
-/// one whose bytes are on the disk is bound as written, and one whose bytes
-/// are not leaves the path bound as it was before, or bound to nothing, so
-/// the file there is never read as the person's edit nor as deleted.
+/// What a binding a write left before its bytes landed settles to: itself,
+/// where the bytes are on the disk; what the path was bound as before, where
+/// they are not; or nothing, where it was bound as nothing. `None` where the
+/// binding waits on no write, or the disk cannot be read now.
+pub fn settled(row: &Bound, root: &std::path::Path) -> Option<Option<Bound>> {
+    let landing = row.writes.landing.as_ref()?;
+    let found = match std::fs::read(root.join(&row.path)) {
+        Ok(found) => Some(hash(&found)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(_) => return None,
+    };
+    if found.as_deref() == Some(row.content_hash.as_str()) {
+        let mut landed = row.clone();
+        landed.writes.landing = None;
+        return Some(Some(landed));
+    }
+    Some(landing.before.as_deref().cloned())
+}
+
+/// Settles every write a crash cut off between its binding and its landing,
+/// so the file there is never read as the person's edit nor as deleted.
 pub fn settle_landings(conn: &Connection, root: &std::path::Path) -> Result<(), CoreError> {
     for row in every_bound(conn)? {
-        let Some(landing) = row.writes.landing.clone() else {
-            continue;
-        };
-        let found = match std::fs::read(root.join(&row.path)) {
-            Ok(found) => Some(hash(&found)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            // Asked again at the next pass that can read it.
-            Err(_) => continue,
-        };
-        if found.as_deref() == Some(row.content_hash.as_str()) {
-            let mut landed = row;
-            landed.writes.landing = None;
-            bind(conn, &landed)?;
-            continue;
-        }
-        match landing.before {
-            Some(before) => bind(conn, &before)?,
-            None => {
+        match settled(&row, root) {
+            None => {}
+            Some(Some(settled)) => bind(conn, &settled)?,
+            Some(None) => {
                 unbind(conn, &row.path)?;
                 journal_clear(conn, &row.path)?;
             }

@@ -229,7 +229,10 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
                     if let Some(hydrated) = &hydrated {
                         lines.push(format!("hydrated {} item(s) first", hydrated.items));
                     }
-                    lines.extend(settings_line(&settings));
+                    lines.extend(settings_lines(
+                        &settings,
+                        pulled.as_ref().map(|pulled| &pulled.settings),
+                    ));
                     lines.push(describe_scan(&scanned));
                     let mut flagged = scanned.flagged.clone();
                     if let Some(pulled) = &pulled {
@@ -375,6 +378,21 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
             named.join(", ")
         )
     })
+}
+
+/// What became of the settings file in a pass: its edit, sent first, and
+/// the pull's write of it, each said once.
+pub fn settings_lines(
+    sent: &marfa_core::SettingsFileReport,
+    pulled: Option<&marfa_core::SettingsFileReport>,
+) -> Vec<String> {
+    let mut lines: Vec<String> = settings_line(sent).into_iter().collect();
+    if let Some(line) = pulled.and_then(settings_line)
+        && !lines.contains(&line)
+    {
+        lines.push(line);
+    }
+    lines
 }
 
 pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {

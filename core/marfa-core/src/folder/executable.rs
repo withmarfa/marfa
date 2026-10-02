@@ -96,17 +96,6 @@ pub fn quarantine(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Answers `true` where the mark is there, or where nothing keeps one.
-#[cfg(target_os = "macos")]
-pub fn quarantined(path: &Path) -> bool {
-    xattr::get(path, QUARANTINE).is_ok_and(|found| found.is_some())
-}
-
-#[cfg(not(target_os = "macos"))]
-pub fn quarantined(_path: &Path) -> bool {
-    true
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

@@ -59,15 +59,22 @@ pub const REQUEST_LIMIT: usize = 1_048_576;
 
 pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
 
-/// Held as `encoding`, by the same binding an `unreadable` file is.
+/// Each held as `encoding`, by the same binding an `unreadable` file is.
 const NOT_UTF8: &str = "it is not UTF-8 text; saved as UTF-8, it is sent";
+const HOLDS_NUL: &str = "it holds a NUL byte, as UTF-16 text does, so it is not read as text; saved as UTF-8 with no NUL, it is sent";
 
-/// UTF-8 holding no NUL: UTF-16 with no byte-order mark decodes as UTF-8
-/// where its letters are ASCII, each beside a NUL, and is no text.
-fn text_of(bytes: &[u8]) -> Option<&str> {
-    std::str::from_utf8(bytes)
-        .ok()
-        .filter(|text| !text.contains('\0'))
+fn encoding(reason: &str) -> bool {
+    reason == NOT_UTF8 || reason == HOLDS_NUL
+}
+
+/// UTF-8 holding no NUL, or why not: UTF-16 with no byte-order mark decodes
+/// as UTF-8 where its letters are ASCII, each beside a NUL.
+fn text_of(bytes: &[u8]) -> std::result::Result<&str, &'static str> {
+    let text = std::str::from_utf8(bytes).map_err(|_| NOT_UTF8)?;
+    if text.contains('\0') {
+        return Err(HOLDS_NUL);
+    }
+    Ok(text)
 }
 
 /// Measured as the JSON string the text is sent in; a file item's bytes go up
@@ -142,7 +149,7 @@ impl Flagged {
     fn of(path: &str, held: &str) -> Flagged {
         let (flag, reason) = if let Some(reason) = held.strip_prefix(state::UNREADABLE) {
             (
-                if reason == NOT_UTF8 {
+                if encoding(reason) {
                     "encoding"
                 } else {
                     "unreadable"
@@ -507,9 +514,9 @@ fn in_nested_folder(root: &Path, relative: &str) -> bool {
 }
 
 impl Folder {
-    /// Every write into the folder goes through here: refused where the
-    /// folder's directory is gone, so a pull never makes it anew, with the
-    /// directories on the way made only inside it.
+    /// Writes a file into the folder, through `inside`, which every write
+    /// and every rename into the folder passes: refused where the folder's
+    /// directory is gone, so a pull never makes it anew.
     fn land(
         &self,
         path: &Path,
@@ -906,7 +913,7 @@ impl Folder {
                     stats.push((key.clone(), stat));
                 }
                 // Held below; its id line, which is ASCII, still names its item.
-                let Some(text) = text_of(&bytes) else {
+                let Ok(text) = text_of(&bytes) else {
                     named.extend(document::id_line(&String::from_utf8_lossy(&bytes)));
                     early.insert(path.clone(), bytes);
                     continue;
@@ -1006,22 +1013,22 @@ impl Folder {
             // A document whose bytes are not UTF-8 is held as one whose
             // frontmatter does not parse is: decoded, it would be sent and
             // written back with every byte that is not replaced.
-            let (text, decodes) = match text_of(&bytes) {
-                Some(text) => (text.to_string(), true),
-                None => (
+            let (text, not_text) = match text_of(&bytes) {
+                Ok(text) => (text.to_string(), None),
+                Err(reason) => (
                     String::from_utf8_lossy(&bytes).into_owned(),
-                    !is_document(&path),
+                    is_document(&path).then_some(reason),
                 ),
             };
+            let decodes = not_text.is_none();
             let read = (decodes && carries_frontmatter(&path)).then(|| document::read(&text));
-            let unreadable = if decodes {
-                read.as_ref().and_then(|read| {
+            let unreadable = match not_text {
+                None => read.as_ref().and_then(|read| {
                     read.unreadable
                         .clone()
                         .or_else(|| fields::read(&read.front, &edge_types).err())
-                })
-            } else {
-                Some(NOT_UTF8.to_string())
+                }),
+                Some(reason) => Some(reason.to_string()),
             };
             // An unreadable file still names its item, so a move keeps it.
             let id = match &read {
@@ -1095,7 +1102,7 @@ impl Folder {
                 })
             };
             if let Some(reason) = &file.unreadable
-                && (reason != NOT_UTF8 || !bytes_item()?)
+                && (!encoding(reason) || !bytes_item()?)
             {
                 self.hold_unreadable(file, claim.as_ref(), reason, &withheld)?;
                 report.flagged.push(Flagged::of(
@@ -2806,19 +2813,12 @@ impl Folder {
 
     /// Leaves a file changed since the scan read it alone: the permission is
     /// then the person's.
-    /// `wrote` says the bytes there are ones a pull wrote, which carry the
-    /// quarantine mark as every file a pull writes does, one written before
-    /// the mark was included.
-    fn keep_executable(&self, item: &Item, want: &str, wrote: bool) -> Result<()> {
+    fn keep_executable(&self, item: &Item, want: &str) -> Result<()> {
         let path = self.root.join(want);
         let wanted = executable::held(item);
-        if !self.keeps_permissions() {
-            return Ok(());
-        }
-        if std::fs::symlink_metadata(&path).is_ok_and(|found| executable::of(&found) == wanted) {
-            if wanted && wrote && !executable::quarantined(&path) {
-                let _ = executable::quarantine(&path);
-            }
+        if !self.keeps_permissions()
+            || std::fs::symlink_metadata(&path).is_ok_and(|found| executable::of(&found) == wanted)
+        {
             return Ok(());
         }
         let read = state::stat_of(&*self.core.conn()?, want)?;
@@ -2986,10 +2986,7 @@ impl Folder {
         }
         if in_place {
             if bytes_of(item, catalog).is_some() {
-                let wrote = bound
-                    .as_ref()
-                    .is_some_and(|bound| bound.written_hash.as_deref() == Some(hash.as_str()));
-                self.keep_executable(item, &want, wrote)?;
+                self.keep_executable(item, &want)?;
             }
             report.placed += usize::from(self.place(&item.id, &want, withheld)?);
             report.unchanged += 1;
@@ -3181,8 +3178,22 @@ impl Folder {
             own: theirs.own.clone(),
             writes: state::Writes::default(),
         };
-        state::bind(&*self.core.conn()?, &binding(None))?;
+        // Kept beside the new binding until the file is here, as a write's is.
+        let before = state::bound_at(&*self.core.conn()?, want)?;
+        state::bind(
+            &*self.core.conn()?,
+            &state::Bound {
+                writes: state::Writes {
+                    landing: Some(state::Landing {
+                        before: before.clone().map(Box::new),
+                    }),
+                    ..state::Writes::default()
+                },
+                ..binding(None)
+            },
+        )?;
         let moved = self.inside(path.parent()).and_then(|()| {
+            landing::crash_if_asked(&path);
             // Copied where a rename cannot cross volumes, landing whole or
             // not at all; a source left behind is still its folder's,
             // which lets it go later.
@@ -3200,9 +3211,14 @@ impl Folder {
             })
         });
         if moved.is_err() {
-            state::unbind(&*self.core.conn()?, want)?;
+            let conn = self.core.conn()?;
+            match &before {
+                Some(before) => state::bind(&conn, before)?,
+                None => state::unbind(&conn, want)?,
+            }
             return Ok(false);
         }
+        state::bind(&*self.core.conn()?, &binding(None))?;
         state::journal_clear(&*self.core.conn()?, want)?;
         if let Ok(metadata) = std::fs::symlink_metadata(&path)
             && let Some(found) = identity::of(&metadata)

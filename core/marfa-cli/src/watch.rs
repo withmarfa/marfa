@@ -376,9 +376,11 @@ fn step(
         json,
         || {
             let held = pulled.unwritten + pulled.outside + pulled.unsuited + pulled.absent;
-            let settings = crate::folders::settings_line(&settings)
-                .map(|line| format!("{line}\n"))
-                .unwrap_or_default();
+            let settings: String =
+                crate::folders::settings_lines(&settings, Some(&pulled.settings))
+                    .into_iter()
+                    .map(|line| format!("{line}\n"))
+                    .collect();
             format!(
                 "{settings}{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}{}",
                 scanned.created,

@@ -15921,6 +15921,44 @@ describe("folders on one Mac", () => {
     expect(deletesOf(a.server, ids[3]!)).toBe(1);
   });
 
+  it("keeps a file a crash cut off taking in where it was, and journals no delete", async () => {
+    const plan = {
+      id: "01a00000-0000-7000-8000-00000000fa45",
+      properties: { title: "Plan", body: "the plan\n" },
+    };
+    const { a, b, edges } = await onOneMac(
+      "take-in-cut-off",
+      { search: { types: ["core.note"], filter: 'tags contains "a"' } },
+      { search: { types: ["core.note"], filter: 'tags contains "b"' } },
+      { "core.note": [{ item: plan, tags: ["a"] }] },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect((await b.folder.pull()).ok).toBe(true);
+    edges.events.push(
+      itemEvent("2", "metadata.changed", wireItem(plan), { tags: ["b"] }),
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    await expect(
+      withFault("crash-before-rename=Plan.md", () => b.folder.push()),
+    ).rejects.toThrow(/could not be run/);
+    // The witness: the crash came before the file moved.
+    expect([
+      existsSync(join(a.dir, "Plan.md")),
+      existsSync(join(b.dir, "Plan.md")),
+    ]).toEqual([true, false]);
+    const after = await b.folder.scan();
+    expect(after.ok, JSON.stringify(after)).toBe(true);
+    if (!after.ok) return;
+    expect(
+      after.value.missing,
+      "a file a crash kept from being taken in was journaled as deleted",
+    ).toBe(0);
+    // And the next push takes it in.
+    const took = await b.folder.push();
+    expect(took.ok && took.value.pull?.taken).toBe(1);
+    expect(idIn(b, "Plan.md")).toBe(plan.id);
+  });
+
   it("leaves a file it let go where the person saved it meanwhile", async () => {
     const brief = {
       id: "01a00000-0000-7000-8000-00000000fa41",
@@ -16708,7 +16746,7 @@ describe("what a folder never does to a person's text", () => {
     }
   });
 
-  it("marks each file a pull writes from the server's bytes as downloaded, so macOS asks before it runs one", async () => {
+  it("gives each file a pull writes from the server's bytes the quarantine mark on macOS", async () => {
     const [tool, later, note] = [
       "01a00000-0000-7000-8000-00000000fa31",
       "01a00000-0000-7000-8000-00000000fa32",
@@ -16791,25 +16829,23 @@ describe("what a folder never does to a person's text", () => {
       ).toEqual([true, true]);
       // A note is text the folder renders, never bytes to run.
       expect(marked("Readme.md")).toBe(false);
-      // Unmarked, as a file written before the mark was is, both the one
-      // already runnable and the one the server makes runnable next.
-      for (const name of ["tool.bin", "later.bin"]) {
-        execFileSync("xattr", [
-          "-d",
-          "com.apple.quarantine",
-          join(harness.dir, name),
-        ]);
-        expect(marked(name)).toBe(false);
-      }
+      // Unmarked, as a file the person made is, before the server says it
+      // runs.
+      execFileSync("xattr", [
+        "-d",
+        "com.apple.quarantine",
+        join(harness.dir, "later.bin"),
+      ]);
+      expect(marked("later.bin")).toBe(false);
     }
     // The push's catch-up makes the file in place runnable, and marks it.
     expect((await harness.folder.push()).ok).toBe(true);
     expect(runs("later.bin")).toBe(true);
     if (marks) {
       expect(
-        [marked("tool.bin"), marked("later.bin")],
-        "a runnable file a pull wrote, or made runnable in place, carries no quarantine mark",
-      ).toEqual([true, true]);
+        marked("later.bin"),
+        "a file a pull made runnable in place carries no quarantine mark",
+      ).toBe(true);
     }
     expect(sentUpdates(harness)).toEqual([]);
   });
@@ -16844,6 +16880,12 @@ describe("what a folder never does to a person's text", () => {
     // The witness: the crash came after the pull chose to write, and before
     // the new file landed.
     expect(readFileSync(join(harness.dir, "whole.txt"))).toEqual(before);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files.find((file) => file.path === "whole.txt")?.status,
+      "the status said the file a crash left waits to be sent",
+    ).toBe("in_step");
     const pushed = await harness.folder.push();
     expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
     expect(
@@ -16964,6 +17006,24 @@ describe("what a folder never does to a person's text", () => {
       written: false,
       unwritten: expect.stringContaining("folder.yaml") as unknown,
     });
+    // A push and a watch say so in words too.
+    const said = await harness.folder.pushText();
+    expect(said.ok && said.value).toContain(
+      "the settings file was not written",
+    );
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => {
+          expect(watching.stdout).toContain(
+            "the settings file was not written",
+          );
+        },
+        { timeout: 30_000, interval: 200 },
+      );
+    } finally {
+      await watching.stop();
+    }
     // Writable again, the next pass writes it.
     rmSync(settingsFile(harness), { recursive: true });
     const again = await harness.folder.pull();
