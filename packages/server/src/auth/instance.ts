@@ -393,11 +393,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // Better Auth builds its context asynchronously and starts that work
   // at construction, but nothing awaits the promise until the first
   // request touches the handler. Anything that rejects inside plugin
-  // init therefore surfaces as an unhandled rejection — which, with no
-  // handler installed, terminates the process at boot. Attaching here
-  // converts that into a logged failure: the auth surface then fails per
-  // request, the way every other unreachable dependency does, instead of
-  // taking the whole server with it.
+  // init would therefore surface as an unhandled rejection, which the
+  // process reports as a fault and a test run fails on. Attaching here
+  // makes it a logged failure of the auth surface instead: that surface
+  // then fails per request, the way every other unreachable dependency
+  // does.
   const ready = (
     instance as unknown as { $context: Promise<unknown> }
   ).$context.then(

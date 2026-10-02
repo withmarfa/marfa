@@ -469,12 +469,19 @@ describe("key management", () => {
       ["POST", "/edge-types"],
       ["DELETE", "/edge-types/not%20an%20edge%20type"],
     ];
+    // Registering a connector takes a working key of its own, so the
+    // operator key is the credential that door refuses.
+    const operatorKey = process.env.MARFA_OPERATOR_KEY;
+    expect(operatorKey).toBeTruthy();
+    const refusing = (path: string) =>
+      path === "/connectors" ? operatorKey! : key;
+    doors.push(["POST", "/connectors"]);
     const wrong: string[] = [];
     for (const [method, path] of doors) {
       const response = await fetch(`${apiUrl}${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${key}`,
+          Authorization: `Bearer ${refusing(path)}`,
           "Content-Type": "application/json",
         },
         body:

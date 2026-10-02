@@ -44,17 +44,9 @@ export const registersEdgeType = standingRule(
  *  `schema.write`. */
 export type SchemaDoor = "register" | "change";
 
-/**
- * The permission half alone, for a door that answers a credential without
- * it before judging the request: `schema.write`, which a replacement or a
- * delete takes. The door still asks the whole guard once it knows the names.
- */
-export function requireSchemaChange(c: Context<AppEnv>): void {
-  requirePermission(c, "schema.write");
-}
-
-/** The permission half alone for a registration: the registry's metadata
- *  scope. */
+/** The permission half for a registration: the registry's metadata scope,
+ *  which `registersType` and `registersEdgeType` ask before the request is
+ *  read and the whole guard asks again with the names. */
 export function requireSchemaRegistration(
   c: Context<AppEnv>,
   registry: "types" | "edge_types",
@@ -68,7 +60,7 @@ function requireDoorPermission(
   door: SchemaDoor,
 ): void {
   if (door === "register") requireSchemaRegistration(c, registry);
-  else requireSchemaChange(c);
+  else requirePermission(c, "schema.write");
 }
 
 /** Admit a change to the type `id` names, or refuse it `403`. */
