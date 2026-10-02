@@ -187,7 +187,7 @@ const ANSWERING: Record<string, Driver> = {
 /** Doors with a rule of their own, each with what that rule is. */
 const OWN_RULE: Record<string, string> = {
   "PATCH /folders/{id}":
-    "a folder is `system.folder` at every version, and the door is gated on that type; its stale write passes the same reader to the store",
+    "a folder is `system.folder` at every version, so the platform's reader, which admits every type, admits only `system.folder` snapshots here, and the door is gated on write to that type, which the key may therefore read",
 };
 
 /**
