@@ -11,7 +11,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaError } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import {
@@ -19,6 +19,8 @@ import {
   checkExtensionPermission,
   checkTypeAccess,
 } from "./auth.js";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
 
 const root = join(import.meta.dirname, "..");
 
@@ -134,5 +136,190 @@ describe("a refusal for a missing grant is built once and names the grant", () =
     });
     expect(fenced.code).toBe("type_not_permitted");
     expect(fenced.details).toBeUndefined();
+  });
+});
+
+describe("every door that refuses a missing grant names it", () => {
+  let ctx: TestContext;
+  /** Read on notes, nothing on edges or extensions. */
+  let reader: string;
+  /** Write on notes, nothing on edges or extensions. */
+  let writer: string;
+  let note: string;
+  let edge: string;
+
+  beforeAll(async () => {
+    ctx = await createTestContext();
+    reader = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "read" },
+      edge_permissions: {},
+      extension_permissions: {},
+    });
+    writer = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+      edge_permissions: {},
+      extension_permissions: {},
+    });
+    const made = async (): Promise<string> => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "census" } },
+      });
+      return ((await res.json()) as { item: { id: string } }).item.id;
+    };
+    note = await made();
+    const other = await made();
+    const res = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: note, target_id: other, edge_type: "references" },
+    });
+    edge = ((await res.json()) as { edge: { id: string } }).edge.id;
+  });
+
+  afterAll(async () => {
+    await ctx.cleanup();
+  });
+
+  const typeWrite = { kind: "type", name: "core.note", level: "write" };
+  const doors: {
+    door: string;
+    key: () => string;
+    send: () => [string, string, unknown?];
+    grant: unknown;
+  }[] = [
+    {
+      door: "POST /items",
+      key: () => reader,
+      send: () => [
+        "POST",
+        "/items",
+        { type: "core.note", properties: { body: "x" } },
+      ],
+      grant: typeWrite,
+    },
+    {
+      door: "PATCH /items/{id}",
+      key: () => reader,
+      send: () => [
+        "PATCH",
+        `/items/${note}`,
+        { properties: { body: "x" }, version: 1 },
+      ],
+      grant: typeWrite,
+    },
+    {
+      door: "DELETE /items/{id}",
+      key: () => reader,
+      send: () => ["DELETE", `/items/${note}`],
+      grant: typeWrite,
+    },
+    {
+      door: "POST /items/{id}/transition",
+      key: () => reader,
+      send: () => ["POST", `/items/${note}/transition`, { state: "archived" }],
+      grant: typeWrite,
+    },
+    {
+      door: "PUT /items/{id}/metadata",
+      key: () => reader,
+      send: () => ["PUT", `/items/${note}/metadata`, { tags: ["x"] }],
+      grant: typeWrite,
+    },
+    {
+      door: "PATCH /items/{id}/metadata",
+      key: () => reader,
+      send: () => ["PATCH", `/items/${note}/metadata`, { tags: ["x"] }],
+      grant: typeWrite,
+    },
+    {
+      door: "POST /items/{id}/tags",
+      key: () => reader,
+      send: () => ["POST", `/items/${note}/tags`, { tags: ["x"] }],
+      grant: typeWrite,
+    },
+    {
+      door: "DELETE /items/{id}/tags/{tag}",
+      key: () => reader,
+      send: () => ["DELETE", `/items/${note}/tags/x`],
+      grant: typeWrite,
+    },
+    {
+      door: "POST /folders",
+      key: () => writer,
+      send: () => ["POST", "/folders", { title: "x" }],
+      grant: { kind: "type", name: "system.folder", level: "write" },
+    },
+    {
+      door: "POST /edges",
+      key: () => writer,
+      send: () => [
+        "POST",
+        "/edges",
+        { source_id: note, target_id: note, edge_type: "references" },
+      ],
+      grant: { kind: "edge_type", name: "references", level: "write" },
+    },
+    {
+      door: "PATCH /items/{id} with inline edges",
+      key: () => writer,
+      send: () => [
+        "PATCH",
+        `/items/${note}`,
+        { edges: { references: [] }, version: 1 },
+      ],
+      grant: { kind: "edge_type", name: "references", level: "write" },
+    },
+    {
+      door: "GET /items/{id}/extensions/{namespace}",
+      key: () => writer,
+      send: () => ["GET", `/items/${note}/extensions/notes-app`],
+      grant: { kind: "extension", name: "notes-app", level: "read" },
+    },
+    {
+      door: "PUT /items/{id}/extensions/{namespace}",
+      key: () => writer,
+      send: () => ["PUT", `/items/${note}/extensions/notes-app`, { a: 1 }],
+      grant: { kind: "extension", name: "notes-app", level: "write" },
+    },
+    {
+      door: "DELETE /items/{id}/extensions/{namespace}",
+      key: () => writer,
+      send: () => ["DELETE", `/items/${note}/extensions/notes-app`],
+      grant: { kind: "extension", name: "notes-app", level: "write" },
+    },
+  ];
+
+  for (const { door, key, send, grant } of doors) {
+    it(door, async () => {
+      const [method, path, body] = send();
+      const res = await request(ctx.app, method, path, {
+        key: key(),
+        ...(body !== undefined && { body }),
+      });
+      expect(res.status).toBe(403);
+      const { error } = (await res.json()) as {
+        error: { details?: { grant?: unknown } };
+      };
+      expect(error.details?.grant).toEqual(grant);
+    });
+  }
+
+  it("PATCH /edges/{id}, a move of an edge the key may not write", async () => {
+    const res = await request(ctx.app, "PATCH", `/edges/${edge}`, {
+      key: writer,
+      body: { properties: { a: 1 }, version: 1 },
+    });
+    // A key with no read on the edge type is not told the edge is there.
+    expect([403, 404]).toContain(res.status);
+    if (res.status === 403) {
+      const { error } = (await res.json()) as {
+        error: { details?: { grant?: unknown } };
+      };
+      expect(error.details?.grant).toEqual({
+        kind: "edge_type",
+        name: "references",
+        level: "write",
+      });
+    }
   });
 });

@@ -117,6 +117,30 @@ describe("a refusal caused by a missing grant names it", () => {
       level: "write",
     });
 
+    const tagged = await reader.updateMetadata(target.id, { tags: ["x"] });
+    expect(tagged.status).toBe(403);
+    expect(tagged.error?.error.details?.grant).toEqual({
+      kind: "type",
+      name: "core.note",
+      level: "write",
+    });
+
+    // On the bulk door the grant rides with the entry's refusal.
+    const entry = { type: "core.note", properties: { body: "refused" } };
+    const atomic = await reader.bulkItems({ atomic: true, items: [entry] });
+    expect(atomic.status).toBe(403);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(
+      (atomic.error?.error.details?.details as { grant?: unknown }).grant,
+    ).toEqual({ kind: "type", name: "core.note", level: "write" });
+    const loose = await reader.bulkItems({ atomic: false, items: [entry] });
+    expect(loose.status).toBe(200);
+    expect(loose.data.results[0]?.error?.details?.grant).toEqual({
+      kind: "type",
+      name: "core.note",
+      level: "write",
+    });
+
     const folder = await writer.createFolder({ title: "refused" });
     expect(folder.status).toBe(403);
     expect(folder.error?.error.details?.grant).toEqual({
@@ -172,9 +196,17 @@ describe("a write to an item in the bin says so", () => {
     expect(again.status).toBe(404);
     expect(again.error?.error.details).toEqual({ trashed: true });
 
-    const tagged = await client.updateMetadata(id, { tags: ["late"] });
-    expect(tagged.status).toBe(404);
-    expect(tagged.error?.error.details).toEqual({ trashed: true });
+    for (const write of [
+      () => client.updateMetadata(id, { tags: ["late"] }),
+      () => client.replaceMetadata(id, { tags: ["late"] }),
+      () => client.addTags(id, ["late"]),
+      () => client.removeTag(id, "live"),
+      () => client.setItemExtension(id, "notes-app", { late: true }),
+    ]) {
+      const refused = await write();
+      expect(refused.status).toBe(404);
+      expect(refused.error?.error.details).toEqual({ trashed: true });
+    }
 
     const read = await client.getItem(id);
     expect(read.status).toBe(404);
