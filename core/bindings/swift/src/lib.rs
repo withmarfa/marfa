@@ -963,8 +963,10 @@ pub struct Thumbnail {
     pub bytes: Vec<u8>,
 }
 
-/// One event a held stream applied: what it was, what it was about, and the
-/// cursor it left.
+/// What a held stream changed in the copy: an event it applied, named by the
+/// event's type with the item or edge it was about, or `catalog.changed`,
+/// naming neither, where a stream it opened read a catalog that differs from
+/// the one held. `cursor` is the cursor held after it.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Change {
     pub event: String,
