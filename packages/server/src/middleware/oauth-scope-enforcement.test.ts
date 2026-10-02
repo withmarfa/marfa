@@ -318,7 +318,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
     it("accepts type registration with metadata.types:write", async () => {
       const { rawToken } = await mintOAuthToken({
-        scopes: ["metadata.types:write"],
+        scopes: ["metadata.types:write", "demo.t045_accepted:write"],
       });
       const res = await request(ctx.app, "POST", "/types", {
         key: rawToken,
@@ -455,7 +455,7 @@ describe("edge-type registration is scope-gated (metadata.edge_types:write)", ()
 
   it("accepts POST /edge-types with metadata.edge_types:write", async () => {
     const { rawToken } = await mintOAuthToken({
-      scopes: ["metadata.edge_types:write"],
+      scopes: ["metadata.edge_types:write", "edge.user.blocks:write"],
     });
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: rawToken,
