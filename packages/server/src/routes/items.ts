@@ -44,22 +44,22 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
-  requireAuth,
-  requirePermission,
-  requireTypeAccess,
-  requireReadableRow,
-  mayReadRow,
-  mayWriteEdge,
-  requireResolvedRowWrite,
-  itemProvenanceSource,
-  requireDeclaredTypeMatches,
   checkTypeAccess,
   checkTypePermission,
-  requireEdgePermission,
   getTypeFilter,
+  itemProvenanceSource,
   mayReadEdgeEnd,
+  mayReadRow,
   typeReader,
   mayReadType,
+  mayWriteEdge,
+  requireAuth,
+  requireDeclaredTypeMatches,
+  requireEdgePermission,
+  requireReadableRow,
+  requireResolvedRowWrite,
+  requireTypeAccess,
+  standingPermission,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -1313,6 +1313,7 @@ const purgeItemRoute = createRoute({
   summary: "Permanently delete an item",
   description: `Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires \`items.purge\` and write on the item's type. Each edge it takes is announced \`edge.deleted\` with \`purged_with\` naming this item. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live \`system.connection\` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.\n\nThe purge leaves tombstones under the item's type: its link, where the type names a \`link_field\` and the row held a value there, and its natural key, where it had one, each with the purge time as \`purged_at\` and \`settled_at\`. \`POST /items/lookup\` reads them and \`POST /items/tombstones\` moves \`settled_at\` later; an item that later holds the same link in the type, or the same natural key in any type, removes the one it matches. Nothing else sweeps them but deleting the type.\n\n\`version\` makes the purge conditional on the row being where the caller read it: at any other version it answers \`409 version_conflict\` with the row as it now stands under \`current\`, and deletes nothing. Without it the purge applies to the row as it is. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
+  middleware: standingPermission("items.purge"),
   request: {
     params: IdParam,
     query: z.object({
@@ -3135,8 +3136,6 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireAuth(c);
-    requirePermission(c, "items.purge");
     // A misspelled `version` stripped by the validator would purge
     // unconditionally, which is the act the parameter exists to guard.
     refuseUnknownQueryParams(c.req.raw.url, purgeItemRoute.request.query);

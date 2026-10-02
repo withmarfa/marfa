@@ -20,11 +20,11 @@ import {
 } from "../auth/mint-clamp.js";
 import { keysInReach } from "../auth/key-reach.js";
 import {
-  requirePermission,
-  requireAuth,
   hashApiKey,
   isReservedCredentialSource,
+  requireAuth,
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
+  standingPermission,
 } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import {
@@ -162,6 +162,23 @@ const ApiKeySchema = z
 // Route definitions
 // ---------------------------------------------------------------------------
 
+/**
+ * **The operator key reaches these doors by being the operator key**, and holds
+ * no permission to be checked. Key management is instance-tier work when
+ * the operator does it — it mints the credential an instance works through —
+ * so asking a permission of it would be asking the wrong question, and
+ * the only answer it could ever give is no, because running the instance is
+ * deliberately not expressible as a permission.
+ *
+ * Everything else is held to `keys.mint`. A session may mint too, if it was
+ * granted the permission to, and the key it asks for does not reach past the
+ * session's own grant: holding `keys.mint` says a credential may mint, and the
+ * clamp in the mint says how far what it mints may reach. The two are separate
+ * on purpose, and removing one without the other opens an escalation; see
+ * `auth/mint-clamp.ts`.
+ */
+const keyDoors = standingPermission("keys.mint", { operatorToo: true });
+
 const createKeyRoute = createRoute({
   operationId: "createKey",
   method: "post",
@@ -172,6 +189,7 @@ const createKeyRoute = createRoute({
     "Creates a new API key. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nA credential is a set of permissions and nothing else. `permissions` names the permissions the key holds, and anything named beyond what the creator holds is refused, so a mint can narrow and can never widen. A body naming no map and no claimed source takes the creator's whole set, permissions and maps alike; a body naming any of them holds only what it names, so a key minted with a type map and no `permissions` holds no permission. A map entry beyond the creator's is refused the same way, and a signed-in app must hold `keys.mint` to reach this route at all.\n\n`source` is the key's own, and no other unrevoked key may hold it as its own, though keys claiming it write under it too. `sources` names the sources the key claims besides it, which a write may name so its rows are keyed by the claimed source; a working key may grant only its own `source` and what it claims itself.\n\nThe operator key holds no permissions, because running the instance sits outside the permission model, so it is not a ceiling: a working key it mints holds what the body names, or the whole set when the body names nothing. With `is_operator: true` it mints a second operator key instead, which holds nothing, so a body naming any map entry, permission or claimed source on one is refused. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it — and a body naming `sources` there is refused as on any operator key, with the secret left to mint again. The operator key is not a working key, so the next call is this route again with it, minting the key to configure a client with.",
 
   security: [{ bearerAuth: [] }],
+  middleware: keyDoors,
   request: {
     // Strict, and that is load-bearing rather than tidiness. A field this
     // body does not declare is stripped by an ordinary object, and on a body
@@ -273,6 +291,7 @@ const listKeysRoute = createRoute({
   description:
     "Returns the API keys within the caller's reach, the caller included, without plaintext, which is only ever returned at creation time. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
   security: [{ bearerAuth: [] }],
+  middleware: keyDoors,
   responses: {
     200: {
       content: {
@@ -343,6 +362,7 @@ const revokeKeyRoute = createRoute({
   description:
     "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. An event stream the key holds open ends before it sends anything written after the revoke, and at its next heartbeat when nothing is written. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.",
   security: [{ bearerAuth: [] }],
+  middleware: keyDoors,
   request: {
     params: z.object({
       id: z.string().describe("ID of the API key to revoke"),
@@ -394,21 +414,6 @@ const revokeKeyRoute = createRoute({
   },
 });
 
-/**
- * **The operator key reaches these doors by being the operator key**, and holds
- * no permission to be checked. Key management is instance-tier work when
- * the operator does it — it mints the credential an instance works through —
- * so asking a permission of it would be asking the wrong question, and
- * the only answer it could ever give is no, because running the instance is
- * deliberately not expressible as a permission.
- *
- * Everything else is held to `keys.mint`.
- */
-function requireKeysMintOrOperator(c: Context<AppEnv>): void {
-  if (requireAuth(c).is_operator) return;
-  requirePermission(c, "keys.mint");
-}
-
 // `source` is declared, and immutable. It is listed here rather than left
 // out so the handler refuses a body naming it with a readable error rather
 // than the strict object's generic "unrecognized keys"; a caller is told
@@ -443,6 +448,7 @@ const updateKeyRoute = createRoute({
   description:
     "Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.",
   security: [{ bearerAuth: [] }],
+  middleware: keyDoors,
   request: {
     params: z.object({
       id: z.string().describe("ID of the API key to update"),
@@ -955,16 +961,6 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
-    if (!isBootstrap) {
-      requireAuth(c);
-      // A session may mint, if it was granted the permission to and the key it
-      // asks for does not reach past the session's own grant. Holding
-      // `keys.mint` says a credential may mint; the clamp below says how far
-      // what it mints may reach. The two are separate on purpose, and
-      // removing one without the other opens an escalation; see
-      // `auth/mint-clamp.ts`.
-      requireKeysMintOrOperator(c);
-    }
 
     const body = c.req.valid("json");
 
@@ -1294,8 +1290,6 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(listKeysRoute, async (c) => {
-    requireAuth(c);
-    requireKeysMintOrOperator(c);
     const keys = await keysInReach(storage, c).list();
     return c.json({ data: keys, next_cursor: null }, 200);
   });
@@ -1317,8 +1311,6 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
-    requireAuth(c);
-    requireKeysMintOrOperator(c);
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
@@ -1347,7 +1339,6 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(updateKeyRoute, async (c) => {
     const key = requireAuth(c);
-    requireKeysMintOrOperator(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 

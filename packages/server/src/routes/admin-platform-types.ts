@@ -30,7 +30,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { pageOf } from "./_schemas.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import { operatorOnly } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import { platformDrift } from "../storage/platform-drift.js";
@@ -60,6 +60,7 @@ const listDriftRoute = createRoute({
   tags: ["Types"],
   summary: "Shipped types this instance carries that the build does not",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   description:
     "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items still carry the identifier. A row here keeps resolving and keeps listing at `GET /types`, so a type a rename retired outlives the rename on every instance upgraded across it until somebody acts; `DELETE /admin/platform-types/{id}` is that act, one row per call, and a row reporting `removable: true` is one it would accept today, unless this process has already removed it — the drifted set is derived once at boot, so a row removed since then is still listed here and the remove door answers `404` for it. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
   responses: {
@@ -97,6 +98,7 @@ const removeDriftedTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Remove one shipped type the build no longer carries",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   description:
     "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report, so an item of the type written meanwhile is either counted or refused. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.",
   request: {
@@ -177,7 +179,6 @@ export function adminPlatformTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listDriftRoute, async (c) => {
-    requireOperatorKey(c);
     const ids = platformDrift();
     const types = await Promise.all(
       ids.map(async (id) => {
@@ -195,7 +196,6 @@ export function adminPlatformTypeRoutes(storage: Storage) {
   });
 
   router.openapi(removeDriftedTypeRoute, async (c) => {
-    requireOperatorKey(c);
     const { id } = c.req.valid("param");
 
     // Asked of this boot's derived set rather than of the row, and the

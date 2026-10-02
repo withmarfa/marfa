@@ -1,237 +1,227 @@
 /**
- * Every administrative door, and the permission it consults.
+ * Every door that asks the same thing of every caller, the operator key or
+ * one permission, and the order it asks it in.
  *
- * **A census rather than a per-route test, for the reason the credential-mint
- * census exists.** A gate added to nine doors and forgotten on the tenth reads
- * as covered from every angle a per-route test can see: each route that was
- * changed has a passing test, and the one that was not has no failing one. The
- * property worth asserting is the shape of the whole surface.
- *
- * **What this can and cannot see, now that there is no rank.** It used to scan
- * for handlers admitting on the retired rank gate and report the ones with no
- * capability beside them, and that worked because rank had a distinctive
- * signature in the source. It has none now: `requireAuth` is ordinary
- * authentication and sits on nearly every door, so a scan keyed on it reports
- * the whole route table. What survives is the half that still has a signature
- * — every door that does consult a permission is consulting the right one for
- * its own surface, and the files reached through the shared resolver are seen
- * at all. A door that should ask and does not is no longer detectable by
- * reading the source, and needs an explicit list rather than a scanner.
+ * **A census rather than a test per door.** A door's standing rule, the
+ * operator key or one permission, refused inside its handler is reached only
+ * after the router has validated the request, so a key that may not use the
+ * door is told what is wrong with its body before it is told it may not use
+ * the door. Such a door reads as covered from every angle a per-route test
+ * can see. So the doors carrying a standing rule are read out of the app's
+ * own route table, each has to be named below, the sources are read for a
+ * check made inside a handler instead, and every named door is then driven
+ * with a key that may not use it and a request nothing would accept.
  */
-import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+import { standingRuleOf } from "../middleware/auth.js";
 
-const ROUTES_DIR = join(import.meta.dirname, ".");
+let ctx: TestContext;
+/** A working key holding no permission and no metadata reach, so every
+ *  standing rule refuses it. */
+let holdsNoPermission: string;
 
-interface Site {
-  file: string;
-  line: number;
-  handler: string;
-  permission: string | null;
-}
-
-/**
- * Anything that begins a route handler.
- *
- * **Not just `openapi(`, and that was a real hole.** Five route files register
- * their surfaces as plain Hono routes and contain no `openapi(` call at all —
- * `auth-pages.ts` alone has twenty-eight. Bounding a handler by `openapi(`
- * there bounded nothing: the window became the whole file, so one
- * `requirePermission` anywhere in it credited every rank-admitting site in it,
- * and every site reported the same `(module scope)` handler. Both effects run
- * in the unsafe direction, and they run in exactly the files the surfaces are
- * hardest to see in by eye.
- */
-/**
- * Two shapes, and the argument is what makes them safe to match. A router
- * variable can be called anything — `router`, `r`, `htmlRouter` — so the
- * receiver is not the signal. Matching any `.get(` on any identifier would
- * make `manifests.get(ref)` a handler boundary; requiring a path literal
- * beginning with `/`, or a bare identifier for `openapi`, does not.
- */
-const ROUTE_STARTS: readonly RegExp[] = [
-  /\b\w+\.openapi\(\s*(\w+)/,
-  /\b\w+\.(?:get|post|put|patch|delete|all|on)\(\s*"(\/[^"]*)"/,
-];
-
-/**
- * Helpers that hold a door to a permission on its callers' behalf.
- *
- * A door gated through one of these names is gated, and the scanner has to say
- * so or the four `/keys` doors become invisible the moment they share a line.
- * The helper's own body is skipped for the same reason `_cross-origin.ts` is:
- * it is not a surface, and counting it would credit a door that does not exist
- * while leaving the real ones unattributed.
- *
- * Adding a name here is a deliberate act, which is the point — a helper that
- * wraps a gate has to be declared before the census will credit it.
- */
-const GATE_HELPERS: Readonly<Record<string, string>> = {
-  requireKeysMintOrOperator: "keys.mint",
-  requireSchemaChange: "schema.write",
-};
-
-function routeStart(line: string): string | null {
-  for (const re of ROUTE_STARTS) {
-    const m = re.exec(line);
-    if (m) return m[1] ?? null;
-  }
-  return null;
-}
-
-/** A label for the handler containing `line` — its registered name or path. */
-function handlerAbove(lines: readonly string[], line: number): string {
-  for (let i = line - 1; i >= 0; i--) {
-    const name = routeStart(lines[i] ?? "");
-    if (name !== null) return name;
-  }
-  return "(module scope)";
-}
-
-/**
- * The capability consulted inside the same handler, if any.
- *
- * Bounded by the next route registration rather than by brace matching: the
- * handlers are long, several carry nested closures, and a brace counter that
- * loses its place would report an absence rather than fail, which is the
- * direction that costs something.
- */
-function permissionWithin(
-  lines: readonly string[],
-  line: number,
-): string | null {
-  let start = 0;
-  for (let i = line - 1; i >= 0; i--) {
-    if (routeStart(lines[i] ?? "") !== null) {
-      start = i;
-      break;
-    }
-  }
-  let end = lines.length;
-  for (let i = line; i < lines.length; i++) {
-    if (routeStart(lines[i] ?? "") !== null) {
-      end = i;
-      break;
-    }
-  }
-  for (let i = start; i < end; i++) {
-    const direct = /requirePermission\(\s*c\s*,\s*"([^"]+)"/.exec(
-      lines[i] ?? "",
-    );
-    if (direct) return direct[1] ?? null;
-    for (const [name, permission] of Object.entries(GATE_HELPERS)) {
-      if ((lines[i] ?? "").includes(`${name}(`)) return permission;
-    }
-  }
-  return null;
-}
-
-/**
- * Whether `line` sits inside the body of a gate helper rather than a handler.
- *
- * Walks back to the nearest function declaration, stopping at a route
- * registration, so a helper defined between two routes is still recognized.
- */
-function insideGateHelper(lines: readonly string[], line: number): boolean {
-  for (let i = line - 1; i >= 0; i--) {
-    const text = lines[i] ?? "";
-    if (routeStart(text) !== null) return false;
-    const declared = /^(?:export )?function (\w+)\s*\(/.exec(text);
-    if (declared)
-      return declared[1] !== undefined && declared[1] in GATE_HELPERS;
-  }
-  return false;
-}
-
-function census(): Site[] {
-  const out: Site[] = [];
-  for (const file of readdirSync(ROUTES_DIR).sort()) {
-    if (!file.endsWith(".ts") || file.endsWith(".test.ts")) continue;
-    const lines = readFileSync(join(ROUTES_DIR, file), "utf8").split("\n");
-    lines.forEach((text, i) => {
-      // Comments mention these names; a line that is only a comment is not a
-      // door, and treating one as ungated would redden the suite for prose.
-      const code = text.trim();
-      if (code.startsWith("//") || code.startsWith("*")) return;
-      // The open paren rather than `(c)`, so a call Prettier has wrapped onto
-      // the next line is still seen. The identifier and its paren stay
-      // together; the argument does not.
-      const consultsPermission =
-        text.includes("requirePermission(") ||
-        Object.keys(GATE_HELPERS).some((name) => text.includes(`${name}(`));
-      if (!consultsPermission) return;
-      if (insideGateHelper(lines, i + 1)) return;
-      out.push({
-        file,
-        line: i + 1,
-        handler: handlerAbove(lines, i + 1),
-        permission: permissionWithin(lines, i + 1),
-      });
-    });
-  }
-  return out;
-}
-
-describe("every administrative door consults a permission", () => {
-  const sites = census();
-
-  it("finds the surface at all, so an empty census cannot pass", () => {
-    // A scanner that stops matching reports a clean sweep. This is what makes
-    // the assertions below mean something.
-    expect(sites.length).toBeGreaterThan(15);
-  });
-
-  it("reads a permission off every site it counts", () => {
-    // The scanner's own health. A site it can see but cannot attribute would
-    // be excluded from the mapping check below without anything saying so,
-    // which is the failure mode that reads as a clean sweep.
-    const unattributed = sites
-      .filter((s) => s.permission === null)
-      .map((s) => `${s.file}:${String(s.line)} ${s.handler}`);
-    expect(unattributed).toEqual([]);
-  });
-
-  it("matches the surface exactly, in both directions", () => {
-    // **The count is pinned, not only the permission**, and that is what the
-    // rank gate used to give for free. The rank check marked which doors
-    // needed a permission, so a new one arriving unmarked was visible in the
-    // source; with rank retired nothing marks them, and a door added to an
-    // administrative surface with no permission beside it reads exactly like
-    // a door that never needed one.
-    //
-    // So the surface is written down. A door losing its gate drops its count
-    // and reddens here; a door gated on the wrong literal reddens here; and a
-    // new gated door has to be added deliberately, which is the moment someone
-    // asks whether the literal is right.
-    //
-    // **What this still cannot see is a new door that consults nothing at
-    // all**, in a file that already has gated siblings. Nothing in the source
-    // distinguishes it from the open reads those files legitimately carry —
-    // `GET /types`, `GET /edge-types` and `GET /keys/current` are open on
-    // purpose — so it is a
-    // judgment at review rather than a property a scan can hold. Said plainly
-    // here rather than left as an absence, because an absence reads as
-    // coverage.
-    const expected: Record<string, Record<string, number>> = {
-      "audit.ts": { "audit.read": 1 },
-      "auth-pages.ts": { "grants.manage": 2 },
-      "bulk.ts": { "items.purge": 1 },
-      "_schema-reach.ts": { "schema.write": 1 },
-      "config.ts": { "config.manage": 2 },
-      "edge-types.ts": { "schema.write": 1 },
-      "items.ts": { "items.purge": 1 },
-      "keys.ts": { "keys.mint": 4 },
-      "types.ts": { "schema.write": 2 },
-      "webhooks.ts": { "webhooks.manage": 6 },
-    };
-
-    const actual: Record<string, Record<string, number>> = {};
-    for (const site of sites) {
-      const permission = site.permission ?? "none";
-      const byPermission = (actual[site.file] ??= {});
-      byPermission[permission] = (byPermission[permission] ?? 0) + 1;
-    }
-    expect(actual).toEqual(expected);
+beforeAll(async () => {
+  ctx = await createTestContext();
+  holdsNoPermission = await mintWorkingKey(ctx, {
+    permissions: [],
+    metadata_permissions: {},
   });
 });
+
+afterAll(async () => {
+  await ctx.cleanup();
+});
+
+const OPERATOR = "operator key";
+
+/** Every door with a standing rule, and the rule. */
+const STANDING: Record<string, string> = {
+  "GET /owner": OPERATOR,
+  "POST /owner": OPERATOR,
+  "GET /blobs/orphans": OPERATOR,
+  "GET /blobs/stores": OPERATOR,
+  "DELETE /blobs/:hash/locations/:store": OPERATOR,
+  "GET /housekeeping": OPERATOR,
+  "POST /housekeeping/:name/run": OPERATOR,
+  "GET /admin/platform-types/drift": OPERATOR,
+  "DELETE /admin/platform-types/:id": OPERATOR,
+  "POST /admin/restore-archive": OPERATOR,
+  "GET /metrics": OPERATOR,
+  "POST /webhooks": "webhooks.manage",
+  "GET /webhooks": "webhooks.manage",
+  "GET /webhooks/:id": "webhooks.manage",
+  "PATCH /webhooks/:id": "webhooks.manage",
+  "DELETE /webhooks/:id": "webhooks.manage",
+  "GET /webhooks/:id/deliveries": "webhooks.manage",
+  "GET /config": "config.manage",
+  "PUT /config": "config.manage",
+  "GET /audit": "audit.read",
+  "POST /keys": "keys.mint or operator key",
+  "GET /keys": "keys.mint or operator key",
+  "DELETE /keys/:id": "keys.mint or operator key",
+  "PATCH /keys/:id": "keys.mint or operator key",
+  "DELETE /items/:id/purge": "items.purge",
+  "POST /types": "metadata.types:write",
+  "PUT /types/:id": "schema.write",
+  "DELETE /types/:id": "schema.write",
+  "POST /edge-types": "metadata.edge_types:write",
+  "DELETE /edge-types/:id": "schema.write",
+};
+
+/**
+ * Every `requirePermission` call left in a route file, by file and literal,
+ * each with why it cannot be a standing rule: what it asks depends on the
+ * request, or the door is not one the route table carries a rule on.
+ */
+const ASKED_IN_PLACE: Record<
+  string,
+  { asks: Record<string, number>; because: string }
+> = {
+  "routes/_schema-reach.ts": {
+    asks: { "schema.write": 1 },
+    because:
+      "the schema guard, which the standing rule and the whole guard both call once the names are known",
+  },
+  "routes/auth-pages.ts": {
+    asks: { "grants.manage": 2 },
+    because:
+      "the grant doors are plain routes that read no body, and answer a path id only after the permission",
+  },
+  "routes/bulk.ts": {
+    asks: { "items.purge": 1 },
+    because: "asked only of a bulk action whose action is purge",
+  },
+};
+
+function standingDoors(): Record<string, string> {
+  const found: Record<string, string> = {};
+  for (const route of ctx.app.routes) {
+    const rule = standingRuleOf(route.handler);
+    if (rule !== undefined) found[`${route.method} ${route.path}`] = rule;
+  }
+  return found;
+}
+
+function sourcesUnder(dir: string): string[] {
+  const root = join(import.meta.dirname, "..");
+  const out: string[] = [];
+  const walk = (rel: string): void => {
+    for (const entry of readdirSync(join(root, rel), {
+      withFileTypes: true,
+    })) {
+      const path = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) walk(path);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+        out.push(path);
+      }
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+function read(rel: string): string {
+  return readFileSync(join(import.meta.dirname, "..", rel), "utf8");
+}
+
+/** The request nothing would accept: an id no row has, in no shape any
+ *  validator takes, a query key no door knows, and a body no parser reads. */
+function malformed(door: string): [string, string] {
+  const [method, path] = door.split(" ") as [string, string];
+  const concrete = path.replace(/:[a-z_]+/g, "not a valid id");
+  return [method, `${concrete.replaceAll(" ", "%20")}?limit=not-a-number`];
+}
+
+describe("every door with a standing rule asks it before anything else", () => {
+  it("names every door the app serves with a standing rule, and no other", () => {
+    const doors = standingDoors();
+    expect(Object.keys(doors).length).toBeGreaterThan(20);
+    expect(doors).toEqual(STANDING);
+  });
+
+  it("asks no standing rule inside a handler", () => {
+    const routes = sourcesUnder("routes");
+    expect(routes.length).toBeGreaterThan(20);
+    const asked: Record<string, Record<string, number>> = {};
+    for (const file of routes) {
+      const source = read(file);
+      expect(source, file).not.toMatch(/checkOperatorKey\(/);
+      for (const match of source.matchAll(
+        /requirePermission\(\s*c\s*,\s*"([^"]+)"/g,
+      )) {
+        const byLiteral = (asked[file] ??= {});
+        byLiteral[match[1]!] = (byLiteral[match[1]!] ?? 0) + 1;
+      }
+    }
+    expect(asked).toEqual(
+      Object.fromEntries(
+        Object.entries(ASKED_IN_PLACE).map(([file, { asks }]) => [file, asks]),
+      ),
+    );
+    for (const { because } of Object.values(ASKED_IN_PLACE)) {
+      expect(because.length).toBeGreaterThan(30);
+    }
+  });
+
+  it("refuses a key that may not use the door 403, whatever is wrong with its request", async () => {
+    const wrong: string[] = [];
+    for (const door of Object.keys(STANDING)) {
+      const [method, path] = malformed(door);
+      const res = await fetchRaw(method, path);
+      const body = (await res.json()) as { error?: { code?: string } };
+      if (res.status !== 403 || body.error?.code !== "forbidden") {
+        wrong.push(
+          `${door} answered ${String(res.status)} ${JSON.stringify(body)}`,
+        );
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("names the permission it refuses, on a door a permission opens", async () => {
+    const [method, path] = malformed("PUT /config");
+    const res = await fetchRaw(method, path);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: { details?: { required_scope?: string } };
+    };
+    expect(body.error.details?.required_scope).toBe("config.manage");
+  });
+
+  it("still validates the request of a caller the rule admits", async () => {
+    // The witness: the malformed request is one the validators refuse, so the
+    // 403s above come from the rule running first rather than from a request
+    // the door would have taken.
+    const res = await ctx.app.request("/config", {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "application/json",
+      },
+      body: "{ not json",
+    });
+    expect(res.status).toBe(400);
+    const owner = await request(ctx.app, "POST", "/owner", {
+      key: ctx.operatorKey,
+      body: { email: "not an address", password: "x" },
+    });
+    expect(owner.status).toBe(400);
+  });
+});
+
+function fetchRaw(method: string, path: string): Promise<Response> {
+  return Promise.resolve(
+    ctx.app.request(path, {
+      method,
+      headers: {
+        Authorization: `Bearer ${holdsNoPermission}`,
+        "Content-Type": "application/json",
+      },
+      body: method === "GET" ? undefined : "{ not json",
+    }),
+  );
+}

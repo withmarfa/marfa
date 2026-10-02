@@ -19,7 +19,26 @@ import {
   requireMetadataPermission,
   requirePermission,
   requireTypeAccess,
+  standingPermission,
+  standingRule,
 } from "../middleware/auth.js";
+
+/** Asked of every caller of a door that replaces or deletes a type or an
+ *  edge type, before the request is read. */
+export const changesSchema = standingPermission("schema.write");
+
+/** Asked of every caller of the type registration door. */
+export const registersType = standingRule("metadata.types:write", (c) => {
+  requireSchemaRegistration(c, "types");
+});
+
+/** Asked of every caller of the edge-type registration door. */
+export const registersEdgeType = standingRule(
+  "metadata.edge_types:write",
+  (c) => {
+    requireSchemaRegistration(c, "edge_types");
+  },
+);
 
 /** A registration takes the metadata scope; a replacement or a delete takes
  *  `schema.write`. */

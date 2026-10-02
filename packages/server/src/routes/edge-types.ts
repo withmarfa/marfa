@@ -25,9 +25,9 @@ import {
   makeErrorResponseSchema,
 } from "../openapi.js";
 import {
+  changesSchema,
+  registersEdgeType,
   requireEdgeTypeSchemaWrite,
-  requireSchemaChange,
-  requireSchemaRegistration,
 } from "./_schema-reach.js";
 
 // ---------------------------------------------------------------------------
@@ -261,6 +261,7 @@ const createEdgeTypeRoute = createRoute({
   description:
     "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
   security: [{ bearerAuth: [] }],
+  middleware: registersEdgeType,
   request: {
     body: {
       content: {
@@ -342,6 +343,7 @@ const deleteEdgeTypeRoute = createRoute({
   description:
     "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds \u2014 it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
   security: [{ bearerAuth: [] }],
+  middleware: changesSchema,
   request: {
     params: z.object({ id: z.string().describe("Edge type id.") }),
     query: z.object({
@@ -406,12 +408,6 @@ export function edgeTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createEdgeTypeRoute, async (c) => {
-    // Registering an edge type is gated by the metadata.edge_types
-    // scope, which every credential must carry: `metadata.edge_types:write`
-    // is requestable but not part of the default consent bundle, so an app
-    // that registers edge types asks for it explicitly. Mirrors
-    // `POST /types`.
-    requireSchemaRegistration(c, "edge_types");
     const body = c.req.valid("json");
     // Check core-type protection first — matches the client-facing
     // expectation that "can't redefine a core type" is a 409, not
@@ -493,8 +489,6 @@ export function edgeTypeRoutes(storage: Storage) {
   });
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
-    requireAuth(c);
-    requireSchemaChange(c);
     const { id } = c.req.valid("param");
     if (isCoreEdgeType(id)) {
       throw new MarfaError(

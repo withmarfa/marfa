@@ -8,7 +8,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import type { AppConfig } from "../config.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import { operatorOnly } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -272,6 +272,7 @@ const listBlobStoresRoute = createRoute({
   description:
     "Every store the instance has attached: the disk it uploads to and, when one is configured, the object store. A store the configuration no longer names stays listed with `detached_at` set, because the location log still describes it. `min_copies` is the live copies a blob keeps at the least: a drop that would leave fewer is refused. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   responses: {
     200: {
       content: {
@@ -491,6 +492,7 @@ const dropBlobLocationRoute = createRoute({
   description:
     "Removes the copy of the blob that one store holds, and its row in the location log, only when at least `min_copies` live copies would remain; otherwise the copy stays and the door answers `409 copies_below_minimum`. A store that holds no copy, or that is not attached, answers `404 blob_location_not_found`. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   request: { params: HashAndStoreParam },
   responses: {
     200: {
@@ -554,6 +556,7 @@ const listBlobOrphansRoute = createRoute({
   description:
     "The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   responses: {
     200: {
       content: {
@@ -793,7 +796,6 @@ export function blobRoutes(
   // GET /blobs/orphans — the report the orphan sweep writes. Registered
   // ahead of `/{hash}` so the literal segment is never read as a hash.
   router.openapi(listBlobOrphansRoute, async (c) => {
-    requireOperatorKey(c);
     const data = await storage.blobs.listOrphans();
     return c.json({ data, next_cursor: null }, 200);
   });
@@ -801,7 +803,6 @@ export function blobRoutes(
   // GET /blobs/stores — the attached stores (operator key only). Registered
   // ahead of `/{hash}` so the literal segment is never read as a hash.
   router.openapi(listBlobStoresRoute, async (c) => {
-    requireOperatorKey(c);
     const data = await storage.blobs.listStores();
     return c.json({ data, next_cursor: null, min_copies: minCopies }, 200);
   });
@@ -885,7 +886,6 @@ export function blobRoutes(
 
   // DELETE /blobs/:hash/locations/:store — drop one store's copy
   router.openapi(dropBlobLocationRoute, async (c) => {
-    requireOperatorKey(c);
     const params = c.req.valid("param");
     const hash = normalizeHash(params.hash);
     if (!(await storage.blobs.get(hash))) {

@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ALL_TYPES } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireOperatorKey } from "../middleware/auth.js";
+import { operatorOnly } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -49,6 +49,7 @@ const getMetricsRoute = createRoute({
   description:
     "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. Operator key only: the counters are instance-wide rather than permission-scoped, so a working credential is refused.",
   security: [{ bearerAuth: [] }],
+  middleware: operatorOnly,
   responses: {
     200: {
       content: {
@@ -81,8 +82,6 @@ export function metricsRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getMetricsRoute, async (c) => {
-    requireOperatorKey(c);
-
     const now = Date.now();
     if (metricsCache && now - metricsCache.at < CACHE_TTL_MS) {
       return c.json(
