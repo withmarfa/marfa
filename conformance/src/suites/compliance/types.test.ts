@@ -159,6 +159,49 @@ describe("type registration and listing", () => {
     expect(r.error?.error.code).toBe("property_shadows_field");
   });
 
+  it("refuses a replacement whose property name shadows a first-class Item field, as registration does", async () => {
+    const id = `user.shadow-replace-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { name: { type: "string" } },
+    });
+    expect(registered.status).toBe(201);
+
+    const r = await client.updateType(id, {
+      fields: {
+        name: { type: "string" },
+        capture_latitude: { type: "number" },
+      },
+    });
+    expect(r.status).toBe(400);
+    expect(r.error?.error.code).toBe("property_shadows_field");
+  });
+
+  it("refuses a replacement that breaks its compatible_with claim, as registration does", async () => {
+    const id = `user.compat-replace-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: { body: { type: "string", required: true } },
+      compatible_with: "core.note",
+    });
+    expect(registered.status).toBe(201);
+
+    // core.note requires `body`; the replacement drops it.
+    const missingField = await client.updateType(id, {
+      fields: { extra: { type: "string" } },
+      compatible_with: "core.note",
+    });
+    expect(missingField.status).toBe(422);
+    expect(missingField.error?.error.code).toBe("compatible_with_violation");
+
+    const unknownTarget = await client.updateType(id, {
+      fields: { body: { type: "string", required: true } },
+      compatible_with: "no.such-type-exists",
+    });
+    expect(unknownTarget.status).toBe(422);
+    expect(unknownTarget.error?.error.code).toBe("compatible_with_violation");
+  });
+
   it("writes and reads items of a type whose fields share a name with an object's built-in members", async () => {
     const names = ["toString", "valueOf", "constructor", "hasOwnProperty"];
     const id = `user.builtin-names-${ctx.runId}`;
