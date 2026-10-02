@@ -352,28 +352,6 @@ export class SqliteEdgeStore implements EdgeStore {
     return this.removeWhere(and(...conditions));
   }
 
-  async deleteBySourceBatch(
-    sourceIds: string[],
-    edgeType?: string,
-  ): Promise<Edge[]> {
-    if (sourceIds.length === 0) return [];
-    const unique = Array.from(new Set(sourceIds));
-    const conditions = [inArray(edges.source_id, unique)];
-    if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
-    return this.removeWhere(and(...conditions));
-  }
-
-  async deleteByTargetBatch(
-    targetIds: string[],
-    edgeType?: string,
-  ): Promise<Edge[]> {
-    if (targetIds.length === 0) return [];
-    const unique = Array.from(new Set(targetIds));
-    const conditions = [inArray(edges.target_id, unique)];
-    if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
-    return this.removeWhere(and(...conditions));
-  }
-
   /** Every edge deletion: the rows go, and the blobs their properties
    *  named have their orphan reports lifted, in one transaction. */
   private async removeWhere(where: SQL | undefined): Promise<Edge[]> {

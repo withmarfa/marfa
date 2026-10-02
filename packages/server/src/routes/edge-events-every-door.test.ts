@@ -570,11 +570,10 @@ describe("the properties the announcement itself has to hold", () => {
     expect(deletedAt).toBeLessThan(createdAt);
   });
 
-  it("a purge chunk that errored announces nothing", async () => {
-    // `cascaded` is filled by the first batch delete, before the
-    // statements after it can throw. Without the guard the chunk reports
-    // every id as errored and still announces the edges it staged —
-    // deletions for rows a rollback put back.
+  it("a purge row that errored announces nothing of the edges it had taken", async () => {
+    // The row's outbound edges go first, so a failure taking its inbound
+    // ones comes after an edge was really deleted. The row is undone with
+    // its savepoint, the edge with it, and nothing is announced of either.
     const tag = `errored-${Math.random().toString(36).slice(2, 8)}`;
     const seed = await request(ctx.app, "POST", "/items", {
       key: ctx.workingKey,
@@ -583,37 +582,48 @@ describe("the properties the announcement itself has to hold", () => {
     expect(seed.status).toBe(201);
     const doomed = ((await seed.json()) as { item: { id: string } }).item.id;
     const other = await note(`errored-other-${tag}`);
-    // **Outbound**, so the first batch delete actually stages it. An
-    // inbound-only fixture leaves `cascaded` empty and the test passes
-    // whether or not the guard exists — which is what it did until a
-    // mutation showed the guard could be removed with the test green.
     const edgeRes = await request(ctx.app, "POST", "/edges", {
       key: ctx.workingKey,
       body: { source_id: doomed, target_id: other, edge_type: "references" },
     });
     const edgeId = ((await edgeRes.json()) as { edge: { id: string } }).edge.id;
+    expect(
+      (
+        await request(ctx.app, "DELETE", `/items/${doomed}`, {
+          key: ctx.workingKey,
+        })
+      ).status,
+    ).toBe(200);
 
     const store = ctx.storage.edges;
-    const realByTarget = store.deleteByTargetBatch.bind(store);
-    store.deleteByTargetBatch = () =>
-      Promise.reject(new Error("simulated storage failure"));
+    const realByTarget = store.deleteByTarget.bind(store);
+    let refused = 0;
+    store.deleteByTarget = () => {
+      refused += 1;
+      return Promise.reject(new Error("simulated storage failure"));
+    };
+    let result: Awaited<ReturnType<typeof runBulkActionAsync>>;
+    let heard: Awaited<ReturnType<typeof edgeEventsDuring>>;
+    try {
+      heard = await edgeEventsDuring(async () => {
+        result = await runBulkActionAsync(
+          ctx,
+          {
+            action: "purge",
+            confirm: "PURGE",
+            filter: { tags: [tag], state: "trashed" },
+            enable_fanout: true,
+          },
+          ctx.workingKey,
+        );
+      });
+    } finally {
+      store.deleteByTarget = realByTarget;
+    }
 
-    const heard = await edgeEventsDuring(async () => {
-      await runBulkActionAsync(
-        ctx,
-        {
-          action: "purge",
-          confirm: "PURGE",
-          filter: { tags: [tag] },
-          enable_fanout: true,
-        },
-        ctx.workingKey,
-      );
-    });
-    store.deleteByTargetBatch = realByTarget;
-
-    // The first delete staged this edge before the second threw. Nothing
-    // about a failed chunk may reach a subscriber.
+    expect(refused).toBeGreaterThan(0);
+    expect(result!.result?.errors?.map((e) => e.id)).toEqual([doomed]);
+    expect(await ctx.storage.edges.get(edgeId)).not.toBeNull();
     expect(
       heard.filter((e) => e.type === "edge_deleted" && e.edge.id === edgeId),
     ).toHaveLength(0);

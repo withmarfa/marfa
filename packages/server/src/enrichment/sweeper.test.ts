@@ -468,6 +468,28 @@ describe("skips", () => {
     expect(patch.status).toBe(200);
   });
 
+  it("skips a row whose type is no longer registered, rather than failing it every run", async () => {
+    // A file type this build no longer ships leaves its rows behind, still
+    // a file by name, and the item write refuses them until it is back.
+    const id = await createFileItem(
+      await seedBlob(Buffer.from("orphaned text"), "text/plain"),
+      "text/plain",
+    );
+    const raw = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await raw.__sqliteRun("UPDATE items SET type = ? WHERE id = ?", [
+      "core.file.retired_by_this_test",
+      id,
+    ]);
+
+    const result = await sweeper().runOnce();
+    expect(result).toEqual({ extracted: 0, skipped: 1, failed: 0 });
+    const row = await ctx.storage.enrichment.get(id);
+    expect(row?.status).toBe("skipped");
+    expect(row?.error).toContain("core.file.retired_by_this_test");
+  });
+
   it("reconsiders a refused extraction once the ceiling is back under the validator's", async () => {
     const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
     const id = await createFileItem(

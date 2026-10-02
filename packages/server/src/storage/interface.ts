@@ -2440,17 +2440,6 @@ export interface EdgeStore {
   /** Mirror of `deleteBySource` for inbound edges. */
   deleteByTarget(targetId: string, edgeType?: string): Promise<Edge[]>;
   /**
-   * Batched `deleteBySource` — drop every edge whose `source_id` is in
-   * `sourceIds`, optionally filtered by `edge_type`. Single SQL DELETE per
-   * call regardless of how many ids are passed. Returns the number of
-   * rows deleted; an empty `sourceIds` is a 0-row no-op. Used by the
-   * bulk-action purge worker so 100 items' worth of outbound edges drop
-   * in one statement instead of 100.
-   */
-  deleteBySourceBatch(sourceIds: string[], edgeType?: string): Promise<Edge[]>;
-  /** Mirror of `deleteBySourceBatch` for inbound edges. */
-  deleteByTargetBatch(targetIds: string[], edgeType?: string): Promise<Edge[]>;
-  /**
    * Count edges where the given item is source. Used for cardinality checks.
    */
   countBySource(sourceId: string, edgeType: string): Promise<number>;

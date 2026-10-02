@@ -311,7 +311,8 @@ export class TextEnrichmentSweeper {
       } catch (err) {
         if (
           !(err instanceof MarfaError) ||
-          err.code !== ErrorCode.INVALID_PROPERTIES
+          (err.code !== ErrorCode.INVALID_PROPERTIES &&
+            err.code !== ErrorCode.UNKNOWN_TYPE)
         ) {
           throw err;
         }
@@ -319,15 +320,23 @@ export class TextEnrichmentSweeper {
         // the extractor output and the type, both fixed under a given
         // configuration, so retrying it would burn the whole attempt budget
         // to reach the same answer. The config signature is what re-offers
-        // it once a ceiling moves.
-        const refusal = `invalid properties: ${
-          (
-            (err.details as { errors?: { field: string; message: string }[] })
-              .errors ?? []
-          )
-            .map((e) => `${e.field}: ${e.message}`)
-            .join("; ") || err.message
-        }`;
+        // it once a ceiling moves. A row whose type a forced delete removed
+        // is refused every write until the type is back, the same kind of
+        // answer.
+        const refusal =
+          err.code === ErrorCode.UNKNOWN_TYPE
+            ? `unknown type: ${fresh.type}`
+            : `invalid properties: ${
+                (
+                  (
+                    err.details as {
+                      errors?: { field: string; message: string }[];
+                    }
+                  ).errors ?? []
+                )
+                  .map((e) => `${e.field}: ${e.message}`)
+                  .join("; ") || err.message
+              }`;
         await recordSkip(refusal);
         log("warn", "Text enrichment refused by validation", {
           item_id: candidate.item_id,
