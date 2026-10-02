@@ -30,7 +30,7 @@ pub const SCHEMA_VERSION: &str = "0";
 
 /// Hashed over `schema.sql` without its comments, so a comment moves no hash.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "3f3fd4d4f3093ab8";
+const SCHEMA_HASH: &str = "1a44b6d4c252ba0e";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
