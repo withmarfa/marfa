@@ -469,6 +469,7 @@ export interface BulkItemInput {
   id?: string;
   type: string;
   properties?: Record<string, unknown>;
+  properties_mode?: "merge" | "replace";
   state?: string;
   tags?: string[];
   tier?: "library" | "feed";

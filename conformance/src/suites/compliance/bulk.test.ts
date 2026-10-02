@@ -122,6 +122,124 @@ describe("bulk", () => {
     }
   });
 
+  it("takes properties_mode on an entry as PATCH takes it, stale versions included", async () => {
+    const seed = async (sourceId: string): Promise<string> => {
+      const created = await client.createItem(
+        createNote({
+          source: ctx.source,
+          source_id: sourceId,
+          properties: { title: "Whole", body: "Original", notes: "Set" },
+        }),
+      );
+      expect(created.ok).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      return created.data.item.id;
+    };
+    const entry = (
+      sourceId: string,
+      properties: Record<string, unknown>,
+      extra: { properties_mode?: "merge" | "replace"; version?: number },
+    ) => ({
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: sourceId,
+          properties,
+          ...extra,
+        },
+      ],
+      atomic: false,
+    });
+
+    // The witness: without the mode, a field the entry leaves out stays.
+    const merged = `bulk-mode-merge-${ctx.runId}`;
+    const mergedId = await seed(merged);
+    const merge = await client.bulkItems(
+      entry(merged, { body: "Original" }, {}),
+    );
+    expect(merge.data.results[0]!.outcome).toBe("updated");
+    expect((await client.getItem(mergedId)).data.item.properties).toEqual({
+      title: "Whole",
+      body: "Original",
+      notes: "Set",
+    });
+
+    // At the current version, `replace` takes the entry's properties whole.
+    const current = `bulk-mode-current-${ctx.runId}`;
+    const currentId = await seed(current);
+    const replaced = await client.bulkItems(
+      entry(
+        current,
+        { body: "Original" },
+        { properties_mode: "replace", version: 1 },
+      ),
+    );
+    expect(
+      replaced.data.results[0]!.outcome,
+      JSON.stringify(replaced.data),
+    ).toBe("updated");
+    expect((await client.getItem(currentId)).data.item.properties).toEqual({
+      body: "Original",
+    });
+
+    // And refuses one that drops a field the type requires.
+    const dropped = await client.bulkItems(
+      entry(
+        current,
+        { title: "No body" },
+        { properties_mode: "replace", version: 2 },
+      ),
+    );
+    expect(dropped.data.results[0]!.outcome).toBe("errored");
+    expect(dropped.data.results[0]!.error?.code).toBe("invalid_properties");
+
+    // Stale, it clears a field nobody changed since.
+    const untouched = `bulk-mode-untouched-${ctx.runId}`;
+    const untouchedId = await seed(untouched);
+    const moved = await client.updateItem(untouchedId, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(moved.ok).toBe(true);
+    const cleared = await client.bulkItems(
+      entry(
+        untouched,
+        { title: "Whole", body: "Original" },
+        { properties_mode: "replace", version: 1 },
+      ),
+    );
+    expect(cleared.data.results[0]!.outcome, JSON.stringify(cleared.data)).toBe(
+      "updated",
+    );
+    expect((await client.getItem(untouchedId)).data.item.properties).toEqual({
+      title: "Server title",
+      body: "Original",
+    });
+
+    // And collides on one the other writer changed since, a field the type
+    // requires among them, as `PATCH` answers it.
+    const changed = `bulk-mode-changed-${ctx.runId}`;
+    const changedId = await seed(changed);
+    const other = await client.updateItem(changedId, {
+      properties: { body: "Changed since" },
+      version: 1,
+    });
+    expect(other.ok).toBe(true);
+    const collided = await client.bulkItems(
+      entry(
+        changed,
+        { title: "Whole" },
+        { properties_mode: "replace", version: 1 },
+      ),
+    );
+    expect(collided.data.results[0]!.outcome).toBe("errored");
+    expect(collided.data.results[0]!.error?.code).toBe("version_conflict");
+    expect((await client.getItem(changedId)).data.item.properties.body).toBe(
+      "Changed since",
+    );
+  });
+
   it("upsert mode updates an existing (source, source_id) row in place", async () => {
     const sourceId = `upsert-${ctx.runId}`;
     const first = await client.bulkItems({
