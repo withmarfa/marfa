@@ -121,6 +121,7 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             0 => String::new(),
             n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
+        let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
         let held = match write.depends_on.len() {
             0 => String::new(),
             1 => format!("  waiting on {}", write.depends_on[0]),
@@ -133,8 +134,8 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
         };
         writeln!(
             out,
-            "{}  {}  {}{}{}{}{}",
-            write.kind, subject, verdict, reason, refusals, held, after
+            "{}  {}  {}{}{}{}{}{}",
+            write.kind, subject, verdict, reason, refusal, refusals, held, after
         )?;
     }
     if writes.is_empty() {
@@ -201,6 +202,9 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             if let Some(reason) = &verdict.reason {
                 line.push_str(&format!(" ({reason})"));
             }
+            if let Some(refusal) = &verdict.refusal {
+                line.push_str(&refused(refusal));
+            }
             if let Some(sibling) = &verdict.conflicted_copy_id {
                 line.push_str(&format!(" conflicted copy {sibling}"));
             }
@@ -227,6 +231,31 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
         lines.extend(unclaimed(drain));
         lines.join("\n")
     })
+}
+
+/// What a refusal says beyond its code: the row in the bin, the grant the key
+/// lacks, and each field the server would not take.
+fn refused(refusal: &marfa_core::Refusal) -> String {
+    let mut said = String::new();
+    if refusal.trashed {
+        said.push_str(" in the bin");
+    }
+    if let Some(grant) = &refusal.grant {
+        let kind = match grant.kind {
+            marfa_core::GrantKind::Type => "type",
+            marfa_core::GrantKind::EdgeType => "edge type",
+            marfa_core::GrantKind::Extension => "extension",
+        };
+        let level = match grant.level {
+            marfa_core::GrantLevel::Read => "read",
+            marfa_core::GrantLevel::Write => "write",
+        };
+        said.push_str(&format!(" needs {level} on the {kind} {}", grant.name));
+    }
+    for field in &refusal.fields {
+        said.push_str(&format!(" {}: {}", field.field, field.message));
+    }
+    said
 }
 
 /// The verdicts say `credential_refused`, which alone reads as a key that has

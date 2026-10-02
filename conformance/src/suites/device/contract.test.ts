@@ -1487,7 +1487,10 @@ describe("the contract the working copy was built for", () => {
       // The update is refused on the core's own contract, and the read it
       // is reconciled against answers on another, as a server mid-upgrade
       // would.
-      read: [naming(answers.updated(wireItem(held)), other)],
+      read: [
+        naming(answers.updated(wireItem(held)), other),
+        answers.updated(wireItem(held)),
+      ],
       create: [answers.created(wireItem({ id: queued.value.item_id ?? "" }))],
     });
 

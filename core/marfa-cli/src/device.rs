@@ -110,7 +110,7 @@ pub enum DeviceCommand {
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
-    /// Every queued write and what became of it.
+    /// Every queued write, the body it carries and what became of it.
     Queue,
     /// Send what the queue holds and record what came back.
     ///
@@ -120,8 +120,18 @@ pub enum DeviceCommand {
     /// Clear the writes the server has answered.
     ///
     /// A queue nobody empties makes every later write slower. Blocked and
-    /// dead rows stay, because a caller may still release them.
+    /// dead rows stay, because a caller may still release them, and so does
+    /// a refused write that carried content, until it is discarded.
     Forget,
+    /// Take a refused write out of the queue, with the content it carried.
+    ///
+    /// The one way a refused create, edit, metadata, extension or edge
+    /// write leaves the queue. A write still waiting on it keeps it.
+    Discard {
+        /// The refused write to discard.
+        #[arg(value_name = "ID")]
+        id: String,
+    },
     /// Send a blocked or dead write again, under a fresh key.
     Release {
         /// The queued write to release.
@@ -915,6 +925,18 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             let cleared = store.open(None)?.forget_answered()?;
             output::report(&cleared, json, || {
                 format!("cleared {cleared} answered write(s)")
+            })
+        }
+        DeviceCommand::Discard { id } => {
+            let discarded = store.open(None)?.discard(&id)?;
+            output::report(&discarded, json, || {
+                if discarded {
+                    format!("discarded {id} and what it carried")
+                } else {
+                    format!(
+                        "nothing to discard: {id} is not a refused write, or a write still waits on it"
+                    )
+                }
             })
         }
         DeviceCommand::Drain => {

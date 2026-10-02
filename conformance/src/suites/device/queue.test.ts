@@ -1329,6 +1329,65 @@ describe("what a drain sends and reports", () => {
   });
 });
 
+describe("a refused write's content is kept", () => {
+  it("keeps a refused write's body through a clearing, until it is discarded by id", async () => {
+    harness = await hydratedHarness("queue-kept", { rows: held() });
+    const edited = await harness.device.update(HELD.id, {
+      properties: { title: "the words a person wrote" },
+      version: HELD.version,
+    });
+    const tagged = await harness.device.addTag(HELD.id, "kept");
+    expect(edited.ok && tagged.ok).toBe(true);
+    if (!edited.ok || !tagged.ok) return;
+    scriptWrites(harness.server, {
+      update: [refusal(404, "item_not_found", `Item ${HELD.id} not found`)],
+      read: [answers.updated(wireItem({ id: HELD.id, version: HELD.version }))],
+      tags: [writeAnswers.metadata(HELD.id, ["kept"])],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.verdicts.map((verdict) => verdict.verdict)).toEqual([
+      "refused",
+      "accepted",
+    ]);
+
+    const before = await queueOf(harness.device);
+    expect(
+      before.find((row) => row.id === edited.value.id)?.body,
+      "the queue does not show the body a write carries, so a refused write's words cannot be read back from it",
+    ).toMatchObject({ properties: { title: "the words a person wrote" } });
+
+    const answered = await harness.device.discard(tagged.value.id);
+    expect(answered.ok).toBe(true);
+    if (answered.ok)
+      expect(
+        answered.value,
+        "a discard took a write the server took, which is the clearing's to take",
+      ).toBe(false);
+
+    // The witness: clearing takes the answered row that carried nothing a
+    // person would lose.
+    const cleared = await harness.device.forget();
+    expect(cleared.ok).toBe(true);
+    if (!cleared.ok) return;
+    expect(
+      cleared.value,
+      "clearing took the refused write's content with the answered rows, so the words a person wrote are gone with nothing saying so",
+    ).toBe(1);
+    const after = await queueOf(harness.device);
+    expect(after.map((row) => row.id)).toEqual([edited.value.id]);
+    expect(after[0]?.body).toMatchObject({
+      properties: { title: "the words a person wrote" },
+    });
+
+    const discarded = await harness.device.discard(edited.value.id);
+    expect(discarded.ok).toBe(true);
+    if (discarded.ok) expect(discarded.value).toBe(true);
+    expect(await queueOf(harness.device)).toEqual([]);
+  });
+});
+
 /** The kinds a queue holds (`queue-and-verdicts.md` 32). */
 const WRITE_KINDS = [
   "create_item",

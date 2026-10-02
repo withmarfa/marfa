@@ -161,6 +161,56 @@ describe("catch-up replays from the cursor", () => {
     );
   });
 
+  it("skips an event at the version it holds that was stamped before the row it holds", async () => {
+    harness = await startHarness("stale-stamp");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    server.answer(
+      "GET",
+      "/events",
+      replay("12", [
+        // Archived at version 3, then an event from before the transition
+        // arrives behind it: the version cannot tell them apart, since a
+        // transition leaves it where it was, and the time each was written
+        // can. A follow and a drain on one core meet this shape when the
+        // drain writes a row it read ahead of the stream.
+        itemEvent(
+          "11",
+          "item.created",
+          wireItem({
+            id: "row",
+            version: 3,
+            state: "archived",
+            updated_at: "2026-03-02T00:00:00.000Z",
+          }),
+        ),
+        itemEvent(
+          "12",
+          "item.updated",
+          wireItem({
+            id: "row",
+            version: 3,
+            state: "active",
+            updated_at: "2026-03-01T00:00:00.000Z",
+          }),
+        ),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok).toBe(true);
+    if (!caught.ok) return;
+    expect(caught.value.skipped).toBe(1);
+    expect(caught.value.cursor).toBe("12");
+    const listed = await device.list({ state: "archived" });
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+    expect(
+      listed.value.map((row) => row.id),
+      "an event stamped before the row the copy holds took it back to active, so an archive another device made is undone on this one",
+    ).toEqual(["row"]);
+  });
+
   it("skips an event older than the row it holds and still advances the cursor", async () => {
     harness = await startHarness("stale-event");
     const { server, device } = harness;

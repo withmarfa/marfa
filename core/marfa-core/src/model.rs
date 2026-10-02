@@ -493,6 +493,21 @@ impl WriteKind {
         }
     }
 
+    /// A write whose refusal would lose what a person wrote, were it cleared
+    /// with the answered rows: it leaves the queue only when discarded.
+    pub fn carries_content(self) -> bool {
+        matches!(
+            self,
+            WriteKind::CreateItem
+                | WriteKind::UpdateItem
+                | WriteKind::ReplaceMetadata
+                | WriteKind::MergeMetadata
+                | WriteKind::WriteExtension
+                | WriteKind::CreateEdge
+                | WriteKind::UpdateEdge
+        )
+    }
+
     /// An edge write names its endpoints in `item_id` and `target_id` too,
     /// but is a write to neither.
     pub fn subject(self) -> Option<Subject> {
@@ -631,6 +646,7 @@ impl fmt::Display for Verdict {
     }
 }
 
+/// What became of a write, read once from what the queue stores.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Accepted,
@@ -641,14 +657,14 @@ pub enum Outcome {
         sibling_id: String,
         fields: Vec<String>,
     },
-    /// The server's code verbatim, or, for a write held behind a refused one,
-    /// a sentence naming that write.
-    Refused {
-        reason: String,
-    },
+    Refused(Refusal),
     Blocked {
         reason: BlockedReason,
     },
+    /// Held behind a write that has no answer yet. The queue stores it as
+    /// `blocked` `awaiting_dependency`; nothing outside the queue has to
+    /// change for it to go, so it is not presented as a stop.
+    Waiting,
     Dead,
 }
 
@@ -659,6 +675,7 @@ impl Outcome {
         reason: Option<&str>,
         sibling_id: Option<&str>,
         fields: Vec<String>,
+        refusal: Option<&Refusal>,
     ) -> Result<Option<Outcome>, CoreError> {
         Ok(Some(match verdict {
             None => return Ok(None),
@@ -668,14 +685,113 @@ impl Outcome {
                 sibling_id: sibling_id.unwrap_or_default().to_string(),
                 fields,
             },
-            Some(Verdict::Refused) => Outcome::Refused {
-                reason: reason.unwrap_or_default().to_string(),
-            },
-            Some(Verdict::Blocked) => Outcome::Blocked {
-                reason: reason.unwrap_or_default().parse()?,
+            Some(Verdict::Refused) => Outcome::Refused(
+                refusal
+                    .cloned()
+                    .unwrap_or_else(|| Refusal::read(reason.unwrap_or_default(), None)),
+            ),
+            Some(Verdict::Blocked) => match reason.unwrap_or_default().parse()? {
+                BlockedReason::AwaitingDependency => Outcome::Waiting,
+                reason => Outcome::Blocked { reason },
             },
             Some(Verdict::Dead) => Outcome::Dead,
         }))
+    }
+}
+
+/// A refusal read into its parts from the server's envelope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Refusal {
+    /// The server's code verbatim, or, for a write the drain refused without
+    /// sending, the sentence naming the write it waited for.
+    pub reason: String,
+    /// `error.code`, where the server's envelope carries one.
+    pub code: Option<String>,
+    pub message: Option<String>,
+    /// `details.errors`: each property the server would not take, and why.
+    pub fields: Vec<FieldRefusal>,
+    /// The row the write named is in the bin: a `404 item_not_found` saying
+    /// so in `details.trashed`, or a create acknowledged onto a trashed row.
+    pub trashed: bool,
+    /// `details.grant`: the permission the credential's key lacks.
+    pub grant: Option<MissingGrant>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FieldRefusal {
+    pub field: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MissingGrant {
+    pub kind: GrantKind,
+    /// The type or edge type id, or the extension namespace.
+    pub name: String,
+    pub level: GrantLevel,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantKind {
+    Type,
+    EdgeType,
+    Extension,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantLevel {
+    Read,
+    Write,
+}
+
+impl Refusal {
+    /// `answer` is the stored answer, which for a create acknowledged onto a
+    /// trashed row is the row and not an error. A part the envelope does
+    /// not carry, or carries in another shape, reads as absent.
+    pub fn read(reason: &str, answer: Option<&str>) -> Refusal {
+        let body = answer
+            .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
+            .unwrap_or_default();
+        let error = body.get("error");
+        let text = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
+        let details = error.and_then(|error| error.get("details"));
+        let fields = details
+            .and_then(|details| details.get("errors"))
+            .and_then(Value::as_array)
+            .map(|errors| {
+                errors
+                    .iter()
+                    .filter_map(|entry| {
+                        Some(FieldRefusal {
+                            field: text(entry.get("field"))?,
+                            message: text(entry.get("message")).unwrap_or_default(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let grant = details
+            .and_then(|details| details.get("grant"))
+            .and_then(|grant| {
+                Some(MissingGrant {
+                    kind: serde_json::from_value(grant.get("kind")?.clone()).ok()?,
+                    name: text(grant.get("name"))?,
+                    level: serde_json::from_value(grant.get("level")?.clone()).ok()?,
+                })
+            });
+        let acknowledged_in_bin = body.get("acknowledged") == Some(&Value::Bool(true))
+            && body.pointer("/item/state").and_then(Value::as_str) == Some("trashed");
+        Refusal {
+            reason: reason.to_string(),
+            code: text(error.and_then(|error| error.get("code"))),
+            message: text(error.and_then(|error| error.get("message"))),
+            fields,
+            trashed: details.and_then(|details| details.get("trashed")) == Some(&Value::Bool(true))
+                || acknowledged_in_bin,
+            grant,
+        }
     }
 }
 
@@ -766,6 +882,11 @@ pub struct QueuedWrite {
     pub reason: Option<String>,
     /// The server's answer, kept whole.
     pub answer: Option<String>,
+    /// The refusal read from `reason` and `answer`, under `refused`.
+    pub refusal: Option<Refusal>,
+    /// What the write sends, or sent: kept so a refused write's content can
+    /// be read back from the queue until it is discarded.
+    pub body: Value,
     pub conflicted_copy_id: Option<String>,
     pub refusals: i64,
     pub queued_at: String,
@@ -786,6 +907,7 @@ impl QueuedWrite {
             self.reason.as_deref(),
             self.conflicted_copy_id.as_deref(),
             self.resolved_fields(),
+            self.refusal.as_ref(),
         )
     }
 
@@ -1125,6 +1247,9 @@ mod tests {
             verdict,
             reason: reason.map(str::to_string),
             answer: answer.map(str::to_string),
+            refusal: (verdict == Some(Verdict::Refused))
+                .then(|| Refusal::read(reason.unwrap_or_default(), answer)),
+            body: Value::Null,
             conflicted_copy_id: Some("sibling".into()),
             refusals: 0,
             queued_at: "2026-01-01T00:00:00Z".into(),
@@ -1188,9 +1313,21 @@ mod tests {
             row(Some(Verdict::Refused), Some("type_not_permitted"), None)
                 .outcome()
                 .unwrap(),
-            Some(Outcome::Refused {
-                reason: "type_not_permitted".into()
-            })
+            Some(Outcome::Refused(Refusal {
+                reason: "type_not_permitted".into(),
+                code: None,
+                message: None,
+                fields: Vec::new(),
+                trashed: false,
+                grant: None,
+            }))
+        );
+        assert_eq!(
+            row(Some(Verdict::Blocked), Some("awaiting_dependency"), None)
+                .outcome()
+                .unwrap(),
+            Some(Outcome::Waiting),
+            "a write held behind another read as a stop"
         );
         assert_eq!(
             row(Some(Verdict::Blocked), Some("key_spent"), None)
@@ -1215,5 +1352,64 @@ mod tests {
                 .outcome()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_refusal_reads_its_code_message_fields_bin_and_grant_from_the_envelope() {
+        let envelope = |details: Value| {
+            serde_json::json!({
+                "error": { "code": "invalid_properties", "message": "Invalid properties", "details": details }
+            })
+            .to_string()
+        };
+        let read = Refusal::read(
+            "invalid_properties",
+            Some(&envelope(serde_json::json!({
+                "errors": [{ "field": "title", "message": "Too long" }, { "message": "no field" }],
+                "grant": { "kind": "edge_type", "name": "references", "level": "write" },
+                "trashed": true,
+            }))),
+        );
+        assert_eq!(read.code.as_deref(), Some("invalid_properties"));
+        assert_eq!(read.message.as_deref(), Some("Invalid properties"));
+        assert_eq!(
+            read.fields,
+            vec![FieldRefusal {
+                field: "title".into(),
+                message: "Too long".into()
+            }]
+        );
+        assert!(read.trashed);
+        assert_eq!(
+            read.grant,
+            Some(MissingGrant {
+                kind: GrantKind::EdgeType,
+                name: "references".into(),
+                level: GrantLevel::Write,
+            })
+        );
+
+        // A grant naming a kind or a level outside the sets reads as none,
+        // and `trashed` only as the boolean.
+        let odd = Refusal::read(
+            "forbidden",
+            Some(&envelope(serde_json::json!({
+                "grant": { "kind": "folder", "name": "x", "level": "write" },
+                "trashed": "yes",
+            }))),
+        );
+        assert_eq!(odd.grant, None);
+        assert!(!odd.trashed);
+
+        let acknowledged = Refusal::read(
+            "trashed",
+            Some(r#"{"acknowledged":true,"item":{"id":"i","state":"trashed"}}"#),
+        );
+        assert!(acknowledged.trashed);
+        assert_eq!(acknowledged.code, None);
+
+        let unsent = Refusal::read("the create_item it waits for was refused", None);
+        assert_eq!(unsent.reason, "the create_item it waits for was refused");
+        assert!(unsent.fields.is_empty() && !unsent.trashed && unsent.grant.is_none());
     }
 }

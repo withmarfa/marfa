@@ -59,6 +59,30 @@ CREATE TABLE IF NOT EXISTS tags (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
 
+-- The server's row or edge beneath the writes still waiting on it, as the
+-- copy last took it: the copy lays those writes over it, so it cannot say
+-- afterwards what a refused one covered.
+CREATE TABLE IF NOT EXISTS beneath (
+  subject TEXT NOT NULL CHECK (subject IN ('item', 'edge')),
+  id TEXT NOT NULL,
+  row TEXT NOT NULL,
+  PRIMARY KEY (subject, id)
+) WITHOUT ROWID;
+
+-- A refused write's subject whose read-back has not landed. Not a column of
+-- `queue`: a refused row can be discarded while the copy still owes the read.
+CREATE TABLE IF NOT EXISTS read_backs (
+  subject TEXT NOT NULL CHECK (subject IN ('item', 'edge')),
+  id TEXT NOT NULL,
+  -- An edge is read through its source's listing of its type.
+  source_id TEXT,
+  edge_type TEXT,
+  -- Whether a refused write owed here was a move, which lets the row go
+  -- where the read lands outside the slice.
+  moved INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (subject, id)
+) WITHOUT ROWID;
+
 -- Not a child of `items`: a hydration clears the copy and keeps the pins.
 CREATE TABLE IF NOT EXISTS pins (
   item_id TEXT PRIMARY KEY

@@ -182,10 +182,34 @@ export interface QueuedWrite {
   /** The server's answer, kept whole, because a device reports a verdict and
    *  never acts on one (`queue-and-verdicts.md` 15). */
   answer: string | null;
+  /** The refusal read into its parts, on `refused` (`queue-and-verdicts.md`
+   *  12). */
+  refusal: WriteRefusal | null;
+  /** The body the write carries, as it goes or went to the server, so a
+   *  refused write's content can be read back (`queue-and-verdicts.md`
+   *  47). */
+  body: unknown;
   conflicted_copy_id: string | null;
   refusals: number;
   queued_at: string;
   answered_at: string | null;
+}
+
+/** A refused write's refusal, read from the server's envelope once
+ *  (`queue-and-verdicts.md` 12). */
+export interface WriteRefusal {
+  /** The server's code verbatim, or the drain's sentence for a write it
+   *  refused unsent. */
+  reason: string;
+  /** The envelope's `error.code`, where the server refused it. */
+  code: string | null;
+  message: string | null;
+  /** The envelope's `details.errors`. */
+  fields: Array<{ field: string; message: string }>;
+  /** The row the write named is in the bin. */
+  trashed: boolean;
+  /** The grant the credential lacks, where the refusal names one. */
+  grant: { kind: string; name: string; level: string } | null;
 }
 
 /** An edge as the working copy holds it. */
@@ -222,6 +246,7 @@ export interface DrainVerdict {
   id: string;
   kind: string;
   item_id: string | null;
+  edge_id: string | null;
   /** One of the six, or `null` where the write was sent and not answered. */
   verdict: string | null;
   reason: string | null;
@@ -232,6 +257,8 @@ export interface DrainVerdict {
   replayed: boolean;
   /** The fields the server resolved, on `merged` or `conflicted`. */
   merged_fields: string[];
+  /** The refusal read into its parts, on `refused`. */
+  refusal: WriteRefusal | null;
 }
 
 /** A create, before it is queued. */
