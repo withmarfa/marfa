@@ -130,6 +130,9 @@ export function validateReturnTo(raw: unknown, issuer: string): string {
     return "/";
   }
   if (target.origin !== base.origin) return "/";
+  // A path the browser would read as another host: resolving collapses dot
+  // segments, so `/a/..//evil.example` lands here as `//evil.example`.
+  if (target.pathname.startsWith("//")) return "/";
   return `${target.pathname}${target.search}${target.hash}`;
 }
 

@@ -140,6 +140,13 @@ describe("validateReturnTo", () => {
       "\t//evil.example",
       " //evil.example",
       "/\t\\evil.example",
+      // Resolving collapses dot segments into a path the browser reads as
+      // another host.
+      "/.//evil.example",
+      "/a/..//evil.example",
+      "/%2e//evil.example",
+      "/.\\/evil.example",
+      "//localhost:0//evil.example",
       "javascript:alert(1)",
       "data:text/html,hi",
       "http://localhost:1/",
@@ -561,33 +568,45 @@ describe("POST /auth/sign-in (form wrapper)", () => {
     expect(res.headers.get("location")).toBe("/");
   });
 
-  it("never redirects off the instance on a return_to a browser would strip into one", async () => {
+  it("never redirects off the instance on a return_to a browser would read as another host", async () => {
     ctx = await createTestContext();
     await createTestAccount(ctx, "tab@example.com", "correct horse", "Tab");
-    // A browser removes tabs and newlines from a URL before resolving it, so
-    // `/\t/evil.example` reaches it as `//evil.example`.
-    const page = await request(
-      ctx.app,
-      "GET",
-      `/auth/sign-in?return_to=${encodeURIComponent("/\t/evil.example")}`,
-    );
-    expect(await page.text()).toContain('name="return_to" value="/"');
-    const res = await ctx.app.fetch(
-      new Request(`${ORIGIN}/auth/sign-in`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/x-www-form-urlencoded",
-          origin: ORIGIN,
-        },
-        body: new URLSearchParams({
-          email: "tab@example.com",
-          password: "correct horse",
-          return_to: "/\t/evil.example",
-        }).toString(),
-      }),
-    );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe("/");
+    // A browser removes tabs and newlines from a URL before resolving it,
+    // and resolving collapses dot segments, so each of these reaches it as
+    // `//evil.example`.
+    for (const offInstance of [
+      "/\t/evil.example",
+      "/.//evil.example",
+      "/a/..//evil.example",
+      "/%2e//evil.example",
+      "/.\\/evil.example",
+      `${ORIGIN}//evil.example`,
+    ]) {
+      const page = await request(
+        ctx.app,
+        "GET",
+        `/auth/sign-in?return_to=${encodeURIComponent(offInstance)}`,
+      );
+      expect(await page.text(), offInstance).toContain(
+        'name="return_to" value="/"',
+      );
+      const res = await ctx.app.fetch(
+        new Request(`${ORIGIN}/auth/sign-in`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/x-www-form-urlencoded",
+            origin: ORIGIN,
+          },
+          body: new URLSearchParams({
+            email: "tab@example.com",
+            password: "correct horse",
+            return_to: offInstance,
+          }).toString(),
+        }),
+      );
+      expect(res.status).toBe(302);
+      expect(res.headers.get("location"), offInstance).toBe("/");
+    }
   });
 
   it("rejects unsafe return_to values and falls back to /", async () => {
