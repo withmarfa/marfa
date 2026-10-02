@@ -14,8 +14,8 @@ fi
 # need them. Without the deployment targets the C the core links (SQLite,
 # the TLS stack) is compiled for whichever system built it; without the
 # platforms the generated package claims systems its objects do not run on.
-macos=15
-ios=18
+macos=27
+ios=27
 export MACOSX_DEPLOYMENT_TARGET="${macos}.0"
 export IPHONEOS_DEPLOYMENT_TARGET="${ios}.0"
 
