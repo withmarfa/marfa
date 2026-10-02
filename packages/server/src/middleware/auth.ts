@@ -260,10 +260,34 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * The principal a sign-in's access token stands for, as every door reads
- * it, and as a bulk-action job reads it again before each chunk.
+ * The credential behind a request, named by something that survives a token
+ * refresh: a key's id, or for a signed-in app its app and person,
+ * `oauth:<client>:<user>`. Empty when the request carries no credential.
+ *
+ * An OAuth principal's `id` is the access-token row, and every refresh
+ * replaces it, so anything that has to hold across a refresh keys on this:
+ * an idempotent retry the app makes after refreshing, and the bulk-action
+ * job it comes back to read.
+ *
+ * **A revoke followed by a fresh consent from the same app and person lands
+ * on the same handle**, and an idempotent replay is served before the door's
+ * authorization runs, so a narrower token of that pair sending the same
+ * request under the same key is handed the first one's answer.
  */
-export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey {
+export function credentialHandle(c: Context<AppEnv>): string {
+  const apiKey = c.get("apiKey");
+  if (apiKey === undefined) return "";
+  return c.get("authType") === "oauth" ? apiKey.source : apiKey.id;
+}
+
+/**
+ * The principal a sign-in's access token stands for, as every door reads
+ * it, and as a bulk-action job reads it again before each chunk; null for a
+ * token naming no person, which names no app and person a credential could
+ * be and is refused as no credential at all.
+ */
+export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey | null {
+  if (oauthToken.userId === null) return null;
   const typePermissions = scopesToTypePermissions(oauthToken.scopes);
   const edgePermissions = scopesToEdgePermissions(oauthToken.scopes);
   const metadataPermissions = scopesToMetadataPermissions(oauthToken.scopes);
@@ -271,7 +295,7 @@ export function oauthPrincipal(oauthToken: OauthAccessTokenRow): ApiKey {
   // Stable composite label/source. Used in audit rows; doesn't need
   // to be a real foreign-key handle — system.connection projection
   // is maintained separately.
-  const grantHandle = `${oauthToken.clientId}:${oauthToken.userId ?? "anon"}`;
+  const grantHandle = `${oauthToken.clientId}:${oauthToken.userId}`;
   const createdAtIso = oauthToken.createdAtMs
     ? new Date(oauthToken.createdAtMs).toISOString()
     : new Date().toISOString();
@@ -388,13 +412,14 @@ export function authMiddleware(storage: Storage, salt: string) {
       const hash = hashApiKey(bare, salt);
       const oauthToken = await storage.oauthProvider?.validateAccessToken(hash);
 
-      if (!oauthToken) {
+      const principal = oauthToken ? oauthPrincipal(oauthToken) : null;
+      if (!oauthToken || !principal) {
         c.set("apiKey", undefined);
         c.set("authType", undefined);
         return next();
       }
 
-      c.set("apiKey", oauthPrincipal(oauthToken));
+      c.set("apiKey", principal);
       c.set("authType", "oauth");
       // The granted set, beside the projections rather than inside them.
       // Read only by `requirePermission` and by the audit rows that name

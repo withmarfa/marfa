@@ -156,8 +156,8 @@ export const INTERNAL_OPERATION_IDS = new Set<string>([
 /**
  * The `Idempotency-Key` header, added to every door that honors it.
  *
- * Derived from `IDEMPOTENT_WRITE_DOORS` rather than restated on ten
- * `createRoute` definitions, so the reference cannot claim a door the
+ * Derived from `IDEMPOTENT_WRITE_DOORS` rather than restated on each
+ * `createRoute` definition, so the reference cannot claim a door the
  * middleware does not serve, or miss one it does. The table is written in
  * Hono's path syntax and the spec uses OpenAPI's, which is the whole of
  * the translation below.
@@ -174,7 +174,7 @@ const IDEMPOTENCY_HEADER_PARAM = {
   required: false,
   schema: { type: "string", maxLength: 255 },
   description:
-    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.",
+    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under.",
 };
 
 /** The doors, keyed the way the reflected document keys an operation. */

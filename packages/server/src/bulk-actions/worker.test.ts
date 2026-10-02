@@ -19,6 +19,7 @@ function makeRow(): BulkActionJobRow {
   return {
     id: "job_1",
     api_key_id: null,
+    credential: "fixture",
     status: "in_progress",
     action: "transition",
     input: JSON.stringify({ action: "transition", state: "trashed" }),
@@ -31,7 +32,6 @@ function makeRow(): BulkActionJobRow {
     error: null,
     worker_id: "w",
     worker_heartbeat_at: null,
-    idempotency_key: null,
     created_at: "2026-01-01T00:00:00.000Z",
     started_at: null,
     finished_at: null,

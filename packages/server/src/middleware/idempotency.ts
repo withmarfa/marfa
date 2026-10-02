@@ -2,6 +2,7 @@ import type { Context, ErrorHandler, MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
+import { credentialHandle } from "./auth.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
@@ -78,6 +79,7 @@ export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /folders",
   "PATCH /folders/:id",
   "POST /folders/:id/revoke",
+  "POST /items/bulk-actions",
 ];
 
 /**
@@ -156,51 +158,20 @@ const HEADER = "Idempotency-Key";
 const REPLAY_HEADER = "Idempotency-Replayed";
 
 /**
- * What makes a repeat a repeat.
- *
- * The key alone is not enough: a client reusing a key for a different
- * request would be served an answer to a request it did not make, which
- * silently discards a write it believes it made — the failure this exists
- * to prevent, arriving from the other side. So the digest covers
- * everything that decides what the write does.
- *
- * **The credential is in it deliberately.** The key is unique across the
- * instance, so two credentials share one keyspace; without the credential,
- * one could be handed a response body derived from a row the other may not
- * read. A client that rotates its credential between a
- * write and its retry is refused rather than served, which is the safe
- * direction of that trade.
+ * This request's key as its credential's own, for a write that derives a
+ * value from the key, or null when the request carries no key or no
+ * credential. Derived from the bare header, a value would be shared by
+ * every credential choosing the same key.
  */
-/**
- * The credential, named by something that survives a token refresh.
- *
- * An OAuth principal's `id` is the access-token row, and a refresh
- * replaces it. That is not an edge case here, it is the case the feature
- * exists for: a write goes out, the response is lost, the token expires
- * inside the same partition, and the client refreshes and retries with the
- * key it already minted. Same body, same everything a caller
- * can see — and a different access-token row, so keying on `id` refuses
- * the retry as a reused key and the client can never learn whether its
- * first attempt landed.
- *
- * `source` carries `oauth:<client>:<user>`, which is stable across a
- * refresh and distinguishes two principals sharing the keyspace, so it holds
- * the property the digest wants the credential for. API keys keep their
- * own id, which does not rotate under them.
- *
- * **It identifies a principal, not a grant**, so a revoke-then-re-consent
- * for the same client and user collapses onto one handle. Because a replay
- * is served before the route's authorization runs, a second and possibly
- * narrower-scoped token of that client, making the same request under the
- * same key, is handed the first one's response.
- * The blast radius is one client's own writes. Widening the handle is a
- * separate change; naming it here so the next reader is not misled into
- * thinking a grant is what is being compared.
- */
-function credentialHandle(c: Context<AppEnv>): string {
-  const apiKey = c.get("apiKey");
-  if (apiKey === undefined) return "";
-  return c.get("authType") === "oauth" ? apiKey.source : apiKey.id;
+export function credentialIdempotencyKey(c: Context<AppEnv>): string | null {
+  const key = c.req.header(HEADER);
+  if (key === undefined || c.get("apiKey") === undefined) return null;
+  return credentialScopedKey(credentialHandle(c), key);
+}
+
+/** A key within the credential `credentialHandle` names. */
+export function credentialScopedKey(credential: string, key: string): string {
+  return `${credential}\u0000${key}`;
 }
 
 /**
@@ -238,6 +209,16 @@ function canonicalPath(pathname: string): string {
     .join("/");
 }
 
+/**
+ * What makes a repeat a repeat.
+ *
+ * The key alone is not enough: a client reusing a key for a different
+ * request would be served an answer to a request it did not make, which
+ * silently discards a write it believes it made — the failure this exists
+ * to prevent, arriving from the other side. So the digest covers
+ * everything that decides what the write does. The credential is not in
+ * it, because the record is already that credential's own.
+ */
 async function fingerprint(
   c: Context<AppEnv>,
   body: string,
@@ -262,7 +243,6 @@ async function fingerprint(
     // order is part of the request, which is a wider question than the
     // path's.
     url.search,
-    credentialHandle(c),
     body,
   ].join("\n");
   const digest = await crypto.subtle.digest(
@@ -317,7 +297,7 @@ function errorCodeOf(body: string): string | null {
  */
 
 /**
- * `Idempotency-Key` on the item and edge write doors.
+ * `Idempotency-Key` on the doors in `IDEMPOTENT_WRITE_DOORS`.
  *
  * **Mounted outside any write transaction**, which is not a
  * preference: the claim must commit whether or not the write's own
@@ -375,7 +355,7 @@ export function idempotencyMiddleware(opts: {
       c.req.raw.body === null ? "" : await c.req.raw.clone().text();
     const digest = await fingerprint(c, bodyText, contract);
 
-    const held = await acquire(storage, key, digest);
+    const held = await acquire(storage, credentialHandle(c), key, digest);
     if ("answer" in held) return withPreparedHeaders(c, held.answer);
 
     const { recordId, heldSince } = held;
@@ -427,6 +407,7 @@ export function idempotencyMiddleware(opts: {
  */
 async function acquire(
   storage: Storage,
+  credential: string,
   key: string,
   digest: string,
 ): Promise<{ recordId: string; heldSince: string } | { answer: Response }> {
@@ -435,6 +416,7 @@ async function acquire(
     const now = new Date().toISOString();
     const claim = await storage.idempotency.claim({
       id,
+      credential,
       idempotency_key: key,
       fingerprint: digest,
       created_at: now,

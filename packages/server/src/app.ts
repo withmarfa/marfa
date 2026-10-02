@@ -394,7 +394,7 @@ export function createApp(
     );
   }
 
-  // `Idempotency-Key` on the item and edge write doors, so a client that
+  // `Idempotency-Key` on the doors in `IDEMPOTENT_WRITE_DOORS`, so a client that
   // lost a response can ask what its first attempt did instead of asking
   // the door again and being told about the second ask.
   //

@@ -60,6 +60,7 @@ import {
   itemProvenanceSource,
   getTypeFilter,
   computeTypeFilter,
+  credentialHandle,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
@@ -1679,16 +1680,15 @@ export function bulkRoutes(storage: Storage) {
     // 202. `enable_fanout` is never read here for that reason — it travels
     // to the worker inside the stored input, which is the request body
     // verbatim.
-    const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const apiKeyId = c.get("apiKey")?.id ?? null;
     const job = await storage.bulkActionJobs.create({
       id: generateId(),
       api_key_id: apiKeyId,
+      credential: credentialHandle(c),
       action,
       input: JSON.stringify(body),
       matched_ids: JSON.stringify(matched.map((i) => i.id)),
       matched_count: matched.length,
-      idempotency_key: idempotencyKey,
       created_at: new Date().toISOString(),
     });
     // Wake the worker rather than leaving the job to be found by the idle
@@ -1704,10 +1704,6 @@ export function bulkRoutes(storage: Storage) {
         sub_action: action,
         matched: matched.length,
         job_id: job.id,
-        idempotency_replay: !!(
-          idempotencyKey &&
-          job.created_at < new Date(Date.now() - 1000).toISOString()
-        ),
       },
     });
 
@@ -1767,8 +1763,9 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // No permission says "read another credential's bulk jobs", and an arm
   // admitting an administrator to any job anyone else had started would need
   // one invented for it — widening the model to fit a line rather than the
-  // other way round.
-  if (job.api_key_id && apiKey.id === job.api_key_id) return;
+  // other way round. A signed-in app is its app and person, so the token it
+  // refreshes to still owns what the earlier token queued.
+  if (credentialHandle(c) === job.credential) return;
   // The job's existence is not a secret, only its contents, so this is a
   // 403 rather than a cloaked 404.
   throw new MarfaError(

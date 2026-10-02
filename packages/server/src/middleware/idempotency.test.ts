@@ -716,8 +716,8 @@ describe("a claim the store did not grant", () => {
    */
   let fingerprintEcho = "";
 
-  /** Every digest the middleware has computed, in order. */
-  let seenFingerprints: string[] = [];
+  /** Every credential the middleware has claimed a key under, in order. */
+  let seenCredentials: string[] = [];
 
   function doorWith(
     outcomes: readonly IdempotencyClaim[],
@@ -736,12 +736,12 @@ describe("a claim the store did not grant", () => {
     };
     const storage = {
       idempotency: {
-        claim: (input: { fingerprint: string }) => {
+        claim: (input: { fingerprint: string; credential: string }) => {
           // The middleware's own digest, echoed onto whatever held row the
           // case supplied, so a case about the lease is not decided by the
           // fingerprint comparison ahead of it.
           fingerprintEcho = input.fingerprint;
-          seenFingerprints.push(input.fingerprint);
+          seenCredentials.push(input.credential);
           const next = outcomes[Math.min(calls.claim, outcomes.length - 1)];
           calls.claim += 1;
           if (next === undefined) throw new Error("fixture ran dry");
@@ -842,6 +842,7 @@ describe("a claim the store did not grant", () => {
       claimed: false,
       held: {
         id: "held-row",
+        credential: "cred-1",
         idempotency_key: "k",
         // The fingerprint the middleware computes for the fixture request
         // is not knowable here, so the mismatch branch has to be kept out
@@ -934,17 +935,15 @@ describe("a claim the store did not grant", () => {
     expect(calls.released).toBe(0);
   });
 
-  it("names an OAuth principal by its grant, not by its access-token row", async () => {
+  it("names an OAuth principal by its app and person, not by its access-token row", async () => {
     // The case the header exists for, arriving from the other side: the
     // write goes out, the response is lost, the token expires inside the
     // same partition, and the client refreshes and retries with the key it
     // already minted. The grant is the same and the request is identical;
     // only the access-token row behind it has been replaced.
     //
-    // Keying the digest on that row makes the retry a reused key, so the
-    // client is refused and can never learn whether its first attempt
-    // landed — which is exactly the question the key was minted to answer.
-    seenFingerprints = [];
+    // Keyed on that row, the retry would find no record and write again.
+    seenCredentials = [];
     await doorWith([{ claimed: true }], 201, {
       id: "access-token-row-1",
       source: "oauth:client-a:user-b",
@@ -957,17 +956,17 @@ describe("a claim the store did not grant", () => {
       oauth: true,
     }).send();
 
-    expect(seenFingerprints).toHaveLength(2);
-    expect(seenFingerprints[0]).toBe(seenFingerprints[1]);
+    expect(seenCredentials).toHaveLength(2);
+    expect(seenCredentials[0]).toBe(seenCredentials[1]);
 
-    // The control: a different grant is still a different digest, so this
-    // did not simply drop the credential from the material.
+    // The control: a different person is a different keyspace, so this did
+    // not simply drop the credential.
     await doorWith([{ claimed: true }], 201, {
       id: "access-token-row-3",
       source: "oauth:client-a:someone-else",
       oauth: true,
     }).send();
-    expect(seenFingerprints[2]).not.toBe(seenFingerprints[0]);
+    expect(seenCredentials[2]).not.toBe(seenCredentials[0]);
   });
 
   it("asks again when the holder vanished, and writes exactly once", async () => {

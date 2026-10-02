@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS `blobs` (
 CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`api_key_id` text,
+	`credential` text NOT NULL,
 	`status` text NOT NULL,
 	`action` text NOT NULL,
 	`input` text NOT NULL,
@@ -330,7 +331,6 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 	`error` text,
 	`worker_id` text,
 	`worker_heartbeat_at` text,
-	`idempotency_key` text,
 	`created_at` text NOT NULL,
 	`started_at` text,
 	`finished_at` text
@@ -338,7 +338,6 @@ CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_status` ON `bulk_action_jobs` (`status`);
 CREATE INDEX IF NOT EXISTS `idx_bulk_action_jobs_gc` ON `bulk_action_jobs` (`status`,`finished_at`);
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_bulk_action_jobs_idempotency` ON `bulk_action_jobs` (`idempotency_key`) WHERE idempotency_key IS NOT NULL;
 CREATE TABLE IF NOT EXISTS `cascade_marks` (
 	`item_id` text PRIMARY KEY NOT NULL,
 	`trashed_with` text NOT NULL,
@@ -455,6 +454,7 @@ CREATE TABLE IF NOT EXISTS `housekeeping` (
 
 CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`id` text PRIMARY KEY NOT NULL,
+	`credential` text NOT NULL,
 	`idempotency_key` text NOT NULL,
 	`fingerprint` text NOT NULL,
 	`state` text NOT NULL,
@@ -465,7 +465,7 @@ CREATE TABLE IF NOT EXISTS `idempotency_records` (
 	`completed_at` text
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS `idx_idempotency_records_key` ON `idempotency_records` (`idempotency_key`);
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_idempotency_records_key` ON `idempotency_records` (`credential`,`idempotency_key`);
 CREATE INDEX IF NOT EXISTS `idx_idempotency_records_gc` ON `idempotency_records` (`created_at`);
 CREATE TABLE IF NOT EXISTS `inbound_deliveries` (
 	`id` text PRIMARY KEY NOT NULL,

@@ -3336,7 +3336,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -3793,7 +3793,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -3967,7 +3967,7 @@ export interface operations {
                 conflict?: components["schemas"]["ConflictMode"];
             };
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -4167,7 +4167,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -4338,7 +4338,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -5169,7 +5169,7 @@ export interface operations {
                 version?: number;
             };
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -5649,7 +5649,10 @@ export interface operations {
     applyBulkAction: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                "Idempotency-Key"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -5722,6 +5725,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5736,6 +5740,7 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5751,6 +5756,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5787,6 +5793,22 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
+            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                };
+            };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
             413: {
                 headers: {
@@ -5799,6 +5821,22 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
+            /** @description The key names a different request from the one it was first used for, or the first attempt's response was too large to retain and cannot be replayed. Neither repeated the write. */
+            422: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
+                    "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
+                    "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                };
+            };
             /** @description Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting. */
             429: {
                 headers: {
@@ -5809,6 +5847,7 @@ export interface operations {
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Retry-After": components["headers"]["Retry-After"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -5824,6 +5863,7 @@ export interface operations {
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7329,7 +7369,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -7632,7 +7672,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -7803,7 +7843,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -13146,7 +13186,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path?: never;
@@ -13315,7 +13355,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {
@@ -13505,7 +13545,7 @@ export interface operations {
         parameters: {
             query?: never;
             header?: {
-                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to this instance; a key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
+                /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
             };
             path: {

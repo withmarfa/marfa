@@ -18,13 +18,27 @@
  * that was offline reads.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, type TestContext } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+  type TestContext,
+} from "../test-utils.js";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import { credentialScopedKey } from "../middleware/idempotency.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
+/** The working key's id, the credential its idempotency keys belong to. */
+let workingKeyId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  const working = await ctx.storage.keys.validate(
+    hashApiKey(ctx.workingKey, TEST_API_KEY_SALT),
+  );
+  if (!working) throw new Error("the working key does not resolve");
+  workingKeyId = working.id;
   // `createTestContext` does not wire the log — the server's bootstrap does.
   // Without this, `publish` appends nothing and every assertion below reads
   // an empty log whatever the routes did.
@@ -210,7 +224,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
       properties: { body: "retried edit" },
       version: base,
       conflict_mode: "auto",
-      idempotency_key: key,
+      idempotency_key: credentialScopedKey(workingKeyId, key),
     });
     expect("error" in again).toBe(false);
     expect(
@@ -263,7 +277,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
       properties: { body: "retried edit, parented" },
       version: base,
       conflict_mode: "auto",
-      idempotency_key: key,
+      idempotency_key: credentialScopedKey(workingKeyId, key),
       may_copy_edge: () => true,
     });
     expect("error" in again).toBe(false);

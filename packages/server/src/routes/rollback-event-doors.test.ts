@@ -60,6 +60,8 @@ import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { generateId } from "@withmarfa/shared";
 import { conflictedSiblingId } from "../storage/conflict.js";
+import { credentialScopedKey } from "../middleware/idempotency.js";
+import { hashApiKey } from "../middleware/auth.js";
 import {
   createTestContext,
   request,
@@ -67,6 +69,7 @@ import {
   collectItemEvents,
   runBulkActionAsync,
   settle,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
@@ -77,9 +80,16 @@ import {
 } from "../pubsub.js";
 
 let ctx: TestContext;
+/** The working key's id, the credential its idempotency keys belong to. */
+let workingKeyId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  const working = await ctx.storage.keys.validate(
+    hashApiKey(ctx.workingKey, TEST_API_KEY_SALT),
+  );
+  if (!working) throw new Error("the working key does not resolve");
+  workingKeyId = working.id;
   // Without this `publish` persists nothing, and the event-log half of every
   // assertion below would hold for a reason that has nothing to do with the
   // property under test.
@@ -369,7 +379,7 @@ function conflictSiblingFor(item: string): string {
   return conflictedSiblingId({
     itemId: item,
     baseVersion: 1,
-    idempotencyKey: conflictKeyFor(item),
+    idempotencyKey: credentialScopedKey(workingKeyId, conflictKeyFor(item)),
   });
 }
 

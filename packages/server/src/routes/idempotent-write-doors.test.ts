@@ -91,7 +91,7 @@ const WRITERS: Record<string, string> = {
 
   // --- A door, deliberately not idempotent through this mechanism ---
   "routes/bulk.ts":
-    "POST /items/bulk resolves an existing row by id or natural key and updates it, so a retry converges rather than colliding — the collision this mechanism removes is not reachable there. POST /items/bulk-actions already reads Idempotency-Key and stores its outcome in the job row the outcome IS; a second mechanism over the same header on the same door is the thing this change exists to avoid",
+    "POST /items/bulk resolves an existing row by id or natural key and updates it, so a retry converges rather than colliding — the collision this mechanism removes is not reachable there. POST /items/bulk-actions queues a job rather than writing, and is in IDEMPOTENT_WRITE_DOORS",
   "routes/edges-bulk.ts":
     "POST /edges/bulk upserts on the (source, target, type) triple, so a retry converges. A batch response is also megabytes, and storing one per key trades an unbounded table for a property the door already has",
   "routes/admin-archive.ts":
@@ -100,7 +100,7 @@ const WRITERS: Record<string, string> = {
   // --- Writes with no request behind them, so no header to carry ---
   "enrichment/sweeper.ts": "background extraction sweep, no request",
   "bulk-actions/runner.ts":
-    "the async bulk-action worker; the job row it runs from is what the door's own Idempotency-Key already deduplicates",
+    "the async bulk-action worker; the job it runs is queued by POST /items/bulk-actions, in IDEMPOTENT_WRITE_DOORS",
 
   // --- Routes writing a system item through a surface of their own ---
   "routes/auth-consent.ts":
@@ -246,8 +246,6 @@ const NOT_AN_IDEMPOTENT_DOOR: Record<string, string> = {
   "POST /items/lookup": "read-only lookup by link, natural key or id",
   "POST /items/tombstones":
     "moves a time only ever later, so a repeat is already a no-op",
-  "POST /items/bulk-actions":
-    "already reads Idempotency-Key and stores its outcome in the job row that outcome IS; a second mechanism over the same header on the same door is what this change exists to avoid",
   "DELETE /items/bulk-actions/jobs/:id":
     "requests cancellation of a job, and asking twice is already a no-op on a terminal job",
   "POST /edges/bulk": "upserts on the triple, so a retry converges",
