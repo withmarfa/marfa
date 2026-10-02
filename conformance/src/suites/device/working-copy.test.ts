@@ -14,6 +14,7 @@ import {
   type Harness,
 } from "./harness.js";
 import {
+  edgeTypeCatalog,
   SCRIPTED_TYPES,
   snapshotType,
   answers,
@@ -1652,6 +1653,7 @@ describe("the working copy says what it is", () => {
   it("refuses a read after an interrupted hydration", async () => {
     harness = await startHarness("interrupted");
     const { server, device } = harness;
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     server.answer("GET", "/events", {
       kind: "sse",
       frames: [connected, streamCursor("10")],

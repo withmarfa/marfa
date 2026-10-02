@@ -100,6 +100,34 @@ pub struct WireType {
     pub rest: Map<String, Value>,
 }
 
+/// Every field the listing always sends is required, so a row missing one is
+/// refused rather than held with a default that says something else.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WireEdgeType {
+    pub id: String,
+    #[serde(default)]
+    pub label: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub cardinality: String,
+    #[serde(default)]
+    pub reverse_name: Option<String>,
+    pub written_at: crate::catalog::End,
+    pub source_type_constraints: Vec<String>,
+    pub target_type_constraints: Vec<String>,
+    pub cascade_on_delete: String,
+    pub property_schema: Map<String, Value>,
+    pub shipped: bool,
+}
+
+/// Both catalogs, read together so a copy never holds one without the other.
+#[derive(Debug, Clone)]
+pub struct WireCatalog {
+    pub types: Vec<WireType>,
+    /// Each row as listed, checked to read as a `WireEdgeType`.
+    pub edge_types: Vec<Value>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireErrorBody {
     pub code: String,

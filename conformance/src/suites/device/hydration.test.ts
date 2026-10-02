@@ -13,6 +13,7 @@ import {
   itemsPage,
   refusal,
   replay,
+  edgeTypeCatalog,
   typeCatalog,
   wireEdge,
   wireItem,
@@ -144,6 +145,7 @@ describe("what a hydration declares", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
     server.answer("GET", "/items", (request) =>
       request.query.get("type") === "bookmark"
@@ -224,6 +226,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
     server.answer("GET", "/items", (request) =>
       request.query.get("type") === "core.note"
@@ -266,6 +269,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
     // The first attempt lands a page and then dies partway through the walk,
     // so there is something a resuming device could resume from. With nothing
@@ -309,6 +313,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("7"));
     server.answer("GET", "/types", typeCatalog());
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
     server.answer(
       "GET",
@@ -425,6 +430,7 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("42"));
     server.answer("GET", "/types", typeCatalog());
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(server);
     server.answer(
       "GET",

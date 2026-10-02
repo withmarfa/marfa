@@ -72,7 +72,14 @@ impl Scripted {
     pub fn start() -> Scripted {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        // A catalog is read with both halves, and a script about something
+        // else need not write the second.
         let script = Arc::new(Mutex::new(Script::default()));
+        script
+            .lock()
+            .unwrap()
+            .answers
+            .insert("/edge-types".into(), vec![edge_types(&[])]);
         let stopping = Arc::new(AtomicBool::new(false));
         let open = Arc::new(Mutex::new(Vec::new()));
         {
@@ -363,6 +370,30 @@ pub fn types(entries: &[(&str, Option<&str>)]) -> Answer {
                 r#"{{"id":"{id}","parent":"{parent}","display_hints":{{"title_field":"title"}}}}"#
             ),
             None => format!(r#"{{"id":"{id}","display_hints":{{"title_field":"title"}}}}"#),
+        })
+        .collect();
+    json(
+        200,
+        &format!(r#"{{"data":[{}],"next_cursor":null}}"#, data.join(",")),
+    )
+}
+
+/// Edge types as the listing answers them, each `(id, reverse name)`.
+pub fn edge_types(entries: &[(&str, Option<&str>)]) -> Answer {
+    let data: Vec<String> = entries
+        .iter()
+        .map(|(id, reverse)| {
+            let reverse = reverse.map_or(String::new(), |name| {
+                format!(r#","reverse_name":"{name}","written_at":"target""#)
+            });
+            let written = if reverse.is_empty() {
+                r#","written_at":"source""#
+            } else {
+                ""
+            };
+            format!(
+                r#"{{"id":"{id}","cardinality":"many-to-many","source_type_constraints":["*"],"target_type_constraints":["*"],"cascade_on_delete":"orphan","property_schema":{{}},"shipped":false{reverse}{written}}}"#
+            )
         })
         .collect();
     json(

@@ -188,12 +188,10 @@ impl Folder {
         // The catalog the hydration would read, so a default type the
         // search does not hold is refused before anything is bound.
         {
-            let http = added.core.http()?;
-            let types = http.types()?;
+            let catalog = added.core.http()?.catalog()?;
             let conn = added.core.conn()?;
-            crate::store::replace_types(&conn, &types)?;
+            crate::store::replace_catalog(&conn, &catalog)?;
             Settings::of_wire(&row.item)?.check_types(&Catalog::load(&conn)?)?;
-            EdgeTypes::refresh(http, &conn)?;
         }
         // A key that cannot place its files would lay the folder out on this
         // machine alone; a credential that is not a key is not asked.
@@ -383,7 +381,9 @@ impl Folder {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
         self.core.lock.refuse_unless_writer()?;
-        let edge_types = EdgeTypes::refresh(self.core.http()?, &*self.core.conn()?)?;
+        let fetched = self.core.http()?.catalog()?;
+        crate::store::replace_catalog(&*self.core.conn()?, &fetched)?;
+        let edge_types = EdgeTypes::load(&*self.core.conn()?)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         let catalog = Catalog::load(&*self.core.conn()?)?;
         let whole = whole_edge_types(&settings, &edge_types, &catalog);
@@ -427,12 +427,7 @@ impl Folder {
     }
 
     pub fn catch_up(&self) -> Result<CaughtUp> {
-        // An edge type registered since is read with the rest.
-        let caught = self.core.catch_up().and_then(|report| {
-            EdgeTypes::refresh(self.core.http()?, &*self.core.conn()?)?;
-            Ok(report)
-        });
-        match caught {
+        match self.core.catch_up() {
             // Settings changed elsewhere can ask for another slice.
             Ok(report) if self.slice_moved()? => Ok(CaughtUp {
                 caught_up: Some(report),
@@ -672,7 +667,7 @@ impl Folder {
             ..ScanReport::default()
         };
         let settings = self.settings()?;
-        let (catalog, mut edge_types) = {
+        let (mut catalog, mut edge_types) = {
             let conn = self.core.conn()?;
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
@@ -881,9 +876,12 @@ impl Folder {
         });
         if changed
             && let Ok(http) = self.core.http()
-            && let Ok(fresh) = EdgeTypes::refresh(http, &*self.core.conn()?)
+            && let Ok(fresh) = http.catalog()
         {
-            edge_types = fresh;
+            let conn = self.core.conn()?;
+            crate::store::replace_catalog(&conn, &fresh)?;
+            catalog = Catalog::load(&conn)?;
+            edge_types = EdgeTypes::load(&conn)?;
         }
         let peers = Peers::of(self, doubt);
         let (claims, mut waiting) = self.claim(&files, &snapshot, &settings, &catalog, &peers)?;
@@ -1640,9 +1638,9 @@ impl Folder {
     ) -> Result<()> {
         for (edge_type, targets) in &settings.defaults.edges {
             let end = if edge_type == crate::filter::PARENT_OF {
-                edge_types::End::Target
+                crate::catalog::End::Target
             } else {
-                edge_types::End::Source
+                crate::catalog::End::Source
             };
             if let Some((front, types)) = front
                 && let Some(name) = types.get(edge_type).and_then(|def| def.name_at(end))
@@ -1652,8 +1650,8 @@ impl Folder {
             }
             for target in targets {
                 let (source_id, target_id) = match end {
-                    edge_types::End::Target => (target.clone(), item_id.to_string()),
-                    edge_types::End::Source => (item_id.to_string(), target.clone()),
+                    crate::catalog::End::Target => (target.clone(), item_id.to_string()),
+                    crate::catalog::End::Source => (item_id.to_string(), target.clone()),
                 };
                 self.core.create_edge(&crate::model::EdgeDraft {
                     source_id,
@@ -2010,8 +2008,8 @@ fn moved_line(
     };
     let body: Value = serde_json::from_str(&crate::store::payload_of(conn, &row.id)?)?;
     let (end, from, to) = match (body["source_id"].as_str(), body["target_id"].as_str()) {
-        (None, Some(to)) if source == &bound.item_id => (edge_types::End::Source, target, to),
-        (Some(to), None) if target == &bound.item_id => (edge_types::End::Target, source, to),
+        (None, Some(to)) if source == &bound.item_id => (crate::catalog::End::Source, target, to),
+        (Some(to), None) if target == &bound.item_id => (crate::catalog::End::Target, source, to),
         _ => return Ok(None),
     };
     let edge_type = match crate::store::edge_by_id(conn, edge_id)? {
@@ -2048,9 +2046,9 @@ fn edge_change(
         return Ok(None);
     };
     let (end, other) = if source == item_id {
-        (edge_types::End::Source, target)
+        (crate::catalog::End::Source, target)
     } else {
-        (edge_types::End::Target, source)
+        (crate::catalog::End::Target, source)
     };
     Ok(Some(state::Change::Edge {
         line: state::Line {
@@ -2289,8 +2287,8 @@ impl Folder {
                 let body: Value =
                     serde_json::from_str(&crate::store::payload_of(&*self.core.conn()?, &row.id)?)?;
                 let (source_id, target_id) = match moved.to.end {
-                    edge_types::End::Source => (bound.item_id.clone(), moved.to.other.clone()),
-                    edge_types::End::Target => (moved.to.other.clone(), bound.item_id.clone()),
+                    crate::catalog::End::Source => (bound.item_id.clone(), moved.to.other.clone()),
+                    crate::catalog::End::Target => (moved.to.other.clone(), bound.item_id.clone()),
                 };
                 let created = self.core.create_edge(&crate::model::EdgeDraft {
                     source_id,

@@ -30,6 +30,7 @@ use rusqlite::Connection;
 use serde_json::Value;
 
 pub use blob::{file_type_for, mime_type_for};
+pub use catalog::{EdgeType, End, ItemType, TypeField};
 pub use catch_up::{Change, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::CoreError;
@@ -1066,7 +1067,29 @@ impl Core {
             hydration,
             items: store::count(&conn, "items")?,
             edges: store::count(&conn, "edges")?,
+            catalog_version: store::catalog_version(&conn)?,
         })
+    }
+
+    /// Every item type the copy holds, by id, read from the copy alone.
+    /// Refused `NoCatalog` where the copy has never held a catalog.
+    pub fn item_types(&self) -> Result<Vec<ItemType>> {
+        catalog::item_types(&*self.conn()?)
+    }
+
+    /// Refused `NotFound` where the catalog holds no such type.
+    pub fn item_type(&self, id: &str) -> Result<ItemType> {
+        catalog::item_type(&*self.conn()?, id)
+    }
+
+    /// Every edge type the copy holds, by id, read from the copy alone.
+    pub fn edge_types(&self) -> Result<Vec<EdgeType>> {
+        catalog::edge_types(&*self.conn()?)
+    }
+
+    /// Refused `NotFound` where the catalog holds no such edge type.
+    pub fn edge_type(&self, id: &str) -> Result<EdgeType> {
+        catalog::edge_type(&*self.conn()?, id)
     }
 
     fn http(&self) -> Result<&http::Http> {

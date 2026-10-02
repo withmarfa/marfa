@@ -87,6 +87,51 @@ export interface Status {
   hydration: "never" | "in_progress" | "complete" | "expired";
   items: number;
   edges: number;
+  /** Moves each time a refresh changes the catalog the copy holds, and is
+   *  null where the copy has never held one. */
+  catalog_version: number | null;
+}
+
+/** A field of an item type, or a property of an edge type. */
+export interface TypeField {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string | null;
+  /** The type that declares it: the type itself, or the nearest it inherits it from. */
+  declared_by: string;
+  /** The definition whole, as the server answers it. */
+  definition: Record<string, unknown>;
+}
+
+/** An item type as the copy holds it, its inheritance resolved. */
+export interface ItemType {
+  id: string;
+  label: string | null;
+  description: string | null;
+  parent: string | null;
+  version: number;
+  fields: TypeField[];
+  title_field: string | null;
+  body_field: string | null;
+  link_field: string | null;
+  roles: string[];
+  compatible_with: string[];
+}
+
+/** An edge type as the copy holds it. */
+export interface EdgeType {
+  id: string;
+  label: string | null;
+  description: string | null;
+  cardinality: string;
+  reverse_name: string | null;
+  written_at: "source" | "target";
+  source_type_constraints: string[];
+  target_type_constraints: string[];
+  cascade_on_delete: string;
+  properties: TypeField[];
+  shipped: boolean;
 }
 
 /** What a pin or an unpin answers. */
@@ -291,6 +336,12 @@ export interface DeviceUnderTest {
   /** Every queued write and what became of it. */
   queue(): Promise<Outcome<QueuedWrite[]>>;
   status(): Promise<Outcome<Status>>;
+  /** The item types the copy holds, read from it alone. */
+  itemTypes(): Promise<Outcome<ItemType[]>>;
+  itemType(id: string): Promise<Outcome<ItemType>>;
+  /** The edge types the copy holds, read from it alone. */
+  edgeTypes(): Promise<Outcome<EdgeType[]>>;
+  edgeType(id: string): Promise<Outcome<EdgeType>>;
 
   /** Write a new item into the working copy and queue it. */
   create(draft: Draft): Promise<Outcome<QueuedWrite>>;

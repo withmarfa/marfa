@@ -20,6 +20,7 @@ import {
   replay,
   streamCursor,
   streamLive,
+  edgeTypeCatalog,
   typeCatalog,
   wireEdge,
   wireItem,
@@ -1071,20 +1072,9 @@ describe("catch-up replays from the cursor", () => {
     let reads = 0;
     server.answer("GET", "/types", () => {
       reads += 1;
-      return {
-        kind: "json",
-        status: 200,
-        body: {
-          data: [
-            wireType("core.note"),
-            wireType("core.file"),
-            ...(reads > 1
-              ? [wireType("acme.late-note", { parent: "core.note" })]
-              : []),
-          ],
-          next_cursor: null,
-        },
-      };
+      return typeCatalog(
+        reads > 1 ? [wireType("acme.late-note", { parent: "core.note" })] : [],
+      );
     });
     scriptKey(server);
     server.answer(
@@ -1107,8 +1097,16 @@ describe("catch-up replays from the cursor", () => {
       "an item of a type registered after the stream opened was dropped, though its parent is a type the slice declares",
     ).toBe(true);
     expect(
-      followed.value.changes.map((change) => [change.item_id, change.cursor]),
-    ).toEqual([["late", "11"]]);
+      followed.value.changes.map((change) => [
+        change.event,
+        change.item_id,
+        change.cursor,
+      ]),
+      "the reopened stream read a catalog holding the new type and did not say so before the row it let in (49)",
+    ).toEqual([
+      ["catalog.changed", null, "10"],
+      ["item.created", "late", "11"],
+    ]);
     expect(followed.value.report.cursor).toBe("11");
     expect(
       followed.value.report.reconnects,
@@ -2953,6 +2951,7 @@ describe("catch-up keeps the copy to its slice", () => {
     harness = await startHarness("catalog");
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     server.answer(
       "GET",
       "/types",
@@ -3005,6 +3004,7 @@ describe("catch-up keeps the copy to its slice", () => {
     harness = await startHarness("catalog-behind");
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
+    server.answer("GET", "/edge-types", edgeTypeCatalog());
     // The hydration and the catch-up's first read know neither type; the
     // one registered after the catch-up began is there from the next read,
     // and the other is never described.

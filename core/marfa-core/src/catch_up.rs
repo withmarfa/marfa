@@ -14,7 +14,7 @@ use crate::http::Http;
 use crate::model::{CatchUpReport, Tier};
 use crate::sse::{Frame, Frames};
 use crate::store;
-use crate::wire::{EventPayload, WireEdge, WireItem, WireType};
+use crate::wire::{EventPayload, WireCatalog, WireEdge, WireItem};
 use crate::{Core, Result};
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
@@ -104,6 +104,10 @@ fn unexplained(
         .find(|named| !refreshed.contains(named))
 }
 
+/// What a held stream changed in the copy: an event it applied, named by the
+/// event's type with the item or edge it was about, or `catalog.changed`,
+/// naming neither, where a stream it opened read a catalog that differs from
+/// the one held. `cursor` is the cursor held after it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Change {
     pub event: String,
@@ -149,14 +153,16 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 }
 
 /// Written only where it differs from the one held, so a reader told of every
-/// save is not told of this.
-fn adopt(core: &Core, types: &[WireType]) -> Result<Catalog> {
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    store::replace_types(&tx, types)?;
-    tx.commit()?;
-    Catalog::load(&conn)
+/// save is not told of this. Says whether the catalog version moved.
+fn adopt(core: &Core, catalog: &WireCatalog) -> Result<(Catalog, bool)> {
+    let conn = core.conn()?;
+    let moved = store::replace_catalog(&conn, catalog)?;
+    Ok((Catalog::load(&conn)?, moved))
 }
+
+/// The event a held stream tells its caller of when the catalog it reads
+/// differs from the one the copy held.
+const CATALOG_CHANGED: &str = "catalog.changed";
 
 /// The reading thread outlives a caller that lets the frames go: it learns
 /// they are unwanted only when it next has a frame to hand on, so it keeps
@@ -242,7 +248,7 @@ fn payload_of(data: &str) -> Result<EventPayload> {
 
 pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<CatchUpReport> {
     let (slice, cursor) = start(core)?;
-    let mut catalog = adopt(core, &http.types()?)?;
+    let (mut catalog, _) = adopt(core, &http.catalog()?)?;
     let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
     // So a type the server will not describe costs one read of the catalog
     // rather than one for every event naming it.
@@ -315,7 +321,7 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
                             unexplained(&catalog, &slice, kind, &payload, &refreshed, pinned)
                         {
                             refreshed.insert(named);
-                            catalog = adopt(core, &http.types()?)?;
+                            catalog = adopt(core, &http.catalog()?)?.0;
                         }
                         if take(core, &catalog, &slice, &id, kind, &payload)?.is_some() {
                             report.applied += 1;
@@ -387,7 +393,7 @@ fn follow_paced(
         let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
             break;
         };
-        let (types, frames) = match reached {
+        let (fetched, frames) = match reached {
             Ok(reached) => reached,
             Err(error) if error.is_environmental() => {
                 report.failed_opens += 1;
@@ -401,7 +407,15 @@ fn follow_paced(
             }
             Err(error) => return Err(error),
         };
-        let catalog = adopt(core, &types)?;
+        let (catalog, moved) = adopt(core, &fetched)?;
+        if moved {
+            on_change(&Change {
+                event: CATALOG_CHANGED.into(),
+                item_id: None,
+                edge_id: None,
+                cursor: report.cursor.clone(),
+            });
+        }
         let opened = Instant::now();
         let ended = read_stream(
             core,
@@ -517,7 +531,7 @@ fn read_stream(
     }
 }
 
-type Reached = Result<(Vec<WireType>, Receiver<io::Result<Frame>>)>;
+type Reached = Result<(WireCatalog, Receiver<io::Result<Frame>>)>;
 
 /// `None` when `stop` was set first.
 fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
@@ -525,9 +539,9 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     let http = Arc::clone(http);
     let cursor = cursor.to_string();
     thread::spawn(move || {
-        let reached = http.types().and_then(|types| {
+        let reached = http.catalog().and_then(|catalog| {
             let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
-            Ok((types, frames))
+            Ok((catalog, frames))
         });
         let _ = sender.send(reached);
     });
@@ -703,9 +717,12 @@ mod tests {
             store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
             store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
             store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
-            store::replace_types(
+            store::replace_catalog(
                 &conn,
-                &[store::testing::wire_type(NOTE, None, Some("title"))],
+                &WireCatalog {
+                    types: vec![store::testing::wire_type(NOTE, None, Some("title"))],
+                    edge_types: Vec::new(),
+                },
             )
             .unwrap();
         }
@@ -1199,9 +1216,15 @@ mod tests {
         );
         let (_dir, core) = hydrated(&server);
         let run = follow_on(&core, QUICK, None);
+        let told = run.change();
         let change = run.change();
         run.stop();
         run.ended().unwrap();
+        assert_eq!(
+            (told.event.as_str(), told.item_id, told.edge_id),
+            (CATALOG_CHANGED, None, None),
+            "the second stream read a changed catalog and its caller was not told"
+        );
         assert_eq!(
             change.item_id.as_deref(),
             Some("late"),

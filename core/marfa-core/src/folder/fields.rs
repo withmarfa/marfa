@@ -262,20 +262,10 @@ mod tests {
     use super::*;
 
     fn edge_types() -> EdgeTypes {
-        use super::super::edge_types::{EdgeType, End};
+        use crate::catalog::{EdgeType, End};
         EdgeTypes::of(vec![
-            EdgeType {
-                id: "parent-of".into(),
-                reverse_name: Some("child-of".into()),
-                written_at: End::Target,
-                cardinality: "one-to-many".into(),
-            },
-            EdgeType {
-                id: "cites".into(),
-                reverse_name: Some("cited-by".into()),
-                written_at: End::Source,
-                cardinality: "many-to-many".into(),
-            },
+            EdgeType::of("parent-of", Some("child-of"), End::Target, "one-to-many"),
+            EdgeType::of("cites", Some("cited-by"), End::Source, "many-to-many"),
         ])
     }
 

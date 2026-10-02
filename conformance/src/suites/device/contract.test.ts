@@ -9,6 +9,7 @@ import {
   itemsPage,
   refusal as refused,
   replay,
+  edgeTypeCatalog,
   typeCatalog,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -1165,6 +1166,7 @@ describe("the contract the working copy was built for", () => {
     let pageOn = other;
     scripted.answer("GET", "/events", headRead("10"));
     scripted.answer("GET", "/types", typeCatalog());
+    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
     scripted.answer("GET", "/items", () =>
       naming(itemsPage([{ item: wireItem({ id: "n1" }) }]), pageOn),
@@ -1177,6 +1179,7 @@ describe("the contract the working copy was built for", () => {
     expect(sent(scripted)).toEqual([
       "GET /events",
       "GET /types",
+      "GET /edge-types",
       "GET /keys/current",
       "GET /items",
     ]);
@@ -1203,6 +1206,7 @@ describe("the contract the working copy was built for", () => {
       replay("11", [itemEvent("11", "item.created", wireItem({ id: "n2" }))]),
     );
     scripted.answer("GET", "/types", () => naming(typeCatalog(), catalogOn));
+    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
     scripted.answer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -1255,6 +1259,7 @@ describe("the contract the working copy was built for", () => {
     const { server: scripted, device } = harness;
     scripted.answer("GET", "/events", headRead("10"));
     scripted.answer("GET", "/types", typeCatalog(), endless);
+    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
     scripted.answer("GET", "/items", itemsPage([]));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
@@ -1414,6 +1419,7 @@ describe("the contract the working copy was built for", () => {
     let catalogOn = orders[0] ?? [];
     scripted.answer("GET", "/events", headRead("10"));
     scripted.answer("GET", "/types", () => naming(typeCatalog(), catalogOn));
+    scripted.answer("GET", "/edge-types", edgeTypeCatalog());
     scriptKey(scripted);
     scripted.answer("GET", "/items", itemsPage([]));
     for (const order of orders.slice(0, 2)) {

@@ -25,6 +25,7 @@ import {
   catchupTooOld,
   connected,
   edgeEvent,
+  edgeType,
   edgesPage,
   headRead,
   itemEvent,
@@ -3749,27 +3750,21 @@ describe("edges in frontmatter", () => {
           ...SCRIPTED_EDGE_TYPES,
           ...(registered
             ? [
-                {
-                  id: "cites",
-                  cardinality: "many-to-many",
-                  written_at: "source",
-                },
-                {
-                  id: "mentor-of",
+                edgeType("cites"),
+                edgeType("mentor-of", {
                   cardinality: "one-to-many",
                   reverse_name: "mentored-by",
                   written_at: "target",
-                },
+                }),
               ]
             : []),
           ...(later
             ? [
-                {
-                  id: "sponsor-of",
+                edgeType("sponsor-of", {
                   cardinality: "one-to-many",
                   reverse_name: "sponsored-by",
                   written_at: "target",
-                },
+                }),
               ]
             : []),
         ],
@@ -6345,6 +6340,47 @@ describe("what frontmatter says", () => {
         },
       ],
       ["core.highlight", { note: "Worth a second read.\n", text: "Quote" }],
+    ]);
+  });
+
+  it("takes the display hints of the nearest type that declares any, whole, as the server resolves them", async () => {
+    // A subtype naming only a body inherits no title from its parent: the
+    // server's read of the type answers the subtype's block alone
+    // (`types.md` 8), so the folder falls back to `title` (`device.md` 47).
+    harness = await folderHarness("folder-partial-hints", {
+      settings: { search: { types: ["user.quote"] } },
+      catalog: {
+        kind: "json",
+        status: 200,
+        body: {
+          data: [
+            ...SCRIPTED_TYPES,
+            {
+              id: "user.quote",
+              parent: "core.highlight",
+              label: "quote",
+              version: 0,
+              fields: { comment: { type: "string" } },
+              display_hints: { body_field: "comment" },
+            },
+          ],
+          next_cursor: null,
+        },
+      },
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    put(harness, "Saying.md", "---\ntype: user.quote\n---\nWorth it.\n");
+    // The witness: the parent's own hints still name its title.
+    put(harness, "Line.md", "---\ntype: core.highlight\n---\nKept.\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    expect(
+      sentCreates(harness).map((sent) => [sent.type, sent.properties]),
+      "a subtype naming only its body took its title field from its parent's hints, which the server's read of the type does not",
+    ).toEqual([
+      ["core.highlight", { note: "Kept.\n", text: "Line" }],
+      ["user.quote", { comment: "Worth it.\n", title: "Saying" }],
     ]);
   });
 

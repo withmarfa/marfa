@@ -40,7 +40,7 @@ pub(crate) fn hydrate(
     }
 
     let cursor = read_head(http)?;
-    let catalog_rows = http.types()?;
+    let catalog_rows = http.catalog()?;
     refuse_unreadable(http, &types)?;
 
     {
@@ -49,7 +49,7 @@ pub(crate) fn hydrate(
         store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
         store::meta_delete(&tx, store::META_EVENT_CURSOR)?;
         store::clear_slice(&tx)?;
-        store::replace_types(&tx, &catalog_rows)?;
+        store::replace_catalog(&tx, &catalog_rows)?;
         tx.commit()?;
     }
     let catalog = {

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value};
 
-use super::edge_types::{self, EdgeType, EdgeTypes, End};
+use super::edge_types::{self, EdgeTypes};
 use super::embeds::{self, ATTACHMENT_EDGE, Target};
 use super::names::{folded, forms};
 use super::state::{self, Line};
@@ -11,6 +11,7 @@ use super::{
 };
 use crate::Result;
 use crate::catalog::Catalog;
+use crate::catalog::{EdgeType, End};
 use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
 
 /// A file's links and lines, read once every file in the scan is bound.
