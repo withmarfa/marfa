@@ -163,7 +163,7 @@ const holdRoute = createRoute({
   path: "/{id}/hold",
   tags: ["Connectors"],
   summary: "Take or renew the hold on a registration",
-  description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers \`409 connector_held\` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
+  description: `Holds the registration for \`process\` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers \`409 connector_held\` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered \`renewed: false\` while it believed it held the registration re-reads the state and the agreements before writing again. ${UNDECLARED_REFUSED} ${CONNECTOR_KEY_ONLY}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -179,6 +179,12 @@ const holdRoute = createRoute({
         "application/json": {
           schema: z.object({
             expires_at: z.string().describe("When the hold lapses."),
+            ttl_ms: z
+              .number()
+              .int()
+              .describe(
+                "The instance's hold window in milliseconds: `expires_at` is the server's clock plus this when it took the hold, so a process schedules its next renewal without reading the server's clock.",
+              ),
             renewed: z
               .boolean()
               .describe(
@@ -431,7 +437,10 @@ export function connectorStateRoutes(storage: Storage, config: AppConfig) {
       );
     }
     if (!hold.taken) throw held(hold.expires_at);
-    return c.json({ expires_at: hold.expires_at, renewed: hold.renewed }, 200);
+    return c.json(
+      { expires_at: hold.expires_at, ttl_ms: holdMs, renewed: hold.renewed },
+      200,
+    );
   });
 
   router.openapi(releaseHoldRoute, async (c) => {

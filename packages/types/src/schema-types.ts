@@ -43,8 +43,8 @@ export interface FieldDefinition {
   /**
    * Semantic refinement of a `string` field. Only the annotation-only formats
    * (`bcp47`, `iso3166`) survive here — the formats that have a matching
-   * `FieldType` normalize into `type` instead, so there is exactly one way to
-   * read a field's shape. Carried through the registry and the type diff so a
+   * `FieldType` normalize into `type`, or into an array of strings'
+   * `items_type`, so there is exactly one way to read a field's shape. Carried through the registry and the type diff so a
    * schema round-trips unchanged; value-level enforcement of the annotation
    * formats is not applied at write time.
    */

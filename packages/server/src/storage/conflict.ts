@@ -278,7 +278,11 @@ export interface AutoMergePlan {
  * caller reading the policy off a refusal computes what the server would.
  */
 function strategyFor(field: string, policy: MergePolicy): MergeStrategy {
-  return policy.fields?.[field] ?? policy.default ?? "last_writer_wins";
+  const own =
+    policy.fields && Object.hasOwn(policy.fields, field)
+      ? policy.fields[field]
+      : undefined;
+  return own ?? policy.default ?? "last_writer_wins";
 }
 
 /**

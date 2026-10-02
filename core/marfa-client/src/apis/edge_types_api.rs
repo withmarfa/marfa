@@ -56,9 +56,9 @@ pub enum ListEdgeTypesSuccess {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CreateEdgeTypeError {
-    Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
+    Status400(models::InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenRefusal),
+    Status403(models::EdgePermissionDeniedOrForbiddenRefusal),
     Status409(models::ConflictRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -91,7 +91,7 @@ pub enum ListEdgeTypesError {
     UnknownValue(serde_json::Value),
 }
 
-/// Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.
+/// Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.
 pub fn create_edge_type(
     configuration: &configuration::Configuration,
     params: CreateEdgeTypeParams,

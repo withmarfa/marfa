@@ -628,7 +628,7 @@ describe("a link is one row's", () => {
         },
       ],
     });
-    expect(atomic.status).toBe(400);
+    expect(atomic.status).toBe(409);
     expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
     expect(atomic.error?.error.details?.code).toBe("link_taken");
     const none = await client.lookupItems({

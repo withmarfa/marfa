@@ -71,8 +71,9 @@ const FIELD_TYPE_SET: ReadonlySet<string> = new Set<string>(FIELD_TYPES);
 const FIELD_FORMAT_SET: ReadonlySet<string> = new Set<string>(FIELD_FORMATS);
 
 /**
- * Formats that have a first-class `FieldType` of the same name. A field
- * declaring one is normalized to the equivalent `type` so there is exactly one
+ * Formats that have a first-class `FieldType` of the same name. A string
+ * field declaring one is normalized to the equivalent `type`, and an array of
+ * strings to the equivalent `items_type`, so there is exactly one
  * representation of a URL field in the registry, however it was authored. The
  * formats absent from this map (`bcp47`, `iso3166`) annotate a `string` field
  * and survive normalization as `format`.
@@ -248,7 +249,8 @@ export function normalizeFieldDefinition(
   const collapsed = declaredFormat
     ? FORMAT_TO_FIELD_TYPE[declaredFormat]
     : undefined;
-  const type = (collapsed ?? raw.type) as FieldType;
+  const isList = raw.type === "array";
+  const type = (isList ? raw.type : (collapsed ?? raw.type)) as FieldType;
 
   const out: FieldDefinition = { type };
   if (typeof raw.description === "string" && raw.description.length > 0) {
@@ -259,10 +261,12 @@ export function normalizeFieldDefinition(
   if (Array.isArray(raw.enum_values)) {
     out.enum_values = raw.enum_values as string[];
   }
-  if (typeof raw.items_type === "string") out.items_type = raw.items_type;
-  // A format that collapses into a field type is carried by `type` alone,
-  // since keeping it too would give the same field two spellings. Only a
-  // format that annotates without changing the type is kept.
+  if (typeof raw.items_type === "string") {
+    out.items_type = isList ? (collapsed ?? raw.items_type) : raw.items_type;
+  }
+  // A format that collapses into a field type is carried by `type` or
+  // `items_type` alone, since keeping it too would give the same field two
+  // spellings. Only a format that annotates without changing the type is kept.
   if (declaredFormat && !collapsed) out.format = declaredFormat;
   if (raw.searchable === false) out.searchable = false;
   if (typeof raw.maxLength === "number") out.maxLength = raw.maxLength;
@@ -347,18 +351,36 @@ function validateFieldShape(
           hint: "Drop the format, or pick one of the supported values.",
         }),
       );
-    } else if (
-      !FORMAT_TO_FIELD_TYPE[declaredFormat as FieldFormat] &&
-      fd.type !== "string"
-    ) {
-      errors.push(
-        issue({
-          field: `fields.${name}.format`,
-          expected: `format "${declaredFormat}" on a string field`,
-          actual: `format "${declaredFormat}" on a ${describe(fd.type)} field`,
-          hint: `The ${declaredFormat} format annotates string contents. Set the field type to "string".`,
-        }),
-      );
+    } else {
+      const collapsed = FORMAT_TO_FIELD_TYPE[declaredFormat as FieldFormat];
+      if (collapsed) {
+        const fitsList =
+          fd.type === "array" &&
+          collapsed !== "thumbnail" &&
+          (fd.items_type === "string" || fd.items_type === collapsed);
+        if (fd.type !== "string" && fd.type !== collapsed && !fitsList) {
+          errors.push(
+            issue({
+              field: `fields.${name}.format`,
+              expected:
+                collapsed === "thumbnail"
+                  ? `format "thumbnail" on a string field`
+                  : `format "${declaredFormat}" on a string field, a ${collapsed} field or a list of strings`,
+              actual: `format "${declaredFormat}" on a ${describe(fd.type)} field`,
+              hint: `Set the field type to "${collapsed}" and drop the format.`,
+            }),
+          );
+        }
+      } else if (fd.type !== "string") {
+        errors.push(
+          issue({
+            field: `fields.${name}.format`,
+            expected: `format "${declaredFormat}" on a string field`,
+            actual: `format "${declaredFormat}" on a ${describe(fd.type)} field`,
+            hint: `The ${declaredFormat} format annotates string contents. Set the field type to "string".`,
+          }),
+        );
+      }
     }
   }
 
@@ -854,7 +876,7 @@ export function validateTypeSchema(
   // refinement so it survives registration instead of disappearing when the
   // normalized schema replaces the submitted shape.
   for (const name of requiredNames) {
-    if (normalizedFields[name]) continue;
+    if (Object.hasOwn(normalizedFields, name)) continue;
     const inherited = ancestorFields.get(name)?.definition;
     if (inherited) {
       normalizedFields[name] = { ...inherited, required: true };
