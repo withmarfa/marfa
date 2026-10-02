@@ -1531,7 +1531,7 @@ fn land(
     let read = if held && read_at.is_some() {
         None
     } else {
-        match core.http_ref()?.item(id) {
+        match core.http()?.item(id) {
             Ok(Some(found)) => Some(found),
             // The read failed for a reason that clears on its own. The
             // server keeps its answer to this create under the create's key,
@@ -1701,7 +1701,7 @@ pub(crate) enum ReadBack {
 /// Reads back what the server holds of the subject of `row`, changing
 /// nothing.
 pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
-    let http = core.http_ref()?;
+    let http = core.http()?;
     // An edge write names the edge, and its endpoints in `item_id` and
     // `target_id`. Reading `item_id` as the subject would re-read the source
     // *item* and leave the local edge exactly as the refused write left it:

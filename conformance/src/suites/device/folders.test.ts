@@ -870,32 +870,6 @@ describe("what a folder is", () => {
     }
   });
 
-  it("refuses a folder whose settings are kept on this machine, and says to add it again", async () => {
-    harness = await folderHarness("folder-old-record");
-    writeFileSync(
-      join(harness.dir, ".marfa", "folder.json"),
-      JSON.stringify({
-        types: ["core.note"],
-        tier: "library",
-        default_type: "core.note",
-      }),
-    );
-    const pushed = await harness.folder.push();
-    expect(pushed.ok, "a folder read settings kept on this machine").toBe(
-      false,
-    );
-    if (pushed.ok) return;
-    expect(pushed.refusal.raw).toContain("folders add");
-    // Added again, as the refusal says, it is a folder once more.
-    expect((await harness.folder.add(harness.settings.id)).ok).toBe(true);
-    scriptFolderWrites(harness);
-    const again = await harness.folder.push();
-    expect(
-      again.ok,
-      `a folder added again still refused its old record: ${JSON.stringify(again)}`,
-    ).toBe(true);
-  });
-
   it("writes its settings out as one file in .marfa/", async () => {
     harness = await folderHarness("folder-settings-file", {
       settings: {

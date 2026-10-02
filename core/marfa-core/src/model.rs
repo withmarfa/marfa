@@ -1356,7 +1356,7 @@ mod tests {
             Some(Outcome::Accepted)
         );
         assert!(
-            row(Some(Verdict::Blocked), Some("resolver_missing"), None)
+            row(Some(Verdict::Blocked), Some("no_such_reason"), None)
                 .outcome()
                 .is_err()
         );
@@ -1375,6 +1375,6 @@ mod tests {
             assert_eq!(reason.as_str().parse::<BlockedReason>().unwrap(), reason);
         }
         assert!("seventh".parse::<Verdict>().is_err());
-        assert!("resolver_missing".parse::<BlockedReason>().is_err());
+        assert!("no_such_reason".parse::<BlockedReason>().is_err());
     }
 }

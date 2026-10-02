@@ -223,15 +223,6 @@ impl Settings {
         }
     }
 
-    /// Edge types the copy holds whole so the search can be answered from
-    /// it: `beneath` walks `parent-of` from rows the slice may not hold.
-    pub fn whole_edge_types(&self) -> Vec<String> {
-        match self.search.beneath {
-            Some(_) => vec![crate::filter::PARENT_OF.to_string()],
-            None => Vec::new(),
-        }
-    }
-
     /// The type a new document becomes: never a file type, whose items are
     /// bytes rather than documents.
     pub fn new_type(&self, catalog: &Catalog) -> String {

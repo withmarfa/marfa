@@ -1247,10 +1247,6 @@ impl Core {
         })
     }
 
-    pub(crate) fn http_ref(&self) -> Result<&http::Http> {
-        self.http()
-    }
-
     pub(crate) fn lock_ref(&self) -> &lock::WriterLock {
         &self.lock
     }

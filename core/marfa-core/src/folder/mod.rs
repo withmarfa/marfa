@@ -62,10 +62,6 @@ pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 /// reads and watches (`folders.md` 1, 28).
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
-/// A record of settings kept on this machine alone, which a folder refuses
-/// (`folders.md` 1).
-const OLD_RECORD: &str = "folder.json";
-
 /// The server's cap on a request's body unless its instance names another,
 /// past which it answers `413 request_too_large` (`folders.md` 47).
 pub const REQUEST_LIMIT: usize = 1_048_576;
@@ -272,12 +268,6 @@ impl Folder {
         }
         settings_file::bind(&added.core, folder)?;
         added.write_settings_file(&row.item.properties, row.item.version)?;
-        let old = state.join(OLD_RECORD);
-        if old.exists() {
-            std::fs::remove_file(&old).map_err(|error| {
-                CoreError::Store(format!("cannot remove {}: {error}", old.display()))
-            })?;
-        }
         // Unlisted, its moves would read as deletes to the others (`folders.md` 41).
         if let Some(registry) = Registry::located() {
             let store = elsewhere::store_id(&added.core)?;
@@ -291,14 +281,6 @@ impl Folder {
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
-        // Refused, never read: settings kept on one machine are ones no other
-        // machine sees change (`folders.md` 1).
-        if state.join(OLD_RECORD).exists() {
-            return Err(CoreError::Invalid(format!(
-                "{dir} keeps its settings on this machine, and a folder's settings live in a {FOLDER_TYPE} on the server: make one with `folders create` and add the folder again with `folders add {dir} --folder <id>`",
-                dir = root.display()
-            )));
-        }
         let not_a_folder = || {
             CoreError::Invalid(format!(
                 "{} is not a folder; `folders add` makes one",
@@ -581,8 +563,11 @@ fn in_nested_folder(root: &Path, relative: &str) -> bool {
 /// The edge types a folder's copy holds whole, since their other ends may lie
 /// outside the slice: its search's, `child-of`'s and attachments' (`folders.md` 11, 12).
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
-    let mut whole = settings.whole_edge_types();
-    whole.extend(edge_types.written_at_targets());
+    let mut whole = edge_types.written_at_targets();
+    // `beneath` walks `parent-of` from rows the slice may not hold.
+    if settings.search.beneath.is_some() {
+        whole.push(crate::filter::PARENT_OF.into());
+    }
     // A search of files alone holds no document to embed one.
     let documents = settings.types().is_empty()
         || settings
