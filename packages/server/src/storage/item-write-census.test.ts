@@ -17,14 +17,26 @@ import { describe, expect, it } from "vitest";
 
 const root = join(import.meta.dirname, "..");
 
-/** Importing the way to the store's writes, by name or by type. */
-const WRITER =
-  /from "[./]*(?:storage\/)?item-writes\.js"|import[^;]*\bItemStore\b[^;]*from/;
+/** Reaching the store's writes: `itemWrites`, or the `ItemStore` type however it is named. */
+const WRITER = /\bitem-writes\.js"|\bItemStore\b/;
+
+/** The source without its comments, so a mention is not a use. */
+function code(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:"'`])\/\/[^\n]*/g, "$1");
+}
+
+function reachesWrites(text: string): boolean {
+  return WRITER.test(code(text));
+}
 
 /** Modules outside `storage/sqlite/` that reach the writes, each with why. */
 const WRITERS: Record<string, string> = {
   "storage/item-write.ts": "the item write itself",
   "storage/item-writes.ts": "the way to the writes",
+  "storage/interface.ts":
+    "declares `ItemStore`, and `ItemReader` as it without its writes",
   "storage/retention.ts":
     "the trash and revoked-grant sweeps the store runs on itself, each typed to its one method",
   "housekeeping/registrations.ts": "hands those sweeps their one method each",
@@ -73,9 +85,28 @@ describe("every item write goes through writeItem", () => {
     const writers = sources().filter(
       (rel) =>
         !rel.startsWith("storage/sqlite/") &&
-        WRITER.test(readFileSync(join(root, rel), "utf8")),
+        reachesWrites(readFileSync(join(root, rel), "utf8")),
     );
     expect(writers).toEqual(Object.keys(WRITERS).sort());
+  });
+
+  it("sees the type however it is reached, and not where it is only mentioned", () => {
+    expect(
+      reachesWrites(
+        'let s: import("../storage/interface.js").ItemStore | undefined;',
+      ),
+    ).toBe(true);
+    expect(
+      reachesWrites('import type { ItemStore } from "./interface.js";'),
+    ).toBe(true);
+    expect(
+      reachesWrites('import { itemWrites } from "./item-writes.js";'),
+    ).toBe(true);
+    expect(
+      reachesWrites(
+        "/** Reads, as `ItemStore` has them. */\n// not an ItemStore\nconst a = 1;",
+      ),
+    ).toBe(false);
   });
 
   it("writes the items table only where a reason is named", () => {
