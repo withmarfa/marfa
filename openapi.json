@@ -23750,7 +23750,7 @@
           "Connectors"
         ],
         "summary": "Take or renew the hold on a registration",
-        "description": "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only.",
+        "description": "Holds the registration for `process` until the server's clock plus the instance's hold window, three minutes unless it names another, and answers until when, for how long, and whether this renewed a hold the process still held. The process holding it renews it the same way; while another process holds it and its hold has not lapsed, this answers `409 connector_held` and nothing moves. Only the process holding a live hold writes the state and the agreements. A hold is a lock the process takes and gives up: nothing watches it, and a process that stops renewing simply loses it, so one answered `renewed: false` while it believed it held the registration re-reads the state and the agreements before writing again. A top-level field the body does not declare is refused. The connector's own key only.",
         "security": [
           {
             "bearerAuth": []
@@ -23800,6 +23800,10 @@
                       "type": "string",
                       "description": "When the hold lapses."
                     },
+                    "ttl_ms": {
+                      "type": "integer",
+                      "description": "The instance's hold window in milliseconds: `expires_at` is the server's clock plus this when it took the hold, so a process schedules its next renewal without reading the server's clock."
+                    },
                     "renewed": {
                       "type": "boolean",
                       "description": "True only when this process's hold was still live when the call arrived; false on a first take and on a take after a lapse. A process answered false while it believed it held the registration re-reads the state and the agreements before writing again."
@@ -23807,6 +23811,7 @@
                   },
                   "required": [
                     "expires_at",
+                    "ttl_ms",
                     "renewed"
                   ]
                 }
