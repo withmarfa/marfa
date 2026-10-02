@@ -119,21 +119,30 @@ describe("the sign-in surface", () => {
   });
 
   it("sends a signed-in browser only to a path on the instance", async () => {
-    // A browser strips the tab before it resolves the address, so this is
-    // `//foreign.example` by the time it navigates.
-    const offInstance = "/\t/foreign.example";
-    const page = await fetch(
-      `${server!.apiUrl}/auth/sign-in?return_to=${encodeURIComponent(offInstance)}`,
-    );
-    expect(await page.text()).toContain('name="return_to" value="/"');
-
-    const signedIn = await postForm(
-      "/auth/sign-in",
-      { ...OWNER, return_to: offInstance },
-      { origin, [CLIENT_HEADER]: "192.0.2.2" },
-    );
-    expect(signedIn.status).toBe(302);
-    expect(signedIn.headers.get("location")).toBe("/");
+    // Each of these is `//foreign.example` by the time a browser navigates:
+    // it strips the tab, and resolving collapses the dot segments.
+    for (const offInstance of [
+      "/\t/foreign.example",
+      "/.//foreign.example",
+      "/a/..//foreign.example",
+      "/%2e//foreign.example",
+      "/.\\/foreign.example",
+      `${origin}//foreign.example`,
+    ]) {
+      const page = await fetch(
+        `${server!.apiUrl}/auth/sign-in?return_to=${encodeURIComponent(offInstance)}`,
+      );
+      expect(await page.text(), offInstance).toContain(
+        'name="return_to" value="/"',
+      );
+      const signedIn = await postForm(
+        "/auth/sign-in",
+        { ...OWNER, return_to: offInstance },
+        { origin, [CLIENT_HEADER]: "192.0.2.2" },
+      );
+      expect(signedIn.status).toBe(302);
+      expect(signedIn.headers.get("location"), offInstance).toBe("/");
+    }
 
     const onInstance = await postForm(
       "/auth/sign-in",
@@ -170,8 +179,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "198.51.100.20")).status).toBe(200);
   });
 
-  it("limits device code entry per address, whatever codes are tried", async () => {
-    const sweeper = "203.0.113.30";
+  it("limits device code lookups per address, on the entry form and the consent screen alike", async () => {
     const enter = async (code: string, address: string) => {
       const response = await postForm(
         "/auth/device",
@@ -181,6 +189,7 @@ describe("the sign-in surface", () => {
       expect(response.status).toBe(302);
       return response.headers.get("location") ?? "";
     };
+    const sweeper = "203.0.113.30";
     for (let i = 0; i < 10; i++) {
       expect(await enter(`ZZ${String(100000 + i)}`, sweeper)).toContain(
         "error=invalid_code",
@@ -191,6 +200,48 @@ describe("the sign-in surface", () => {
     );
     expect(await enter("ZZ999998", "198.51.100.30")).toContain(
       "error=invalid_code",
+    );
+
+    // A signed-in browser looks codes up on the consent screen and its
+    // decision, and those lookups count in the same limit.
+    const signedIn = await signIn(OWNER.password, "198.51.100.31");
+    expect(signedIn.status).toBe(200);
+    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+      signedIn.headers.get("set-cookie") ?? "",
+    )?.[1];
+    expect(cookie).toBeDefined();
+    const screen = async (code: string, address: string) => {
+      const response = await fetch(
+        `${server!.apiUrl}/auth/device/consent?user_code=${code}`,
+        {
+          headers: { cookie: cookie!, [CLIENT_HEADER]: address },
+          redirect: "manual",
+        },
+      );
+      return response.headers.get("location") ?? "";
+    };
+    const decide = (code: string, address: string) =>
+      postForm(
+        "/auth/device/consent",
+        { user_code: code, decision: "approve" },
+        { origin, cookie: cookie!, [CLIENT_HEADER]: address },
+      );
+    const browser = "203.0.113.31";
+    for (let i = 0; i < 5; i++) {
+      expect(await screen(`YY${String(100000 + i)}`, browser)).toContain(
+        "error=invalid_code",
+      );
+      expect((await decide(`YY${String(200000 + i)}`, browser)).status).toBe(
+        404,
+      );
+    }
+    expect(await screen("YY999999", browser)).toContain(
+      "error=too_many_attempts",
+    );
+    const refused = await decide("YY999998", browser);
+    expect(refused.status).toBe(302);
+    expect(refused.headers.get("location")).toContain(
+      "error=too_many_attempts",
     );
   });
 });
