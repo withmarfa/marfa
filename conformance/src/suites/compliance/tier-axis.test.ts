@@ -218,4 +218,46 @@ describe("tier axis", () => {
     trackItem(ctx, feedItem.data.item.id);
     expect(feedItem.data.item.tier).toBe("feed");
   });
+
+  it("keeps a row's tier through a natural-key re-sync on both doors", async () => {
+    // A person moves a synced row to the feed; the connector's next sync
+    // names no tier and must leave it there, whichever door it uses.
+    for (const door of ["single", "bulk"] as const) {
+      const sourceId = `tier-resync-${door}-${String(Date.now())}`;
+      const first = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "synced" },
+      });
+      expect(first.status, JSON.stringify(first.error)).toBe(201);
+      trackItem(ctx, first.data.item.id);
+      expect(first.data.item.tier).toBe("library");
+
+      const moved = await client.updateItem(first.data.item.id, {
+        tier: "feed",
+        version: first.data.item.version,
+      });
+      expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+      const body = {
+        type: "core.note",
+        source: ctx.source,
+        source_id: sourceId,
+        properties: { body: "synced again" },
+      };
+      if (door === "single") {
+        const again = await client.createItem(body);
+        expect(again.status, JSON.stringify(again.error)).toBe(200);
+        expect(again.data.item.tier).toBe("feed");
+      } else {
+        const again = await client.bulkItems({ atomic: true, items: [body] });
+        expect(again.status, JSON.stringify(again.error)).toBe(200);
+        expect(again.data.results[0]?.outcome).toBe("updated");
+      }
+      const read = await client.getItem(first.data.item.id);
+      expect(read.data.item.properties.body).toBe("synced again");
+      expect(read.data.item.tier).toBe("feed");
+    }
+  });
 });

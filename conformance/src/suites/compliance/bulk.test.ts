@@ -24,15 +24,20 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote, createTask } from "../../generators/items.js";
+import { createNote, createTask, generateId } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext("compliance", "bulk"));
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
+    "compliance",
+    "bulk",
+  ));
 });
 
 afterAll(async () => {
@@ -603,6 +608,61 @@ describe("bulk", () => {
     const stored = await client.getItem(goodId);
     expect(stored.ok).toBe(true);
     expect(stored.data.item.source_id).toBe(`mixed-good-${ctx.runId}`);
+  });
+
+  it("writes nothing for a best-effort entry whose edge target is missing", async (context) => {
+    // The edge step is the last of an entry's writes, and a child syncing
+    // before its parent meets it in ordinary use: the entry is reported
+    // errored, so its row must not have landed either. The entry after it is
+    // the stream's sentinel, and its row is the witness that this page writes.
+    const phantom = `bulk-edge-phantom-${ctx.runId}`;
+    const sentinel = `bulk-edge-sentinel-${ctx.runId}`;
+    await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+      const res = await client.bulkItems({
+        atomic: false,
+        items: [
+          {
+            type: "core.note",
+            properties: { body: phantom },
+            source: ctx.source,
+            source_id: phantom,
+            edges: { "parent-of": [generateId()] },
+          },
+          {
+            type: "core.note",
+            properties: { body: sentinel },
+            source: ctx.source,
+            source_id: sentinel,
+          },
+        ],
+      });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      expect(res.data.results[0]?.outcome).toBe("errored");
+      expect(res.data.results[0]?.id).toBeUndefined();
+      expect(res.data.results[1]?.outcome).toBe("created");
+      const sentinelId = res.data.results[1]!.id!;
+      trackItem(ctx, sentinelId);
+      const { raw } = await collectUntil(
+        stream,
+        (events) =>
+          events.some(
+            (e) =>
+              (e.data as { item?: { id?: string } } | undefined)?.item?.id ===
+              sentinelId,
+          ),
+        "the sentinel entry to reach the stream",
+        context.signal,
+      );
+      expect(raw).not.toContain(phantom);
+    });
+    const found = await client.lookupItems({
+      type: "core.note",
+      source: ctx.source,
+      source_ids: [phantom, sentinel],
+    });
+    expect(found.status, JSON.stringify(found.error)).toBe(200);
+    expect(found.data.data.map((item) => item.source_id)).toEqual([sentinel]);
   });
 
   it("purge is refused to a key holding no permissions", async () => {
