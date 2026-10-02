@@ -18,6 +18,7 @@
  * derived from the type by `softDeleteState`. These tests pin the bound from
  * the delete side, which is the side that broke it.
  */
+import { itemWrites } from "./item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -34,7 +35,7 @@ afterAll(async () => {
 });
 
 async function connection(): Promise<string> {
-  const item = await ctx.storage.items.create({
+  const item = await itemWrites(ctx.storage).create({
     type: "system.connection",
     properties: {
       kind: "app",
@@ -46,7 +47,7 @@ async function connection(): Promise<string> {
 }
 
 async function note(): Promise<string> {
-  const item = await ctx.storage.items.create({
+  const item = await itemWrites(ctx.storage).create({
     type: "core.note",
     properties: { body: "soft delete fixture" },
   });
@@ -71,13 +72,13 @@ describe("softDeleteState", () => {
 describe("deleting an item obeys its lifecycle", () => {
   it("REGRESSION: deleting a system item revokes it rather than trashing it", async () => {
     const id = await connection();
-    await ctx.storage.items.delete(id);
+    await itemWrites(ctx.storage).delete(id);
     expect(await stateOf(id)).toBe("revoked");
   });
 
   it("still trashes an ordinary item", async () => {
     const id = await note();
-    await ctx.storage.items.delete(id);
+    await itemWrites(ctx.storage).delete(id);
     expect(await stateOf(id)).toBe("trashed");
   });
 
@@ -87,13 +88,13 @@ describe("deleting an item obeys its lifecycle", () => {
     // repeat delete into an error if it did not short-circuit first. DELETE
     // is idempotent and has to stay that way.
     const sys = await connection();
-    await ctx.storage.items.delete(sys);
-    await ctx.storage.items.delete(sys);
+    await itemWrites(ctx.storage).delete(sys);
+    await itemWrites(ctx.storage).delete(sys);
     expect(await stateOf(sys)).toBe("revoked");
 
     const ord = await note();
-    await ctx.storage.items.delete(ord);
-    await ctx.storage.items.delete(ord);
+    await itemWrites(ctx.storage).delete(ord);
+    await itemWrites(ctx.storage).delete(ord);
     expect(await stateOf(ord)).toBe("trashed");
   });
 
@@ -102,16 +103,16 @@ describe("deleting an item obeys its lifecycle", () => {
     // correctly-revoked system row unpurgeable, so fixing the delete without
     // fixing the gate would have traded a wrong state for a stuck one.
     const id = await connection();
-    await ctx.storage.items.delete(id);
-    await ctx.storage.items.purge(id);
+    await itemWrites(ctx.storage).delete(id);
+    await itemWrites(ctx.storage).purge(id);
     expect(await stateOf(id)).toBeUndefined();
   });
 
   it("refuses to purge an item that has not been soft-deleted", async () => {
     const sys = await connection();
-    await expect(ctx.storage.items.purge(sys)).rejects.toThrow(/revoked/);
+    await expect(itemWrites(ctx.storage).purge(sys)).rejects.toThrow(/revoked/);
     const ord = await note();
-    await expect(ctx.storage.items.purge(ord)).rejects.toThrow(/trashed/);
+    await expect(itemWrites(ctx.storage).purge(ord)).rejects.toThrow(/trashed/);
   });
 
   it("leaves no system item in a state its lifecycle does not contain", async () => {
@@ -119,8 +120,8 @@ describe("deleting an item obeys its lifecycle", () => {
     // by enumerating every state by hand rather than trusting the bound, and
     // that is the only way to ask the question.
     const ids = [await connection(), await connection(), await connection()];
-    await ctx.storage.items.delete(ids[0]!);
-    await ctx.storage.items.delete(ids[1]!);
+    await itemWrites(ctx.storage).delete(ids[0]!);
+    await itemWrites(ctx.storage).delete(ids[1]!);
 
     // One query per state, because the filter takes one — which is itself
     // part of why this went unnoticed: the convenient query is the default

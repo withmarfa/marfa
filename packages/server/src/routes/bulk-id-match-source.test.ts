@@ -89,4 +89,24 @@ describe("a bulk entry landing on a row by its id", () => {
     expect(moved?.outcome).toBe("updated");
     expect((await ctx.storage.items.get(id))?.source_id).toBe("own-after");
   });
+
+  it("refuses the same move through PATCH /items/{id}", async () => {
+    const made = await bulk(keyA, {
+      type: "core.note",
+      properties: { body: "a's" },
+      source_id: "patched-from-a",
+    });
+    const id = made!.id!;
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: keyB,
+      body: { source_id: "patched-from-b", version: 1 },
+    });
+    expect(res.status).toBe(403);
+    const { error } = (await res.json()) as {
+      error: { code: string; details?: { source?: string } };
+    };
+    expect(error.code).toBe("forbidden");
+    expect(error.details?.source).toBe("src-a");
+    expect((await ctx.storage.items.get(id))?.source_id).toBe("patched-from-a");
+  });
 });

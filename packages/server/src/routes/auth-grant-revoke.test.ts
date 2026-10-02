@@ -27,6 +27,7 @@
  * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { createHmac } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -883,7 +884,7 @@ describe("revocation reaches outstanding device codes", () => {
       200,
     );
 
-    await c.storage.items.delete(grant.id);
+    await itemWrites(c.storage).delete(grant.id);
 
     // Exactly the disagreement described: one axis moved, the other did not.
     const soft = await c.storage.items.getIncludingTrashed(grant.id);
@@ -936,8 +937,8 @@ describe("revocation reaches outstanding device codes", () => {
 
     // The purge route's own two steps: soft delete first, because purge
     // refuses an item that has not been soft-deleted.
-    await c.storage.items.delete(grant.id);
-    await c.storage.items.purge(grant.id);
+    await itemWrites(c.storage).delete(grant.id);
+    await itemWrites(c.storage).purge(grant.id);
     expect(await c.storage.items.getIncludingTrashed(grant.id)).toBeNull();
 
     // The row survived, its grant did not.

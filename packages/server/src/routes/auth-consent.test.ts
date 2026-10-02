@@ -15,6 +15,7 @@
  *   - GET /authorize renders 200 for clients with null client_name
  *     (DCR registration without client_name is RFC 7591-compliant)
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, afterEach } from "vitest";
 import { makeSignature } from "better-auth/crypto";
 import {
@@ -861,7 +862,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const v1 = items.data[0]!.version;
 
     // Simulate the user revoking the grant via /security (sets status=revoked).
-    const revokedUpdate = await ctx.storage.items.update(grantId, {
+    const revokedUpdate = await itemWrites(ctx.storage).update(grantId, {
       properties: {
         ...items.data[0]!.properties,
         status: "revoked",

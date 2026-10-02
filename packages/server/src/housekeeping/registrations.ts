@@ -1,4 +1,5 @@
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
+import { itemWrites } from "../storage/item-writes.js";
 import type { AppConfig } from "../config.js";
 import { DEFAULT_INBOUND_LIMITS, defaultTessdataDir } from "../config.js";
 import type { Storage } from "../storage/interface.js";
@@ -161,7 +162,7 @@ export function registerHousekeepingJobs(
   // Registered whatever the instance default, because the retention can
   // be turned on through `/config` while the process runs.
   const trashPurger = new TrashPurger(
-    storage.items,
+    itemWrites(storage),
     config.trashRetentionDays,
     undefined,
     trashOverride,
@@ -181,7 +182,7 @@ export function registerHousekeepingJobs(
   const revokedGrantRetentionDays = config.revokedGrantRetentionDays ?? 90;
   if (revokedGrantRetentionDays > 0) {
     const revokedGrantPurger = new RevokedGrantPurger(
-      storage.items,
+      itemWrites(storage),
       revokedGrantRetentionDays,
     );
     housekeeping.register({

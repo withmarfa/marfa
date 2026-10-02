@@ -2,6 +2,7 @@
  * `GET /items/stats` under a listing's filters: the count is the number of
  * rows `GET /items` walks for the same keys.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -43,7 +44,7 @@ beforeAll(async () => {
   expect(other.status).toBe(201);
   // The reserved namespace refuses a write to every credential, so the
   // system row goes in through the store.
-  const folder = await ctx.storage.items.create({
+  const folder = await itemWrites(ctx.storage).create({
     type: "system.folder",
     properties: { title: "stats-folder" },
   });

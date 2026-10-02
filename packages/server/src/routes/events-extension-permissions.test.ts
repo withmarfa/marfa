@@ -6,6 +6,7 @@
  * replay re-sends the stored `payload` string from `event_log` without
  * parsing it. A fix to one is not a fix.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   TEST_API_KEY_SALT,
@@ -180,7 +181,7 @@ describe("an OAuth-derived subscriber", () => {
       {},
     );
 
-    const item = await ctx.storage.items.create({
+    const item = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "an oauth item" },
     });

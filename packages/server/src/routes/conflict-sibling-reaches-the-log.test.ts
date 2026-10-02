@@ -17,6 +17,7 @@
  * what a live subscriber happens to be attached to, the log is what a client
  * that was offline reads.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
@@ -220,7 +221,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     // A second execution of the same write. The sibling already exists, so
     // announcing again would report a create that did not happen.
     const cursor = await logCursor();
-    const again = await ctx.storage.items.update(id, {
+    const again = await itemWrites(ctx.storage).update(id, {
       properties: { body: "retried edit" },
       version: base,
       conflict_mode: "auto",
@@ -273,7 +274,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     expect(await parentsOf()).toHaveLength(1);
 
     const cursor = await logCursor();
-    const again = await ctx.storage.items.update(id, {
+    const again = await itemWrites(ctx.storage).update(id, {
       properties: { body: "retried edit, parented" },
       version: base,
       conflict_mode: "auto",

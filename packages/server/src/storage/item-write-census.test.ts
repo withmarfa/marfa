@@ -4,9 +4,12 @@
  * The rules an item write must pass were once called door by door, outside
  * the transaction that wrote, and each door fixed on its own. A module that
  * reaches the store's write primitives directly reads as covered from every
- * angle a test of one door can see, so this reads the source instead: it
- * fails on a module outside the store that calls them, and on a module that
- * writes the `items` table with a statement of its own.
+ * angle a test of one door can see. So `Storage.items` carries only the
+ * store's reads, and the compiler refuses a write through it or through any
+ * handle typed from it; the writes are reached through `itemWrites` and the
+ * `ItemStore` type, and this fails on a module that imports either without a
+ * reason named here, and on a module that writes the `items` table with a
+ * statement of its own.
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
@@ -14,8 +17,24 @@ import { describe, expect, it } from "vitest";
 
 const root = join(import.meta.dirname, "..");
 
-/** The store's primitives that write an item row's content. */
-const PRIMITIVE = /\.items\.(create|update)\(/;
+/** Importing the way to the store's writes, by name or by type. */
+const WRITER =
+  /from "[./]*(?:storage\/)?item-writes\.js"|import[^;]*\bItemStore\b[^;]*from/;
+
+/** Modules outside `storage/sqlite/` that reach the writes, each with why. */
+const WRITERS: Record<string, string> = {
+  "storage/item-write.ts": "the item write itself",
+  "storage/item-writes.ts": "the way to the writes",
+  "storage/retention.ts":
+    "the trash and revoked-grant sweeps the store runs on itself, each typed to its one method",
+  "housekeeping/registrations.ts": "hands those sweeps their one method each",
+  "routes/items.ts":
+    "the delete and purge doors' moves, which the next layer of this work routes through the item write",
+  "routes/items-lifecycle.ts":
+    "the restore and transition doors' moves, likewise",
+  "routes/folders.ts": "a folder's revoke transition, likewise",
+  "bulk-actions/runner.ts": "the transition and purge chunks, likewise",
+};
 
 /** A statement written against the `items` table itself. */
 const TABLE_WRITE =
@@ -50,16 +69,13 @@ function sources(): string[] {
 }
 
 describe("every item write goes through writeItem", () => {
-  it("finds the primitives where they are called, so the scan below can see one", () => {
-    const writer = readFileSync(join(root, "storage/item-write.ts"), "utf8");
-    expect(writer).toMatch(PRIMITIVE);
-  });
-
-  it("calls the store's write primitives from writeItem alone", () => {
-    const callers = sources().filter((rel) =>
-      PRIMITIVE.test(readFileSync(join(root, rel), "utf8")),
+  it("reaches the store's writes only where a reason is named", () => {
+    const writers = sources().filter(
+      (rel) =>
+        !rel.startsWith("storage/sqlite/") &&
+        WRITER.test(readFileSync(join(root, rel), "utf8")),
     );
-    expect(callers).toEqual(["storage/item-write.ts"]);
+    expect(writers).toEqual(Object.keys(WRITERS).sort());
   });
 
   it("writes the items table only where a reason is named", () => {

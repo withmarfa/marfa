@@ -15,6 +15,7 @@
  * and why archives written before this still restore correctly.
  */
 
+import { itemWrites } from "../storage/item-writes.js";
 import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { describe, expect, it, afterAll } from "vitest";
@@ -63,12 +64,12 @@ describe("a restore does not rewind a row's version", () => {
     const source = await newContext();
     const destination = await newContext();
 
-    const note = await source.storage.items.create({
+    const note = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "v1" },
       source: "av-seed",
     });
-    const other = await source.storage.items.create({
+    const other = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "target" },
       source: "av-seed",
@@ -76,7 +77,7 @@ describe("a restore does not rewind a row's version", () => {
     // Climb well past 1, so a restore that re-mints at 1 is unmistakable
     // rather than coincidentally right.
     for (const body of ["v2", "v3", "v4"]) {
-      const bumped = await source.storage.items.update(note.id, {
+      const bumped = await itemWrites(source.storage).update(note.id, {
         properties: { body },
       });
       expect("error" in bumped).toBe(false);

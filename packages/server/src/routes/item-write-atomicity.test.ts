@@ -21,6 +21,7 @@
  * file's door table records the transaction each door opens, so a door that
  * gains one here reddens there too, by design.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -81,7 +82,7 @@ async function readUpdatedAt(itemId: string): Promise<string | undefined> {
 /** Seeded through storage rather than through a door, because the doors
  *  below are what is under test. */
 async function makeNote(body: string): Promise<string> {
-  const item = await ctx.storage.items.create({
+  const item = await itemWrites(ctx.storage).create({
     type: "core.note",
     properties: { body },
   });
@@ -111,7 +112,7 @@ describe("DELETE /items/{id}/purge", () => {
       key: ctx.workingKey,
     });
 
-    const broken = breakWrite(ctx.storage.items, "purge");
+    const broken = breakWrite(itemWrites(ctx.storage), "purge");
     let status: number;
     try {
       const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {

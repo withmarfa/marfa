@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { itemWrites } from "./item-writes.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -47,7 +48,7 @@ async function storedTypeOf(itemId: string): Promise<string> {
 describe("items.properties is stored natively structured", () => {
   it("create writes the database's structured type, not text", async () => {
     const itemId = id("1");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: gnarly,
@@ -58,7 +59,7 @@ describe("items.properties is stored natively structured", () => {
 
   it("round-trips gnarly properties object-equivalently through create and get", async () => {
     const itemId = id("2");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: gnarly,
@@ -70,13 +71,13 @@ describe("items.properties is stored natively structured", () => {
 
   it("update keeps the structured encoding and the merged object", async () => {
     const itemId = id("3");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: gnarly,
       tier: "library",
     });
-    const updated = await ctx.storage.items.update(itemId, {
+    const updated = await itemWrites(ctx.storage).update(itemId, {
       properties: { title: "replaced", added: [1, 2, 3] },
     });
     expect("error" in updated).toBe(false);
@@ -91,7 +92,7 @@ describe("items.properties is stored natively structured", () => {
     // The oauth store patches properties in SQL rather than through the item
     // store; on sqlite a json_set here would silently revert the row to text.
     const itemId = id("4");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { kind: "app", client_id: "c1", body: "grant" },
@@ -106,7 +107,7 @@ describe("items.properties is stored natively structured", () => {
 
   it("property filters read the structured column", async () => {
     const itemId = id("5");
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       id: itemId,
       type: "core.note",
       properties: { author: "Orwell", page_count: 328, body: "novel" },

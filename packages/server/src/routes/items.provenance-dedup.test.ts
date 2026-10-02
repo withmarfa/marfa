@@ -10,6 +10,7 @@
  * re-sync, permanently, because two dedup checks on the same write path
  * disagreed about state.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -84,13 +85,13 @@ describe("provenance dedup is scoped, not instance-wide", () => {
 describe("the same upstream record", () => {
   it("refuses a duplicate at the store", async () => {
     const shared = { source: "feed-inner", source_id: "upstream-inner" };
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { title: "one", body: "x" },
       ...shared,
     });
     await expect(
-      ctx.storage.items.create({
+      itemWrites(ctx.storage).create({
         type: "core.note",
         properties: { title: "two", body: "x" },
         ...shared,

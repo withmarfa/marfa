@@ -6,6 +6,7 @@
  * a version snapshot and an edge's properties, wherever a string in them
  * holds the hash.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { createHash } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -370,7 +371,7 @@ describe("what the report counts as a reference", () => {
       // one of these rows is a `system.*` type and the reserved namespace is
       // closed to every credential. The claim here is about what the scan
       // keeps, not about which door wrote the row.
-      await ctx.storage.items.create({
+      await itemWrites(ctx.storage).create({
         type,
         tier: "library",
         state,

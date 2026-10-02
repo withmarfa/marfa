@@ -8,6 +8,7 @@
  * stored column back rather than an API response, since the API never
  * shows it and a stale value is invisible from outside.
  */
+import { itemWrites } from "./item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -108,7 +109,7 @@ describe("the instant columns on the write path", () => {
       starts_at: "2026-04-05T09:00:00.000Z",
       ends_at: "2026-04-05T10:00:00.000Z",
     });
-    await ctx.storage.items.update(id, {
+    await itemWrites(ctx.storage).update(id, {
       properties: { title: "Undated" },
       properties_mode: "replace",
     });

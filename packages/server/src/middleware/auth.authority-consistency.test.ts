@@ -9,6 +9,7 @@
  * control proving the legitimate caller still gets through.
  */
 
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { Permission } from "@withmarfa/shared";
 import { hashApiKey, isReservedCredentialSource } from "./auth.js";
@@ -84,7 +85,7 @@ async function mintKey(opts: {
 /** A `system.connection`, seeded through storage so the test doesn't
  *  depend on the consent pipeline. */
 async function seedConnection(): Promise<string> {
-  const conn = await ctx.storage.items.create({
+  const conn = await itemWrites(ctx.storage).create({
     type: "system.connection",
     properties: {
       kind: "app",
@@ -146,7 +147,7 @@ describe("extensions — the reserved namespaces are nobody's", () => {
       type_permissions: { "core.note": "write" },
       extension_permissions: { "*": "write" },
     });
-    const item = await ctx.storage.items.create({
+    const item = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "reserved-host" },
     });
@@ -168,7 +169,7 @@ describe("extensions — the reserved namespaces are nobody's", () => {
   });
 
   it("refuses an operator key on a reserved namespace too", async () => {
-    const item = await ctx.storage.items.create({
+    const item = await itemWrites(ctx.storage).create({
       type: "core.note",
       properties: { body: "reserved-control" },
     });

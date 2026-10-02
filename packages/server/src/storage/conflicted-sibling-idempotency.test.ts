@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "./item-writes.js";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { conflictedSiblingId } from "./conflict.js";
@@ -30,11 +31,11 @@ async function collidingNote(seed: string): Promise<{
   id: string;
   base: number;
 }> {
-  const created = await ctx.storage.items.create({
+  const created = await itemWrites(ctx.storage).create({
     type: "core.note",
     properties: { body: `${seed} original` },
   });
-  const updated = await ctx.storage.items.update(created.id, {
+  const updated = await itemWrites(ctx.storage).update(created.id, {
     properties: { body: `${seed} from the winner` },
     version: created.version,
   });
@@ -56,7 +57,7 @@ describe("a keep-both resolution that runs twice", () => {
     const losing = "keyed from the loser";
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      const result = await ctx.storage.items.update(id, {
+      const result = await itemWrites(ctx.storage).update(id, {
         properties: { body: losing },
         version: base,
         conflict_mode: "auto",
@@ -78,7 +79,7 @@ describe("a keep-both resolution that runs twice", () => {
     const losing = "unkeyed from the loser";
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      await ctx.storage.items.update(id, {
+      await itemWrites(ctx.storage).update(id, {
         properties: { body: losing },
         version: base,
         conflict_mode: "auto",

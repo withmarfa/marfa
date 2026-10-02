@@ -13,6 +13,7 @@
  * The doors keep what is theirs: parsing the request, rendering the answer,
  * and announcing what committed.
  */
+import { itemWrites } from "./item-writes.js";
 import {
   ErrorCode,
   MarfaError,
@@ -435,6 +436,21 @@ async function changeRow(
       change.source_id !== undefined &&
       change.source_id !== (row.source_id ?? undefined)
     ) {
+      // A natural key is its source's: a key moves one only under a source
+      // it writes under, its own or one it claims, or it takes the row from
+      // the key its own connector syncs it by.
+      const key = credentialOf(writer);
+      if (
+        key !== undefined &&
+        row.source !== key.source &&
+        key.sources?.includes(row.source) !== true
+      ) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `This credential may not move a natural key under the source "${row.source}". A key moves one only under its own source or one it claims.`,
+          { source: row.source },
+        );
+      }
       const holder = await storage.items.findBySourceId(
         row.source,
         change.source_id,
@@ -470,7 +486,7 @@ async function changeRow(
     let item: ResolvedItem;
     if (writesRow) {
       const key = credentialOf(writer);
-      const updated = await storage.items.update(row.id, {
+      const updated = await itemWrites(storage).update(row.id, {
         properties: change.properties,
         ...(change.properties_mode !== undefined && {
           properties_mode: change.properties_mode,
@@ -652,22 +668,6 @@ async function put(
         }
         requireDeclaredTypeMatches(write.type, row);
       }
-      // The id finds a row whatever source wrote it, and a natural key is
-      // its source's: an entry moves one only under the source it is
-      // written under, or it takes the row from the key its own connector
-      // syncs it by.
-      if (
-        matchedBy === "id" &&
-        write.source_id !== undefined &&
-        write.source_id !== (row.source_id ?? undefined) &&
-        row.source !== source
-      ) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `This entry is written under the source "${source ?? "(none)"}" and may not move a natural key under the source "${row.source}".`,
-          { source: row.source },
-        );
-      }
       // A re-sync naming no tier leaves the row's tier where it is: the
       // person may have moved it since the connector last wrote it.
       return await changeRow(
@@ -693,7 +693,7 @@ async function put(
     write.index === undefined ? {} : { index: write.index },
   );
   if (undeclared) throw undeclared;
-  const created = await storage.items.create({
+  const created = await itemWrites(storage).create({
     type: write.type,
     properties: write.properties ?? {},
     ...(write.blob_proof !== undefined && {
@@ -758,7 +758,7 @@ async function createPlatformRow(
   if (writer.kind !== "platform") {
     throw new Error("A credential's create is a put");
   }
-  const created = await storage.items.create({
+  const created = await itemWrites(storage).create({
     type: write.type,
     properties: write.properties,
     ...(write.id !== undefined && { id: write.id }),

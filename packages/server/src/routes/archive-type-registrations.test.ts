@@ -14,6 +14,7 @@
  * is not an error anywhere, it is four zeros in a `200`.
  */
 
+import { itemWrites } from "../storage/item-writes.js";
 import { createGunzip, createGzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { describe, expect, it, afterAll } from "vitest";
@@ -148,13 +149,13 @@ describe("archives carry type registrations", () => {
       written_at: "target",
     });
 
-    const recipe = await source.storage.items.create({
+    const recipe = await itemWrites(source.storage).create({
       type: typeId,
       properties: { title: "Soup", servings: 4 },
       source: "at-seed",
       source_id: "r1",
     });
-    const note = await source.storage.items.create({
+    const note = await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "made this" },
       source: "at-seed",
@@ -240,7 +241,7 @@ describe("archives carry type registrations", () => {
         signed_by: { type: "string", description: "Who signed." },
       },
     });
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: childId,
       properties: { title: "Lease", signed_by: "someone" },
       source: "at-p",
@@ -355,7 +356,7 @@ describe("archives carry type registrations", () => {
         title: { type: "string", required: true, description: "Name." },
       },
     });
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: typeId,
       properties: { title: "once" },
       source: "at-r",
@@ -391,7 +392,7 @@ describe("archives carry type registrations", () => {
       },
     };
     await source.storage.types.create(schema);
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: typeId,
       properties: { title: "from source" },
       source: "at-c",
@@ -430,7 +431,7 @@ describe("archives carry type registrations", () => {
   it("refuses an archive claiming a reserved namespace", async () => {
     const source = await newContext();
     const destination = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-e",
@@ -462,7 +463,7 @@ describe("archives carry type registrations", () => {
   it("refuses an archive carrying a malformed type", async () => {
     const source = await newContext();
     const destination = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-m",
@@ -508,7 +509,7 @@ describe("archives carry type registrations", () => {
     // door produces: a type another inherits from refuses its delete.
     const source = await newContext();
     const destination = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-d",
@@ -545,7 +546,7 @@ describe("archives carry type registrations", () => {
   it("refuses an archive redefining a core edge type", async () => {
     const source = await newContext();
     const destination = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-ce",
@@ -566,7 +567,7 @@ describe("archives carry type registrations", () => {
 
   it("carries an edge type's reverse name, and refuses one another type holds", async () => {
     const source = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-rn",
@@ -652,7 +653,7 @@ describe("archives carry type registrations", () => {
 
   it("claims an edge type's names where it registers it, and gives them back if its row is not written", async () => {
     const source = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-claim",
@@ -717,7 +718,7 @@ describe("archives carry type registrations", () => {
 
   it("refuses an archive carrying an edge type with a thumbnail property", async () => {
     const source = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-et",
@@ -774,7 +775,7 @@ describe("archives carry type registrations", () => {
 
   it("refuses an archive whose child gains a second thumbnail from a parent it carries", async () => {
     const source = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "innocent" },
       source: "at-tt",
@@ -840,7 +841,7 @@ describe("archives carry type registrations", () => {
   it("restores an archive carrying no registrations", async () => {
     const source = await newContext();
     const destination = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "from an older exporter" },
       source: "at-o",
@@ -866,7 +867,7 @@ describe("archives carry type registrations", () => {
     // zero, a response an operator has no way to tell from an empty one.
     const source = await newContext();
     const destination = await newContext();
-    await source.storage.items.create({
+    await itemWrites(source.storage).create({
       type: "core.note",
       properties: { body: "carried across" },
       source: "elsewhere",

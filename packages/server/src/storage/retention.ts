@@ -70,7 +70,7 @@ export interface RetentionOverride {
  */
 export class TrashPurger {
   constructor(
-    private items: ItemStore,
+    private items: Pick<ItemStore, "purgeTrashedOlderThan">,
     private retentionDays: number,
     private nowFn: () => Date = () => new Date(),
     private configOverride?: RetentionOverride,
@@ -137,7 +137,7 @@ export class TrashPurger {
  */
 export class RevokedGrantPurger {
   constructor(
-    private items: ItemStore,
+    private items: Pick<ItemStore, "purgeRevokedAppGrantsOlderThan">,
     private retentionDays: number,
     private nowFn: () => Date = () => new Date(),
   ) {}

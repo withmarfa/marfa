@@ -23,6 +23,7 @@
  * Each publish happens after the chunk's transaction commits, and reuses
  * the rows the writes returned rather than reading them back.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { CascadeRoot, Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
@@ -135,12 +136,12 @@ async function runTransitionChunk({
             : null;
         const root = row?.state === "trashed" ? { id, type: row.type } : null;
         const back = root
-          ? (await storage.items.restoreBeneath(id)).map((item) => ({
+          ? (await itemWrites(storage).restoreBeneath(id)).map((item) => ({
               item,
               restoredWith: root,
             }))
           : [];
-        moved.push(await storage.items.transition(id, input.state));
+        moved.push(await itemWrites(storage).transition(id, input.state));
         for (const entry of back) {
           broughtBack.push(entry);
           backInChunk.add(entry.item.id);
@@ -212,7 +213,9 @@ async function runPurgeChunk({
       // restored since then is one the person took back, and the filter may
       // have matched a row that was never in the trash at all. Edges go
       // with the rows taken, in one DELETE per direction.
-      const taken = new Set(await storage.items.bulkPurge([...found.keys()]));
+      const taken = new Set(
+        await itemWrites(storage).bulkPurge([...found.keys()]),
+      );
       if (taken.size > 0) {
         cascaded.push(
           ...(await storage.edges.deleteBySourceBatch([...taken])),
