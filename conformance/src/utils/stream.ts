@@ -58,7 +58,7 @@ export interface CollectResult {
  */
 export async function collectUntil(
   stream: EventStream,
-  done: (events: SseEvent[], raw: string) => boolean,
+  done: (events: SseEvent[]) => boolean,
   waitingFor: string,
   signal?: AbortSignal,
 ): Promise<CollectResult> {
@@ -71,16 +71,28 @@ export async function collectUntil(
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
+  // Parsed as frames complete rather than from the start on every chunk: a
+  // replay can carry megabytes, and re-reading all of it per chunk makes a
+  // long one slower than any budget.
+  const events: SseEvent[] = [];
+  let pending = "";
   const onAbort = () => void reader.cancel().catch(() => undefined);
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
     for (;;) {
       const { done: finished, value } = await reader.read();
-      if (value) chunks.push(decoder.decode(value, { stream: true }));
-      const raw = chunks.join("");
-      const events = parseSse(raw);
-      if (done(events, raw)) return { events, raw };
+      if (value) {
+        const text = decoder.decode(value, { stream: true });
+        chunks.push(text);
+        pending += text;
+        const end = pending.lastIndexOf("\n\n");
+        if (end >= 0) {
+          events.push(...parseSse(pending.slice(0, end + 2)));
+          pending = pending.slice(end + 2);
+        }
+      }
+      if (done(events)) return { events, raw: chunks.join("") };
       if (finished) {
         throw new Error(
           `event stream closed before ${waitingFor}; saw ${describe(events)}`,

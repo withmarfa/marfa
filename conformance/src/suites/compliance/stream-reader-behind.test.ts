@@ -37,7 +37,7 @@ afterAll(async () => {
 /** The bound `events.md` states, in bytes. */
 const BOUND = 4 * 1024 * 1024;
 /** Written while the socket is not read: the bound, and room for buffers. */
-const WRITTEN = 5 * BOUND;
+const WRITTEN = 4 * BOUND;
 const BODY = "x".repeat(90_000);
 
 /** Open `GET /events` on a socket of its own and stop reading at once. */
