@@ -1,11 +1,9 @@
 import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
-import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, readsSomeType } from "../middleware/auth.js";
-import type { CascadeRoot, Storage } from "../storage/interface.js";
-import { publish } from "../pubsub.js";
+import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
@@ -158,26 +156,6 @@ const transitionItemRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-/**
- * Announces each row a restore brought back because the trash that took it
- * was undone, after the transaction that restored them has committed, as a
- * restore of its own.
- */
-async function publishBroughtBack(
-  storage: Storage,
-  restoredWith: CascadeRoot,
-  broughtBack: readonly Item[],
-): Promise<void> {
-  for (const item of broughtBack) {
-    await publish({
-      type: "restored",
-      item,
-      metadata: await storage.metadata.get(item.id),
-      restoredWith,
-    });
-  }
-}
-
 export function itemsLifecycleRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -189,18 +167,15 @@ export function itemsLifecycleRoutes(storage: Storage) {
     }
 
     const key = requireAuth(c);
-    const { item: restored, broughtBack } = await writeItem(
-      storage,
-      { kind: "credential", key },
-      { op: "restore", id },
-    );
-    const metadata = await storage.metadata.get(id);
-    await publish({
-      type: "restored",
-      item: restored,
-      metadata,
+    // The move, its events and what the answer reads, in one transaction.
+    const { restored, metadata } = await storage.runInTransaction(async () => {
+      const { item: restored } = await writeItem(
+        storage,
+        { kind: "credential", key },
+        { op: "restore", id },
+      );
+      return { restored, metadata: await storage.metadata.get(id) };
     });
-    await publishBroughtBack(storage, { id, type: restored.type }, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -233,31 +208,16 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // Read past the trash, so a transition out of it is judged by the type's
     // graph: `trashed` admits `active` alone. A move into the bin takes what
     // a delete takes and is held by what holds a delete.
-    const {
-      item: updated,
-      from,
-      trashed,
-      broughtBack,
-    } = await writeItem(
-      storage,
-      { kind: "credential", key },
-      { op: "transition", id, state },
+    const { updated, from, metadata } = await storage.runInTransaction(
+      async () => {
+        const { item: updated, from } = await writeItem(
+          storage,
+          { kind: "credential", key },
+          { op: "transition", id, state },
+        );
+        return { updated, from, metadata: await storage.metadata.get(id) };
+      },
     );
-    const metadata = await storage.metadata.get(id);
-    await publish({
-      type: "state_changed",
-      item: updated,
-      metadata,
-    });
-    const root = { id, type: updated.type };
-    for (const taken of trashed) {
-      await publish({
-        type: "deleted",
-        item: { ...taken, state: "trashed" },
-        trashedWith: root,
-      });
-    }
-    await publishBroughtBack(storage, root, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

@@ -2,10 +2,11 @@
  * A grant's event that cannot be written does not end the process, and does
  * not take the person's consent with it.
  *
- * The consent door announces a new grant without waiting on it, after the
- * grant is written. The announcement used to be started with no handler, so
- * a failed event-log append was an unhandled rejection, and with nothing
- * listening for those the server ended.
+ * The grant record and its event are written in one transaction, so an
+ * event-log append that fails leaves neither: no record the log never
+ * heard of. The consent itself is the sign-in library's, already made, so
+ * the person is still sent back with a code and the failed projection is
+ * reported, as any other projection failure is.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
@@ -49,7 +50,8 @@ async function signIn(c: TestContext, email: string): Promise<string> {
 
 describe("a consent whose event cannot be written", () => {
   it("still sends the person back with a code, and the failure is reported rather than left unhandled", async () => {
-    ctx = await createTestContext({});
+    const c = await createTestContext({});
+    ctx = c;
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {
       unhandled.push(reason);
@@ -58,57 +60,65 @@ describe("a consent whose event cannot be written", () => {
     const logged = vi.spyOn(logger, "log");
     try {
       initEventLog({
-        ...ctx.storage.eventLog,
+        ...c.storage.eventLog,
         append: () => Promise.reject(new Error("the event log is unwritable")),
       });
-      const cookie = await signIn(ctx, "announce@example.com");
+      const cookie = await signIn(c, "announce@example.com");
+      const register = async (clientId: string): Promise<void> => {
+        await c.storage.oauthProvider?.createClient({
+          clientId,
+          name: "Announcing App",
+          isPublic: true,
+          grantTypes: ["authorization_code", "refresh_token"],
+          responseTypes: ["code"],
+          tokenEndpointAuthMethod: "none",
+          scopes: ["core.note:read"],
+          redirectUris: [CALLBACK],
+          postLogoutRedirectUris: [ORIGIN + "/"],
+        });
+      };
       const clientId = `announce-${randomBytes(5).toString("hex")}`;
-      await ctx.storage.oauthProvider?.createClient({
-        clientId,
-        name: "Announcing App",
-        isPublic: true,
-        grantTypes: ["authorization_code", "refresh_token"],
-        responseTypes: ["code"],
-        tokenEndpointAuthMethod: "none",
-        scopes: ["core.note:read"],
-        redirectUris: [CALLBACK],
-        postLogoutRedirectUris: [ORIGIN + "/"],
-      });
-      const challenge = createHash("sha256")
-        .update(randomBytes(32).toString("base64url"))
-        .digest("base64url");
-      const params = new URLSearchParams({
-        response_type: "code",
-        client_id: clientId,
-        redirect_uri: CALLBACK,
-        scope: "core.note:read",
-        state: "announce",
-        code_challenge: challenge,
-        code_challenge_method: "S256",
-      });
-      const authorize = await request(
-        ctx.app,
-        "GET",
-        `/auth/oauth2/authorize?${params.toString()}`,
-        { headers: { cookie } },
-      );
-      const location = authorize.headers.get("location") ?? "";
-      expect(location).toContain("/auth/authorize?");
-      const signedQuery = location.slice(location.indexOf("?") + 1);
-
-      const decision = await request(
-        ctx.app,
-        "POST",
-        "/auth/authorize/decision",
-        {
+      await register(clientId);
+      const consent = async (clientId: string): Promise<Response> => {
+        const challenge = createHash("sha256")
+          .update(randomBytes(32).toString("base64url"))
+          .digest("base64url");
+        const params = new URLSearchParams({
+          response_type: "code",
+          client_id: clientId,
+          redirect_uri: CALLBACK,
+          scope: "core.note:read",
+          state: "announce",
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+        });
+        const authorize = await request(
+          c.app,
+          "GET",
+          `/auth/oauth2/authorize?${params.toString()}`,
+          { headers: { cookie } },
+        );
+        const location = authorize.headers.get("location") ?? "";
+        expect(location).toContain("/auth/authorize?");
+        const signedQuery = location.slice(location.indexOf("?") + 1);
+        return request(c.app, "POST", "/auth/authorize/decision", {
           form: {
             accept: "true",
             oauth_query: signedQuery,
             scopes: ["core.note:read"],
           },
           headers: { cookie, origin: ORIGIN },
-        },
-      );
+        });
+      };
+      const records = async (clientId: string): Promise<unknown[]> =>
+        (
+          await c.storage.items.list({ type: "system.connection", limit: 100 })
+        ).data.filter(
+          (row) =>
+            (row.properties as { client_id?: string }).client_id === clientId,
+        );
+
+      const decision = await consent(clientId);
       expect(decision.status).toBe(302);
       const back = new URL(decision.headers.get("location") ?? "", ORIGIN);
       expect(back.searchParams.get("code")).toBeTruthy();
@@ -118,13 +128,23 @@ describe("a consent whose event cannot be written", () => {
       expect(
         logged.mock.calls.some(
           ([level, message]) =>
-            level === "error" &&
-            message === "consent: the grant's event could not be written",
+            level === "warn" &&
+            message === "consent decision: projection failed",
         ),
       ).toBe(true);
+      // No record the log never heard of.
+      expect(await records(clientId)).toEqual([]);
+
+      // The witness: with the log writable again, a consent records its
+      // grant.
+      initEventLog(c.storage.eventLog);
+      const witness = `witness-${randomBytes(5).toString("hex")}`;
+      await register(witness);
+      expect((await consent(witness)).status).toBe(302);
+      expect(await records(witness)).toHaveLength(1);
     } finally {
       process.off("unhandledRejection", onUnhandled);
-      initEventLog(ctx.storage.eventLog);
+      initEventLog(c.storage.eventLog);
     }
   });
 });

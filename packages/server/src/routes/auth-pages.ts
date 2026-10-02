@@ -35,7 +35,6 @@ import {
 import { setNoStore } from "./no-store.js";
 import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { forwardHeaders } from "./forward-headers.js";
-import { publish } from "../pubsub.js";
 
 /**
  * Persist (or refresh) a `kind: app` connection through `writeItem`, which
@@ -158,11 +157,6 @@ async function createUserAppGrant(
       );
       if (written.outcome === "updated") {
         const updated = written.item;
-        await publish({
-          type: "updated",
-          item: updated,
-          metadata: written.metadata,
-        });
         return {
           id: updated.id,
           created: false,
@@ -175,7 +169,7 @@ async function createUserAppGrant(
   // First-time consent: insert a fresh row. No tier named: `tier` is a
   // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
   // writer of one leaves it to the store the way `POST /items` does.
-  const { item, metadata } = await writeItem(
+  const { item } = await writeItem(
     storage,
     { kind: "platform" },
     {
@@ -195,7 +189,6 @@ async function createUserAppGrant(
       source,
     },
   );
-  await publish({ type: "created", item, metadata });
   return { id: item.id, created: true, scopes };
 }
 

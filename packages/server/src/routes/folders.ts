@@ -28,7 +28,6 @@ import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import type { ItemWriteResult } from "../storage/item-write.js";
 import { depthInsideFolder } from "../folder-path.js";
-import { publish } from "../pubsub.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema, TierEnum } from "./_schemas.js";
@@ -493,7 +492,6 @@ export function folderRoutes(storage: Storage) {
         blob_proof: requestBlobProof(c, storage),
       },
     );
-    await publish({ type: "created", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: credential?.id,
@@ -539,7 +537,6 @@ export function folderRoutes(storage: Storage) {
       throw new Error("A folder update always carries settings to merge");
     }
     const { item, metadata } = written(result);
-    await publish({ type: "updated", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -555,7 +552,9 @@ export function folderRoutes(storage: Storage) {
 
   router.openapi(revokeFolderRoute, async (c) => {
     const { id } = c.req.valid("param");
-    const item = await storage.runInTransaction(async () => {
+    // One change to a subscriber: the stamp rides on the state change that
+    // announces both.
+    const { item, metadata } = await storage.runInTransaction(async () => {
       refuseRevoked(await requireFolder(storage, id));
       await writeItem(
         storage,
@@ -566,16 +565,15 @@ export function folderRoutes(storage: Storage) {
           properties: { revoked_at: new Date().toISOString() },
           blob_proof: requestBlobProof(c, storage),
         },
+        { announce: false },
       );
       const { item: revoked } = await writeItem(
         storage,
         { kind: "platform" },
         { op: "transition", id, state: "revoked" },
       );
-      return revoked;
+      return { item: revoked, metadata: await storage.metadata.get(id) };
     });
-    const metadata = await storage.metadata.get(id);
-    await publish({ type: "state_changed", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

@@ -6,7 +6,6 @@ import {
   listTypes,
 } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
-import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { writeItem } from "../storage/item-write.js";
@@ -361,7 +360,6 @@ export class TextEnrichmentSweeper {
       // the write. Nothing recorded: the row is re-offered next run and
       // judged against whatever the item has become.
       if (written.outcome !== "updated") return "skipped";
-      const updated = written.item;
 
       if (textError !== null) {
         // Half of it landed. Recorded as a failure anyway, so the retry
@@ -375,11 +373,6 @@ export class TextEnrichmentSweeper {
         await record("done", reasons.length > 0 ? reasons.join("; ") : null);
       }
 
-      await publish({
-        type: "updated",
-        item: updated,
-        metadata: written.metadata,
-      });
       return textError === null ? "extracted" : "failed";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

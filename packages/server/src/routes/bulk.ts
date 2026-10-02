@@ -39,7 +39,7 @@ import {
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { ApiKey, Item, Metadata } from "@withmarfa/shared";
+import type { ApiKey, Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
@@ -61,9 +61,6 @@ import { refusedRowId, writeItem } from "../storage/item-write.js";
 import type { ItemWriteResult } from "../storage/item-write.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
-import { publish } from "../pubsub.js";
-import { announceInlineEdges } from "./_edges-inline.js";
-import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
@@ -430,22 +427,9 @@ interface BulkItemResult {
   };
 }
 
-/**
- * What one processed entry yields: the wire entry, plus the row as written
- * when there was one.
- *
- * The row travels beside the wire object rather than inside it, exactly as
- * `processBulkEdge` returns its `created` / `updated`. It exists so the
- * publish loop does not read back what the batch just wrote, and it must
- * not reach the response: five thousand entries each carrying a full item
- * would cost more than the read it saves. Keeping it out of `BulkItemResult` is what makes that structural
- * rather than a thing to remember at the boundary.
- */
+/** What one processed entry yields: its wire entry. */
 interface ProcessedBulkItem {
   result: BulkItemResult;
-  item?: Item;
-  /** The entry's inline-edge changes, announced once its write commits. */
-  edges?: InlineEdgeChanges;
 }
 
 function erroredEntry(
@@ -486,6 +470,9 @@ async function processBulkItem(
      * every write, so inferring would move a corpus on an ordinary sync bug.
      */
     retype: boolean;
+    /** Whether the entry's events drive outbound work: off unless the page
+     *  asks, and never whether the entry is logged. */
+    enableFanout: boolean;
   },
 ): Promise<ProcessedBulkItem> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -524,6 +511,7 @@ async function processBulkItem(
         retype: options.retype,
         blob_proof: options.blobProof,
       },
+      { fanout: options.enableFanout },
     );
   } catch (err) {
     if (isEntryVerdict(err)) {
@@ -538,8 +526,6 @@ async function processBulkItem(
     case "updated":
       return {
         result: { index, outcome: result.outcome, id: result.item.id },
-        item: result.item,
-        ...(result.edges !== undefined && { edges: result.edges }),
       };
     case "unchanged":
       return {
@@ -685,6 +671,7 @@ export function bulkRoutes(storage: Storage) {
           mode,
           blobProof: requestBlobProof(c, storage),
           retype,
+          enableFanout,
         });
         if (atomic && processed.result.outcome === "errored") {
           // One failure aborts the whole batch: thrown so the transaction
@@ -705,50 +692,10 @@ export function bulkRoutes(storage: Storage) {
     const processed = atomic
       ? await storage.runInTransaction(run)
       : await run();
-    // The wire array, and nothing else. The written rows stay on
-    // `processed` for the publish loop below.
     const results = processed.map((p) => p.result);
 
     const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
     for (const r of results) counts[r.outcome] += 1;
-
-    // Published only after the batch commits, so a subscriber is never
-    // told about a write a rollback then took away — an atomic batch that
-    // rolled back throws and never reaches here.
-    //
-    // Every written row publishes. `enable_fanout` decides what happens
-    // downstream of the log, not whether the row is logged.
-    //
-    // The rows come from the batch that wrote them rather than from a
-    // second read: re-reading each item and its metadata would put two
-    // queries per row on a door that accepts five thousand of them.
-    const published = processed.filter(
-      (p): p is ProcessedBulkItem & { item: Item } =>
-        p.item !== undefined &&
-        (p.result.outcome === "created" || p.result.outcome === "updated"),
-    );
-    const metadataById = new Map<string, Metadata>();
-    if (published.length > 0) {
-      for (const m of await storage.metadata.getMany(
-        published.map((r) => r.item.id),
-      )) {
-        metadataById.set(m.item_id, m);
-      }
-    }
-    for (const r of published) {
-      const metadata = metadataById.get(r.item.id);
-      await publish({
-        type: r.result.outcome === "created" ? "created" : "updated",
-        item: r.item,
-        ...(metadata && { metadata }),
-        enableFanout,
-      });
-    }
-    // Edges after the items, so a subscriber sees the endpoints before the
-    // relationship naming them.
-    for (const p of processed) {
-      if (p.edges) await announceInlineEdges(storage, p.edges, enableFanout);
-    }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

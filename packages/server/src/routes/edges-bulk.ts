@@ -571,27 +571,39 @@ export function edgesBulkRoutes(storage: Storage) {
       })),
     );
 
-    const run = async (): Promise<{
-      results: BulkEdgeResult[];
-      createdEdges: Edge[];
-      updatedEdges: Edge[];
-    }> => {
+    const run = async (): Promise<BulkEdgeResult[]> => {
       const results: BulkEdgeResult[] = [];
-      const createdEdges: Edge[] = [];
-      const updatedEdges: Edge[] = [];
       for (const [i, raw] of rawEdges.entries()) {
-        const { result, created, updated } = await processBulkEdge(
-          storage,
-          raw,
-          i,
-          {
+        // Each entry's edge and its event commit together: inside the page's
+        // transaction when it is atomic, in one of its own otherwise. Both
+        // outcomes are announced, an upsert replacing an edge's properties
+        // being an edit a subscriber cannot tell from one made through
+        // `PATCH /edges/{id}`.
+        const entry = async () => {
+          const processed = await processBulkEdge(storage, raw, i, {
             mode,
             existingByTriple,
             checkEdgeWrite,
             mayRead,
             mayTell: (edge) => edgeReadable(storage, requireAuth(c), edge),
-          },
-        );
+          });
+          const written = processed.created ?? processed.updated;
+          if (written) {
+            const sourceTypes = await sourceTypesFor(storage, [
+              written.source_id,
+            ]);
+            await publishEdge({
+              type: processed.created ? "edge_created" : "edge_updated",
+              edge: written,
+              sourceType: sourceTypes.get(written.source_id),
+              enableFanout,
+            });
+          }
+          return processed;
+        };
+        const { result } = atomic
+          ? await entry()
+          : await storage.runInTransaction(entry);
         if (atomic && result.outcome === "errored") {
           throw bulkAtomicRollback(
             i,
@@ -604,47 +616,14 @@ export function edgesBulkRoutes(storage: Storage) {
           );
         }
         results.push(result);
-        if (created) createdEdges.push(created);
-        if (updated) updatedEdges.push(updated);
       }
-      return { results, createdEdges, updatedEdges };
+      return results;
     };
 
-    const { results, createdEdges, updatedEdges } = atomic
-      ? await storage.runInTransaction(run)
-      : await run();
+    const results = atomic ? await storage.runInTransaction(run) : await run();
 
     const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
     for (const r of results) counts[r.outcome] += 1;
-
-    // Both outcomes publish. An upsert that replaces an existing edge's
-    // properties is an edit, and a subscriber has no way to tell it apart
-    // from one made through `PATCH /edges/:id` — so publishing for one and
-    // not the other would make propagation depend on which route the
-    // writer happened to use. `skipped` and `errored` wrote nothing and
-    // publish nothing.
-    const sourceTypes = await sourceTypesFor(
-      storage,
-      [...createdEdges, ...updatedEdges].map((edge) => edge.source_id),
-    );
-    for (const edge of createdEdges) {
-      const sourceType = sourceTypes.get(edge.source_id);
-      await publishEdge({
-        type: "edge_created",
-        edge,
-        sourceType,
-        enableFanout,
-      });
-    }
-    for (const edge of updatedEdges) {
-      const sourceType = sourceTypes.get(edge.source_id);
-      await publishEdge({
-        type: "edge_updated",
-        edge,
-        sourceType,
-        enableFanout,
-      });
-    }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

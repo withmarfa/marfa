@@ -706,7 +706,7 @@ describe("every announcement names its source's type", () => {
         }
       }
     }
-    expect(calls).toBeGreaterThanOrEqual(11);
+    expect(calls).toBeGreaterThanOrEqual(8);
     expect(missing).toEqual([]);
   });
 });
