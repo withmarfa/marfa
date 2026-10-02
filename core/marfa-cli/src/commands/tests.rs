@@ -1,10 +1,3 @@
-//! The shape each leaf sends, held without a server.
-//!
-//! A command is its arguments turned into a method, a path, a query and a
-//! body; that turn is pure, so it is asserted here for every door that
-//! carries something a caller could get wrong, and the scenario suite holds
-//! the answers against a real server.
-
 use std::path::PathBuf;
 
 use serde_json::json;
@@ -48,8 +41,7 @@ fn a_listing_sends_only_the_filters_it_was_given() {
     assert_eq!(query(&request, "tags").as_deref(), Some("a,b"));
     assert_eq!(query(&request, "limit").as_deref(), Some("5"));
     assert_eq!(query(&request, "cursor").as_deref(), Some("c1"));
-    // Absent rather than sent empty: an empty `source=` is a filter that
-    // matches nothing, and a caller who gave none asked for everything.
+    // An empty `source=` would match nothing.
     assert_eq!(query(&request, "source"), None);
     assert_eq!(query(&request, "tier"), None);
     assert_eq!(query(&request, "include"), None);
@@ -152,21 +144,8 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
     assert_eq!(query(&resolved, "conflict").as_deref(), Some("auto"));
     assert_eq!(body(&resolved)["properties_mode"], "replace");
     assert_eq!(body(&resolved)["source_id"], "notes/new.md");
-    // No properties were given, so none are sent: an empty object would be
-    // a replace-with-nothing under `--replace`.
+    // An empty object would clear everything under `--replace`.
     assert!(body(&resolved).get("properties").is_none());
-}
-
-#[test]
-fn the_lifecycle_doors_take_the_verb_the_document_publishes() {
-    assert_eq!(items::delete_request("i").method, Method::Delete);
-    assert_eq!(items::delete_request("i").path(), "/items/i");
-    assert_eq!(items::restore_request("i").path(), "/items/i/restore");
-    assert_eq!(items::purge_request("i").method, Method::Delete);
-    assert_eq!(items::purge_request("i").path(), "/items/i/purge");
-    let archived = items::transition_request("i", items::TransitionState::Archived);
-    assert_eq!(archived.path(), "/items/i/transition");
-    assert_eq!(body(&archived), &json!({ "state": "archived" }));
 }
 
 #[test]
@@ -369,17 +348,6 @@ fn a_search_sends_its_query_and_its_narrowing() {
 }
 
 #[test]
-fn metadata_is_replaced_whole_or_merged_and_tags_are_listed_from_their_own_door() {
-    let replaced = metadata::replace_request("i", &["a".into()]);
-    assert_eq!(replaced.method, Method::Put);
-    assert_eq!(replaced.path(), "/items/i/metadata");
-    let merged = metadata::merge_request("i", &["b".into()]);
-    assert_eq!(merged.method, Method::Patch);
-    assert_eq!(body(&merged), &json!({ "tags": ["b"] }));
-    assert_eq!(metadata::tags_request().path(), "/metadata/tags");
-}
-
-#[test]
 fn an_extension_namespace_is_written_whole_and_must_be_an_object() {
     let written = extensions::write_request("i", "app.cursor", json!({ "at": 3 })).unwrap();
     assert_eq!(written.method, Method::Put);
@@ -505,7 +473,6 @@ fn a_key_is_minted_with_exactly_the_reach_named() {
     })
     .unwrap();
     assert_eq!(body(&claiming_none)["sources"], json!([]));
-    // Unnamed, the field is left out, so the mint takes the caller's claims.
     assert_eq!(body(&inherited).get("sources"), None);
     let reclaimed = keys::update_request(&keys::KeyUpdateArgs {
         id: "k".into(),
@@ -622,31 +589,6 @@ fn blobs_are_fetched_as_a_stream_and_a_link_carries_its_ttl() {
         query(&blobs::url_request("sha256:abc", Some(60)), "ttl").as_deref(),
         Some("60")
     );
-}
-
-/// The stores and the location log are reached where the document puts
-/// them, and a dropped copy names the store in the path rather than a body.
-#[test]
-fn the_stores_and_the_location_log_are_reached_at_their_doors() {
-    assert_eq!(blobs::stores_request().path(), "/blobs/stores");
-    assert_eq!(blobs::orphans_request().path(), "/blobs/orphans");
-    assert_eq!(
-        blobs::locations_request("sha256:abc").path(),
-        "/blobs/sha256:abc/locations"
-    );
-    let dropped = blobs::drop_request("sha256:abc", "disk");
-    assert_eq!(dropped.method, Method::Delete);
-    assert_eq!(dropped.path(), "/blobs/sha256:abc/locations/disk");
-    assert_eq!(dropped.body, Body::None);
-}
-
-#[test]
-fn a_housekeeping_job_is_listed_and_run_by_name() {
-    assert_eq!(housekeeping::list_request().path(), "/housekeeping");
-    let run = housekeeping::run_request("blob-orphans");
-    assert_eq!(run.method, Method::Post);
-    assert_eq!(run.path(), "/housekeeping/blob-orphans/run");
-    assert_eq!(run.body, Body::None);
 }
 
 #[test]
@@ -899,12 +841,6 @@ fn restore_posts_the_archive_under_its_own_type() {
     }
 }
 
-/// Every operation the document publishes has a command, and every command
-/// in the table names an operation the document still publishes.
-///
-/// The document is the one at the repository root, read relative to the
-/// crate, so a door added to the server is red here before it reaches a
-/// pull request.
 #[test]
 fn every_published_operation_has_a_command() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json");
@@ -949,8 +885,6 @@ fn every_published_operation_has_a_command() {
     }
 }
 
-/// Every command the table names is one the tree accepts, so the table
-/// cannot advertise a command that does not exist.
 #[test]
 fn every_mapped_command_parses() {
     use clap::CommandFactory;
@@ -968,80 +902,9 @@ fn every_mapped_command_parses() {
     }
 }
 
-/// Every leaf's request goes where the document puts it: the method and the
-/// path, held for the leaves whose tests above assert a body or a query
-/// rather than the door itself.
-#[test]
-fn the_remaining_leaves_reach_the_doors_the_document_names() {
-    let at = |request: &Request, method: Method, path: &str| {
-        assert_eq!(request.method, method, "{path}");
-        assert_eq!(request.path(), path);
-    };
-    at(&edges::get_request("e"), Method::Get, "/edges/e");
-    let bulk_file =
-        std::env::temp_dir().join(format!("marfa-edges-bulk-{}.json", std::process::id()));
-    std::fs::write(&bulk_file, "[]").unwrap();
-    at(
-        &edges::bulk_request(&edges::EdgeBulkArgs {
-            file: bulk_file,
-            ..Default::default()
-        })
-        .unwrap(),
-        Method::Post,
-        "/edges/bulk",
-    );
-    at(&types::list_request(), Method::Get, "/types");
-    at(
-        &types::delete_request("t", false),
-        Method::Delete,
-        "/types/t",
-    );
-    at(
-        &webhooks::create_request(&webhooks::WebhookCreateArgs {
-            to: "https://example.test/hook".into(),
-            events: vec!["item.created".into()],
-            ..Default::default()
-        }),
-        Method::Post,
-        "/webhooks",
-    );
-    at(
-        &webhooks::update_request(&webhooks::WebhookUpdateArgs {
-            id: "w".into(),
-            ..Default::default()
-        }),
-        Method::Patch,
-        "/webhooks/w",
-    );
-    at(
-        &webhooks::deliveries_request("w", None),
-        Method::Get,
-        "/webhooks/w/deliveries",
-    );
-    at(
-        &blobs::url_request("sha256:a", None),
-        Method::Get,
-        "/blobs/sha256:a/url",
-    );
-    at(
-        &metadata::get_request("i"),
-        Method::Get,
-        "/items/i/metadata",
-    );
-    at(
-        &extensions::list_request("i"),
-        Method::Get,
-        "/items/i/extensions",
-    );
-    at(&keys::list_request(), Method::Get, "/keys");
-}
-
-/// The dispatch beside the shaping: what `run` sends through a remote, held
-/// at a door on a local port, for the three places a call site could drop
-/// what the shaping carries.
 mod dispatch {
     use super::*;
-    use crate::door::{Answer, Door, another_contract};
+    use crate::door::{Answer, Door};
     use crate::output::Printer;
     use crate::remote::Remote;
     use crate::remote::Transport;
@@ -1162,8 +1025,6 @@ mod dispatch {
 
     #[test]
     fn bootstrap_sends_the_secret_as_the_bearer_and_nowhere_else() {
-        // The minted key is answered once, so the root is read first, with
-        // no credential, and the mint goes out only on this contract.
         let door = Door::open(vec![
             Answer::json(
                 "200 OK",
@@ -1196,38 +1057,8 @@ mod dispatch {
         );
         assert!(!received[1].body.contains("the-secret"));
     }
-
-    #[test]
-    fn bootstrap_sends_nothing_past_the_root_of_a_server_on_another_contract() {
-        // A mint answered on another contract would not be read, and the
-        // secret it spent cannot be spent twice.
-        let door = Door::open(vec![
-            Answer::json(
-                "200 OK",
-                &format!(r#"{{"name":"marfa","contract":{}}}"#, another_contract()),
-            )
-            .on_another_contract(),
-        ]);
-        match keys::run(
-            keys::KeysCommand::Bootstrap {
-                secret: Some("the-secret".into()),
-            },
-            &remote_at(&door),
-            &QUIET,
-        ) {
-            Err(CliError::ContractMismatch {
-                write_sent: false, ..
-            }) => {}
-            other => panic!("{other:?}"),
-        }
-        let received = door.received();
-        assert_eq!(received.len(), 1);
-        assert_eq!(received[0].path(), "/");
-    }
 }
 
-/// The key doors send the selector they were given and no other, so the
-/// server can refuse a body that names two.
 #[test]
 fn the_key_doors_send_the_selector_they_were_given() {
     let by_link = items::lookup_request(

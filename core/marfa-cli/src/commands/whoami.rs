@@ -7,12 +7,6 @@ use crate::output::Printer;
 use crate::remote::request::Request;
 use crate::remote::{CredentialSource, Remote, Transport};
 
-/// Which server, which instance, and which credential a bare command would
-/// use, and where that credential came from.
-///
-/// For a key this reports the key's kind and where it came from, and
-/// `keys current` says what it holds; a token reports the person it was
-/// issued to.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let instance = remote.root()?;
     let held = status::speaks_this_contract(&instance);
@@ -36,13 +30,10 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 record["expires_at"] = json!(expires_at);
             }
             if kind == "token" {
-                // The person the token was issued to, at the door the server
-                // names for it. A token whose scope does not reach the
-                // identity claims is refused there (401 or 403) and reported
-                // without a person; any other refusal is this command's.
-                // A server on another contract is reported without a person
-                // rather than refused, and the token is not sent on to it,
-                // since saying which server this is remains the command's job.
+                // A scope that does not reach the identity claims is refused
+                // 401 or 403 and reported without a person. A server on
+                // another contract is described, not refused, and the token
+                // is not sent on to it.
                 if !held {
                     record["person"] = json!(null);
                 } else if let Some(endpoint) = auth::discover(remote)?.userinfo_endpoint {

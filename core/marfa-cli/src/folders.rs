@@ -1,5 +1,3 @@
-//! Folders on this machine: a directory that holds what a search matches, as files.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -85,7 +83,7 @@ pub enum FoldersCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Watch a folder and keep it in step until interrupted.
+    /// Watch a folder and keep it in step.
     Watch {
         /// The directory to watch, recursively.
         dir: PathBuf,
@@ -95,10 +93,6 @@ pub enum FoldersCommand {
     },
 }
 
-/// Every folder command. A folder carries its own store under `.marfa`, so
-/// none of these takes `--db`: pointing one at another store would be two
-/// folders sharing a mapping, and neither would be right about the other's
-/// files.
 pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), CliError> {
     match command {
         FoldersCommand::Add { dir, folder } => {
@@ -143,7 +137,6 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             })
         }
         FoldersCommand::Remove { dir } => {
-            // A folder whose directory is gone is only taken off the list.
             if dir.join(marfa_core::folder::STATE_DIR).exists() || !Folder::forget(&dir)? {
                 Folder::open(&dir, None)?.remove()?;
             }
@@ -194,17 +187,14 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             output::report(&report, json, || describe_scan(&report))
         }
         FoldersCommand::Pull { dir } => {
-            // A server where one is named, because a file item's bytes are
-            // fetched when the pull asks for them; with none, a file whose
-            // bytes are not held is reported rather than written.
+            // Optional: without a server, unheld bytes are reported, not fetched.
             let report = opened(&dir, named.session_if_named()?)?.pull()?;
             output::report(&report, json, || describe_pull(&report))
         }
         FoldersCommand::Push { dir } => {
             let folder = opened(&dir, Some(named.session()?))?;
             let hydrated = folder.resume()?;
-            // First, so the rest of the push works on the settings the person
-            // just wrote.
+            // First, so the rest of the push works on the new settings.
             let settings = folder.send_settings_edit()?;
             let scanned = folder.scan()?;
             let drained = folder.drain()?;
@@ -306,21 +296,16 @@ fn send(
     Printer { json }.value(&answer)
 }
 
-/// Said in words, because what these edits carried went over whatever
-/// changed since their file was written (`folders.md` 23).
 pub fn rebased_line(rebased: usize) -> String {
     format!(
         "{rebased} edit(s) written from a version the server no longer holds, sent again on the version this copy holds"
     )
 }
 
-/// Placements another machine made first, followed rather than sent
-/// (`folders.md` 19).
 pub fn gave_way_line(gave_way: usize) -> String {
     format!("{gave_way} placement(s) another machine made first, followed instead")
 }
 
-/// Placements the server refused, said so the person can mend the key.
 pub fn unplaced_line(unplaced: usize) -> Option<String> {
     (unplaced > 0).then(|| {
         format!(
@@ -329,8 +314,6 @@ pub fn unplaced_line(unplaced: usize) -> Option<String> {
     })
 }
 
-/// Each file the folder holds rather than sends, with why, in words.
-/// Opens a folder with the server a session names, where it names one.
 pub fn opened(dir: &Path, session: Option<Session>) -> Result<Folder, CliError> {
     let (server, renew) = Session::split(session);
     let folder = Folder::open(dir, server)?;
@@ -357,7 +340,6 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
         .collect()
 }
 
-/// Each directory the walk did not enter, with why (`folders.md` 26).
 pub fn directory_lines(directories: &[marfa_core::folder::Flagged]) -> Vec<String> {
     directories
         .iter()
@@ -368,7 +350,6 @@ pub fn directory_lines(directories: &[marfa_core::folder::Flagged]) -> Vec<Strin
         .collect()
 }
 
-/// Each embed the folder read nothing from, once, with why (`folders.md` 12).
 pub fn embed_lines<'a>(
     embeds: impl IntoIterator<Item = &'a marfa_core::folder::Flagged>,
 ) -> Vec<String> {
@@ -382,8 +363,6 @@ pub fn embed_lines<'a>(
     said
 }
 
-/// Properties no file can carry, because a file reads their name as the
-/// item's own field or an edge.
 pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<String> {
     (!uncarried.is_empty()).then(|| {
         let named: Vec<String> = uncarried
@@ -397,7 +376,6 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
     })
 }
 
-/// What became of the settings file, where anything did.
 pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
     match (&report.flagged, report.sent) {
         (Some(reason), _) => Some(format!(
@@ -408,11 +386,6 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
     }
 }
 
-/// What a pull did, for somebody who did not ask for JSON.
-///
-/// The counts after the semicolon are items that have no file and will not
-/// get one on this pass (`folders.md` 30, 32, 37), named only when there are
-/// any.
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     let mut line = format!(
         "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
@@ -448,7 +421,6 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
             report.beside
         ));
     }
-    // A file the person deleted and the pull wrote back.
     if report.revived > 0 {
         line.push_str(&format!(
             "; {} written back over a pending delete",
@@ -505,8 +477,6 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     line
 }
 
-/// Where every file stands, a line each, for somebody who did not ask
-/// for JSON; a file in step is counted, not listed.
 fn describe_status(report: &marfa_core::StatusReport) -> String {
     let in_step = report
         .files
@@ -536,7 +506,6 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
     lines.join("\n")
 }
 
-/// The files the secrets list refused, one line each (`folders.md` 25).
 pub(crate) fn secret_lines(secrets: &[String]) -> Vec<String> {
     secrets
         .iter()
@@ -544,8 +513,6 @@ pub(crate) fn secret_lines(secrets: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// A large removal waiting to be confirmed, from the disk or from a pull
-/// (`folders.md` 46).
 pub fn paused_line(count: usize, from_pull: bool) -> String {
     if from_pull {
         format!(
@@ -632,8 +599,6 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     line
 }
 
-/// What a scan's look in the other folders on this machine came to, in
-/// words (`folders.md` 41, 43).
 pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!("this folder stands alone, since the folder registry cannot be read: {why}")

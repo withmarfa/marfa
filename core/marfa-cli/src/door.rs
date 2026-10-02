@@ -1,14 +1,10 @@
-//! A door on a local port for the tests: it answers what it was given, one
-//! answer per connection, and keeps what it was sent, so a command's whole
-//! call can be held without a server.
+//! A scripted HTTP server on a local port for the tests.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
-/// One request as it arrived on the wire: the request line and headers,
-/// lowercased for lookup, and the body.
 #[derive(Debug, Clone)]
 pub struct Received {
     pub line: String,
@@ -34,13 +30,10 @@ impl Received {
     }
 }
 
-/// A canned answer: the status line's code and reason, the content type,
-/// the body.
 pub struct Answer {
     pub status: &'static str,
     pub content_type: &'static str,
     pub body: String,
-    /// Headers beyond the content type, such as a `Retry-After`.
     pub headers: Vec<(&'static str, String)>,
 }
 
@@ -50,8 +43,6 @@ impl Answer {
         self
     }
 
-    /// An answer on the contract this binary was built for, as every answer
-    /// the server gives names its own.
     pub fn json(status: &'static str, body: &str) -> Answer {
         Answer {
             status,
@@ -64,13 +55,11 @@ impl Answer {
         }
     }
 
-    /// The same answer on another contract than the binary's.
     pub fn on_another_contract(self) -> Answer {
         let other = another_contract();
         self.on_contract(Some(&other))
     }
 
-    /// The same answer naming another contract, or with `None` naming none.
     pub fn on_contract(mut self, contract: Option<&str>) -> Answer {
         self.headers
             .retain(|(name, _)| *name != marfa_core::http::CONTRACT_HEADER);
@@ -87,19 +76,13 @@ pub struct Door {
     served: Receiver<Vec<Received>>,
 }
 
-/// How long `received` waits for the door's last answer to go out.
 const SERVED_BUDGET: Duration = Duration::from_secs(20);
 
 impl Door {
-    /// Opens the door with the answers it will give, in order, one per
-    /// connection; every answer closes its connection so the next call
-    /// arrives as a fresh one.
     pub fn open(answers: Vec<Answer>) -> Door {
         Door::open_at(|_| answers)
     }
 
-    /// Opens the door and lets the answers name its own URL, for a document
-    /// that has to say where it was served from.
     pub fn open_at(answers: impl FnOnce(&str) -> Vec<Answer>) -> Door {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -132,9 +115,6 @@ impl Door {
         Door { url, served }
     }
 
-    /// Everything the door was sent, once every answer has gone out. A
-    /// door with answers left is one a call never reached, which fails the
-    /// test after a bound rather than hanging it.
     pub fn received(self) -> Vec<Received> {
         self.served
             .recv_timeout(SERVED_BUDGET)
@@ -204,8 +184,6 @@ fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// The payload of a chunked body: each chunk's size line dropped, the
-/// bytes kept.
 fn unchunk(body: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut at = 0;
@@ -222,7 +200,6 @@ fn unchunk(body: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A contract the binary was not built for.
 pub fn another_contract() -> String {
     (marfa_client::CONTRACT_VERSION + 1).to_string()
 }

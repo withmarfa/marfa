@@ -1,9 +1,6 @@
-//! A keychain file of the test's own for the binary under test, named to it
-//! by `MARFA_KEYCHAIN`, so what it keeps and reads is kept and read there
-//! and never in the person's keychain. The binary refuses keychain prompts
-//! whenever `MARFA_KEYCHAIN` names a file; this process refuses them before
-//! its first keychain call and unlocks the file with its own password
-//! before every run, so neither side can wait on a person.
+//! A keychain file of the test's own, so no test touches the person's
+//! keychain. Prompts are refused before the first keychain call and the file
+//! is unlocked before every run, so nothing can wait on a person.
 
 // Each test crate that includes this module uses its own part of it.
 #![allow(dead_code)]
@@ -49,8 +46,6 @@ impl Isolated {
         Isolated { folder }
     }
 
-    /// The binary, keeping in this keychain, with none of the caller's
-    /// server or credential.
     pub fn marfa(&self) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_marfa"));
         command
@@ -69,7 +64,6 @@ impl Isolated {
         command
     }
 
-    /// A keychain file name in this test's folder with nothing there.
     pub fn missing(&self) -> PathBuf {
         self.folder.join("missing.keychain-db")
     }
@@ -82,8 +76,6 @@ impl Isolated {
         keychain
     }
 
-    /// Whether this keychain holds an entry the binary kept for `account`,
-    /// asked by attributes alone.
     #[cfg(target_os = "macos")]
     pub fn holds(&self, account: &str) -> bool {
         holds(Some(vec![self.opened()]), account)
@@ -107,9 +99,8 @@ fn refuse_prompts() {
     });
 }
 
-/// Whether the keychains a search that names none reaches, the login
-/// keychain among them, hold an entry under the binary's service for
-/// `account`: asked by attributes alone, with prompts refused.
+/// Searches the login keychain too: by attributes alone, with prompts
+/// refused, so no secret is read and no dialog can appear.
 #[cfg(target_os = "macos")]
 pub fn the_users_keychains_hold(account: &str) -> bool {
     refuse_prompts();
@@ -133,7 +124,7 @@ fn holds(
     }
     match options.search() {
         Ok(found) => !found.is_empty(),
-        // Keychain Services' answer for an item that is not there.
+        // errSecItemNotFound.
         Err(error) if error.code() == -25300 => false,
         Err(error) => panic!("{error}"),
     }

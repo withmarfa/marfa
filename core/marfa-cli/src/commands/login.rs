@@ -14,21 +14,18 @@ use crate::remote::{Named, Remote};
 /// has decided.
 #[derive(Debug, Args)]
 pub struct LoginArgs {
-    /// What to ask for. Everything an owner can hold, narrowed to what the
-    /// server supports, unless narrowed here; the consent screen is where
-    /// a grant is narrowed.
+    /// The scopes to ask for. Defaults to everything an owner can hold that
+    /// the server supports; the consent screen narrows it.
     #[arg(long, value_name = "SCOPE")]
     pub scope: Option<String>,
     /// Print the page to open rather than opening it.
     #[arg(long)]
     pub no_browser: bool,
-    /// Print the token set instead of keeping it in the keychain, for a
-    /// process that has no keychain to keep it in.
+    /// Print the token set instead of keeping it in the keychain.
     #[arg(long)]
     pub print_token: bool,
-    /// The client id an earlier sign-in registered at this server, for a
-    /// process with no keychain to remember it in; without one the binary
-    /// registers again.
+    /// The client id an earlier sign-in registered, where no keychain
+    /// remembers it; without one the binary registers again.
     #[arg(long, value_name = "ID")]
     pub client_id: Option<String>,
 }
@@ -39,15 +36,10 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
     let origin = remote.origin().to_string();
     let discovery = auth::discover(&remote)?;
 
-    // What is kept for this origin decides: a key is not replaced under
-    // the person; a sign-in is replaced, and the set it replaces is left
-    // to expire rather than revoked, because revoking a refresh token
-    // ends the grant behind it, the new set included. A keychain that
-    // does not answer a read is refused here, before the person is asked
-    // to approve a token there is nowhere to keep, unless the token is to
-    // be printed instead; one that answers the read and refuses the write
-    // is met after the approval, where the set is printed rather than
-    // lost.
+    // A replaced sign-in is left to expire, not revoked: revoking its
+    // refresh token would end the grant behind it, the new set included. A
+    // keychain that cannot be read is refused before the person approves a
+    // token with nowhere to go.
     match credentials::read(&origin) {
         Ok(Some(Kept::Key { .. })) => {
             return Err(CliError::Invalid(format!(
@@ -75,9 +67,6 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         Some(scope) => scope.clone(),
         None => auth::default_scope(&discovery)?,
     };
-    // The client registered on an earlier sign-in to this origin is reused;
-    // a server that has forgotten it says `invalid_client` and it is
-    // registered again.
     let (client_id, code) = match held {
         Some(client_id) => match auth::device_code(&discovery, &client_id, &scope) {
             Ok(code) => (client_id, code),
@@ -99,8 +88,7 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         code.user_code
     );
     if args.print_token && !out.json {
-        // The token set is the one document on stdout, so the sentence
-        // goes beside it.
+        // The token set is the one document on stdout.
         eprintln!("{sentence}");
     } else {
         out.record(
@@ -128,8 +116,7 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
             &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
             || format!("signed in to {origin}; the token is in the keychain"),
         ),
-        // The person has approved; a set the keychain would not take is
-        // theirs to keep by hand rather than lost.
+        // The person has approved, so the set is printed rather than lost.
         Err(CliError::NoKeychain(reason)) => {
             eprintln!(
                 "marfa: the keychain did not take the token ({reason}); it is printed instead"
@@ -140,7 +127,6 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
     }
 }
 
-/// The token set as JSON, pretty without `--json` and one line under it.
 fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(), CliError> {
     let set = json!({
         "access_token": token.access_token,
@@ -154,8 +140,6 @@ fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(
     })
 }
 
-/// Registers the binary at the server, keeps the client id where a keychain
-/// answers, and asks for a device code under it.
 fn register_and_ask(
     discovery: &Discovery,
     origin: &str,
@@ -170,8 +154,6 @@ fn register_and_ask(
     Ok((client_id, code))
 }
 
-/// Best effort: a browser that does not open is not a failure, because the
-/// page was printed.
 fn open_browser(page: &str) {
     let opener = if cfg!(target_os = "macos") {
         "open"
@@ -190,8 +172,6 @@ mod tests {
     use super::*;
     use crate::door::{Answer, Door};
 
-    /// A discovery document on the door's own origin, listing the scopes the
-    /// default narrows to.
     fn discovery(origin: &str) -> String {
         json!({
             "issuer": format!("{origin}/auth"),
@@ -226,9 +206,6 @@ mod tests {
         }
     }
 
-    /// The whole sign-in against a scripted door: discovery read, the
-    /// device code asked for under the held client and the narrowed scope,
-    /// the token polled for, and the set printed rather than kept.
     #[test]
     fn a_sign_in_reads_discovery_asks_for_a_code_and_polls_for_the_token() {
         let door = Door::open_at(|origin| {
@@ -269,8 +246,6 @@ mod tests {
         assert!(sent[2].body.contains("device_code=dc"), "{}", sent[2].body);
     }
 
-    /// A device code whose page is off the issuer is refused before the
-    /// token door is polled: the door has no third answer to give.
     #[test]
     fn a_page_off_the_issuer_is_refused_before_the_poll() {
         let door = Door::open_at(|origin| {
@@ -291,8 +266,6 @@ mod tests {
         assert_eq!(door.received().len(), 2);
     }
 
-    /// A kept key is not replaced under the person: the sign-in is refused
-    /// after discovery and before a code is asked for.
     #[test]
     fn a_kept_key_is_not_replaced_by_a_sign_in() {
         let door = Door::open_at(|origin| vec![Answer::json("200 OK", &discovery(origin))]);

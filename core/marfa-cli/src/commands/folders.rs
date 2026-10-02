@@ -1,6 +1,3 @@
-//! A folder's settings on the server: the `system.folder` the folder door
-//! creates, changes at a version and revokes.
-
 use std::path::PathBuf;
 
 use clap::Args;

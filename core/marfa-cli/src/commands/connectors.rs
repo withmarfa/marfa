@@ -426,8 +426,6 @@ fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Resul
                 label.as_deref(),
                 duplicate_header.as_deref(),
             ))?;
-            // The one answer that carries the address: joined to the
-            // instance this command reached, for pasting into a sender.
             if let Some(path) = made.get("path").and_then(Value::as_str) {
                 let url = format!("{}{path}", remote.url().trim_end_matches('/'));
                 if let Some(object) = made.as_object_mut() {

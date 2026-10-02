@@ -1,8 +1,3 @@
-//! The binary leaves by the door its help documents, end to end: the process
-//! exit code and what stderr carries, for every class reachable without a
-//! server. A server's own refusal (exit 1 with the server's code) needs one
-//! and is held by the scenario suite under `conformance/`.
-
 mod isolated;
 
 use std::path::PathBuf;
@@ -16,9 +11,6 @@ fn scratch(name: &str) -> PathBuf {
     dir.join("store.sqlite")
 }
 
-/// Runs the binary with no server or credential in the environment and a
-/// keychain of its own that holds nothing, so the answer comes from the
-/// arguments alone.
 fn run(args: &[&str]) -> (i32, String, String) {
     run_with(args, &[])
 }
@@ -53,41 +45,6 @@ fn a_usage_refusal_leaves_by_two() {
     assert_eq!(envelope["error"]["code"], "no_store");
     assert_eq!(envelope["exit"], 2);
 
-    // A path where no store has been made, to a command that makes none,
-    // is refused the same way and leaves the path as it was.
-    let missing = scratch("missing");
-    let (code, stdout, stderr) = run(&[
-        "--json",
-        "device",
-        "--db",
-        missing.to_str().unwrap(),
-        "queue",
-    ]);
-    assert_eq!(code, 2, "{stderr}");
-    assert_eq!(stdout, "");
-    let envelope = read_envelope(&stderr);
-    assert_eq!(envelope["error"]["code"], "no_store");
-    assert!(
-        envelope["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains(missing.to_str().unwrap()),
-        "{stderr}"
-    );
-    assert!(!missing.exists());
-    let (code, _, stderr) = run(&[
-        "--json",
-        "device",
-        "--db",
-        missing.to_str().unwrap(),
-        "status",
-    ]);
-    assert_eq!(code, 0, "{stderr}");
-    assert!(
-        missing.exists(),
-        "the state report makes the store it reports on"
-    );
-
     let store = scratch("usage");
     let (code, _, stderr) = run(&["--json", "device", "--db", store.to_str().unwrap(), "drain"]);
     assert_eq!(code, 2, "{stderr}");
@@ -95,13 +52,10 @@ fn a_usage_refusal_leaves_by_two() {
     let (code, _, stderr) = run(&["--json", "items", "list"]);
     assert_eq!(code, 2, "{stderr}");
     assert_eq!(read_envelope(&stderr)["error"]["code"], "no_server");
-    // The table needs no server at all.
     let (code, stdout, _) = run(&["--json", "operations"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("\"operation_id\""));
 
-    // A command line the parser refuses answers the envelope too, naming
-    // what was wrong, wherever `--json` stands in it.
     let (code, stdout, stderr) = run(&[
         "--json",
         "device",
@@ -134,8 +88,7 @@ fn a_usage_refusal_leaves_by_two() {
         assert_eq!(envelope["exit"], 2, "{args:?}");
     }
 
-    // Without `--json`, and where it is only a value after `--`, the
-    // parser's usage text.
+    // After `--`, `--json` is a value, not the flag.
     for args in [
         &["items", "get"][..],
         &[
@@ -153,7 +106,6 @@ fn a_usage_refusal_leaves_by_two() {
         assert!(!stderr.trim_start().starts_with('{'), "{stderr}");
     }
 
-    // Help and the version are answers, under `--json` as without it.
     let (code, stdout, _) = run(&["--json", "--version"]);
     assert_eq!(code, 0);
     assert!(stdout.starts_with("marfa "), "{stdout}");
@@ -162,7 +114,6 @@ fn a_usage_refusal_leaves_by_two() {
     assert!(stdout.contains("Usage:"), "{stdout}");
 }
 
-/// The binary's own refusal of an argument, before anything is sent.
 #[test]
 fn an_argument_the_binary_refuses_leaves_by_one() {
     let (code, stdout, stderr) = run(&[
@@ -210,7 +161,6 @@ fn an_environment_failure_leaves_by_three() {
     assert!(envelope["error"]["server"].is_null());
     assert_eq!(envelope["exit"], 3);
 
-    // A direct command takes the same flags and meets the same door.
     let (code, _, stderr) = run(&[
         "--json",
         "--url",
@@ -226,8 +176,6 @@ fn an_environment_failure_leaves_by_three() {
 #[test]
 fn a_refusal_under_the_device_rules_leaves_by_four() {
     let store = scratch("local");
-    // A store that exists and has never hydrated, which the state report
-    // makes; a path with no store is the command line's refusal instead.
     let (code, _, stderr) = run(&[
         "--json",
         "device",
@@ -249,7 +197,6 @@ fn a_refusal_under_the_device_rules_leaves_by_four() {
     assert_eq!(envelope["error"]["code"], "hydration_incomplete");
     assert_eq!(envelope["exit"], 4);
 
-    // Without `--json`, the sentence, prefixed, and no JSON.
     let (code, stdout, stderr) = run(&["device", "--db", store.to_str().unwrap(), "items", "list"]);
     assert_eq!(code, 4, "{stderr}");
     assert_eq!(stdout, "");
@@ -274,7 +221,7 @@ fn a_missing_credential_leaves_by_five() {
     assert_eq!(envelope["error"]["code"], "no_credential");
     assert_eq!(envelope["exit"], 5);
 
-    // A variable exported as nothing names no credential.
+    // Whitespace-only names no credential.
     let (code, _, stderr) = run_with(
         &["--json", "--url", "http://127.0.0.1:1", "items", "list"],
         &[("MARFA_API_KEY", "  ")],

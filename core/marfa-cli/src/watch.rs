@@ -11,38 +11,24 @@ use crate::folders;
 use crate::output;
 use crate::remote::Session;
 
-/// How long the watcher waits for the filesystem to go quiet before it acts.
-///
-/// An editor saving a file writes it in several steps, and a scan run
-/// between two of them reads a file halfway through being written and pushes
-/// it. The debounce is what makes a burst of events one scan.
+/// An editor saves a file in several steps; a scan between two of them
+/// would push a half-written file.
 const SETTLE: Duration = Duration::from_millis(250);
 
-/// How often the folder acts with nothing happening: nothing on the
-/// filesystem marks the moment a journaled delete's grace runs out
-/// (`folders.md` 21).
+/// Nothing on the filesystem marks a journaled delete's grace running out.
 const TICK: Duration = Duration::from_secs(1);
 
-/// How often a pass reads every file, rather than only those whose size,
-/// time or identity changed (`folders.md` 49).
+/// Finds a change that size and time did not show.
 const FULL_PASS: Duration = Duration::from_secs(60);
 
-/// Whether this pass reads every file: the first does, and then one a
-/// minute, which finds a change the size and time did not show.
 fn full_due(last: Option<Instant>, now: Instant) -> bool {
     last.is_none_or(|last| now.duration_since(last) >= FULL_PASS)
 }
 
-/// The longest changes that never settle hold off a pass. A file written
-/// more often than the debounce, a log say, would otherwise keep every
-/// other file and every change from the server out of step for as long as
-/// it is written. An editor's save settles long before this, so only a
-/// change that never stops is read mid-write, and the next pass reads it
-/// again.
+/// A file written more often than `SETTLE`, a log say, would otherwise hold
+/// off every pass for as long as it is written.
 const HELD_MOST: Duration = Duration::from_secs(5);
 
-/// When the watch last saw a change and last ran a pass, which decide
-/// whether a pass runs now.
 struct Gate {
     last_change: Instant,
     last_pass: Instant,
@@ -60,32 +46,24 @@ impl Gate {
         self.last_change = now;
     }
 
-    /// Measured from the end: a pass's own reads are events passed over, and
-    /// measured from its start a pass longer than a tick would set off the
-    /// next one.
+    /// Call at a pass's end: its own reads are events passed over, and from
+    /// its start a pass longer than a tick would set off the next one.
     fn passed(&mut self, now: Instant) {
         self.last_pass = now;
     }
 
-    /// Whether an event the loop passes over lets the tick's pass run: only
-    /// once a tick has gone by since the last pass ended and since the last
-    /// change, as a receive that timed out would. inotify reports every open
-    /// of a file, so a reader faster than the tick would otherwise keep the
-    /// receive from ever timing out.
+    /// inotify reports every open, so a reader faster than the tick would
+    /// otherwise keep the receive from ever timing out.
     fn passed_over_is_due(&self, now: Instant) -> bool {
         now.duration_since(self.last_pass) >= TICK && now.duration_since(self.last_change) >= TICK
     }
 
-    /// Whether a pass runs now: once the folder has settled, or once
-    /// changes that never settle have held it off for `HELD_MOST`.
     fn due(&self, now: Instant) -> bool {
         now.duration_since(self.last_change) >= SETTLE
             || now.duration_since(self.last_pass) >= HELD_MOST
     }
 }
 
-/// Watches a folder and keeps it in step. Every pass, the first included,
-/// decides identity by the same rule (`folders.md` 18).
 pub fn watch(
     dir: &Path,
     session: Session,
@@ -96,10 +74,6 @@ pub fn watch(
     let stop = AtomicBool::new(false);
     let (sender, wakes) = mpsc::channel::<Wake>();
     std::thread::scope(|scope| {
-        // The server's side is held open beside the folder's, so another
-        // device's change reaches the copy as it happens and the next pass
-        // writes it out, where a folder that only ever pushed would hold what
-        // it had at its last hydration for good.
         let server_wakes = sender.clone();
         let follower = scope.spawn(|| follow(&folder, &stop, server_wakes));
         let watched = watch_files(&folder, dir, sender, &wakes, stop_after, json);
@@ -111,22 +85,15 @@ pub fn watch(
     })
 }
 
-/// What wakes the watcher: the filesystem, or the server's side.
 enum Wake {
     File(notify::Result<notify::Event>),
-    /// A change from the server reached the copy.
     Server,
-    /// The follow ended for a reason no retry changes.
     Ended(String),
 }
 
-/// The first wait before a failed hydration is tried again, and the longest
-/// it doubles to.
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 const RETRY_MOST: Duration = Duration::from_secs(30);
 
-/// Follows the server, hydrating first where the copy cannot answer
-/// (`device.md` 16); an answer no retry changes ends the watch.
 fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CliError> {
     let mut retry = RETRY_FIRST;
     while !stop.load(Ordering::SeqCst) {
@@ -157,8 +124,6 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
     Ok(())
 }
 
-/// The wait before the next hydration after one that failed with `error`,
-/// the server's `Retry-After` where it names longer, and the backoff after it.
 fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {
     let wait = error
         .retry_after()
@@ -177,8 +142,6 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
     }
 }
 
-/// The filesystem side of a watch: a pass whenever the folder settles, and
-/// on every tick.
 fn watch_files(
     folder: &Folder,
     dir: &Path,
@@ -187,18 +150,14 @@ fn watch_files(
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
-    // Resolved, because the filter below strips this prefix off the paths
-    // the watcher reports and macOS reports them resolved: a folder under
-    // `/var/folders/...` comes back as `/private/var/folders/...`, every
-    // strip fails, every path reads as not dot-led, and the folder wakes
-    // itself through its own writes under `.marfa` a few times a second.
+    // macOS reports resolved paths (`/private/var/...`); unresolved, every
+    // strip below fails and the folder wakes itself through `.marfa` writes.
     let dir = &std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let mut watcher = notify::recommended_watcher(move |event| {
         let _ = sender.send(Wake::File(event));
     })
     .map_err(|error| CliError::Watch(format!("cannot watch: {error}")))?;
-    // Watching starts before the first pass, so a file that arrives during
-    // that pass is seen by the watcher rather than falling between the two.
+    // Before the first pass, so a file arriving during it is not missed.
     watcher
         .watch(dir, RecursiveMode::Recursive)
         .map_err(|error| CliError::Watch(format!("cannot watch {}: {error}", dir.display())))?;
@@ -206,11 +165,9 @@ fn watch_files(
 
     let started = Instant::now();
     let mut gate = Gate::new(Instant::now());
-    // What stood after the last pass that printed, so a standing condition
-    // is said once rather than once a second.
+    // So a standing condition is said once, not once a second.
     let mut standing: Option<Standing> = None;
     let mut last_full: Option<Instant> = None;
-    // Read again after each pass, which is when the settings can change.
     let mut lists = folder.settings().and_then(|settings| settings.lists()).ok();
     loop {
         if let Some(limit) = stop_after
@@ -220,12 +177,8 @@ fn watch_files(
         }
         match events.recv_timeout(TICK) {
             Ok(Wake::File(Ok(event))) => {
-                // `Access` is an open or the close after a write, and a folder
-                // does not push a file because somebody opened it; a write
-                // has already shown itself as a modify. A dot-led path is watched only
-                // where the include list names it (`folders.md` 25), and
-                // `.marfa` only for the settings file (28); this stops a write
-                // under `.marfa` waking a pass.
+                // `Access` is an open or the close after a write, which has
+                // already shown itself as a modify.
                 let passed_over = matches!(event.kind, EventKind::Access(_))
                     || event.paths.iter().all(|path| {
                         dot_led(dir, path)
@@ -239,7 +192,6 @@ fn watch_files(
                 }
             }
             Ok(Wake::File(Err(error))) => eprintln!("watch error: {error}"),
-            // A change from elsewhere is written out on the pass below.
             Ok(Wake::Server) => {}
             Ok(Wake::Ended(reason)) => {
                 return Err(CliError::Watch(format!(
@@ -249,18 +201,8 @@ fn watch_files(
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        // A pass on every tick, not only on a change: a journaled delete
-        // becomes a delete when its grace runs out, and nothing on the
-        // filesystem marks that. So once a tick is due, the only gate is
-        // the debounce — an editor writes a file in several steps, and a
-        // pass between two of them reads a file halfway through being
-        // written and pushes it. Only changes that never settle pass it,
-        // once they have held a pass off for `HELD_MOST`.
-        //
-        // There is deliberately no "was there a change" flag beside this.
-        // A pass with nothing to do is cheap and says nothing, and a flag
-        // that gated the pass would stop the journal ever being swept in a
-        // folder that went quiet after a delete.
+        // No "was there a change" flag: it would stop the journal being
+        // swept in a folder that went quiet after a delete.
         if !gate.due(Instant::now()) {
             continue;
         }
@@ -269,8 +211,7 @@ fn watch_files(
             last_full = Some(Instant::now());
         }
         match step(folder, json, full, &mut standing) {
-            // The follow is hydrating the copy, or will try again, and a
-            // later pass finds it whole.
+            // The follow is hydrating the copy; a later pass finds it whole.
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
         }
@@ -280,8 +221,6 @@ fn watch_files(
     Ok(())
 }
 
-/// What a pass leaves standing rather than does: files that are not in step.
-/// Said when it changes, not on every pass it stays the same.
 #[derive(Debug, Clone, PartialEq)]
 struct Standing {
     lost: usize,
@@ -301,11 +240,9 @@ struct Standing {
     embeds: Vec<String>,
     registry: Option<String>,
     unsure: Vec<marfa_core::folder::Unsure>,
-    /// A large removal waiting, from the disk and from a pull.
     paused: (usize, usize),
 }
 
-/// One pass: read the folder, send what it queued, write back what came in.
 fn step(
     folder: &Folder,
     json: bool,
@@ -320,13 +257,10 @@ fn step(
     };
     let drained = folder.drain()?;
     let pulled = folder.pull()?;
-    // Quiet unless something happened or what stands changed. Files already
-    // in step, or outside the search, are not events.
     let happened = scanned.created
         + scanned.updated
         + scanned.renamed
-        // A paused removal's files are missing at every pass, and are said
-        // through `paused` when it changes.
+        // A paused removal's files are missing at every pass.
         + scanned.missing.saturating_sub(scanned.paused)
         + scanned.deleted
         + scanned.moved_away
@@ -383,7 +317,6 @@ fn step(
         unsure: scanned.unsure.clone(),
     };
     let changed = standing.as_ref() != Some(&now);
-    // Said when it changes, as what stands is, not at every eventful pass.
     let unplaced = standing
         .as_ref()
         .is_none_or(|before| before.unplaced != now.unplaced)
@@ -418,7 +351,6 @@ fn step(
         }),
         json,
         || {
-            // An item with no file is named, never left out of the line.
             let held = pulled.unwritten + pulled.outside + pulled.unsuited + pulled.absent;
             let settings = crate::folders::settings_line(&settings)
                 .map(|line| format!("{line}\n"))
@@ -474,15 +406,12 @@ fn step(
     )
 }
 
-/// Whether a path is the folder's settings file, the one file under `.marfa`
-/// a watch watches, so a save of it is waited out as any file's is (`folders.md` 28).
 fn settings_file(root: &Path, path: &Path) -> bool {
     path == root
         .join(marfa_core::folder::STATE_DIR)
         .join(marfa_core::folder::SETTINGS_FILE)
 }
 
-/// Whether the folder's lists take the file at `path`.
 fn taken(lists: &marfa_core::folder::lists::Lists, root: &Path, path: &Path) -> bool {
     path.strip_prefix(root)
         .ok()
@@ -490,7 +419,6 @@ fn taken(lists: &marfa_core::folder::lists::Lists, root: &Path, path: &Path) -> 
         .is_some_and(|relative| lists.takes(relative))
 }
 
-/// Whether a path lies under a dot-led directory inside the folder.
 fn dot_led(root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
@@ -523,11 +451,6 @@ mod tests {
         assert!(!due(under, under));
     }
 
-    /// The loop's timing on a clock the test moves: one file changing twice
-    /// a second, each change waking the watch. A pass carries both
-    /// directions, its scan and drain sending what changed on the disk and
-    /// its pull writing what came from the server, so a bound on the wait
-    /// for a pass is a bound on both.
     #[test]
     fn steady_changes_hold_a_pass_off_for_a_bounded_time() {
         let every = Duration::from_millis(500);
@@ -560,8 +483,6 @@ mod tests {
             "a pass was held off for {longest:?} by changes that never settled"
         );
 
-        // Witness: the same clock with the changes stopped settles at once,
-        // so the bound above is what steady changes cost and nothing more.
         let quiet = at + SETTLE;
         assert!(gate.due(quiet));
         assert!(!Gate::new(at).due(at + SETTLE / 2));

@@ -1,5 +1,3 @@
-//! The values both surfaces of the binary take from the command line.
-
 use clap::ValueEnum;
 
 use crate::error::CliError;
@@ -11,7 +9,6 @@ pub enum Tier {
 }
 
 impl Tier {
-    /// The value the server's doors take.
     pub fn as_str(self) -> &'static str {
         match self {
             Tier::Library => "library",
@@ -29,7 +26,6 @@ pub enum ItemState {
 }
 
 impl ItemState {
-    /// The value the server's doors take.
     pub fn as_str(self) -> &'static str {
         match self {
             ItemState::Active => "active",
@@ -40,8 +36,7 @@ impl ItemState {
     }
 }
 
-// Every sortable column is a verb plus `_at`, so the shared `At` suffix the
-// lint reports is the naming rule rather than noise the variants could drop.
+// The `At` suffix is the server's column names.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SortField {
@@ -51,7 +46,6 @@ pub enum SortField {
 }
 
 impl SortField {
-    /// The column name the server's listing takes.
     pub fn as_str(self) -> &'static str {
         match self {
             SortField::CreatedAt => "created_at",
@@ -115,13 +109,8 @@ impl From<SortDirection> for marfa_core::SortDirection {
     }
 }
 
-/// A `--properties` argument as the object the core takes.
-///
-/// Refused here rather than deeper, because a caller who typed malformed JSON
-/// wants to hear about their argument rather than about a field a queue could
-/// not build. An array or a bare value is refused for the same reason: the
-/// wire shape is an object and a caller who sent something else meant an
-/// object.
+/// Refused here rather than deeper, so the caller hears about their argument
+/// rather than about a field a queue could not build.
 pub fn properties(text: &str) -> Result<serde_json::Map<String, serde_json::Value>, CliError> {
     match serde_json::from_str::<serde_json::Value>(text) {
         Ok(serde_json::Value::Object(map)) => Ok(map),

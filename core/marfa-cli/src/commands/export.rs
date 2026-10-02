@@ -81,8 +81,7 @@ pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             )
         }
         None => {
-            // The export is the answer, whatever the mode: NDJSON is already
-            // one record per line, and an archive is bytes to redirect.
+            // Raw even under `--json`: an archive is bytes to redirect.
             let mut stdout = io::stdout().lock();
             io::copy(&mut reader, &mut stdout)?;
             stdout.flush()?;

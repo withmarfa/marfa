@@ -4,24 +4,14 @@ use serde_json::Value;
 
 pub use marfa_core::http::Method;
 
-/// What a call sends as its body.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Body {
     None,
     Json(Value),
-    /// Streamed from the file rather than read whole, under this type.
-    File {
-        path: PathBuf,
-        content_type: String,
-    },
-    /// `application/x-www-form-urlencoded`, which is what the OAuth doors
-    /// take.
+    File { path: PathBuf, content_type: String },
     Form(Vec<(String, String)>),
 }
 
-/// One call from the direct surface, before it is sent: the shape a command
-/// builds and the tests hold, with nothing about the server or the credential
-/// in it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Request {
     pub method: Method,
@@ -29,17 +19,8 @@ pub struct Request {
     pub query: Vec<(String, String)>,
     pub headers: Vec<(String, String)>,
     pub body: Body,
-    /// Whether the door needs a credential. The root document, the health
-    /// door and the sign-in endpoints answer without one.
     pub credential: bool,
-    /// Hand the body back as a reader rather than reading it as text: the
-    /// stream, an export, a blob's bytes.
     pub stream: bool,
-    /// The answer carries something the server mints once and never shows
-    /// again, a key or a signing secret. The contract a server speaks is
-    /// named on its answer, which for this write is too late: an answer on
-    /// another contract is not read, and what it carried would be lost. So
-    /// the root is read first.
     pub mints: bool,
 }
 
@@ -82,7 +63,6 @@ impl Request {
         self
     }
 
-    /// A query parameter that rides only when the caller gave it.
     pub fn query_opt(self, key: &str, value: Option<impl Into<String>>) -> Request {
         match value {
             Some(value) => self.query(key, value),
@@ -90,13 +70,10 @@ impl Request {
         }
     }
 
-    /// A flag that rides as `key=true` only when set.
     pub fn query_flag(self, key: &str, set: bool) -> Request {
         if set { self.query(key, "true") } else { self }
     }
 
-    /// A repeatable value joined with commas, the way the listing grammar
-    /// takes `tags` and `include`.
     pub fn query_list(self, key: &str, values: &[String]) -> Request {
         if values.is_empty() {
             self
@@ -148,7 +125,6 @@ impl Request {
         self
     }
 
-    /// The path as it will appear on the wire, for messages and tests.
     pub fn path(&self) -> String {
         format!("/{}", self.segments.join("/"))
     }

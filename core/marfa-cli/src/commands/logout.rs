@@ -6,18 +6,15 @@ use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::{Named, Remote};
 
-/// Sign out of a server: the token set is revoked and forgotten.
 pub fn run(named: &Named, out: &Printer) -> Result<(), CliError> {
     let url = Remote::url_named(named)?;
     let origin = Remote::public_at(&url)?.origin().to_string();
     match credentials::read(&origin)? {
         Some(kept @ Kept::Token { .. }) => {
-            // The keychain decides the sign-out: the token is forgotten
-            // whether or not the server took the revocation, and the
-            // answer says which.
-            // `None` is revoked; otherwise why not, and whether it is known
-            // not to have been: a revocation answered on another contract
-            // was sent and its answer not read, so it may have taken effect.
+            // The token is forgotten whether or not the server took the
+            // revocation. The flag says whether it is known not to have: a
+            // revocation answered on another contract was sent, so it may
+            // have taken effect.
             let not_revoked: Option<(&str, bool)> = match auth::revoke(&kept) {
                 Ok(()) => None,
                 Err(CliError::Refused { .. }) => {

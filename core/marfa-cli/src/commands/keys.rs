@@ -44,7 +44,6 @@ pub enum KeysCommand {
     Forget,
 }
 
-/// The seven permissions, named by what they permit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Permission {
     #[value(name = "schema.write")]
@@ -204,9 +203,7 @@ pub struct KeyUpdateArgs {
     pub no_permissions: bool,
 }
 
-/// Every family named empty. A mint takes the creator's maps for a body
-/// naming none of them, whatever it names of the permissions, and an update
-/// changes only what it names.
+/// Every family is named, empty: a mint naming no map takes the creator's.
 fn hold_nothing(body: &mut Map<String, Value>) {
     body.insert("permissions".into(), json!([]));
     for map in [
@@ -247,8 +244,6 @@ impl ClaimArgs {
 }
 
 pub fn bootstrap_request() -> Request {
-    // The operator key's label and source are the door's convention; the
-    // secret rides as the bearer, which `run` below sets on the transport.
     Request::post(&["keys"])
         .json(json!({ "label": "operator", "source": "operator" }))
         .minting()
@@ -311,8 +306,7 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
                     "no bootstrap secret: pass --secret, or write the secret from the server's log on stdin",
                 )?,
             };
-            // The secret is the credential for this one call, whatever key
-            // the environment holds: a fresh instance has no key yet.
+            // Whatever key the environment holds: a fresh instance has none.
             let http = Transport::new(remote.url(), Some(&secret))?;
             let minted = Remote::with(http).json(&bootstrap_request())?;
             return print_minted(&minted, out);
@@ -345,10 +339,7 @@ pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), C
     }
 }
 
-/// Keeps the key the call resolved, or one read from stdin, for this origin.
-///
-/// Checked against the server first: a key kept unverified is a key that
-/// fails on the next command with nothing saying it was wrong when kept.
+/// Checked against the server first, so a wrong key fails here, not later.
 fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let key = match remote.credential() {
         Some(source) if source != crate::remote::CredentialSource::Keychain => remote.bearer(),
@@ -371,7 +362,6 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     })
 }
 
-/// One line from stdin, trimmed, refused with `empty` when there is none.
 fn read_line(empty: &str) -> Result<String, CliError> {
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
@@ -382,8 +372,7 @@ fn read_line(empty: &str) -> Result<String, CliError> {
     Ok(line)
 }
 
-/// A minted key is shown once, so the plaintext is the first thing on the
-/// line rather than a field in a record somebody scrolls past.
+/// A minted key is shown once, so the plaintext leads the line.
 fn print_minted(answer: &Value, out: &Printer) -> Result<(), CliError> {
     out.report(answer, || {
         let key = answer.get("key").and_then(Value::as_str).unwrap_or("");

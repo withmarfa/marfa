@@ -55,7 +55,6 @@ pub fn request(args: &EventsArgs) -> Request {
     request
 }
 
-/// One server-sent event, as the wire delivered it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Frame {
     pub id: Option<String>,
@@ -63,9 +62,8 @@ pub struct Frame {
     pub data: String,
 }
 
-/// Reads frames off a stream, sending each as it completes. Ends when the
-/// stream does; a read that fails is sent as the failure it is, so a
-/// connection that broke is not reported as a stream that closed.
+/// A failed read is sent as a failure, so a broken connection is not
+/// reported as a stream that closed.
 fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Result<Frame, std::io::Error>>) {
     let mut frame = Frame::default();
     let mut has_content = false;
@@ -84,7 +82,7 @@ fn read_frames(reader: Box<dyn Read + Send>, frames: mpsc::Sender<Result<Frame, 
             has_content = false;
             continue;
         }
-        // A comment line is a keep-alive and carries nothing.
+        // An SSE comment line, a keep-alive.
         if line.starts_with(':') {
             continue;
         }
@@ -131,8 +129,6 @@ pub fn run(args: EventsArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
                     return Ok(());
                 }
             }
-            // The server closed the stream, and a terminal frame preceded
-            // it and was printed.
             Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }

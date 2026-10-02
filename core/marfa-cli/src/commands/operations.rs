@@ -1,18 +1,8 @@
-//! Every published operation, and the command that reaches it.
-//!
-//! One table, read by two things: `marfa operations`, which prints it for
-//! any reader of the binary; and the crate's own test, which holds it
-//! against `openapi.json` so a published operation without a command is
-//! red before anything is pushed, and a command for one the document no
-//! longer publishes is red too.
-
 use serde_json::json;
 
 use crate::error::CliError;
 use crate::output::Printer;
 
-/// An operation id from `openapi.json` and the command line that reaches
-/// it, without the arguments a call needs.
 pub struct Operation {
     pub id: &'static str,
     pub command: &'static str,
