@@ -24,7 +24,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, createTask } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
 let client: MarfaClient;
@@ -1106,6 +1106,83 @@ describe("bulk_action async-job lifecycle", () => {
     );
     expect(replay.ok).toBe(true);
     expect((replay.data as BulkActionJob).id).toBe(firstJobId);
+    expect(first.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(replay.headers.get("Idempotency-Replayed")).toBe("true");
+  });
+
+  it("refuses a different request under a key already used", async () => {
+    const tag = `ba-idem-reuse-${ctx.runId}`;
+    await seedTagged(1, tag);
+    const key = `idem-reuse-${ctx.runId}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const first = await client.bulkAction(
+      { action: "update_tags", add: [`${tag}-once`], filter: { tags: [tag] } },
+      { idempotencyKey: key },
+    );
+    expect(first.status).toBe(202);
+
+    const different = await client.bulkAction(
+      { action: "update_tags", add: [`${tag}-twice`], filter: { tags: [tag] } },
+      { idempotencyKey: key },
+    );
+    expect(different.status).toBe(422);
+    expect(different.error?.error.code).toBe("idempotency_key_reused");
+  });
+
+  it("runs another credential's own job under a key this one used, and never hands it this job", async () => {
+    // The first credential's job matches tasks the second may not read; the
+    // second, reusing the key for its own notes, is answered about its own
+    // request.
+    const key = `idem-cross-${ctx.runId}-${Math.random().toString(36).slice(2, 8)}`;
+    const taskTag = `ba-idem-cross-task-${ctx.runId}`;
+    const task = await client.createItem(
+      createTask({ source: ctx.source, tags: [taskTag], tier: "library" }),
+    );
+    expect(task.ok).toBe(true);
+    trackItem(ctx, task.data.item.id);
+    const theirs = await client.bulkAction(
+      {
+        action: "update_tags",
+        add: [`${taskTag}-done`],
+        filter: { tags: [taskTag] },
+      },
+      { idempotencyKey: key },
+    );
+    expect(theirs.status).toBe(202);
+    const theirJob = theirs.data as BulkActionJob;
+
+    const noteOnly = await createScopedClient(`idem-cross-${ctx.runId}`, {
+      "core.note": "write",
+    });
+    const noteTag = `ba-idem-cross-note-${ctx.runId}`;
+    const note = await noteOnly.createItem(
+      createNote({
+        source: `${ctx.source}-idem-cross-${ctx.runId}`,
+        tags: [noteTag],
+        tier: "library",
+      }),
+    );
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+
+    const mine = await noteOnly.bulkAction(
+      {
+        action: "update_tags",
+        add: [`${noteTag}-done`],
+        filter: { tags: [noteTag] },
+      },
+      { idempotencyKey: key },
+    );
+    expect(mine.status).toBe(202);
+    expect(mine.headers.get("Idempotency-Replayed")).toBeNull();
+    const myJob = mine.data as BulkActionJob;
+    expect(myJob.id).not.toBe(theirJob.id);
+    expect(myJob.matched).toBe(1);
+
+    const final = await noteOnly.pollBulkActionToTerminal(myJob.id);
+    expect(final.status).toBe("completed");
+    const metadata = await noteOnly.getMetadata(note.data.item.id);
+    expect(metadata.data.metadata.tags).toContain(`${noteTag}-done`);
   });
 
   it("tells a reused id from a mistaken declaration, as the single-item doors do", async () => {

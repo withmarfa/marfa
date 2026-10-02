@@ -10,6 +10,7 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackKey,
   cleanup,
 } from "../../utils/setup.js";
 import { detectSyncCapabilities, requireRule } from "./capabilities.js";
@@ -407,6 +408,75 @@ describe("idempotency keys", () => {
       repeat.headers.get("Idempotency-Replayed"),
       "a replayed delete did not announce itself",
     ).toBe("true");
+  });
+
+  it("holds a key to the credential that sent it", async () => {
+    requireRule(caps, "idempotencyKeys");
+    const label = `sync-idem-second-${randomUUID().slice(0, 8)}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "core.note": "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const second = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    const create = (
+      as: MarfaClient,
+      key: string,
+      body: string,
+      source?: string,
+    ) =>
+      as.rawRequest<ItemEnvelope>("/items", {
+        method: "POST",
+        headers: { "Idempotency-Key": key },
+        body: { type: "core.note", source, properties: { body } },
+      });
+
+    // A different request from each under one key: neither is refused for
+    // a key only the other used.
+    const shared = `sync-shared-${randomUUID()}`;
+    const mine = await create(client, shared, "first credential", ctx.source);
+    expect(mine.ok).toBe(true);
+    trackItem(ctx, mine.data.item.id);
+    const theirs = await create(
+      second,
+      shared,
+      "second credential",
+      `${ctx.source}-${label}`,
+    );
+    expect(
+      theirs.ok,
+      `a second credential was refused for a key only the first used: ${JSON.stringify(theirs.error)}`,
+    ).toBe(true);
+    trackItem(ctx, theirs.data.item.id);
+    expect(theirs.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(theirs.data.item.properties.body).toBe("second credential");
+
+    // The same request from each, each stamped with its own source: the
+    // second is its own write, never the first's stored answer.
+    const same = `sync-same-${randomUUID()}`;
+    const a = await create(client, same, "one body");
+    expect(a.ok).toBe(true);
+    trackItem(ctx, a.data.item.id);
+    const b = await create(second, same, "one body");
+    expect(b.ok).toBe(true);
+    trackItem(ctx, b.data.item.id);
+    expect(b.headers.get("Idempotency-Replayed")).toBeNull();
+    expect(b.data.item.id).not.toBe(a.data.item.id);
+
+    // The witness: within one credential the key still replays.
+    const again = await create(
+      second,
+      shared,
+      "second credential",
+      `${ctx.source}-${label}`,
+    );
+    expect(again.headers.get("Idempotency-Replayed")).toBe("true");
   });
 });
 
