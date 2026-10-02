@@ -103,6 +103,22 @@ describe("validation edge cases", () => {
     }
   });
 
+  it("refuses an edge shorthand value carrying a backslash, and still takes a quote", async () => {
+    // The witness: a value the shorthand quotes without trouble.
+    const quoted = await client.listItems({ edge: { about: 'a"b' } });
+    expect(quoted.status).toBe(200);
+    expect(quoted.data.data).toEqual([]);
+
+    // The first value's backslash would swallow its closing quote, so the
+    // second clause's opening quote would end the string and the second
+    // value would be read as filter syntax.
+    const refused = await client.listItems({
+      edge: { about: "x\\", mentions: " OR state exists OR type eq " },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+  });
+
   it("accepts quotes, ampersands and parentheses in a search query", async () => {
     const r = await client.search('hello "world" & (test)');
     expect(r.status).toBe(200);
