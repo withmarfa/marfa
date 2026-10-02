@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Lists the login keychain's generic passwords under one service, or those
-# of the keychain file named after it, one line each: account, creation and
-# modification time. Read from the items'
-# attributes alone, never a secret, so listing never asks a person for
-# anything.
+# Reads attributes only, never a secret, so it never raises a dialog.
 #
 #   core/scripts/login-keychain.sh marfa [KEYCHAIN]
-#
-# login-keychain-unchanged.sh compares two listings around a run.
 set -euo pipefail
 
 service="${1:?usage: login-keychain.sh SERVICE [KEYCHAIN]}"

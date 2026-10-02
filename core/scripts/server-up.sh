@@ -1,46 +1,21 @@
 #!/usr/bin/env bash
-# Boots the monorepo server on SQLite, mints the first key from the
-# bootstrap secret the server prints, and writes an env file naming the
-# server, a working key and the process to stop.
-#
 #   env_text="$(scripts/server-up.sh)" && eval "${env_text}"
 #                                       # exports MARFA_TEST_URL, MARFA_TEST_KEY, MARFA_SERVER_ENV
 #   scripts/server-down.sh              # stops it, and removes a directory it made
 #
-# Assigned and then evaluated, never `eval "$(…)"` alone: `eval` of an empty
-# string succeeds, so a boot that failed would leave the caller running on
-# whatever the last boot exported.
+# Assign, then eval: `eval "$(…)"` of a failed boot's empty output succeeds.
 #
-# Set MARFA_SERVER_ENV first to choose where the env file goes. A caller that
-# wants to clean up after a boot that failed has to, because the default sits
-# inside a throwaway directory whose name is only printed on success.
-#
-# MARFA_SERVER_REPO points at the monorepo checkout to boot; the default is
-# the checkout this script lives in.
-#
-# MARFA_SERVER_KEEP names a directory to keep the instance in. The first
-# boot there records its port, its secrets and the working key beside the
-# database, and a later boot on the same directory reuses all four: the same
-# origin, the same data, the same key. That is how a proof stops a server and
-# brings it back. `server-down.sh` leaves that directory in place. It is an
-# input only: the env file names the directory in MARFA_SERVER_STATE, which a
-# second boot in the same shell does not read.
-#
-# PORT defaults to one the kernel says is free, because a fixed default
-# cannot be right for two boots on one machine: whichever arrived second would
-# fail to bind against a process belonging to the other.
+# MARFA_SERVER_ENV: where the env file goes. Set it to clean up after a failed
+# boot, since the default directory's name is printed only on success.
+# MARFA_SERVER_REPO: the checkout to boot; this one by default.
+# MARFA_SERVER_KEEP: a directory a later boot reuses, with the same port,
+# secrets, data and key; server-down.sh leaves it in place.
+# PORT: a free one by default.
 set -euo pipefail
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
-# Asked of the kernel, then released so the server can bind it a moment
-# later. The window between is not zero, which is why the health check below
-# is what decides a boot succeeded rather than this line.
-#
-# Asked on the address the server binds, not the one the URL names. Node
-# given no host listens on `::` with IPv6-only off where the machine has
-# IPv6, which takes the port in both families, and on `0.0.0.0` where it does
-# not. A port asked of `127.0.0.1` alone can be one a listener holds on IPv6,
-# and the server's bind then fails with `EADDRINUSE`.
+# Asked on the address the server binds (`::` dual-stack, else `0.0.0.0`),
+# not the URL's: a port free on `127.0.0.1` alone can be held on IPv6.
 free_port() {
   python3 -c 'import socket
 try:
@@ -81,15 +56,8 @@ export PORT="${port}"
 export MARFA_AUTH_SECRET="${MARFA_AUTH_SECRET:-$(openssl rand -hex 32)}"
 export API_KEY_SALT="${API_KEY_SALT:-$(openssl rand -hex 32)}"
 
-# Refused here rather than left to the server, which reports a port already
-# in use as an unhandled `EADDRINUSE` and a node stack trace. On a shared
-# runner the usual cause is a server a previous run failed to stop, and that
-# is worth saying in one line.
-#
-# A listener that takes the connection and never answers is refused too: the
-# server can still bind the port on `::` beside one held on `127.0.0.1`
-# alone, and every health check below would then reach the silent one. curl
-# says so with exit 28, a timeout, where a free port refuses the connection.
+# A silent listener on `127.0.0.1` would still let the server bind `::`, and
+# every health check would reach the silent one; curl exits 28 for it.
 probe=0
 curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || probe=$?
 if [[ "${probe}" -eq 0 ]]; then
@@ -103,33 +71,16 @@ if [[ "${probe}" -eq 28 ]]; then
   exit 1
 fi
 
-# The subshell `exec`s into pnpm, which spawns tsx, which spawns node, so the
-# pid recorded here is pnpm's and the process holding the port is two levels
-# below it. `server-down.sh` walks down from this pid rather than signaling
-# it alone.
-#
-# **A process group would be tidier and is not reliable here.** `set -m` gives
-# a background job its own group only where the shell has job control, and
-# this script is routinely run inside a command substitution, where it does
-# not: the job then shares the script's group, `kill -- -$pid` names a group
-# that is not the server's, and the fallback kills pnpm and orphans node.
+# The pid is pnpm's, two levels above node; server-down.sh walks the tree.
 (
   cd "${repo}"
   exec pnpm --filter @withmarfa/server exec tsx --import ./src/instrumentation.ts src/index.ts
 ) >"${log}" 2>&1 &
 pid=$!
 
-# The caller may name the env file, and a caller that has to clean up after a
-# failed boot must: the path is otherwise inside a `mktemp` directory this
-# script alone knows, so a boot that dies before printing it leaves a running
-# server nobody can address.
 env_file="${MARFA_SERVER_ENV:-${state}/env}"
 
-# **Written before the server is known to be up, not after.** Everything
-# below can fail, and a caller that cannot read the pid cannot stop what this
-# script started: `server-down.sh` answers "no env file" and the server runs
-# on. The key is filled in once there is one; the two lines that matter for
-# cleanup are here from the start.
+# Written before the server is up, so a failed boot can still be stopped.
 write_env() {
   {
     echo "export MARFA_TEST_URL='${url}'"
@@ -151,8 +102,6 @@ fail() {
   exit 1
 }
 
-# Every call is bounded: a connection taken and never answered would
-# otherwise hold the boot for good rather than fail it.
 for _ in $(seq 1 120); do
   if curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1; then
     break
@@ -191,10 +140,8 @@ read_key() {
   python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))'
 }
 
-# Bootstrap answers with the operator key, which holds no permissions because
-# running the instance sits outside the permission model; the operator mints
-# the key that works. Two source names, because the server refuses a second
-# key naming as its own a source another key already holds.
+# The operator key bootstrap answers with holds no permissions; it mints the
+# working key. Two sources, since no two keys may claim one.
 bootstrap="$(mint "${secret}" core-proof-operator)"
 operator="$(read_key <<<"${bootstrap}")"
 [[ -n "${operator}" ]] || fail "bootstrap did not mint an operator key: ${bootstrap}"
