@@ -35,7 +35,7 @@ pub(super) struct Outcome {
 }
 
 /// Every name an item answers to in this copy, folded: its title, and its
-/// title, and its file's path and name here with and without the extension.
+/// file's path and name here with and without the extension.
 pub(super) struct Names {
     ids: HashMap<String, BTreeSet<String>>,
 }

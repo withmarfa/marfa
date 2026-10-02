@@ -174,6 +174,8 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
+        // The server has not finished answering this key, and nothing clears
+        // it on its own, so it counts.
         (409, "idempotency_key_in_flight") => Classified::Counted,
         (429, _) => Classified::Environmental,
         (500..=599, _) => Classified::Environmental,
@@ -302,6 +304,8 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             Outgoing {
                 method: Method::Patch,
                 segments: vec!["items".into(), item_id()?.into()],
+                // The device resolves nothing itself: the server resolves inside
+                // its own transaction rather than leaving two writes.
                 params: vec![("conflict".into(), "auto".into())],
                 body: payload,
                 idempotency_key: &row.idempotency_key,
@@ -443,7 +447,7 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
 }
 
 pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
-    core.lock_ref().refuse_unless_writer()?;
+    core.lock.refuse_unless_writer()?;
     {
         let conn = core.conn()?;
         // Before anything is read: left blocked, a self-clearing row would

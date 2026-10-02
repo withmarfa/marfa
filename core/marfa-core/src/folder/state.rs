@@ -15,7 +15,8 @@ pub struct Bound {
     pub identity: Option<String>,
     pub content_hash: String,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
-    /// where the last agreement was a scan's read. A pull removes only a
+    /// where the last agreement was a scan's read. A pull removes only a file
+    /// it wrote.
     pub written_hash: Option<String>,
     /// The item ids the file's links named when last read or written.
     pub links: Vec<String>,

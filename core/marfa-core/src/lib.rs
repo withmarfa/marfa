@@ -1092,10 +1092,6 @@ impl Core {
         })
     }
 
-    pub(crate) fn lock_ref(&self) -> &lock::WriterLock {
-        &self.lock
-    }
-
     pub(crate) fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
         self.conn
             .lock()

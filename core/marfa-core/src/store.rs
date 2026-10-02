@@ -183,6 +183,7 @@ pub fn holds_slice(conn: &Connection) -> Result<bool, CoreError> {
     Ok(slice(conn)?.is_some_and(|(types, _)| !types.is_empty()))
 }
 
+/// Pinned rows count, even in a copy that has never hydrated.
 pub fn slice_holds(
     conn: &Connection,
     catalog: &crate::catalog::Catalog,
