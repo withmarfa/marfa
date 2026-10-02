@@ -451,47 +451,21 @@ export const blobOrphans = sqliteTable("blob_orphans", {
 });
 
 /**
- * A reference to a blob added or removed lifts the blob's orphan report, so
- * the grace before a purge counts again from a report made after the last
- * change to what names it. Triggers rather than calls in each write path,
- * because the writes that add and drop references are many and owned
- * elsewhere, and a path that forgot the call would let a run purge on a
- * report older than the reference it never saw. Extensions, edge properties
- * and version snapshots match the hex anywhere in their text, which can only
- * lift a report the walk would have kept, never keep one it would lift.
- * Drizzle cannot declare a trigger; `scripts/generate-schema-sql.ts` appends
- * these to `schema.sql`.
+ * A reference to a blob entering or leaving an item's reference index lifts
+ * the blob's orphan report, so the grace before a purge counts again from a
+ * report made after the last change to what names it. A trigger rather than
+ * a call in each item write path, because those paths are many and a path
+ * that forgot the call would let a run purge on a report older than the
+ * reference it never saw. It deletes by hash, so it costs a lookup however
+ * large the report. Extensions and edge properties have no index; the
+ * stores that write them lift reports themselves (`liftOrphanReports`).
+ * Drizzle cannot declare a trigger; `scripts/generate-schema-sql.ts`
+ * appends these to `schema.sql`.
  */
-export const BLOB_REFERENCE_TRIGGERS: readonly string[] = (() => {
-  const lift = (
-    table: string,
-    event: "insert" | "update" | "delete",
-    on: string,
-    match: string,
-  ) =>
-    `CREATE TRIGGER IF NOT EXISTS \`${table}_${event}_lifts_blob_orphans\` AFTER ${on} ON \`${table}\` BEGIN DELETE FROM \`blob_orphans\` WHERE ${match}; END;`;
-  const holds = (row: "OLD" | "NEW", column: string) =>
-    `instr(${row}.${column}, substr(hash, 8)) > 0`;
-  const texts: [table: string, column: string][] = [
-    ["metadata", "extensions"],
-    ["edges", "properties"],
-    ["versions", "properties"],
-  ];
-  return [
-    lift("item_blob_references", "insert", "INSERT", "hash = NEW.hash"),
-    lift("item_blob_references", "delete", "DELETE", "hash = OLD.hash"),
-    ...texts.flatMap(([table, column]) => [
-      lift(table, "insert", "INSERT", holds("NEW", column)),
-      lift(
-        table,
-        "update",
-        `UPDATE OF ${column}`,
-        `${holds("OLD", column)} OR ${holds("NEW", column)}`,
-      ),
-      lift(table, "delete", "DELETE", holds("OLD", column)),
-    ]),
-  ];
-})();
+export const BLOB_REFERENCE_TRIGGERS: readonly string[] = [
+  "CREATE TRIGGER IF NOT EXISTS `item_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;",
+  "CREATE TRIGGER IF NOT EXISTS `item_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;",
+];
 
 // ---------------------------------------------------------------------------
 // blob_purges — blobs whose registry row a purge has removed and whose bytes

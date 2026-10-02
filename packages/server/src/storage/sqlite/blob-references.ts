@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { collectBlobHashes } from "../blob-utils.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
-import { item_blob_references } from "./schema.js";
+import { blobOrphans, item_blob_references, metadata } from "./schema.js";
 
 type Executor = DrizzleDb | SqliteTxContext;
 
@@ -88,4 +88,47 @@ export function digestsIn(properties: Record<string, unknown>): Set<string> {
   const out = new Set<string>();
   collectBlobHashes(properties, out);
   return out;
+}
+
+/**
+ * Lift the orphan report of every blob `values` name, in the transaction
+ * that adds or removes those references, so the grace before a purge
+ * counts again from a report made after the change. Item properties need
+ * none of this: their reference index does it by trigger. Extensions and
+ * edge properties have no index, so the store that writes them passes the
+ * text before and after, and the digests are found by the walk's own rule:
+ * one pass over the text, then lookups by hash, whatever the report holds.
+ */
+export async function liftOrphanReports(
+  db: Executor,
+  values: readonly unknown[],
+): Promise<void> {
+  const named = new Set<string>();
+  for (const value of values) collectBlobHashes(value, named);
+  const hashes = [...named];
+  // The parameter limit, not the report, bounds a statement.
+  for (let i = 0; i < hashes.length; i += 500) {
+    await db
+      .delete(blobOrphans)
+      .where(inArray(blobOrphans.hash, hashes.slice(i, i + 500)))
+      .run();
+  }
+}
+
+/** `liftOrphanReports` for the extensions of items about to be purged,
+ *  which their metadata rows' cascade would otherwise remove unseen. */
+export async function liftExtensionReportsOf(
+  db: Executor,
+  itemIds: readonly string[],
+): Promise<void> {
+  if (itemIds.length === 0) return;
+  const rows = await db
+    .select({ extensions: metadata.extensions })
+    .from(metadata)
+    .where(inArray(metadata.item_id, [...itemIds]))
+    .all();
+  await liftOrphanReports(
+    db,
+    rows.map((row) => row.extensions),
+  );
 }

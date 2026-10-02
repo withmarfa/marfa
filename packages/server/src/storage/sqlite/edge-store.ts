@@ -10,6 +10,7 @@ import {
   gte,
   sql,
   count,
+  type SQL,
 } from "drizzle-orm";
 import {
   ErrorCode,
@@ -35,6 +36,7 @@ import type { CursorSortKey } from "../interface.js";
 import { assertEdgeProperties, rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
 import { edges, edgeTypes } from "./schema.js";
+import { liftOrphanReports } from "./blob-references.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 
@@ -101,6 +103,7 @@ export class SqliteEdgeStore implements EdgeStore {
       }
       try {
         await tx.insert(edges).values(row).run();
+        await liftOrphanReports(tx, [row.properties]);
       } catch (err) {
         if (isPrimaryKeyViolation(err, "edges")) {
           // The race the doors' own comparison cannot close: both read the
@@ -322,7 +325,10 @@ export class SqliteEdgeStore implements EdgeStore {
         })
         .where(where)
         .returning();
-      if (written) return { ok: true as const, edge: rowToEdge(written) };
+      if (written) {
+        await liftOrphanReports(tx, [row.properties, written.properties]);
+        return { ok: true as const, edge: rowToEdge(written) };
+      }
       // The write matched nothing while the read found the row, so the
       // precondition is what failed. The read inside this transaction is
       // the current edge, so there is nothing to go back for.
@@ -331,27 +337,19 @@ export class SqliteEdgeStore implements EdgeStore {
   }
 
   async delete(id: string): Promise<void> {
-    await this.db.delete(edges).where(eq(edges.id, id)).run();
+    await this.removeWhere(eq(edges.id, id));
   }
 
   async deleteBySource(sourceId: string, edgeType?: string): Promise<Edge[]> {
     const conditions = [eq(edges.source_id, sourceId)];
     if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
-    const removed = await this.db
-      .delete(edges)
-      .where(and(...conditions))
-      .returning();
-    return removed.map(rowToEdge);
+    return this.removeWhere(and(...conditions));
   }
 
   async deleteByTarget(targetId: string, edgeType?: string): Promise<Edge[]> {
     const conditions = [eq(edges.target_id, targetId)];
     if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
-    const removed = await this.db
-      .delete(edges)
-      .where(and(...conditions))
-      .returning();
-    return removed.map(rowToEdge);
+    return this.removeWhere(and(...conditions));
   }
 
   async deleteBySourceBatch(
@@ -362,9 +360,7 @@ export class SqliteEdgeStore implements EdgeStore {
     const unique = Array.from(new Set(sourceIds));
     const conditions = [inArray(edges.source_id, unique)];
     if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
-    const where = and(...conditions);
-    const removed = await this.db.delete(edges).where(where).returning();
-    return removed.map(rowToEdge);
+    return this.removeWhere(and(...conditions));
   }
 
   async deleteByTargetBatch(
@@ -375,9 +371,20 @@ export class SqliteEdgeStore implements EdgeStore {
     const unique = Array.from(new Set(targetIds));
     const conditions = [inArray(edges.target_id, unique)];
     if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
-    const where = and(...conditions);
-    const removed = await this.db.delete(edges).where(where).returning();
-    return removed.map(rowToEdge);
+    return this.removeWhere(and(...conditions));
+  }
+
+  /** Every edge deletion: the rows go, and the blobs their properties
+   *  named have their orphan reports lifted, in one transaction. */
+  private async removeWhere(where: SQL | undefined): Promise<Edge[]> {
+    return this.db.transaction(async (tx) => {
+      const removed = await tx.delete(edges).where(where).returning();
+      await liftOrphanReports(
+        tx,
+        removed.map((row) => row.properties),
+      );
+      return removed.map(rowToEdge);
+    });
   }
 
   async countBySource(sourceId: string, edgeType: string): Promise<number> {

@@ -665,6 +665,46 @@ describe("a reference added or removed between runs", () => {
     expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
   });
 
+  it("restarts the grace for a blob an extension named and then stopped naming", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "named by an extension between runs");
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "host" } },
+    });
+    expect(created.status).toBe(201);
+    const id = ((await created.json()) as { item: { id: string } }).item.id;
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    expect((await ctx.storage.blobs.listOrphans()).map((r) => r.hash)).toEqual([
+      hash,
+    ]);
+    const put = await request(
+      ctx.app,
+      "PUT",
+      `/items/${id}/extensions/custom.cover`,
+      { key: ctx.workingKey, body: { cover: hash } },
+    );
+    expect(put.status, await put.clone().text()).toBe(200);
+    expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
+    const removed = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${id}/extensions/custom.cover`,
+      { key: ctx.workingKey },
+    );
+    expect(removed.status).toBe(200);
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+  });
+
   it("restarts the grace for a blob an edge named and then stopped naming", async () => {
     ctx = await createTestContext();
     const hash = await upload(ctx, "named by an edge between runs");
@@ -704,6 +744,76 @@ describe("a reference added or removed between runs", () => {
     time.advance(1);
     expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+  });
+});
+
+describe("lifting a report costs a lookup, not a scan", () => {
+  /** Raw SQL on the test's own database. */
+  function raw(c: TestContext) {
+    return c.storage as unknown as {
+      __sqliteAll: (query: string) => Promise<Record<string, unknown>[]>;
+      __sqliteRun: (query: string, params: unknown[]) => Promise<unknown>;
+    };
+  }
+
+  it("puts no text-matching trigger on extensions, edges or versions", async () => {
+    ctx = await createTestContext();
+    const triggers = await raw(ctx).__sqliteAll(
+      "SELECT tbl_name FROM sqlite_master WHERE type = 'trigger' ORDER BY name",
+    );
+    expect(new Set(triggers.map((t) => t.tbl_name))).toEqual(
+      new Set(["item_blob_references"]),
+    );
+  });
+
+  it("lifts reports by hash, through the index, with many reports held", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "named by a large extension");
+    // Ten thousand other reports, as a large instance's report can hold.
+    await raw(ctx).__sqliteRun(
+      `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 10000)
+       INSERT INTO blobs (hash, mime_type, size_bytes, created_at)
+       SELECT printf('sha256:%064x', i), 'text/plain', 1, '2026-01-01T00:00:00.000Z' FROM n`,
+      [],
+    );
+    await raw(ctx).__sqliteRun(
+      `INSERT INTO blob_orphans (hash, reported_at)
+       SELECT hash, '2026-01-01T00:00:00.000Z' FROM blobs`,
+      [],
+    );
+    const plan = await raw(ctx).__sqliteAll(
+      "EXPLAIN QUERY PLAN DELETE FROM blob_orphans WHERE hash IN ('sha256:0')",
+    );
+    expect(plan.map((row) => String(row.detail)).join(" ")).toMatch(
+      /SEARCH blob_orphans USING (INDEX|PRIMARY KEY)/,
+    );
+
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "host" } },
+    });
+    expect(created.status).toBe(201);
+    const id = ((await created.json()) as { item: { id: string } }).item.id;
+    const filler = "x".repeat(90_000);
+    const started = Date.now();
+    const put = await request(
+      ctx.app,
+      "PUT",
+      `/items/${id}/extensions/custom.big`,
+      { key: ctx.workingKey, body: { filler, cover: hash } },
+    );
+    expect(put.status, await put.clone().text()).toBe(200);
+    // Generous: a scan of every report per write is what this rules out.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const left = await raw(ctx).__sqliteAll(
+      "SELECT count(*) AS n FROM blob_orphans",
+    );
+    expect(Number(left[0]?.n)).toBe(10_000);
+    expect(
+      await raw(ctx).__sqliteAll(
+        `SELECT hash FROM blob_orphans WHERE hash = '${hash}'`,
+      ),
+    ).toEqual([]);
   });
 });
 
