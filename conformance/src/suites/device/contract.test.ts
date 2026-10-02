@@ -329,6 +329,85 @@ describe("the contract the binary was built for", () => {
       `contract ${String(builtFor + 1)}; this marfa was built for contract ${String(builtFor)}`,
     );
   });
+
+  const statusWithCounts = async (stats: Answer) => {
+    const started = await ScriptedServer.start();
+    server = started;
+    started.answer("GET", "/health", {
+      kind: "json",
+      status: 200,
+      body: { status: "ok" },
+    });
+    started.answer("GET", "/items/stats", stats);
+    const outcome = await marfa([
+      "--json",
+      "--url",
+      started.url,
+      "--key",
+      KEY,
+      "status",
+    ]);
+    return { started, outcome };
+  };
+
+  it("describes the server to a key that reaches no type, and says the counts need a working key", async () => {
+    const { started, outcome } = await statusWithCounts(
+      answers.forbidden("type_not_permitted"),
+    );
+    expect(outcome.code, outcome.stderr).toBe(0);
+    const report = JSON.parse(outcome.stdout) as {
+      health: unknown;
+      stats: unknown;
+      stats_refused: unknown;
+    };
+    expect(report.health).toEqual({ status: "ok" });
+    expect(report.stats).toBeNull();
+    expect(report.stats_refused).toBe("type_not_permitted");
+    // The counts were asked for, so the null is the refusal's.
+    expect(sent(started)).toEqual(["GET /", "GET /health", "GET /items/stats"]);
+    const words = await marfa(["--url", started.url, "--key", KEY, "status"]);
+    expect(words.code, words.stderr).toBe(0);
+    expect(words.stdout).toContain("health ok");
+    expect(words.stdout).toContain("items need a working key");
+  });
+
+  it("hands on any other refusal of the counts", async () => {
+    const { outcome } = await statusWithCounts(answers.unauthorized());
+    expect(outcome.code, outcome.stderr).toBe(5);
+    expect(refusal(outcome.stderr).error.server?.status).toBe(401);
+  });
+
+  it("mints the operator key with a bootstrap secret read from stdin", async () => {
+    const secret = "c".repeat(64);
+    const bootstrap = async (stdin: string) => {
+      const started = await ScriptedServer.start();
+      started.answer("POST", "/keys", {
+        kind: "json",
+        status: 201,
+        body: { key: "marfa_k1_operator", id: "k", label: "operator" },
+      });
+      server = started;
+      const outcome = await marfa(
+        ["--json", "--url", started.url, "keys", "bootstrap"],
+        stdin,
+      );
+      const mints = started.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/keys",
+      );
+      await started.stop();
+      server = undefined;
+      return { outcome, mints };
+    };
+    const read = await bootstrap(`${secret}\n`);
+    expect(read.outcome.code, read.outcome.stderr).toBe(0);
+    expect(read.outcome.stdout).toContain("marfa_k1_operator");
+    expect(read.mints).toHaveLength(1);
+    expect(read.mints[0]?.headers.authorization).toBe(`Bearer ${secret}`);
+    // With the mint above as its witness: no secret on stdin sends none.
+    const empty = await bootstrap("");
+    expect(empty.outcome.code).not.toBe(0);
+    expect(empty.mints).toEqual([]);
+  });
 });
 
 /**

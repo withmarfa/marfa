@@ -1179,7 +1179,7 @@ mod dispatch {
         ]);
         keys::run(
             keys::KeysCommand::Bootstrap {
-                secret: "the-secret".into(),
+                secret: Some("the-secret".into()),
             },
             &remote_at(&door),
             &QUIET,
@@ -1210,7 +1210,7 @@ mod dispatch {
         ]);
         match keys::run(
             keys::KeysCommand::Bootstrap {
-                secret: "the-secret".into(),
+                secret: Some("the-secret".into()),
             },
             &remote_at(&door),
             &QUIET,

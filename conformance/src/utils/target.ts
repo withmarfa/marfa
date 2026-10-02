@@ -8,7 +8,7 @@
  * can be tested without a server.
  */
 
-const BOOTSTRAP_SECRET = /Authorization: Bearer ([0-9a-f]{64})/;
+const BOOTSTRAP_SECRET = /on its stdin: ([0-9a-f]{64})/;
 
 /**
  * The bootstrap secret, if the log holds one.
@@ -27,7 +27,7 @@ export function readBootstrapSecret(log: string): string | undefined {
  * that never took its first mint.
  */
 export function redactBootstrapSecret(log: string): string {
-  return log.replace(/Bearer [0-9a-f]{64}/g, "Bearer [redacted]");
+  return log.replace(/on its stdin: [0-9a-f]{64}/g, "on its stdin: [redacted]");
 }
 
 /**
