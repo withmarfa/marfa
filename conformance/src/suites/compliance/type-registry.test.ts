@@ -116,6 +116,42 @@ describe("type registry", () => {
     expect(r.error?.error.details?.metadata_subresource).toBe("types");
   });
 
+  it("registers only the ids the key's own type map grants write on", async () => {
+    const own = testTypeId("own-map");
+    const other = testTypeId("other-map");
+    const readOnly = testTypeId("read-map");
+    const keyResp = await client.createKey({
+      label: "type-reg-own-map",
+      source: `${ctx.source}-type-reg-own-map`,
+      type_permissions: { [own]: "write", [readOnly]: "read" },
+      metadata_permissions: { types: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+    const fields = { name: { type: "string" as const } };
+
+    const mine = await scopedClient.registerType({ id: own, fields });
+    expect(mine.status).toBe(201);
+
+    for (const id of [other, readOnly]) {
+      const refused = await scopedClient.registerType({ id, fields });
+      expect(refused.status, id).toBe(403);
+      expect(refused.error?.error.code).toBe("type_not_permitted");
+      expect(refused.error?.error.message).toContain(id);
+      await expectMatchesSchema("POST", "/types", 403, refused.error);
+      expect((await client.getType(id)).status).toBe(404);
+
+      // The witness: the identifier itself registers, to a key whose map
+      // reaches it.
+      const registered = await client.registerType({ id, fields });
+      expect(registered.status).toBe(201);
+    }
+  });
+
   it("refuses both schema.write doors to a key without it, and declares the refusal", async () => {
     // `PUT` and `DELETE /types/{id}` gate on `schema.write` and published no
     // 403 at all, so the refusal a caller is most likely to meet was the one
