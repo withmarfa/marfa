@@ -1594,8 +1594,19 @@ fn remove_item(
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
+    // An edge hidden behind this device's own waiting delete is in
+    // `beneath` alone, and leaves with the row all the same.
     let leaving: Vec<String> = conn
-        .prepare(&format!("SELECT id FROM edges WHERE {edges}"))?
+        .prepare(&format!(
+            "SELECT id FROM (
+               SELECT id, source_id, target_id, edge_type FROM edges
+               UNION
+               SELECT id, json_extract(row, '$.source_id') AS source_id,
+                      json_extract(row, '$.target_id') AS target_id,
+                      json_extract(row, '$.edge_type') AS edge_type
+                 FROM beneath WHERE subject = 'edge'
+             ) WHERE {edges}"
+        ))?
         .query_map(
             params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
             |row| row.get(0),
@@ -2427,15 +2438,7 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
                 delete_edge(conn, id)?;
                 return drop_beneath(conn, Subject::Edge, id);
             }
-            // Not where the copy has since let its source go.
-            if let Some(held) = beneath_edge(conn, id)?
-                && takes_edge(
-                    conn,
-                    &held.source_id,
-                    &held.edge_type,
-                    &whole_edge_types(conn)?,
-                )?
-            {
+            if let Some(held) = beneath_edge(conn, id)? {
                 upsert_edge(conn, &held.as_wire())?;
             }
             lay_waiting_edge_writes_over(conn, id)?;

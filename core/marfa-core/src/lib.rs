@@ -1587,6 +1587,55 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_edge_delete_never_brings_back_an_edge_to_a_purged_row() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            let other = store::testing::note("other", "other", "body", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &other, None, &catalog::Indexing::default()).unwrap();
+            store::put_server_edge(
+                &conn,
+                &store::testing::wire_edge("link2", "row", "other", "references"),
+            )
+            .unwrap();
+        }
+        let unlinked = core.delete_edge("link2").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            assert!(store::beneath_edge(&conn, "link2").unwrap().is_some());
+            store::purge_item(&conn, "other").unwrap();
+        }
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link2").unwrap(),
+            None,
+            "a refused delete put back an edge to a row the server purged"
+        );
+    }
+
+    #[test]
+    fn a_refused_edge_delete_never_brings_back_an_edge_of_a_type_held_whole_from_a_purged_row() {
+        let core = held_copy();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_SLICE_EDGE_TYPES, "[\"references\"]").unwrap();
+        }
+        let unlinked = core.delete_edge("link").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::purge_item(&conn, "row").unwrap();
+        }
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused delete put back an edge from a row the server purged"
+        );
+    }
+
+    #[test]
     fn a_refused_write_with_content_stays_through_a_clearing_until_it_is_discarded() {
         let core = held_copy();
         let edited = core
