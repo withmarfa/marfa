@@ -240,11 +240,12 @@ export const versions = sqliteTable(
     // A three-way merge needs the value at the version the client read, or
     // it cannot tell the client having changed a field from somebody else
     // having changed it, and has to take the client's value blind.
-    tier: text("tier"),
-    occurred_at: text("occurred_at"),
+    tier: text("tier").notNull(),
+    occurred_at: text("occurred_at").notNull(),
     source_id: text("source_id"),
     // And the type, so a stale move can tell whether the row was moved
-    // since the version the caller read.
+    // since the version the caller read, and a snapshot is read under the
+    // type it was written under rather than the row's type now.
     type: text("type").notNull(),
     created_at: text("created_at").notNull(),
   },

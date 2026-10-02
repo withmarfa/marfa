@@ -521,7 +521,12 @@ export function staleVersion(
   };
 }
 
-/** The 409 for a write whose base version can no longer be reconstructed. */
+/**
+ * The 409 for a write whose base version it cannot be merged against: no
+ * snapshot of it is held, or the writer may not read the one that is. The
+ * two answer alike, so the refusal says nothing of a type the writer may not
+ * read.
+ */
 export function ancestorUnavailable(
   currentVersion: number,
   currentProperties: Record<string, unknown>,
@@ -533,8 +538,8 @@ export function ancestorUnavailable(
       code: "ancestor_unavailable",
       status: 409,
       message:
-        `The snapshot for version ${String(requestedVersion)} is no longer ` +
-        `retained, so this write cannot be merged. Re-read the item at ` +
+        `No snapshot of version ${String(requestedVersion)} is available to ` +
+        `this write, so it cannot be merged. Re-read the item at ` +
         `version ${String(currentVersion)} and re-apply the change.`,
     },
     current: {

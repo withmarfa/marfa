@@ -19,6 +19,10 @@ function makeVersion(id: string, version: number, createdAt: string): Version {
     item_id: "item-1",
     version,
     properties: {},
+    type: "core.note",
+    tier: "library",
+    occurred_at: createdAt,
+    source_id: null,
     created_at: createdAt,
   };
 }

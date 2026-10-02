@@ -179,12 +179,20 @@ export interface Metadata {
   extensions: Record<string, Record<string, unknown>>;
 }
 
-/** A frozen snapshot of an item's previous state. */
+/**
+ * A frozen snapshot of an item's previous state: its properties and the four
+ * fields the row had at that version. A snapshot is read under `type`, the
+ * type it was written under, which a row moved since no longer has.
+ */
 export interface Version {
   id: string;
   item_id: string;
   version: number;
   properties: Record<string, unknown>;
+  type: string;
+  tier: Tier;
+  occurred_at: string;
+  source_id: string | null;
   created_at: string;
 }
 

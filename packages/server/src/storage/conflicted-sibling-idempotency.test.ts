@@ -37,6 +37,7 @@ async function collidingNote(seed: string): Promise<{
   const updated = await ctx.storage.items.update(created.id, {
     properties: { body: `${seed} from the winner` },
     version: created.version,
+    may_read_type: () => true,
   });
   expect("error" in updated).toBe(false);
   return { id: created.id, base: created.version };
@@ -59,6 +60,7 @@ describe("a keep-both resolution that runs twice", () => {
       const result = await ctx.storage.items.update(id, {
         properties: { body: losing },
         version: base,
+        may_read_type: () => true,
         conflict_mode: "auto",
         idempotency_key: "a-key-the-client-retried-under",
       });
@@ -81,6 +83,7 @@ describe("a keep-both resolution that runs twice", () => {
       await ctx.storage.items.update(id, {
         properties: { body: losing },
         version: base,
+        may_read_type: () => true,
         conflict_mode: "auto",
       });
     }

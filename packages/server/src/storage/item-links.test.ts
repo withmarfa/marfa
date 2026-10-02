@@ -106,10 +106,12 @@ describe("the link index", () => {
     await ctx.storage.items.update(row.id, {
       properties: { body: "changed here" },
       version: 1,
+      may_read_type: () => true,
     });
     const resolved = await ctx.storage.items.update(row.id, {
       properties: { body: "changed there" },
       version: 1,
+      may_read_type: () => true,
       conflict_mode: "auto",
     });
     if ("error" in resolved) throw new Error(JSON.stringify(resolved));

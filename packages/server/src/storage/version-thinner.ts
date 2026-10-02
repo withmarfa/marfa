@@ -49,7 +49,7 @@ export class VersionThinner {
     const typePolicy = typeSchema?.version_policy;
     const policy = resolvePolicy(typePolicy, this.globalDefaults);
 
-    const versions = await this.versionStore.list(itemId);
+    const versions = await this.versionStore.all(itemId);
     const idsToDelete = computeVersionsToDelete(versions, policy);
 
     if (idsToDelete.length === 0) return 0;

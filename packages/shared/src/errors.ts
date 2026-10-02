@@ -22,8 +22,10 @@ export enum ErrorCode {
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
   /**
-   * The write was based on a version whose snapshot has been thinned away,
-   * so there is no common ancestor to merge against.
+   * The write was based on a version with no snapshot it may be merged
+   * against: none is held (never issued, or thinned away), or the one held
+   * is of a type the writer may not read. Either way there is no common
+   * ancestor to merge against, and the two answer alike.
    *
    * Its own code rather than a `version_conflict` with an empty ancestor.
    * Both refuse the write, but only one of them can be resolved: a client

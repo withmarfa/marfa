@@ -178,6 +178,20 @@ fn an_item_edge_listing_names_the_direction_by_its_door() {
 }
 
 #[test]
+fn an_item_history_pages_by_limit_and_cursor() {
+    let bare = items::versions_request("i", &PageArgs::default());
+    assert_eq!(bare.path(), "/items/i/versions");
+    assert_eq!(query(&bare, "limit"), None);
+    let page = PageArgs {
+        limit: Some(2),
+        cursor: Some("next".into()),
+    };
+    let paged = items::versions_request("i", &page);
+    assert_eq!(query(&paged, "limit").as_deref(), Some("2"));
+    assert_eq!(query(&paged, "cursor").as_deref(), Some("next"));
+}
+
+#[test]
 fn a_bulk_action_wraps_the_filter_and_names_its_action() {
     let request = items::bulk_action_request(&items::BulkActionCommand::Transition {
         to: items::TransitionState::Trashed,

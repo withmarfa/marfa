@@ -22,7 +22,11 @@ import type {
 } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { itemProvenanceSource, requireAuth } from "../middleware/auth.js";
+import {
+  itemProvenanceSource,
+  requireAuth,
+  typeReader,
+} from "../middleware/auth.js";
 import type { ResolvedItem, Storage } from "../storage/interface.js";
 import { depthInsideFolder } from "../folder-path.js";
 import { publish } from "../pubsub.js";
@@ -502,6 +506,7 @@ export function folderRoutes(storage: Storage) {
       return await storage.items.update(id, {
         properties: settings,
         version,
+        may_read_type: typeReader(c),
         blob_proof: requestBlobProof(c, storage),
       });
     });

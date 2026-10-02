@@ -33,12 +33,17 @@ export interface MarfaMetadata {
   updated_at: string | null;
 }
 
-/** Server-only snapshot of an item's properties at a point in time */
+/** An item's properties and fields as they stood at an earlier version,
+ *  under the type the row had then. */
 export interface MarfaVersion {
   id: string;
   item_id: string;
   version: number;
   properties: Record<string, unknown>;
+  type: string;
+  tier: "library" | "feed";
+  occurred_at: string;
+  source_id: string | null;
   created_at: string;
 }
 

@@ -128,6 +128,40 @@ describe("items from the terminal", () => {
     expect(versions.data.map((row) => row.version)).toEqual([1]);
     expect(versions.data[0]!.properties.status).toBeUndefined();
 
+    // A second update leaves a second snapshot, and the history pages: one
+    // at a time, the cursor the first page answers reaches the second.
+    await c.cli.json([
+      "items",
+      "update",
+      created.item.id,
+      "--version",
+      "2",
+      "--prop",
+      "status=later",
+    ]);
+    const first = await c.cli.json<{
+      data: Array<{ version: number; type: string }>;
+      next_cursor: string | null;
+    }>(["items", "versions", created.item.id, "--limit", "1"]);
+    expect(first.data.map((row) => [row.version, row.type])).toEqual([
+      [1, "core.note"],
+    ]);
+    expect(first.next_cursor).not.toBeNull();
+    const second = await c.cli.json<{
+      data: Array<{ version: number }>;
+      next_cursor: string | null;
+    }>([
+      "items",
+      "versions",
+      created.item.id,
+      "--limit",
+      "1",
+      "--cursor",
+      first.next_cursor!,
+    ]);
+    expect(second.data.map((row) => row.version)).toEqual([2]);
+    expect(second.next_cursor).toBeNull();
+
     // Grouped by type, the answer is a count per type id; grouped by
     // state it would be per state, so the key is what proves the flag.
     const stats = await c.cli.json<Record<string, number>>([

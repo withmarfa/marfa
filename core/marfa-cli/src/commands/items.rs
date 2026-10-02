@@ -59,10 +59,13 @@ pub enum ItemsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// The snapshots an item's history holds.
+    /// One page of the snapshots an item's history holds, oldest first.
+    /// Pass the answer's `next_cursor` as `--cursor` for the next page.
     Versions {
         /// The item id.
         id: String,
+        #[command(flatten)]
+        page: PageArgs,
     },
     /// Put tags on an item.
     Tag {
@@ -617,8 +620,10 @@ pub fn purge_request(id: &str) -> Request {
     Request::delete(&["items", id, "purge"])
 }
 
-pub fn versions_request(id: &str) -> Request {
+pub fn versions_request(id: &str, page: &PageArgs) -> Request {
     Request::get(&["items", id, "versions"])
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
 }
 
 pub fn tag_request(id: &str, tags: &[String]) -> Request {
@@ -905,7 +910,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             idempotency,
         } => idempotency.apply(transition_request(id, *state)),
         ItemsCommand::Purge { id, idempotency } => idempotency.apply(purge_request(id)),
-        ItemsCommand::Versions { id } => versions_request(id),
+        ItemsCommand::Versions { id, page } => versions_request(id, page),
         ItemsCommand::Tag { id, tags } => tag_request(id, tags),
         ItemsCommand::Untag { id, tag } => untag_request(id, tag),
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),

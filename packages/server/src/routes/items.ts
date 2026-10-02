@@ -58,6 +58,7 @@ import {
   requireEdgePermission,
   getTypeFilter,
   mayReadEdgeEnd,
+  typeReader,
   mayReadType,
 } from "../middleware/auth.js";
 import type {
@@ -66,7 +67,7 @@ import type {
   ItemSortField,
   ResolvedItem,
 } from "../storage/interface.js";
-import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
+import { baseVersion, ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
 import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
@@ -191,8 +192,9 @@ const StaleVersionSchema = z
   .openapi("ItemStaleVersion");
 
 /**
- * The refusal for a write based on a version whose snapshot has been thinned
- * away. Distinct from `version_conflict` because it cannot be resolved: there
+ * The refusal for a write based on a version with no snapshot it may be
+ * merged against: none is held, or the writer may not read the one that is.
+ * Distinct from `version_conflict` because it cannot be resolved: there
  * is no ancestor, so no field can be shown not to have collided, and a client
  * merging against an empty one spawns siblings holding text nobody typed.
  */
@@ -699,7 +701,7 @@ const getItemRoute = createRoute({
   summary: "Get an item",
   description:
     "Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.\n\n" +
-    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.\n\n" +
+    "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the first page of the item's version snapshots the caller may read, oldest first, which `GET /items/{id}/versions` continues from its `next_cursor`. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
   request: {
@@ -938,7 +940,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -1756,7 +1758,7 @@ export function itemRoutes(storage: Storage) {
             ...(body.occurred_at !== undefined && {
               occurred_at: body.occurred_at,
             }),
-            ...(body.version !== undefined && { version: body.version }),
+            ...baseVersion(body.version, typeReader(c)),
           });
           if ("error" in updated) {
             // Reachable only when the caller sent a `version`, which is what
@@ -2329,7 +2331,12 @@ export function itemRoutes(storage: Storage) {
       includeBackrefs
         ? hydrateBackrefsForItem(storage, callerKey, id)
         : Promise.resolve(null),
-      includeVersions ? storage.versions.list(id) : Promise.resolve(null),
+      includeVersions
+        ? storage.versions.list(id, {
+            reads: typeReader(c),
+            limit: DEFAULT_PAGE_LIMIT,
+          })
+        : Promise.resolve(null),
     ]);
 
     let neighbors: { item: Item; metadata: Metadata }[] | undefined;
@@ -2444,9 +2451,7 @@ export function itemRoutes(storage: Storage) {
               neighbors_omitted: neighborsOmitted,
             }
           : {}),
-        ...(includeVersions && versions
-          ? { versions: { data: versions, next_cursor: null } }
-          : {}),
+        ...(includeVersions && versions ? { versions } : {}),
       },
       200,
     );
@@ -2756,6 +2761,7 @@ export function itemRoutes(storage: Storage) {
               }),
               ...(retypeTo !== undefined && { type: retypeTo }),
               version: body.version,
+              may_read_type: typeReader(c),
               // Who resolves a collision, and the key that makes a retry
               // recognizable as one. Both are request-level facts rather
               // than fields of the item, which is why they ride here

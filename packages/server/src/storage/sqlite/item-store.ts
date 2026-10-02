@@ -1111,7 +1111,7 @@ export class SqliteItemStore implements ItemStore {
           row.version,
           propertiesToSnapshot,
           {
-            tier: row.tier,
+            tier: row.tier as Tier,
             occurred_at: row.occurred_at,
             source_id: row.source_id,
             type: row.type,
@@ -1204,11 +1204,13 @@ export class SqliteItemStore implements ItemStore {
       // `tx`) so it's consistent with the item row read above.
       // `input.version` is known-defined here: the omitted and
       // equal-version cases returned in the branch above.
-      const ancestor = await this.versionStore.getByVersion(
+      const stored = await this.versionStore.getByVersion(
         id,
         input.version,
         tx,
       );
+      const ancestor =
+        stored !== null && input.may_read_type(stored.type) ? stored : null;
 
       if (!ancestor) {
         // Its own answer rather than a conflict naming every field. See
@@ -1267,7 +1269,7 @@ export class SqliteItemStore implements ItemStore {
         ancestorProperties: ancestor.properties,
         clientFields,
         currentFields,
-        ancestorFields: ancestor.item_fields,
+        ancestorFields: ancestor,
         clearedProperties,
       });
 
@@ -1290,17 +1292,16 @@ export class SqliteItemStore implements ItemStore {
       // A move onto a row another writer has moved since the version the
       // caller read collides on the type, whatever else the write carries:
       // landing it would undo a move the caller never saw.
-      const movedSince =
-        input.type !== undefined && row.type !== ancestor.item_fields.type;
+      const movedSince = input.type !== undefined && row.type !== ancestor.type;
 
       const ancestorFields = {
         current: snapshotFields,
         ancestor: {
           id,
-          tier: (ancestor.item_fields.tier ?? row.tier) as Tier,
-          occurred_at: ancestor.item_fields.occurred_at ?? row.occurred_at,
-          source_id: ancestor.item_fields.source_id,
-          type: ancestor.item_fields.type,
+          tier: ancestor.tier,
+          occurred_at: ancestor.occurred_at,
+          source_id: ancestor.source_id,
+          type: ancestor.type,
         },
       };
       if (movedSince) {

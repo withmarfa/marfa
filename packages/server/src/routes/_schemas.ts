@@ -345,12 +345,20 @@ export const VersionSchema = z
     item_id: z.string(),
     version: z.number(),
     properties: z.record(z.string(), z.unknown()),
+    type: z
+      .string()
+      .describe(
+        "The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it.",
+      ),
+    tier: TierEnum,
+    occurred_at: z.string(),
+    source_id: z.string().nullable(),
     created_at: z.string(),
   })
   .openapi("Version");
 
-/** An item's history, oldest first: the whole of it, so `next_cursor` is
- *  always `null`. The same page `GET /items/{id}/versions` answers. */
+/** A page of an item's history, oldest first, holding only the snapshots
+ *  the credential may read. */
 export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
 
 /**
@@ -373,8 +381,9 @@ export const VersionPageSchema = pageOf(VersionSchema, "VersionPage");
  *   which is about a bound; this is about permission. Without it a partial
  *   neighborhood reads as a complete one, and a caller missing an edge scope
  *   renders an item with none of its relations as though it had none.
- * - `versions` — the item's version snapshots, oldest first, as the same page
- *   `GET /items/{id}/versions` answers. Opt in with `include=versions`.
+ * - `versions` — the first page of the item's version snapshots, oldest
+ *   first, as `GET /items/{id}/versions` answers it, which its `next_cursor`
+ *   continues. Opt in with `include=versions`.
  */
 export const ItemDetailSchema = z
   .object({

@@ -416,6 +416,9 @@ export const ITEM_BACKREFS_CURSOR_KEY = cursorSortKey(
   NEWEST_FIRST,
   "desc",
 );
+/** An item's snapshots page by version, oldest first. */
+export const ITEM_VERSIONS_CURSOR_KEY: CursorSortKey =
+  "item-versions:version:asc";
 export const AUDIT_CURSOR_KEY = cursorSortKey("audit", NEWEST_FIRST, "desc");
 export const WEBHOOK_DELIVERIES_CURSOR_KEY = cursorSortKey(
   "webhook-deliveries",
@@ -569,6 +572,25 @@ export type ResolvedItem = Item & {
  * read off the header the replay cache already owns; neither is a field a
  * client sets on an update payload.
  */
+/**
+ * The version a write is based on, and whose snapshots its writer may read.
+ * One without the other is not a write the store accepts: a stale write is
+ * merged against the snapshot it names and may be answered with it as
+ * `ancestor`, so a snapshot of a type the writer may not read answers
+ * `ancestor_unavailable`, as one thinned away does.
+ */
+export type BaseVersionInput =
+  | { version?: undefined; may_read_type?: undefined }
+  | { version: number; may_read_type: (type: string) => boolean };
+
+/** The base a write names, where it names one. */
+export function baseVersion(
+  version: number | undefined,
+  mayReadType: (type: string) => boolean,
+): BaseVersionInput {
+  return version === undefined ? {} : { version, may_read_type: mayReadType };
+}
+
 export interface ConflictResolutionInput {
   /** Absent means `manual`: the envelope. */
   conflict_mode?: ConflictMode;
@@ -635,7 +657,8 @@ export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
  */
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   ConflictResolutionInput &
-  BlobProofInput & { version?: number };
+  BlobProofInput &
+  BaseVersionInput;
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */
@@ -978,29 +1001,22 @@ export interface MetadataStore {
  * The three fields an update may change that are not properties. Without
  * the value at the version the client read, a three-way merge cannot tell
  * the client having changed one from somebody else having changed it since,
- * and the only thing left to do with the client's value is take it — which
- * is a stale write overwriting a newer one with nothing refused.
- *
- * Not part of `Version`, which is what `GET /items/{id}/versions` answers:
- * the history door publishes the properties at each version and nothing
- * else, and this is read on the update path alone.
+ * and the only thing left to do with the client's value is take it, which
+ * is a stale write overwriting a newer one with nothing refused. And the
+ * type: a stale move is judged against it, and a snapshot is read under it.
  */
-export interface VersionedItemFields {
-  tier: string | null;
-  occurred_at: string | null;
-  source_id: string | null;
-  /**
-   * The type the row had at this version. A stale write that moves the
-   * row is judged against it: two writers who read one version and each
-   * moved the row somewhere else would otherwise land one over the other
-   * with nothing refused.
-   */
-  type: string;
-}
+export type VersionedItemFields = Pick<
+  Version,
+  "type" | "tier" | "occurred_at" | "source_id"
+>;
 
-/** A version row as the update path reads it. */
-export interface VersionSnapshot extends Version {
-  item_fields: VersionedItemFields;
+/** One page of an item's snapshots, oldest first. */
+export interface VersionPageInput {
+  /** Whether the reader may read a snapshot of this type. A snapshot it may
+   *  not read is not on the page, which is filled past it. */
+  reads: (type: string) => boolean;
+  limit: number;
+  cursor?: string;
 }
 
 export interface VersionStore {
@@ -1010,12 +1026,14 @@ export interface VersionStore {
     properties: Record<string, unknown>,
     itemFields: VersionedItemFields,
   ): Promise<Version>;
-  list(itemId: string): Promise<Version[]>;
-  getByVersion(
+  list(
     itemId: string,
-    version: number,
-  ): Promise<VersionSnapshot | null>;
-  getLatestTimestamp(itemId: string): Promise<string | null>;
+    page: VersionPageInput,
+  ): Promise<{ data: Version[]; next_cursor: string | null }>;
+  /** Every snapshot of the item, oldest first, read for no credential: the
+   *  version thinner's. A door reads through `list`. */
+  all(itemId: string): Promise<Version[]>;
+  getByVersion(itemId: string, version: number): Promise<Version | null>;
   deleteByIds(ids: string[]): Promise<number>;
   /**
    * Pages over every version snapshot's parsed properties, instance-wide.
