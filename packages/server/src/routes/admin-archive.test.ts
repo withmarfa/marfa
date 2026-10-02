@@ -15,6 +15,7 @@ import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import { purgeBlob } from "../housekeeping/blob-delete.js";
 
 let ctx: TestContext;
 
@@ -637,6 +638,190 @@ describe("POST /admin/restore-archive", () => {
     // At least the blob uploaded above, which the export carries.
     expect(data.blobs_imported).toBeGreaterThanOrEqual(1);
     expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
+  });
+});
+
+describe("POST /admin/restore-archive against the orphan sweep", () => {
+  it("keeps bytes it found already stored when a purge is due for them", async () => {
+    // The restore finds the bytes on disk, keeps them rather than its own
+    // copy, and registers its rows a moment later. A purge landing between
+    // the two would delete the bytes the restore then registers.
+    const blob = makeBlobData(
+      `restored over a due purge ${String(Date.now())}`,
+    );
+    const uploaded = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: blob.data,
+    });
+    expect(uploaded.status).toBe(201);
+    await ctx.storage.runInTransaction(() =>
+      ctx.storage.blobs.retainOrphans([blob.hash], "2026-01-01T00:00:00.000Z"),
+    );
+    const due = {
+      before: "2026-01-02T00:00:00.000Z",
+      runStartedAt: "2026-01-02T00:00:00.000Z",
+    };
+
+    const disk = ctx.blobs.disk;
+    const has = disk.has.bind(disk);
+    let checked = false;
+    disk.has = async (hash) => {
+      if (hash === blob.hash) checked = true;
+      return has(hash);
+    };
+    const storage = ctx.storage;
+    const runInTransaction = storage.runInTransaction.bind(storage);
+    let purging: Promise<boolean> | undefined;
+    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
+      if (checked && !purging) {
+        purging = purgeBlob(storage, ctx.blobs, blob.hash, due);
+        // Long enough for the purge to finish when nothing holds it back.
+        await Promise.race([
+          purging,
+          new Promise((resolve) => setTimeout(resolve, 200)),
+        ]);
+      }
+      return runInTransaction(fn);
+    };
+    let res: Response;
+    try {
+      res = await postArchive(
+        await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
+      );
+    } finally {
+      disk.has = has;
+      storage.runInTransaction = runInTransaction;
+    }
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(purging).toBeDefined();
+    expect(await purging).toBe(false);
+    expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
+    expect(await disk.has(blob.hash)).not.toBeNull();
+    const served = await ctx.app.request(`/blobs/${blob.hash}`, {
+      headers: { Authorization: `Bearer ${ctx.operatorKey}` },
+    });
+    expect(served.status).toBe(200);
+  });
+});
+
+describe("POST /admin/restore-archive refused after its blobs are stored", () => {
+  it("never takes back bytes an upload was told are stored meanwhile", async () => {
+    // The restore registers the blob, then its rows fail and it undoes
+    // what it wrote. An upload of the same bytes answered 201 in between
+    // must keep them.
+    const blob = makeBlobData(
+      `uploaded during a refused restore ${String(Date.now())}`,
+    );
+    const storage = ctx.storage;
+    const runInTransaction = storage.runInTransaction.bind(storage);
+    let uploading: Promise<Response> | undefined;
+    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
+      if (!uploading && (await storage.blobs.get(blob.hash)) !== null) {
+        uploading = Promise.resolve(
+          ctx.app.request("/blobs", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ctx.workingKey}`,
+              "Content-Type": "text/plain",
+            },
+            body: blob.data,
+          }),
+        );
+        // Long enough for the upload to land when nothing holds it back.
+        await Promise.race([
+          uploading,
+          new Promise((resolve) => setTimeout(resolve, 200)),
+        ]);
+        throw new Error("rows refused");
+      }
+      return runInTransaction(fn);
+    };
+    let res: Response;
+    try {
+      res = await postArchive(
+        await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
+      );
+    } finally {
+      storage.runInTransaction = runInTransaction;
+    }
+    expect(res.status).toBe(500);
+    expect(uploading).toBeDefined();
+    const uploaded = await uploading;
+    expect(uploaded?.status).toBe(201);
+    expect(await storage.blobs.get(blob.hash)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
+    const served = await ctx.app.request(`/blobs/${blob.hash}`, {
+      headers: { Authorization: `Bearer ${ctx.operatorKey}` },
+    });
+    expect(served.status).toBe(200);
+  });
+});
+
+describe("POST /admin/restore-archive refused over bytes a purge left", () => {
+  it("leaves a row naming the bytes it found on disk, for the sweep to judge", async () => {
+    // A purge cut short: the row is gone, the bytes are still on disk and
+    // the purge record waits. The restore registers the bytes it found,
+    // which clears the record, and is then refused.
+    const blob = makeBlobData(
+      `left by a purge cut short ${String(Date.now())}`,
+    );
+    const uploaded = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: blob.data,
+    });
+    expect(uploaded.status).toBe(201);
+    await ctx.storage.runInTransaction(() =>
+      ctx.storage.blobs.retainOrphans([blob.hash], "2026-01-01T00:00:00.000Z"),
+    );
+    const disk = ctx.blobs.disk;
+    const remove = disk.delete.bind(disk);
+    disk.delete = () => Promise.reject(new Error("store unavailable"));
+    try {
+      await expect(
+        purgeBlob(ctx.storage, ctx.blobs, blob.hash, {
+          before: "2026-01-02T00:00:00.000Z",
+          runStartedAt: "2026-01-02T00:00:00.000Z",
+        }),
+      ).rejects.toThrow("store unavailable");
+    } finally {
+      disk.delete = remove;
+    }
+    expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
+    expect(await disk.has(blob.hash)).not.toBeNull();
+    expect(await ctx.storage.blobs.purgePending(blob.hash)).toBe(true);
+
+    const storage = ctx.storage;
+    const runInTransaction = storage.runInTransaction.bind(storage);
+    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
+      if ((await storage.blobs.get(blob.hash)) !== null) {
+        throw new Error("rows refused");
+      }
+      return runInTransaction(fn);
+    };
+    let res: Response;
+    try {
+      res = await postArchive(
+        await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
+      );
+    } finally {
+      storage.runInTransaction = runInTransaction;
+    }
+    expect(res.status).toBe(500);
+    // The bytes stay named: a row the sweep can report and purge, never
+    // bytes with neither a row nor a purge record.
+    expect(await disk.has(blob.hash)).not.toBeNull();
+    const named = await storage.blobs.get(blob.hash);
+    const pending = await storage.blobs.purgePending(blob.hash);
+    expect(named !== null || pending).toBe(true);
+    expect(named).not.toBeNull();
   });
 });
 

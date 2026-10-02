@@ -3,7 +3,8 @@
 --
 -- Applied in full at every database open. Every statement is idempotent, so
 -- an existing database is left as it is. The FTS5 virtual table lives in
--- sqlite/connection.ts, which drizzle-kit cannot express.
+-- sqlite/connection.ts, which drizzle-kit cannot express; the triggers at
+-- the end are declared as SQL in schema.ts for the same reason.
 
 CREATE TABLE IF NOT EXISTS `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
@@ -284,6 +285,11 @@ CREATE TABLE IF NOT EXISTS `blob_orphans` (
 	`hash` text PRIMARY KEY NOT NULL,
 	`reported_at` text NOT NULL,
 	FOREIGN KEY (`hash`) REFERENCES `blobs`(`hash`) ON UPDATE no action ON DELETE cascade
+);
+
+CREATE TABLE IF NOT EXISTS `blob_purges` (
+	`hash` text PRIMARY KEY NOT NULL,
+	`purged_at` text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS `blob_stores` (
@@ -652,3 +658,6 @@ CREATE TABLE IF NOT EXISTS `versions` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_versions_item_id` ON `versions` (`item_id`);
+
+CREATE TRIGGER IF NOT EXISTS `item_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `item_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;

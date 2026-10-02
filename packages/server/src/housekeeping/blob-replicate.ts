@@ -1,6 +1,7 @@
 import type { BlobStore } from "../storage/blob-store.js";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
+import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import type { Stores } from "./blob-delete.js";
 
 export interface ReplicationBounds {
@@ -56,30 +57,13 @@ export class BlobReplicator {
         if (copied > 0 && bytes + blob.size_bytes > this.bounds.maxBytes) {
           break;
         }
-        const source = await this.sourceFor(blob.hash, target.id);
-        if (!source) continue;
-        const read = await source.get(blob.hash);
-        if (!read) {
-          // The log names a copy the store no longer has. The integrity
-          // check is what strikes it; the next run finds another source.
-          continue;
-        }
-        try {
-          await target.put(blob.hash, {
-            stream: read.stream,
-            size_bytes: read.size_bytes,
-          });
-        } catch (err) {
-          read.stream.destroy();
-          log("error", "blob.replicate_failed", {
-            hash: blob.hash,
-            from: source.id,
-            to: target.id,
-            error: err instanceof Error ? err.message : String(err),
-          });
-          continue;
-        }
-        await this.storage.blobs.recordLocation(blob.hash, target.id);
+        // Under the per-hash lock a purge takes, and only while the row
+        // stands: a copy put after a purge removed the row and the bytes
+        // would be bytes in a store that nothing names and nothing sweeps.
+        const placed = await withBlobUploadLock(blob.hash, () =>
+          this.copy(blob.hash, target),
+        );
+        if (!placed) continue;
         copied += 1;
         bytes += blob.size_bytes;
         if (copied >= this.bounds.maxBlobs) break;
@@ -93,6 +77,37 @@ export class BlobReplicator {
       log("info", "Blobs replicated", { copied, bytes, remaining });
     }
     return { copied, bytes, remaining };
+  }
+
+  /** Copy one blob into `target` and record it, if it is still registered
+   *  and a source still has it. Answers whether the copy landed. */
+  private async copy(hash: string, target: BlobStore): Promise<boolean> {
+    if (!(await this.storage.blobs.get(hash))) return false;
+    const source = await this.sourceFor(hash, target.id);
+    if (!source) return false;
+    const read = await source.get(hash);
+    if (!read) {
+      // The log names a copy the store no longer has. The integrity
+      // check is what strikes it; the next run finds another source.
+      return false;
+    }
+    try {
+      await target.put(hash, {
+        stream: read.stream,
+        size_bytes: read.size_bytes,
+      });
+    } catch (err) {
+      read.stream.destroy();
+      log("error", "blob.replicate_failed", {
+        hash,
+        from: source.id,
+        to: target.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+    await this.storage.blobs.recordLocation(hash, target.id);
+    return true;
   }
 
   /** An attached store the log says holds the blob, other than the target:

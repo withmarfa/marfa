@@ -111,6 +111,8 @@ import {
 import {
   blobLending,
   digestsIn,
+  liftExtensionReportsOf,
+  liftOrphanReports,
   syncBlobReferences,
   type BlobProof,
 } from "./blob-references.js";
@@ -351,6 +353,7 @@ async function insertConflictedSibling(
       version: 1,
     };
     await tx.insert(edges).values(copy).run();
+    await liftOrphanReports(tx, [copy.properties]);
     copied.push({
       ...copy,
       properties: safeJsonParse<Record<string, unknown>>(
@@ -1570,9 +1573,33 @@ export class SqliteItemStore implements ItemStore {
     await this.rehomeTrashRecords([id]);
     await recordTombstones(this.db, [id], new Date().toISOString());
     // metadata and versions cascade; search index must be removed explicitly.
-    await this.db.delete(items).where(eq(items.id, id)).run();
+    await this.db.transaction(async (tx) => {
+      await liftExtensionReportsOf(tx, [id]);
+      await tx.delete(items).where(eq(items.id, id)).run();
+    });
 
     await this.searchStore.remove(id);
+  }
+
+  /** Delete purged rows and every edge touching them, lifting the orphan
+   *  reports of the blobs their extensions and edges named. */
+  private async dropWithReferences(
+    tx: SqliteTx,
+    ids: readonly string[],
+  ): Promise<void> {
+    const list = [...ids];
+    await liftExtensionReportsOf(tx, list);
+    for (const end of [edges.source_id, edges.target_id]) {
+      const removed = await tx
+        .delete(edges)
+        .where(inArray(end, list))
+        .returning({ properties: edges.properties });
+      await liftOrphanReports(
+        tx,
+        removed.map((row) => row.properties),
+      );
+    }
+    await tx.delete(items).where(inArray(items.id, list)).run();
   }
 
   async bulkPurge(ids: string[]): Promise<string[]> {
@@ -1598,6 +1625,7 @@ export class SqliteItemStore implements ItemStore {
       }
       await this.rehomeTrashRecords(scopedIds, tx);
       await recordTombstones(tx, scopedIds, new Date().toISOString());
+      await liftExtensionReportsOf(tx, scopedIds);
       await tx.delete(items).where(inArray(items.id, scopedIds)).run();
       return scopedIds;
     });
@@ -1635,9 +1663,7 @@ export class SqliteItemStore implements ItemStore {
       // an omission.
       await this.rehomeTrashRecords(ids, tx);
       await recordTombstones(tx, ids, new Date().toISOString());
-      await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
-      await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
-      await tx.delete(items).where(inArray(items.id, ids)).run();
+      await this.dropWithReferences(tx, ids);
       return ids.length;
     });
   }
@@ -1665,9 +1691,7 @@ export class SqliteItemStore implements ItemStore {
       for (const id of ids) {
         await this.searchStore.remove(id);
       }
-      await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
-      await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
-      await tx.delete(items).where(inArray(items.id, ids)).run();
+      await this.dropWithReferences(tx, ids);
       return ids.length;
     });
   }

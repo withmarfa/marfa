@@ -368,7 +368,7 @@ pub fn list_blob_locations(
     }
 }
 
-/// The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again. Operator key only.
+/// The orphan report: every registered blob the last run of the `blob-orphans` housekeeping job found nothing referencing, with when a run first said so. A blob stands here for the grace period before a later run purges it, and leaves the report if something names it again or its bytes are uploaded again. Operator key only.
 pub fn list_blob_orphans(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<ListBlobOrphansSuccess>, Error<ListBlobOrphansError>> {

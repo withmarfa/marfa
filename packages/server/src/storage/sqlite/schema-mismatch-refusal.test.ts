@@ -81,7 +81,15 @@ describe("a database whose schema is not this build's", () => {
       SCHEMA_SQL.indexOf("idx_item_blob_references_item"),
     );
     expect(start).toBeGreaterThan(0);
-    await seed(path, SCHEMA_SQL.slice(0, start) + SCHEMA_SQL.slice(end));
+    // Its triggers go with it: SQLite will not create a trigger on a table
+    // that is not there.
+    await seed(
+      path,
+      (SCHEMA_SQL.slice(0, start) + SCHEMA_SQL.slice(end))
+        .split("\n")
+        .filter((line) => !line.includes("ON `item_blob_references`"))
+        .join("\n"),
+    );
     const before = digest(path);
 
     await expect(createConnection(path)).rejects.toThrow(

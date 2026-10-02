@@ -16,6 +16,7 @@ import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
+import { liftOrphanReports } from "./blob-references.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
@@ -144,15 +145,25 @@ export class SqliteMetadataStore implements MetadataStore {
       .set({ updated_at: bumpedAt })
       .where(eq(items.id, itemId))
       .run();
-    await tx
-      .update(metadata)
-      .set(
-        "tags" in write
-          ? { tags: write.tags }
-          : { extensions: write.extensions },
-      )
-      .where(eq(metadata.item_id, itemId))
-      .run();
+    if ("tags" in write) {
+      await tx
+        .update(metadata)
+        .set({ tags: write.tags })
+        .where(eq(metadata.item_id, itemId))
+        .run();
+    } else {
+      const held = await tx
+        .select({ extensions: metadata.extensions })
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      await tx
+        .update(metadata)
+        .set({ extensions: write.extensions })
+        .where(eq(metadata.item_id, itemId))
+        .run();
+      await liftOrphanReports(tx, [held?.extensions, write.extensions]);
+    }
     return bumpedAt;
   }
 

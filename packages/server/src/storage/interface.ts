@@ -1279,9 +1279,20 @@ export interface BlobRegistry {
   lendingHashesOf(itemId: string): Promise<string[]>;
   /** Whether `uploader` has sent this blob's bytes. */
   uploadedBy(hash: string, uploader: string): Promise<boolean>;
-  /** Record that `uploader` sent this blob's bytes. Idempotent. */
+  /**
+   * Record that `uploader` sent this blob's bytes, in the transaction that
+   * registers them. Idempotent. The bytes were just confirmed stored, so it
+   * also lifts any orphan report on the blob, and the grace before a purge
+   * counts again from a report made after this upload, and any purge
+   * record, so a purge cut short never finishes on bytes stored again.
+   */
   recordUploader(hash: string, uploader: string): Promise<void>;
-  remove(hash: string): Promise<void>;
+  /**
+   * Remove the row a refused restore registered, unless something has
+   * claimed it since: another credential that sent the bytes, or anything
+   * that references the blob. Answers whether it went.
+   */
+  removeUnclaimed(hash: string, uploader: string): Promise<boolean>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 
   /**
@@ -1337,20 +1348,42 @@ export interface BlobRegistry {
 
   /**
    * Make the orphan report say exactly `hashes`: a hash already reported
-   * keeps its first `reported_at`, a new one is recorded at `at`, and a row
-   * for a hash no longer in the set is removed. Answers how many rows the
-   * report holds afterwards.
+   * keeps its `reported_at`, a new one still registered is recorded at
+   * `at`, and a row for a hash no longer in the set is removed. The caller
+   * runs it in a
+   * transaction and reads `at` inside it, so no report is older than an
+   * upload that committed before it.
    */
-  retainOrphans(hashes: readonly string[], at: string): Promise<number>;
+  retainOrphans(hashes: readonly string[], at: string): Promise<void>;
   /** The report, oldest first. */
   listOrphans(): Promise<BlobOrphanRow[]>;
   /**
-   * Reported orphans whose first report is strictly before `before` and
-   * strictly before `runStartedAt`: what a run may purge. The first bound
-   * is the grace, the second keeps a run from purging what it reported
-   * itself.
+   * Reported orphans whose report is strictly before `before` and strictly
+   * before `runStartedAt`: what a run may purge. The first bound is the
+   * grace, the second keeps a run from purging what it reported itself.
    */
   listOrphansToPurge(before: string, runStartedAt: string): Promise<string[]>;
+  /**
+   * Decide a purge and record it, in one transaction: the blob is still
+   * reported, within both bounds `listOrphansToPurge` takes, and nothing
+   * references it (an item's properties, a metadata extension, an edge's
+   * properties or a version snapshot). When all of that holds, the
+   * registry row goes, with its report, locations and uploaders, and a
+   * purge record takes its place; the bytes are the caller's to delete
+   * next. A blob something references leaves the report instead. Answers
+   * whether the purge was recorded.
+   */
+  claimOrphanPurge(
+    hash: string,
+    before: string,
+    runStartedAt: string,
+  ): Promise<boolean>;
+  /** Hashes whose purge removed the row and has not yet cleared the bytes. */
+  listPendingPurges(): Promise<string[]>;
+  /** Whether a purge of `hash` still awaits its bytes' removal. */
+  purgePending(hash: string): Promise<boolean>;
+  /** Clear the purge record once every store has deleted the bytes. */
+  settlePurge(hash: string): Promise<void>;
 }
 
 /** A blob by hash with the size its row records. */

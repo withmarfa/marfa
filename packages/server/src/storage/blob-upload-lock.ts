@@ -68,3 +68,44 @@ export async function withBlobUploadLock<T>(
     if (inFlight.get(hash) === held) inFlight.delete(hash);
   }
 }
+
+/**
+ * Run `fn` holding the lock on every hash in `hashes`, taken one at a time
+ * in sorted order so two callers holding several never wait on each other
+ * in a cycle. For a request that checks, places and registers several
+ * blobs as one step.
+ */
+export async function withBlobUploadLocks<T>(
+  hashes: readonly string[],
+  fn: () => Promise<T>,
+): Promise<T> {
+  const sorted = [...new Set(hashes)].sort();
+  const take = (i: number): Promise<T> => {
+    const hash = sorted[i];
+    return hash === undefined
+      ? fn()
+      : withBlobUploadLock(hash, () => take(i + 1));
+  };
+  return take(0);
+}
+
+/**
+ * Take the locks on every hash in `hashes`, as `withBlobUploadLocks` does,
+ * and hold them until the answered function is called. For a request whose
+ * locked span runs through code that is not one callback.
+ */
+export async function holdBlobUploadLocks(
+  hashes: readonly string[],
+): Promise<() => void> {
+  let release: () => void = () => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await new Promise<void>((acquired) => {
+    void withBlobUploadLocks(hashes, () => {
+      acquired();
+      return released;
+    });
+  });
+  return release;
+}

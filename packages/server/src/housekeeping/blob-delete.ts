@@ -7,7 +7,8 @@ import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
  * written over the location log, and every deletion here answers to it: a
  * drop goes only if the log's count of live copies allows it, decided in
  * the one statement that removes the row; a purge takes a blob to zero
- * only because the orphan report named it on an earlier run; a strike's
+ * only because the orphan report named it on an earlier run and nothing
+ * names it in the transaction that removes the row; a strike's
  * second half discards bytes the check has just struck from the log. Each
  * runs under the per-hash lock the upload takes, so an upload's own
  * check-and-record cannot interleave with it.
@@ -78,22 +79,62 @@ export async function dropBlobCopy(
 }
 
 /**
- * Take a blob the orphan report named to zero: every attached store, the
- * log's rows and the report's row (both by cascade), then the registry.
- * Every attached store rather than the ones the log names, because a copy
- * the log did not know about would otherwise outlive its row.
+ * Take a blob the orphan report named to zero, if it is still due. The
+ * decision and the row's removal are one transaction (`claimOrphanPurge`),
+ * which checks that the report still stands within `due` and that nothing
+ * references the blob, so an upload of the same bytes or a write naming
+ * them that landed after the sweep's walk keeps it. The bytes go after the
+ * row, from every attached store rather than the ones the log names,
+ * because a copy the log did not know about would otherwise outlive its
+ * row; a purge record covers the gap, so a failure between the two leaves
+ * the next sweep a purge to finish (`finishPurge`) rather than a row naming
+ * bytes that are gone. Answers whether the blob was purged.
  */
 export async function purgeBlob(
   storage: Storage,
   stores: Stores,
   hash: string,
+  due: { before: string; runStartedAt: string },
+): Promise<boolean> {
+  return withBlobUploadLock(hash, async () => {
+    const claimed = await storage.blobs.claimOrphanPurge(
+      hash,
+      due.before,
+      due.runStartedAt,
+    );
+    if (!claimed) return false;
+    await deleteEverywhere(storage, stores, hash);
+    return true;
+  });
+}
+
+/**
+ * Finish a purge whose row went and whose bytes may not have: delete them
+ * from every attached store and clear the record. An upload of the same
+ * bytes clears the record in the transaction that registers them, so a
+ * record gone by the time the lock is held means the bytes are stored
+ * again and stay.
+ */
+export async function finishPurge(
+  storage: Storage,
+  stores: Stores,
+  hash: string,
 ): Promise<void> {
   await withBlobUploadLock(hash, async () => {
-    for (const store of stores.stores) {
-      await store.delete(hash);
-    }
-    await storage.blobs.remove(hash);
+    if (!(await storage.blobs.purgePending(hash))) return;
+    await deleteEverywhere(storage, stores, hash);
   });
+}
+
+async function deleteEverywhere(
+  storage: Storage,
+  stores: Stores,
+  hash: string,
+): Promise<void> {
+  for (const store of stores.stores) {
+    await store.delete(hash);
+  }
+  await storage.blobs.settlePurge(hash);
 }
 
 /**
