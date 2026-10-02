@@ -208,14 +208,6 @@ describe("a signed-in app's subscription", () => {
     ).toBe(404);
   });
 
-  it("is deleted with every grant of an app when the app is removed", async () => {
-    const g = await grant();
-    const id = await register(g.first);
-    expect(await ctx.storage.outboundWebhooks.get(id)).not.toBeNull();
-    await provider().deleteClientRecords(g.clientId);
-    expect(await ctx.storage.outboundWebhooks.get(id)).toBeNull();
-  });
-
   it("is not another person's on the same app", async () => {
     const g = await grant();
     const id = await register(g.first);

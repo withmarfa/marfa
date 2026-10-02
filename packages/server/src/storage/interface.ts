@@ -1212,6 +1212,8 @@ export interface KeyStore {
    * already retired both read as absent through it, and a route asking that
    * question afterwards would be answering from a second query against a
    * row this call has already decided about.
+   *
+   * The key's webhook subscriptions are deleted in the same transaction.
    */
   revoke(id: string): Promise<KeyRevokeOutcome>;
   updateLastUsed(id: string): Promise<void>;
@@ -1745,10 +1747,11 @@ export interface OauthProviderStore {
    *  revoked means the grant stands. */
   getAccessTokenById(id: string): Promise<OauthAccessTokenRow | null>;
   /** Cascade revocation for a grant: delete every access + refresh token
-   *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
-   *  handler when the user revokes an app's access. The grant's
-   *  `auth_oauth_consent` row is also deleted (the plugin will require
-   *  re-consent on the next authorize attempt). */
+   *  for (clientId, authUserId). Used by `DELETE /auth/grants/:id` when the
+   *  user revokes an app's access, and by every other path that revokes a
+   *  grant. The grant's `auth_oauth_consent` row is also deleted (the plugin
+   *  will require re-consent on the next authorize attempt), and so are the
+   *  grant's webhook subscriptions, in the same transaction. */
   revokeTokensForGrant(clientId: string, authUserId: string): Promise<void>;
   /**
    * Delete every outstanding authorization code for (clientId, authUserId).
@@ -1823,45 +1826,6 @@ export interface OauthProviderStore {
    *  registration is the product writer; see `CreateClientInput` for what
    *  this seam is for. */
   createClient(input: CreateClientInput): Promise<CreateClientResult>;
-  /**
-   * Every `system.connection { kind: "app" }` projection carrying this
-   * client id, whatever either lifecycle axis says. The
-   * operator's client delete walks this list, so it has to see the
-   * revoked grant rows `findGrantItemId` deliberately hides: a projection left
-   * behind by a hand-deleted client row is exactly what that route exists
-   * to remove.
-   */
-  listGrantItemsForClient(clientId: string): Promise<
-    {
-      id: string;
-      authUserId: string | null;
-      state: string;
-    }[]
-  >;
-  /**
-   * Delete every authorization code minted for this client, for every user.
-   * Codes are `auth_verification` rows rather than plugin tables, so the
-   * per-client sweep of tokens and consents does not reach them; the grant
-   * cascade reaches them per (client, user), and a user whose projection is
-   * already gone has no cascade. Returns the number of rows deleted.
-   */
-  revokeAuthorizationCodesForClient(clientId: string): Promise<number>;
-  /**
-   * Delete every plugin record keyed on this client id: access tokens,
-   * refresh tokens and consent rows, across every user. The per-grant
-   * cascade reaches the rows a projection names; this reaches the rest,
-   * which is what a client whose projections were removed by hand leaves
-   * behind. Returns the counts, for the audit row.
-   */
-  deleteClientRecords(clientId: string): Promise<{
-    accessTokens: number;
-    refreshTokens: number;
-    consents: number;
-  }>;
-  /** Delete the `auth_oauth_client` row. Returns false when there was none,
-   *  which is what makes the admin delete idempotent and the orphan repair
-   *  the same call. */
-  deleteClient(clientId: string): Promise<boolean>;
   /**
    * Resolve the projected `system.connection { kind: "app" }` item id for a
    * (clientId, authUserId) pair. Returns the `items.id` value or
