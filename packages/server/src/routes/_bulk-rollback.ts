@@ -65,3 +65,23 @@ export function bulkAtomicRollback(
     innerStatus(inner.code),
   );
 }
+
+/**
+ * A best-effort page's answer for an entry whose write failed for a reason
+ * of the server's own (the event log refusing its row, the lock's budget, a
+ * full disk) after earlier entries committed. Before any has, the failure
+ * answers the page, nothing having been written. Answered as that entry's own
+ * `errored` outcome, and the page as `200`, rather than failing the page:
+ * a `5xx` tells the caller nothing was written, so it sends the page again
+ * and the committed entries are written twice. No idempotency key stands in
+ * the way: the bulk doors take none. The entry itself wrote nothing, its
+ * transaction having rolled back.
+ */
+export function failedEntry(err: unknown): { code: string; message: string } {
+  if (err instanceof MarfaError)
+    return { code: err.code, message: err.message };
+  return {
+    code: "internal_error",
+    message: "The entry could not be written, and nothing of it was",
+  };
+}

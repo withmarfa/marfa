@@ -108,8 +108,6 @@ import {
   hasAddedResponseParam,
   isRegisteredResponseRedirect,
 } from "../auth/redirect-params.js";
-import { publish } from "../pubsub.js";
-import { reportFault } from "../process-faults.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -1193,7 +1191,8 @@ async function projectGrantOnConsent(
   },
 ): Promise<void> {
   // Detect re-consent: update scopes in place if a projection exists,
-  // insert on first consent. Either way the audit row and publish fire.
+  // insert on first consent. Either way the audit row is written, and the
+  // write announces itself.
   let grantItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     grantItemId = await storage.oauthProvider.findGrantItemId({
@@ -1203,8 +1202,6 @@ async function projectGrantOnConsent(
   }
 
   const now = new Date().toISOString();
-  let projectedItem: import("@withmarfa/shared").Item;
-  let eventType: "created" | "updated";
   let priorScopes: string[] = [];
 
   if (grantItemId) {
@@ -1301,8 +1298,6 @@ async function projectGrantOnConsent(
         `projectGrantOnConsent: re-consent answered ${written.outcome}`,
       );
     }
-    projectedItem = written.item;
-    eventType = "updated";
   } else {
     // First-time consent: insert a fresh row. No tier named: `tier` is a
     // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
@@ -1326,21 +1321,7 @@ async function projectGrantOnConsent(
       },
     );
     grantItemId = item.id;
-    projectedItem = item;
-    eventType = "created";
   }
-
-  // Not awaited: the grant is written and the person is on their way back
-  // to the app, so a failed announcement is reported rather than answered.
-  publish({
-    type: eventType,
-    item: projectedItem,
-  }).catch((err: unknown) => {
-    reportFault("consent: the grant's event could not be written", err, {
-      client_id: opts.clientId,
-      grant_item_id: projectedItem.id,
-    });
-  });
 
   void storage.audit.log({
     action: "auth.grant.created",

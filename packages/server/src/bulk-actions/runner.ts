@@ -21,20 +21,19 @@
  * could ever learn about. The job's `enable_fanout` decides only whether
  * those events also drive outbound work, never whether they are logged.
  *
- * Each publish happens after the chunk's transaction commits, and reuses
- * the rows the writes returned rather than reading them back.
+ * Each row's events are written with the row, inside the chunk's
+ * transaction, and reach this process's subscribers once it commits.
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
-import type { CascadeRoot, Storage } from "../storage/interface.js";
-import type { Item, Metadata } from "@withmarfa/shared";
+import type { Storage } from "../storage/interface.js";
+import type { Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
-import { publish, publishEdge } from "../pubsub.js";
+import { publish } from "../pubsub.js";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
-import { log } from "../middleware/logger.js";
 import { blobProof } from "../routes/_blob-reach.js";
 import { writeItem } from "../storage/item-write.js";
-import type { ItemMoved, ItemUpdate } from "../storage/item-write.js";
+import type { ItemUpdate } from "../storage/item-write.js";
 import type { LiveCredential } from "../auth/live-credential.js";
 
 export interface ChunkOutcome {
@@ -102,13 +101,6 @@ async function runTransitionChunk({
     throw new Error("runTransitionChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
-  // Collected inside the transaction and published after it commits, so a
-  // subscriber is never told about a row a rollback then took away.
-  const moved: Item[] = [];
-  // Rows a row's move carried with it, announced as the single doors
-  // announce them: brought back as a restore, taken as a delete.
-  const broughtBack: { item: Item; restoredWith: CascadeRoot }[] = [];
-  const trashed: { item: Item; trashedWith: CascadeRoot }[] = [];
   const alreadyCarried = carriedByJob ?? new Set<string>();
   // Joined to the job's set only once this chunk's transaction commits: a
   // chunk rolled back as a whole carried nothing.
@@ -120,21 +112,16 @@ async function runTransitionChunk({
         continue;
       }
       try {
-        // Each row is a savepoint of the chunk's transaction, so one that
-        // fails leaves nothing behind and the rest still land.
+        // Each row is a savepoint of the chunk's transaction, its events
+        // with it, so one that fails leaves nothing behind and the rest
+        // still land.
         const result = await writeItem(
           storage,
           { kind: "credential", key: credential.key },
           { op: "transition", id, state: input.state },
+          { fanout: fansOutFor(input) },
         );
-        const root = { id, type: result.item.type };
-        moved.push(result.item);
-        for (const item of result.broughtBack) {
-          broughtBack.push({ item, restoredWith: root });
-          carriedInChunk.add(item.id);
-        }
-        for (const item of result.trashed) {
-          trashed.push({ item, trashedWith: root });
+        for (const item of [...result.broughtBack, ...result.trashed]) {
           carriedInChunk.add(item.id);
         }
         succeeded.push(id);
@@ -144,29 +131,6 @@ async function runTransitionChunk({
     }
   });
   for (const id of carriedInChunk) alreadyCarried.add(id);
-  for (const item of moved) {
-    await publish({
-      type: "state_changed",
-      item,
-      enableFanout: fansOutFor(input),
-    });
-  }
-  for (const { item, trashedWith } of trashed) {
-    await publish({
-      type: "deleted",
-      item: { ...item, state: "trashed" },
-      trashedWith,
-      enableFanout: fansOutFor(input),
-    });
-  }
-  for (const { item, restoredWith } of broughtBack) {
-    await publish({
-      type: "restored",
-      item,
-      restoredWith,
-      enableFanout: fansOutFor(input),
-    });
-  }
   return { succeeded, errors };
 }
 
@@ -179,22 +143,20 @@ async function runPurgeChunk({
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   const blob_hashes = new Set<string>();
-  // Collected inside the transaction and announced after it commits.
-  const purged: ItemMoved[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
         // The single purge's write, judged inside the chunk's transaction
         // and as a savepoint of it: a row restored since the job was queued
         // is one the person took back and is refused, and a row whose purge
-        // fails part-way leaves nothing behind.
+        // fails part-way leaves nothing behind, its events included.
         const result = await writeItem(
           storage,
           { kind: "credential", key: credential.key },
           { op: "purge", id },
+          { fanout: fansOutFor(input) },
         );
         if (result.outcome !== "moved") continue;
-        purged.push(result);
         collectBlobHashes(result.item.properties, blob_hashes);
         succeeded.push(id);
       } catch (err) {
@@ -202,30 +164,6 @@ async function runPurgeChunk({
       }
     }
   });
-  // Edges first and rows after, the ordering the single-item door states:
-  // an edge pointing AT a purged row lives on a row that is not purged, and
-  // nothing else tells its holder the relationship is gone. A trash before a
-  // purge announced `item.deleted`, which says recoverable, so each row is
-  // announced gone as well.
-  for (const { item, edges, edgeSourceTypes } of purged) {
-    for (const edge of edges) {
-      await publishEdge({
-        type: "edge_deleted",
-        edge,
-        sourceType: edgeSourceTypes.get(edge.source_id),
-        purgedWith: item.id,
-        enableFanout: fansOutFor(input),
-      });
-    }
-  }
-  for (const { item, trashedWith } of purged) {
-    await publish({
-      type: "purged",
-      item,
-      ...(trashedWith && { trashedWith }),
-      enableFanout: fansOutFor(input),
-    });
-  }
   return { succeeded, errors, blob_hashes };
 }
 
@@ -241,24 +179,21 @@ async function runUpdateTagsChunk({
   const errors: BulkActionErrorEntry[] = [];
   const add = input.add ?? [];
   const remove = input.remove ?? [];
-  // Collected inside the transaction and published after it commits, so a
-  // subscriber is never told about a change a rollback took away.
-  const changed = new Map<string, Metadata>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        // A savepoint per row, holding the row's gate and its tag writes, so
-        // the gate is asked of the row as it stands when it is written and a
-        // row that fails leaves nothing behind.
-        const metadata = await storage.runInTransaction(async () => {
+        // A savepoint per row, holding the row's gate, its tag writes and
+        // the event that announces them, so the gate is asked of the row as
+        // it stands when it is written and a row that fails leaves nothing.
+        await storage.runInTransaction(async () => {
           const row = await storage.items.getIncludingTrashed(id);
           if (!row || !mayReadType(credential.key, row.type)) {
             throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
           }
           checkTypeAccess(credential.key, row.type, "write");
-          let written: Metadata | undefined;
+          let metadata: Metadata | undefined;
           if (add.length > 0) {
-            written = await storage.metadata.addTags(id, add);
+            metadata = await storage.metadata.addTags(id, add);
           }
           for (const tag of remove) {
             // Announced whether or not the tag was there to remove. That is
@@ -267,55 +202,25 @@ async function runUpdateTagsChunk({
             // response either, and comparing before and after per tag
             // would cost a read per row to suppress an event a subscriber
             // treats as idempotent anyway.
-            written = await storage.metadata.removeTag(id, tag);
+            metadata = await storage.metadata.removeTag(id, tag);
           }
-          return written;
+          if (!metadata) return;
+          // The row as the tag write left it, its modification time moved.
+          // Read past the bin: the filter takes `state: "trashed"`, and a
+          // row trashed after the job was queued is announced like any other.
+          await publish({
+            type: "metadata_changed",
+            item: (await storage.items.getIncludingTrashed(id)) ?? row,
+            metadata,
+            enableFanout: fansOutFor(input),
+          });
         });
-        if (metadata) changed.set(id, metadata);
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
       }
     }
   });
-  // A tag change is a metadata-layer change, and the single-item tag doors
-  // announce it as one. The item is fetched in a single batch read because
-  // the tag stores return the metadata row alone.
-  //
-  // `includeTrashed` is load-bearing rather than defensive. `addTags` has no
-  // trashed guard, so the write lands on a trashed row and the id is
-  // reported as succeeded; without this the read comes back empty and the
-  // publish is skipped, which is a write with no event-log row — the exact
-  // shape this whole change exists to remove. Two ordinary paths reach it:
-  // the filter accepts `state: "trashed"` outright, and the match set is
-  // frozen at job creation while the worker runs later, so anything trashed
-  // in that window arrives here trashed. The same omission has now cost the
-  // purge runner a four-thousand-row miscount; see `getMany`'s own comment.
-  if (changed.size > 0) {
-    const items = await storage.items.getMany([...changed.keys()], {
-      includeTrashed: true,
-    });
-    for (const [id, metadata] of changed) {
-      const item = items.get(id);
-      if (!item) {
-        // Reachable only if the row was hard-deleted between the write and
-        // this read. Said out loud rather than skipped silently: the write
-        // happened and nothing will ever announce it, so a client rebuilding
-        // from the stream is now behind by one row with no way to find out.
-        log("warn", "Bulk tag update wrote a row it could not announce", {
-          item_id: id,
-          reason: "item absent at publish time",
-        });
-        continue;
-      }
-      await publish({
-        type: "metadata_changed",
-        item,
-        metadata,
-        enableFanout: fansOutFor(input),
-      });
-    }
-  }
   return { succeeded, errors };
 }
 
@@ -370,8 +275,6 @@ async function runUpdateChunk(
 ): Promise<ChunkOutcome> {
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
-  // Collected inside the transaction, published after it commits.
-  const updated: Item[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -379,9 +282,9 @@ async function runUpdateChunk(
           storage,
           { kind: "credential", key: credential.key },
           { op: "update", id, ...change },
+          { fanout: fansOutFor(input) },
         );
         if (result.outcome === "updated") {
-          updated.push(result.item);
           succeeded.push(id);
         } else {
           errors.push({
@@ -395,7 +298,6 @@ async function runUpdateChunk(
       }
     }
   });
-  await publishUpdated(updated, input);
   return { succeeded, errors };
 }
 
@@ -406,20 +308,6 @@ async function runUpdateChunk(
  */
 function fansOutFor(input: BulkActionInput): boolean {
   return input.enable_fanout ?? false;
-}
-
-/** The `item.updated` announcement the three property-shaped chunks share. */
-async function publishUpdated(
-  items: Item[],
-  input: BulkActionInput,
-): Promise<void> {
-  for (const item of items) {
-    await publish({
-      type: "updated",
-      item,
-      enableFanout: fansOutFor(input),
-    });
-  }
 }
 
 function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {

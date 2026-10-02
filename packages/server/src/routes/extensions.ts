@@ -370,7 +370,7 @@ export function extensionRoutes(storage: Storage) {
     const body = c.req.valid("json");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, extensions } = await storage.runInTransaction(async () => {
+    const { extensions } = await storage.runInTransaction(async () => {
       const item = requireWritableRow(
         c,
         await storage.items.getIncludingTrashed(id),
@@ -398,23 +398,23 @@ export function extensionRoutes(storage: Storage) {
       }
 
       const written = await storage.metadata.setExtension(id, namespace, body);
-      return { item, extensions: written };
-    });
 
-    // The extensions map and the tags are one metadata row, and the four
-    // doors that write the other half of it publish. A subscriber cannot
-    // tell which door wrote the row, so emitting for one and not the other
-    // makes propagation depend on which the writer happened to use — and an
-    // app storing sidecar state here changed a record no second device was
-    // ever told about.
-    //
-    // Read the row back rather than composing the event from the extensions
-    // this call returned: the payload carries the whole metadata, and half
-    // of it is the half this door did not touch.
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata: await storage.metadata.get(id),
+      // The extensions map and the tags are one metadata row, and the four
+      // doors that write the other half of it publish. A subscriber cannot
+      // tell which door wrote the row, so emitting for one and not the other
+      // makes propagation depend on which the writer happened to use — and an
+      // app storing sidecar state here changed a record no second device was
+      // ever told about.
+      //
+      // Read the row back rather than composing the event from the extensions
+      // this call returned: the payload carries the whole metadata, and half
+      // of it is the half this door did not touch.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: await storage.metadata.get(id),
+      });
+      return { extensions: written };
     });
 
     void storage.audit.log({
@@ -438,7 +438,7 @@ export function extensionRoutes(storage: Storage) {
     const apiKey = c.get("apiKey");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, extensions } = await storage.runInTransaction(async () => {
+    const { extensions } = await storage.runInTransaction(async () => {
       const item = requireWritableRow(
         c,
         await storage.items.getIncludingTrashed(id),
@@ -461,16 +461,16 @@ export function extensionRoutes(storage: Storage) {
       }
 
       const written = await storage.metadata.deleteExtension(id, namespace);
-      return { item, extensions: written };
-    });
 
-    // A removal is as observable as a write, and for the same reason as
-    // the replace door above: the namespace's absence from the payload is
-    // how a subscriber learns to drop its own copy.
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata: await storage.metadata.get(id),
+      // A removal is as observable as a write, and for the same reason as
+      // the replace door above: the namespace's absence from the payload is
+      // how a subscriber learns to drop its own copy.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: await storage.metadata.get(id),
+      });
+      return { extensions: written };
     });
 
     void storage.audit.log({

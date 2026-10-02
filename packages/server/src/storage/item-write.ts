@@ -50,7 +50,11 @@ import {
   requireDeclaredTypeMatches,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
-import { applyInlineEdges } from "../routes/_edges-inline.js";
+import {
+  announceInlineEdges,
+  applyInlineEdges,
+} from "../routes/_edges-inline.js";
+import { publish, publishEdge } from "../pubsub.js";
 import type { InlineEdgeChanges } from "../routes/_edges-inline.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { sourceAllowlistRefusal } from "../routes/_source-allowlist.js";
@@ -275,30 +279,204 @@ async function naming<T>(id: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** How a write is announced. */
+export interface AnnounceOptions {
+  /** False where the caller announces what it wrote itself, together with
+   *  writes of its own: an archive restore, a folder's two-step revoke. */
+  announce?: boolean;
+  /** Whether the events drive outbound work as well as being logged; the
+   *  bulk doors decline it unless asked (`pubsub.ts`). */
+  fanout?: boolean;
+}
+
 export async function writeItem<W extends ItemWrite>(
   storage: Storage,
   writer: W extends ItemCreate ? { kind: "platform" } : ItemWriter,
   write: W,
+  { announce = true, fanout = true }: AnnounceOptions = {},
 ): Promise<ResultOf<W>> {
   const result = await storage.runInTransaction(async () => {
-    switch (write.op) {
-      case "update":
-        return await updateById(storage, writer, write);
-      case "put":
-        return await put(storage, writer, write);
-      case "create":
-        return await createPlatformRow(storage, writer, write);
-      case "delete":
-        return await deleteRow(storage, writer, write);
-      case "transition":
-        return await transitionRow(storage, writer, write);
-      case "restore":
-        return await restoreRow(storage, writer, write);
-      case "purge":
-        return await purgeRow(storage, writer, write);
-    }
+    const outcome = await (async (): Promise<ItemWriteResult | ItemMoved> => {
+      switch (write.op) {
+        case "update":
+          return await updateById(storage, writer, write);
+        case "put":
+          return await put(storage, writer, write);
+        case "create":
+          return await createPlatformRow(storage, writer, write);
+        case "delete":
+          return await deleteRow(storage, writer, write);
+        case "transition":
+          return await transitionRow(storage, writer, write);
+        case "restore":
+          return await restoreRow(storage, writer, write);
+        case "purge":
+          return await purgeRow(storage, writer, write);
+      }
+    })();
+    // Inside the write's transaction, so the change and its events commit
+    // together or not at all.
+    if (announce) await announceWrite(storage, write, outcome, fanout);
+    return outcome;
   });
   return result as ResultOf<W>;
+}
+
+/**
+ * The row an update left, without what the store reports about the write
+ * beside it: the row has no such columns, so an event or an answer carrying
+ * them would hold fields no read of the item returns.
+ */
+export function rowOf(item: ResolvedItem): Item {
+  const row: Item & Partial<ResolvedItem> = { ...item };
+  delete row.conflict_resolution;
+  delete row.conflict_sibling;
+  delete row.conflict_sibling_edges;
+  return row;
+}
+
+/** The events a write's outcome is announced by, in the order a subscriber
+ *  has to meet them: a row before the edges naming it, and the rows a move
+ *  carried after the row moved. */
+async function announceWrite(
+  storage: Storage,
+  write: ItemWrite,
+  outcome: ItemWriteResult | ItemMoved,
+  enableFanout: boolean,
+): Promise<void> {
+  switch (outcome.outcome) {
+    case "created":
+      await publish({
+        type: "created",
+        item: outcome.item,
+        metadata: outcome.metadata,
+        enableFanout,
+      });
+      if (outcome.edges)
+        await announceInlineEdges(storage, outcome.edges, enableFanout);
+      return;
+    case "updated": {
+      const {
+        conflict_sibling: sibling,
+        conflict_sibling_edges: siblingEdges,
+      } = outcome.item;
+      const item = rowOf(outcome.item);
+      // The copy first, then the row that gave its value up, so no
+      // subscriber sees the losing edit gone from the row and nowhere else.
+      if (sibling) {
+        await publish({
+          type: "created",
+          item: sibling,
+          metadata: await storage.metadata.get(sibling.id),
+          enableFanout,
+        });
+        await announceInlineEdges(
+          storage,
+          { created: siblingEdges ?? [], deleted: [] },
+          enableFanout,
+        );
+      }
+      await publish({
+        type: "updated",
+        item,
+        metadata: outcome.metadata,
+        enableFanout,
+      });
+      if (outcome.edges)
+        await announceInlineEdges(storage, outcome.edges, enableFanout);
+      return;
+    }
+    case "moved":
+      await announceMove(storage, write, outcome, enableFanout);
+      return;
+    case "unchanged":
+    case "conflict":
+    case "stale":
+      return;
+  }
+}
+
+async function announceMove(
+  storage: Storage,
+  write: ItemWrite,
+  moved: ItemMoved,
+  enableFanout: boolean,
+): Promise<void> {
+  const root: CascadeRoot = { id: moved.item.id, type: moved.item.type };
+  const trashedWithRoot = async (): Promise<void> => {
+    for (const taken of moved.trashed) {
+      await publish({
+        type: "deleted",
+        item: { ...taken, state: softDeleteState(taken.type) },
+        ...(softDeleteState(taken.type) === "trashed" && {
+          trashedWith: root,
+        }),
+        enableFanout,
+      });
+    }
+  };
+  const broughtBackWithRoot = async (): Promise<void> => {
+    for (const item of moved.broughtBack) {
+      await publish({
+        type: "restored",
+        item,
+        metadata: await storage.metadata.get(item.id),
+        restoredWith: root,
+        enableFanout,
+      });
+    }
+  };
+  switch (write.op) {
+    case "delete":
+      // The rows the cascade took first, as the store takes them.
+      await trashedWithRoot();
+      await publish({
+        type: "deleted",
+        item: { ...moved.item, state: softDeleteState(moved.item.type) },
+        enableFanout,
+      });
+      return;
+    case "transition":
+      await publish({
+        type: "state_changed",
+        item: moved.item,
+        metadata: await storage.metadata.get(moved.item.id),
+        enableFanout,
+      });
+      await trashedWithRoot();
+      await broughtBackWithRoot();
+      return;
+    case "restore":
+      await publish({
+        type: "restored",
+        item: moved.item,
+        metadata: await storage.metadata.get(moved.item.id),
+        enableFanout,
+      });
+      await broughtBackWithRoot();
+      return;
+    case "purge":
+      // Each edge the purge took, then the row: an edge pointing at the row
+      // lives on another, and nothing else tells that row's holder.
+      for (const edge of moved.edges) {
+        await publishEdge({
+          type: "edge_deleted",
+          edge,
+          sourceType: moved.edgeSourceTypes.get(edge.source_id),
+          purgedWith: moved.item.id,
+          enableFanout,
+        });
+      }
+      await publish({
+        type: "purged",
+        item: moved.item,
+        ...(moved.trashedWith && { trashedWith: moved.trashedWith }),
+        enableFanout,
+      });
+      return;
+    default:
+      return;
+  }
 }
 
 function credentialOf(writer: ItemWriter): ApiKey | undefined {

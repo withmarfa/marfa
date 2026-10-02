@@ -2,6 +2,7 @@ import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import type { CascadeRoot, EventLogStore } from "./storage/interface.js";
+import { afterCommit } from "./storage/commit-hooks.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
@@ -226,6 +227,17 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
   return "edge" in event;
 }
 
+/**
+ * Record an item change in the event log and tell this process's
+ * subscribers.
+ *
+ * **Called inside the transaction that wrote the change**, so the log row
+ * commits with the change or not at all, and the log's ids follow commit
+ * order. The subscribers are told only once that transaction commits, so a
+ * rollback leaves nothing behind for one to act on. Called outside any
+ * transaction, the change before it has already committed, and both happen
+ * at once.
+ */
 export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   const enableFanout = fansOut(event);
 
@@ -241,17 +253,19 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
     });
   }
 
-  emitter.emit("ITEM_CHANGED", {
-    ...event,
-    enableFanout,
-    eventId,
+  afterCommit(() => {
+    emitter.emit("ITEM_CHANGED", {
+      ...event,
+      enableFanout,
+      eventId,
+    });
   });
   return eventId;
 }
 
 /**
- * Publish an edge lifecycle event. Persists via event_log with
- * item_id = null and edge_id = edge.id.
+ * Publish an edge lifecycle event, on the terms `publish` keeps. Persists
+ * via event_log with item_id = null and edge_id = edge.id.
  *
  * A type filter on the SSE stream narrows item events and leaves these
  * alone: an edge carries no item type, so `?type=` has nothing to say
@@ -280,10 +294,12 @@ export async function publishEdge(
     });
   }
 
-  emitter.emit("EDGE_CHANGED", {
-    ...event,
-    enableFanout,
-    eventId,
+  afterCommit(() => {
+    emitter.emit("EDGE_CHANGED", {
+      ...event,
+      enableFanout,
+      eventId,
+    });
   });
   return eventId;
 }
