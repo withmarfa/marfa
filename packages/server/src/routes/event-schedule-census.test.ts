@@ -355,4 +355,34 @@ describe("every item write door holds an event's schedule to one rule", () => {
     );
     expect(taken.status).toBe(200);
   });
+
+  it("refuses more rule than one series may carry through POST /items/bulk", async () => {
+    const lines = Array.from(
+      { length: 700 },
+      (_, i) =>
+        `RRULE:FREQ=DAILY;BYHOUR=${String(i % 24)};BYMINUTE=${String(i % 60)}`,
+    );
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      body: {
+        atomic: false,
+        items: [
+          {
+            type: "core.event",
+            properties: {
+              title: "many rules",
+              starts_at: START,
+              recurrence: lines,
+            },
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    expect(body.results[0]?.outcome).toBe("errored");
+    expect(body.results[0]?.error?.code).toBe("invalid_properties");
+  });
 });

@@ -12,8 +12,10 @@
  * meter that runs out stops the walk at that candidate. No single step does
  * more than a bounded amount of work before it charges, so a rule that never
  * produces an occurrence costs at most the meter's limit, however it is
- * written. Reading the lines is bounded as well: a line is capped in length,
- * the added and removed dates in number, and every rule part is kept once.
+ * written. Reading the lines is bounded as well, before any of them is
+ * parsed: a series carries at most one RRULE and a capped number of
+ * characters in all, its added and removed dates are capped in number, and
+ * every rule part is kept once.
  * Web-safe: no Node API is used.
  */
 import {
@@ -47,8 +49,10 @@ export const RECURRENCE_WORK_LIMIT = 100_000;
  */
 export const RECURRENCE_TIME_LIMIT_MS = 1_000;
 
-/** Longest rule line a series may carry, so reading one is bounded too. */
-export const MAX_RECURRENCE_LINE_CHARS = 20_000;
+/** Most characters a series' `recurrence` may hold in all, so reading it is
+ *  bounded before any line is parsed. Room for one rule and the most dates
+ *  a series may add and remove. */
+export const MAX_RECURRENCE_CHARS = 40_000;
 
 /** Most added and removed dates, together, one series may carry. */
 export const MAX_RECURRENCE_DATES = 1_000;
@@ -392,6 +396,7 @@ function readRule(value: string): Rule {
         break;
       }
       case "BYDAY": {
+        const seen = new Set<string>();
         for (const entry of raw.split(",")) {
           const m = /^([+-]?\d{1,2})?(MO|TU|WE|TH|FR|SA|SU)$/.exec(
             entry.trim(),
@@ -403,9 +408,10 @@ function readRule(value: string): Rule {
           } else {
             const n = readInt(m[1], key, -53, 53);
             if (n === 0) fail("BYDAY may not number a weekday 0");
-            const numbered = (rule.bynweekday ??= []);
-            if (!numbered.some((e) => e.wd === wd && e.n === n)) {
-              numbered.push({ wd, n });
+            const slot = `${String(n)}:${String(wd)}`;
+            if (!seen.has(slot)) {
+              seen.add(slot);
+              (rule.bynweekday ??= []).push({ wd, n });
             }
           }
         }
@@ -588,14 +594,23 @@ export function compileSchedule(
     return values;
   };
 
+  let chars = 0;
+  let rrules = 0;
+  for (const rawLine of schedule.recurrence) {
+    chars += rawLine.length;
+    if (chars > MAX_RECURRENCE_CHARS) {
+      fail(
+        `a recurrence may hold at most ${String(MAX_RECURRENCE_CHARS)} characters in all`,
+      );
+    }
+    if (/^\s*RRULE[;:]/i.test(rawLine)) rrules += 1;
+  }
+  // RFC 5545 gives a series one RRULE.
+  if (rrules > 1) fail("a series carries at most one RRULE");
+
   for (const rawLine of schedule.recurrence) {
     const line = rawLine.trim();
     if (line === "") continue;
-    if (line.length > MAX_RECURRENCE_LINE_CHARS) {
-      fail(
-        `a rule line may be at most ${String(MAX_RECURRENCE_LINE_CHARS)} characters`,
-      );
-    }
     const { name, params, value } = splitLine(line);
     switch (name) {
       case "RRULE": {

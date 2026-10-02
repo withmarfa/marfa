@@ -24,7 +24,7 @@
     },
     "duration": {
       "type": "number",
-      "description": "Duration in seconds; the length of each occurrence of a series that states no ends_at."
+      "description": "Duration in seconds; the length of each occurrence of a series that states no ends_at. A write is refused unless it is from 0 to a century."
     },
     "place": {
       "type": "string",
@@ -59,7 +59,7 @@
     "recurrence": {
       "type": "array",
       "items_type": "string",
-      "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored, starting with starts_at itself. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when the rule names no date that exists after the start, or when it produces no occurrence within the bound a read unfolds a rule to."
+      "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored, starting with starts_at itself. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when it carries more than one RRULE, more than 40,000 characters in all or more than 1,000 added and removed dates, when the rule names no date that exists after the start, or when it produces no occurrence within the bound a read unfolds a rule to."
     },
     "all_day": {
       "type": "boolean",

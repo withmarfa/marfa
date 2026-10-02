@@ -697,3 +697,21 @@ describe("what a rule's text can cost", () => {
     }
   });
 });
+
+describe("how much rule a series may carry", () => {
+  it("refuses a second RRULE, and a value over the total cap before reading it", () => {
+    expect(() =>
+      compileSchedule({
+        starts_at: "2026-01-05T09:00:00Z",
+        recurrence: ["RRULE:FREQ=DAILY", "RRULE:FREQ=WEEKLY"],
+      }),
+    ).toThrow(/one RRULE/);
+    const many = Array.from(
+      { length: 700 },
+      () => `EXDATE:20260105T090000Z;${"X".repeat(100)}`,
+    );
+    expect(() =>
+      compileSchedule({ starts_at: "2026-01-05T09:00:00Z", recurrence: many }),
+    ).toThrow(/at most/);
+  });
+});

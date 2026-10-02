@@ -344,6 +344,11 @@ describe("what a write may store", () => {
     ],
     ["a length no instant can hold", { duration: 1e13 }, "duration"],
     [
+      "a second RRULE",
+      { recurrence: ["RRULE:FREQ=DAILY", "RRULE:FREQ=WEEKLY"] },
+      "recurrence",
+    ],
+    [
       "more added dates than a series may carry",
       {
         recurrence: [TOO_MANY_DATES],
