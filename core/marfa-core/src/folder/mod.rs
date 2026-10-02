@@ -1191,8 +1191,9 @@ impl Folder {
                             work.push(self.edge_work(file, &item_id, Some(&bound)));
                         }
                         // An editor's atomic save gives the same bytes a new
-                        // inode, and a stale record would lose the next rename.
-                        if bound.identity != file.mark {
+                        // inode, and a stale record would lose the next rename;
+                        // and a file taken back by its bytes has no record yet.
+                        if bound.identity != file.mark || !by_path.contains_key(file.key.as_str()) {
                             let conn = self.core.conn()?;
                             state::bind(
                                 &conn,
@@ -1485,6 +1486,56 @@ impl Folder {
                 });
             }
         }
+        // A file that cannot carry an id and that no record here names, the
+        // folder added again over its own files say, is the item placed where
+        // it sits whose bytes it holds.
+        let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
+        for (at, file) in files.iter().enumerate() {
+            if claims[at].is_some()
+                || waiting.contains_key(&at)
+                || file.id.is_some()
+                || carries_frontmatter(&file.path)
+            {
+                continue;
+            }
+            let placed = match &mut placed {
+                Some(placed) => placed,
+                None => placed.insert(self.placed_here()?),
+            };
+            let Some(candidates) = placed.get(&names::folded(&file.key)) else {
+                continue;
+            };
+            for edge in candidates {
+                if by_item.contains_key(edge.source_id.as_str()) || taken.contains(&edge.source_id)
+                {
+                    continue;
+                }
+                let Some(item) = self.core.get(&edge.source_id)? else {
+                    continue;
+                };
+                if !self.holds_bytes(&item, file, catalog) {
+                    continue;
+                }
+                taken.insert(item.id.clone());
+                claims[at] = Some(Claim {
+                    item_id: item.id.clone(),
+                    bound: Some(state::Bound {
+                        path: file.key.clone(),
+                        item_id: item.id,
+                        identity: None,
+                        content_hash: file.hash.clone(),
+                        written_hash: None,
+                        links: Vec::new(),
+                        lines: Vec::new(),
+                        edit_line: None,
+                        held: None,
+                        own: None,
+                        writes: state::Writes::default(),
+                    }),
+                });
+                break;
+            }
+        }
         // A file that cannot carry an id, moved here from another folder on
         // this machine, is the item that folder bound it to.
         for (at, file) in files.iter().enumerate() {
@@ -1523,6 +1574,27 @@ impl Folder {
             }
         }
         Ok((claims, waiting))
+    }
+
+    /// Whether the file holds what the item would be written as: a file
+    /// item's bytes, or a text file's body.
+    fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
+        if item.r#type.starts_with("system.") || !suited(item, &file.key, catalog) {
+            return false;
+        }
+        match bytes_of(item, catalog) {
+            Some(blob) => crate::blob::named(blob).is_ok_and(|named| {
+                std::fs::read(&file.path).is_ok_and(|bytes| crate::blob::name_of(&bytes) == named)
+            }),
+            None => {
+                file.unreadable.is_none()
+                    && item
+                        .properties
+                        .get(fields::body_field(catalog, &item.r#type))
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| state::hash(body.as_bytes()) == file.hash)
+            }
+        }
     }
 
     fn arrival(

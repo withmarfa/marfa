@@ -9286,6 +9286,89 @@ describe("where a file sits", () => {
     expect(existsSync(join(harness.dir, "Elsewhere", "Plan.md"))).toBe(false);
   });
 
+  it("takes back the files it holds by placement and bytes when it is added again over them", async () => {
+    const [photo, paper, words] = [
+      "01a00000-0000-7000-8000-0000000016f1",
+      "01a00000-0000-7000-8000-0000000016f2",
+      "01a00000-0000-7000-8000-0000000016f3",
+    ];
+    const photoBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x16, 0xf1,
+    ]);
+    const paperBytes = Buffer.from("%PDF-1.4\n%%EOF\n");
+    const placed = await placedHarness(
+      "placement-added-again",
+      [
+        {
+          id: photo,
+          title: "photo.png",
+          type: "core.file.image",
+          properties: {
+            title: "photo.png",
+            blob_ref: hashOf(photoBytes),
+            mime_type: "image/png",
+          },
+          path: "Pictures/photo.png",
+        },
+        {
+          id: paper,
+          title: "paper.pdf",
+          type: "core.file",
+          properties: {
+            title: "paper.pdf",
+            blob_ref: hashOf(paperBytes),
+            mime_type: "application/pdf",
+          },
+          path: "paper.pdf",
+        },
+        {
+          id: words,
+          title: "words",
+          properties: { title: "words", body: "plain words\n" },
+          path: "words.txt",
+        },
+      ],
+      { search: { types: ["core.file", "core.file.image", "core.note"] } },
+    );
+    harness = placed.harness;
+    acceptUploads(harness.server);
+    for (const bytes of [photoBytes, paperBytes]) {
+      scriptBlob(harness.server, bytes);
+    }
+    const first = await harness.folder.pull();
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(readFileSync(join(harness.dir, "Pictures", "photo.png"))).toEqual(
+      photoBytes,
+    );
+    expect(read(harness, "words.txt")).toBe("plain words\n");
+
+    // Its own state goes, and the directory is added again: none of these
+    // files can carry an id, so only where each sits and what it holds can
+    // name its item.
+    expect((await harness.folder.remove()).ok).toBe(true);
+    const added = await harness.folder.add(harness.settings.id);
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    // The witness: a new picture beside them is created.
+    writeFileSync(
+      join(harness.dir, "Pictures", "new.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x16, 0xf9]),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentTitles(harness),
+      "a folder added again over its own files made a second item of each",
+    ).toEqual(["new.png"]);
+    expect(sentUpdates(harness)).toEqual([]);
+    expect(
+      readdirSync(join(harness.dir, "Pictures")).sort(),
+      "the pull wrote the item again beside the file that already held it",
+    ).toEqual(["new.png", "photo.png"]);
+    expect(existsSync(join(harness.dir, "words (2).txt"))).toBe(false);
+    expect(existsSync(join(harness.dir, "paper (2).pdf"))).toBe(false);
+  });
+
   it("places a file whose placement another item holds beside it, and writes none where its placement is unsafe", async () => {
     const outside = mkdtempSync(join(tmpdir(), "marfa-folder-elsewhere-"));
     // Placed in this order, so each edge is older than the next.
