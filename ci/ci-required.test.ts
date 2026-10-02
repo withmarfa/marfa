@@ -427,6 +427,71 @@ describe("each job reads its own answer", () => {
   });
 });
 
+/**
+ * Whether a workflow's `paths` filter pattern matches a path, as Actions reads
+ * it: `**` crosses folders, and `**` followed by a slash matches none too.
+ */
+function filterMatches(pattern: string, path: string): boolean {
+  const source = pattern
+    .split("**/")
+    .map((part) =>
+      part
+        .split("**")
+        .map((piece) =>
+          piece
+            .split("*")
+            .map((text) => text.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+            .join("[^/]*"),
+        )
+        .join(".*"),
+    )
+    .join("(?:.*/)?");
+  return new RegExp(`^${source}$`).test(path);
+}
+
+describe("CodeQL", () => {
+  const { on } = workflow("codeql.yml") as unknown as {
+    on: {
+      push?: unknown;
+      pull_request?: { branches?: string[]; "paths-ignore"?: string[] };
+      schedule?: { cron: string }[];
+    };
+  };
+  const ignored = on.pull_request?.["paths-ignore"] ?? [];
+  const skips = (path: string) =>
+    ignored.some((pattern) => filterMatches(pattern, path));
+
+  it("analyzes every push to main and once a week, and a pull request unless it changes only documentation or agent settings", () => {
+    expect(on.push).toEqual({ branches: ["main"] });
+    expect(on.pull_request).toEqual({
+      branches: ["main"],
+      "paths-ignore": ["**/*.md", "LICENSE", ".claude/**"],
+    });
+    expect(on.schedule).toHaveLength(1);
+    expect(on.schedule?.[0]?.cron).toMatch(/^\d{1,2} \d{1,2} \* \* [0-6]$/);
+  });
+
+  it("skips what the classifier also reads as documentation, and no code in a language it analyzes", () => {
+    for (const path of ["README.md", "LICENSE", ".claude/settings.json"]) {
+      expect(skips(path), path).toBe(true);
+      expect([...affected(path)].filter((job) => job !== "ci-sqlite")).toEqual(
+        [],
+      );
+    }
+    expect(skips("conformance/spec/items.md")).toBe(true);
+    for (const path of [
+      ".github/workflows/ci.yml",
+      "packages/server/src/runtime.ts",
+      "deploy/healthcheck.js",
+      "core/marfa-core/src/lib.rs",
+      "core/Cargo.toml",
+      "openapi.json",
+    ]) {
+      expect(skips(path), path).toBe(false);
+    }
+  });
+});
+
 describe("what a job reads reaches it", () => {
   it("every file the CLI scenarios load runs them", async () => {
     const { default: config } =
