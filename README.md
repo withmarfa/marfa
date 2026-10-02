@@ -14,7 +14,7 @@ A typed data layer for structured personal data: items under custom type schemas
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
 | [`deploy/`](./deploy)                    | The container recipe: the server with Litestream streaming its database to the bucket its blobs are replicated to        |
 
-No manifest here carries a version: every package's `package.json` holds the placeholder `0.0.0`, and every `Cargo.toml` holds it or inherits the workspace's (the root `package.json` is the workspace, not a package, and holds none). A release is a tag, the maintainer's, each one the previous plus 0.0.1 from 0.0.1, and `.github/workflows/release.yml` stamps the tag into every manifest in its own checkout when it builds. It builds the binary, `@withmarfa/core`, `@withmarfa/client` and the `marfa-client` crate; it publishes both npm packages and the crate and attaches everything to a GitHub release. The Swift package lives in `withmarfa/marfa-swift`, which builds the core's Swift binding and generates its own types from the commit it pins. A dispatch with a `version` input is a dry run of the same build that publishes nothing. `ci/version-fields.test.ts` refuses a pull request that moves a manifest off the placeholder.
+A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` binary, `@withmarfa/core`, `@withmarfa/client` and the `marfa-client` crate, publishes them and attaches them to a GitHub release. The Swift package lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
 
 ## Quick start
 

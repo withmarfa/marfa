@@ -1,55 +1,44 @@
 # Marfa
 
-Under rebuild since 17 September 2026. The decisions in force live outside this repository, in the maintainer's working folder, and every session is pointed at them by its prompt. Nothing here restates or overrides them.
+The server (`packages/`), the Rust core every native client embeds (`core/`), and the contract both are held to (`conformance/`). The Swift package lives in `withmarfa/marfa-swift`.
 
-## In force
+## Working here
 
-- American English in code, comments and commits. Scoped Conventional Commits (`refactor(server):`, `feat(core):`). Feature branches and pull requests. Never push `main`. A session merges its own pull request once every required check is green and any appropriate review is complete: squash, branch deleted, in stack order.
-- One clone of this repository per machine. Parallel work happens in worktrees made by the agent's own worktree mechanism, never in a second clone or a sibling folder.
-- Before closing, remove the worktrees you created once their branches are merged, with `git worktree remove`, and run `git worktree prune`; if git refuses one, report it rather than forcing it.
-- This repository is public while development continues; visibility is not a release milestone. All CI uses standard GitHub-hosted runners: macOS for Apple builds and Keychain tests, Ubuntu for portable jobs and publishing. Conformance and CLI scenarios run on Ubuntu, and on macOS nightly and when `ci.yml` is dispatched with `macos`. Never route public repository jobs to personal runners or paid third-party runners. `ci/workflow-runner.test.ts` enforces the runner selection.
-- SQLite is the only database. Removed means gone: no shims, no aliases, no migration paths, no compatibility flags.
-- The server's behavior is the specification. The docs site is not a source of truth, and no docs connector is used in a session even if one is offered.
-- No personal details of any machine or person in this repository: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value.
-- No time estimates anywhere.
-
-- Independent pull requests and hosted jobs may run concurrently. Do not delay pushes or verification to ration a personal runner pool. Keep dependency order for stacked changes and cancel superseded PR runs.
-
-## Versions
-
-- A version exists only as a git tag. A tag is created only when a release is called for, never on a session's own initiative, and no one writes a version into a file.
-- Every version is the previous one plus 0.0.1, whatever the size of the change, with no milestone steps. The first is 0.0.1.
-- Every manifest carries the placeholder `0.0.0`, `ci/version-fields.test.ts` refuses a tree where one does not, and `release.yml` stamps the tag's version into its own checkout with `scripts/release/stamp-version.sh`.
+- American English in code, comments and commits. Scoped Conventional Commits (`fix(server):`, `refactor(core):`).
+- One clone per machine. Parallel work happens in worktrees inside it, made with `git worktree add .claude/worktrees/<name> -b <branch> origin/main`; never a second clone or a sibling folder. Once a branch is merged, `git worktree remove` its worktree and run `git worktree prune`; if git refuses, report it rather than forcing it.
+- Feature branches and pull requests; never push `main`. A session merges its own pull request once every required check is green and the review its risk calls for is done, with that depth stated on the pull request: squash, branch deleted, in stack order. Cancel superseded runs; never hold back a push or a check to ration runners.
+- All CI runs on standard GitHub-hosted runners, never personal or paid third-party ones (`ci/workflow-runner.test.ts` enforces it).
+- SQLite is the only database. Removed means gone: no shims, aliases, migration paths or compatibility flags.
+- No personal details of any machine or person: no absolute paths, hostnames, account names, credentials, or a real machine or person as an example value. No time estimates.
+- No test touches the login keychain or raises a dialog.
 
 ## Evidence
 
-- A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced, or the assertion passes against nothing.
-- A comment is probed, not read. A count, a list, or a claim that nothing calls something is checked by running the query, never by agreeing with it.
-- A comment survives only if it explains a why the code cannot; when in doubt, it goes. Anything that narrates history, removed code, a former dialect or mode, a ticket or a person, goes, in every file the work touches.
-- Match review to the change's risk and complexity. Use sub-agent or adversarial review when it adds meaningful confidence; straightforward, low-risk changes do not need it. When both read-only and mutation-based reviews are useful, run them sequentially so they do not interfere.
+- The server's behavior is the specification, written down and held in `conformance/`. The docs site is not a source of truth.
+- A test that asserts absence needs a witness: show the thing was producible before asserting it is not produced.
+- A count, a list or a claim that nothing calls something is checked by running the query, never by trusting a comment.
+- A comment stays only if it says what the code cannot: a constraint from outside, a non-obvious reason, a trap. Never what the code does, history, removed code, a ticket or a person. When in doubt, it goes.
+
+## Versions
+
+A version exists only as a git tag, created only when a release is called for, each the previous plus 0.0.1. Every manifest carries `0.0.0` (`ci/version-fields.test.ts`), and `release.yml` stamps the tag in its own checkout.
 
 ## Commands
 
-`pnpm install`, `pnpm build`, `pnpm test` (SQLite), `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `PORT` and `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev`; `.env.example` is a starter rather than the full list, most of which `config.ts` reads.
+`pnpm install`, `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev` (port 8600 unless `PORT` says otherwise); `packages/server/src/config.ts` reads the full list of settings. The core's commands are in `core/README.md`.
 
 ## Secrets
 
-Software-consumed values live in Infisical, never in a file here. `.infisical.json` maps this repository to its project, environment and folder; anything that needs those values runs under `aic-infisical-run -- <command>` from the checkout. `.env.example` carries names, never values.
+Software-consumed values live in Infisical, never in a file here. `.infisical.json` maps this repository to its project; run anything that needs them under `aic-infisical-run -- <command>`. `.env.example` carries names, never values.
 
 ## Words
 
-`GLOSSARY.md` at the root fixes the vocabulary: the words this repository uses, the words it does not, the seven permission names, the time rule and the error meanings. A pull request is checked against it.
+`GLOSSARY.md` fixes the vocabulary, the seven permission names, the time rule and the error meanings. A pull request is checked against it.
 
-## Conformance
+## The contract
 
-`conformance/` holds the contract: black-box fixtures and the written specification under `conformance/spec/` that states what they assert. Nothing under `conformance/src/suites/` may import a workspace package.
-
-The server's half is driven over HTTP against a server the suite booted itself on SQLite, never a remote one. `pnpm marfa:up` boots the server in this checkout and writes the `MARFA_API_URL`, `MARFA_API_KEY`, `MARFA_OPERATOR_KEY` and `MARFA_BLOB_PATH` the run sources.
-
-The device's half, `conformance/src/suites/device/`, gates the `marfa` binary against a server the fixture scripts, because the verdicts a device reaches include failures the real server cannot be asked for. `MARFA_DEVICE_BIN` names the binary and `device/fidelity.test.ts` holds the scripting to what the real server does. `conformance/README.md` has the rest.
-
-A change to the contract and the change to the server that satisfies it belong in the same pull request. The `conformance` job in `ci.yml` is the gate, and it is not lint-clean by the root ESLint config on purpose: `eslint.config.js` says why.
+`conformance/spec/` states the contract and the fixtures under `conformance/src/suites/` assert it; nothing under `suites/` imports a workspace package. A change to the contract and the change that satisfies it go in the same pull request. `conformance/README.md` says how to run each half: the server's against a server the suite boots itself, the device's against the `marfa` binary and a server the fixture scripts.
 
 ## Notes and logs
 
-Session notes, running logs and open questions are written outside this repository, where the session prompt says. `_trash/` and `_archive/` at the root are never committed: something a session is refused permission to delete is moved there and recorded in its session note.
+Session notes and logs are written outside this repository, where the session prompt says. `_trash/` and `_archive/` at the root are never committed.
