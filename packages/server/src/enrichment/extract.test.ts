@@ -1,6 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { extractText, isEnrichableMime } from "./extract.js";
 import { Worker } from "node:worker_threads";
@@ -186,6 +188,44 @@ describe("TesseractOcr", () => {
       expect(spawned).toBe(1);
     } finally {
       await ocr.terminate();
+    }
+  });
+
+  it("logs the cache path once per thread when a model is not cached", async () => {
+    const cachePath = await mkdtemp(join(tmpdir(), "marfa-tessdata-"));
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const uncached = (): Record<string, unknown>[] =>
+      write.mock.calls
+        .map(([chunk]) => JSON.parse(String(chunk)) as Record<string, unknown>)
+        .filter(
+          (line) =>
+            line.message === "OCR language model not cached; fetching it",
+        );
+    const ocr = new TesseractOcr({
+      cachePath,
+      langs: "eng+deu",
+      spawnThread: () => fakeThread({ text: "ok" }),
+    });
+    try {
+      await writeFile(join(cachePath, "deu.traineddata"), "");
+      await ocr.recognize(Buffer.from(""));
+      await ocr.recognize(Buffer.from(""));
+      expect(uncached()).toEqual([
+        expect.objectContaining({
+          cache_path: cachePath,
+          langs: ["eng"],
+          setting: "MARFA_ENRICHMENT_TESSDATA_DIR",
+        }),
+      ]);
+
+      await ocr.terminate();
+      await writeFile(join(cachePath, "eng.traineddata"), "");
+      await ocr.recognize(Buffer.from(""));
+      expect(uncached()).toHaveLength(1);
+    } finally {
+      write.mockRestore();
+      await ocr.terminate();
+      await rm(cachePath, { recursive: true, force: true });
     }
   });
 

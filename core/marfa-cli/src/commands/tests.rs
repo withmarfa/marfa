@@ -274,6 +274,48 @@ fn an_attachment_is_an_upload_a_file_item_and_an_edge() {
 }
 
 #[test]
+fn a_file_added_on_its_own_is_a_file_item_with_its_tags_and_tier() {
+    let args = items::AddArgs {
+        file: PathBuf::from("talk.pptx"),
+        tags: vec!["work".into(), "slides".into()],
+        tier: Some(Tier::Feed),
+        ..Default::default()
+    };
+    let mime_type = marfa_core::mime_type_for(&args.file, args.mime_type.as_deref());
+    assert_eq!(
+        mime_type,
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    );
+    let item = items::added_file_request(&args, &mime_type, "sha256:abc");
+    assert_eq!(item.path(), "/items");
+    assert_eq!(
+        body(&item),
+        &json!({
+            "type": "core.file",
+            "properties": { "blob_ref": "sha256:abc", "mime_type": mime_type, "title": "talk.pptx" },
+            "tags": ["work", "slides"],
+            "tier": "feed",
+        })
+    );
+    let bare = items::added_file_request(
+        &items::AddArgs {
+            file: PathBuf::from("photo.jpeg"),
+            title: Some("Harbor".into()),
+            ..Default::default()
+        },
+        "image/jpeg",
+        "sha256:abc",
+    );
+    assert_eq!(
+        body(&bare),
+        &json!({
+            "type": "core.file.image",
+            "properties": { "blob_ref": "sha256:abc", "mime_type": "image/jpeg", "title": "Harbor" },
+        })
+    );
+}
+
+#[test]
 fn edges_are_created_between_two_items_and_updated_under_a_version() {
     let created = edges::create_request(&edges::EdgeCreateArgs {
         source: "a".into(),
@@ -1073,6 +1115,49 @@ mod dispatch {
         assert_eq!(edge["source_id"], "f1");
         assert_eq!(edge["target_id"], "target");
         assert_eq!(edge["edge_type"], "attached-to");
+    }
+
+    #[test]
+    fn add_uploads_then_creates_the_file_item_and_links_nothing() {
+        let dir = std::env::temp_dir().join(format!("marfa-add-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("novel.epub");
+        std::fs::write(&file, b"epub bytes").unwrap();
+        let door = Door::open(vec![
+            Answer::json(
+                "201 Created",
+                r#"{"hash":"sha256:h","mime_type":"application/epub+zip","size_bytes":10}"#,
+            ),
+            Answer::json("201 Created", r#"{"item":{"id":"f1","type":"core.file"}}"#),
+        ]);
+        items::run(
+            items::ItemsCommand::Add(items::AddArgs {
+                file,
+                tags: vec!["reading".into()],
+                ..Default::default()
+            }),
+            &remote_at(&door),
+            &QUIET,
+        )
+        .unwrap();
+        let received = door.received();
+        assert_eq!(
+            received.len(),
+            2,
+            "a file added on its own sent more than its upload and its item"
+        );
+        assert_eq!(received[0].path(), "/blobs");
+        assert_eq!(
+            received[0].header("content-type"),
+            Some("application/epub+zip")
+        );
+        assert_eq!(received[0].body, "epub bytes");
+        let item: serde_json::Value = serde_json::from_str(&received[1].body).unwrap();
+        assert_eq!(received[1].path(), "/items");
+        assert_eq!(item["type"], "core.file");
+        assert_eq!(item["properties"]["blob_ref"], "sha256:h");
+        assert_eq!(item["properties"]["title"], "novel.epub");
+        assert_eq!(item["tags"], json!(["reading"]));
     }
 
     #[test]

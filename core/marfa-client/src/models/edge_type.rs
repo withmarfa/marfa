@@ -33,6 +33,9 @@ pub struct EdgeType {
     pub reverse_name: Option<String>,
     #[serde(rename = "written_at")]
     pub written_at: WrittenAt,
+    /// Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`.
+    #[serde(rename = "shipped")]
+    pub shipped: bool,
 }
 
 impl EdgeType {
@@ -44,6 +47,7 @@ impl EdgeType {
         cascade_on_delete: CascadeOnDelete,
         property_schema: std::collections::HashMap<String, models::EdgePropertyDefinition>,
         written_at: WrittenAt,
+        shipped: bool,
     ) -> EdgeType {
         EdgeType {
             id,
@@ -56,6 +60,7 @@ impl EdgeType {
             property_schema,
             reverse_name: None,
             written_at,
+            shipped,
         }
     }
 }

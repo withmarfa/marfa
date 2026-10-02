@@ -1931,6 +1931,10 @@
               "source",
               "target"
             ]
+          },
+          "shipped": {
+            "type": "boolean",
+            "description": "Whether Marfa ships the edge type. A shipped edge type resolves on every instance and cannot be registered or deleted; `false` for one registered through `POST /edge-types`."
           }
         },
         "required": [
@@ -1940,7 +1944,8 @@
           "target_type_constraints",
           "cascade_on_delete",
           "property_schema",
-          "written_at"
+          "written_at",
+          "shipped"
         ]
       },
       "EdgePropertyDefinition": {
@@ -16210,7 +16215,7 @@
           "Edge Types"
         ],
         "summary": "List edge types",
-        "description": "Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, and the reverse name it declares, if any.",
+        "description": "Returns every edge type this instance resolves — the shipped types plus any registered through `POST /edge-types` — each with its cardinality, cascade behavior, source/target type constraints, the reverse name it declares, if any, and whether Marfa ships it.",
         "security": [
           {
             "bearerAuth": []

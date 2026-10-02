@@ -631,6 +631,27 @@ describe("custom edge-type registration", () => {
     expect((await client.getEdge(held.data.edge.id)).status).toBe(200);
   });
 
+  it("says whether Marfa ships each edge type, on the list and on registration", async () => {
+    const etId = `mock.shipped.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+    });
+    expect(reg.status).toBe(201);
+    trackEdgeType(ctx, etId);
+    expect(reg.data.edge_type.shipped).toBe(false);
+
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    await expectMatchesSchema("GET", "/edge-types", 200, r.data);
+    const shipped = Object.fromEntries(
+      r.data.data.map((t) => [t.id, t.shipped]),
+    );
+    expect(shipped["about"]).toBe(true);
+    expect(shipped["in-folder"]).toBe(true);
+    expect(shipped[etId]).toBe(false);
+  });
+
   it("lists the reverse names the shipped edge types declare", async () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);

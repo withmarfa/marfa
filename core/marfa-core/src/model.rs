@@ -1034,9 +1034,9 @@ impl EdgeDraft {
     }
 }
 
-/// How a file is attached (`Core::attach`). Each field has a default: the
-/// MIME type from the file's extension, the title from its name, the type
-/// from the MIME type, the tier from the server.
+/// How a file is attached or added (`Core::attach`, `Core::add_file`). Each
+/// field has a default: the MIME type from the file's extension, the title
+/// from its name, the type from the MIME type, the tier from the server.
 #[derive(Debug, Clone, Default)]
 pub struct Attachment {
     pub mime_type: Option<String>,
@@ -1102,6 +1102,13 @@ pub struct Attached {
     pub upload: QueuedWrite,
     pub item: QueuedWrite,
     pub edge: QueuedWrite,
+}
+
+/// The two writes a file added on its own is, in the order they go out.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Added {
+    pub upload: QueuedWrite,
+    pub item: QueuedWrite,
 }
 
 /// A change to an edge's properties, or a move of one of its ends, and the
