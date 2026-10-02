@@ -200,16 +200,14 @@ export interface ItemFilters {
    *  Ignored when `state` or `all_states` is set: both are the caller
    *  naming the selection outright. */
   exclude_states?: readonly ItemState[];
-  /** Inclusive lower bound on the normalized `items.starts_at` column, and
-   *  so implicitly `starts_at IS NOT NULL`. Serves the calendar's
-   *  window scan: the column is written in the exact shape
-   *  `toISOString()` emits, which is what lets a text comparison answer a
-   *  question about instants. Internal — not reachable through the
-   *  public `?filter=` grammar. */
-  startsAtFrom?: string;
-  /** Exclusive upper bound on `items.starts_at`. Exclusive because a
-   *  calendar window's end belongs to the next window. */
-  startsAtTo?: string;
+  /** Rows whose span overlaps `[from, to)`, read from the normalized
+   *  `items.starts_at` and `items.ends_at` columns: starting inside it, or
+   *  starting before it and ending after `from`. A row with no end counts
+   *  only where it starts. Serves the calendar's window scan: both columns
+   *  are written in the exact shape `toISOString()` emits, which is what
+   *  lets a text comparison answer a question about instants. Internal,
+   *  not reachable through the public `?filter=` grammar. */
+  spanOverlaps?: { from: string; to: string };
   /** Restrict to rows whose top-level property of this name is present
    *  and not JSON `null`: a key written as `null` is a cleared value, and
    *  reads as absent here. Serves the calendar's series and exception

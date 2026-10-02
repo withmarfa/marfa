@@ -106,7 +106,9 @@ import { assertTypeFilter } from "./_type-filter.js";
 import {
   expandSeries,
   RecurrenceExpansionError,
+  RecurrenceExpansionStopped,
 } from "../events/expand-recurrence.js";
+import { instantColumnValues } from "../storage/instant-columns.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -194,9 +196,8 @@ export const MAX_SERIES_ERRORS = 500;
  * Longest reported expansion-failure message.
  *
  * A count alone does not bound bytes. Most of these messages are this
- * file's own fixed strings, but the malformed-rule ones carry ical.js's
- * error text verbatim, which is as long as whatever it was handed —
- * measured at 4,072 characters from a single long property value. This
+ * file's own fixed strings, but the malformed-rule ones quote the stored
+ * text they could not read, which is as long as whatever was stored. This
  * counts characters rather than bytes, so the byte ceiling on the array
  * is `MAX_SERIES_ERRORS` times four times this plus the item ids: a few
  * hundred kilobytes, against 4.8 MB measured without it. That product,
@@ -228,10 +229,10 @@ const ID_BATCH_SIZE = 500;
  * Series expanded between one yield to the event loop and the next.
  *
  * This bounds the *number of per-series parses* between yields, which
- * the iteration budget below cannot see: building a synthetic VEVENT and
- * parsing it through ical.js happens once per series whatever its rule
- * says, and a rule that ends before it starts costs a parse and zero
- * iterations. Both counters run, and whichever trips first yields.
+ * the iteration budget below cannot see: reading a series' lines happens
+ * once per series whatever its rule says, and a rule that cannot be read
+ * costs a parse and zero iterations. Both counters run, and whichever
+ * trips first yields.
  *
  * It bounds the count and not the cost, and the difference is worth
  * stating rather than glossing. `recurrence` is a caller-written array,
@@ -362,8 +363,8 @@ const ITERATIONS_PER_YIELD = 20_000;
  * iterations to reach the window, it is commoner than one that ended,
  * and because it then contributes, none of that is charged. Counted
  * exactly, through the expander's own accumulator: 100 such rules over
- * a seven-day window walk 366,000 iterations and report
- * `unproductive_iterations` as zero, against 900 for the same hundred
+ * a seven-day window walk 366,100 iterations and report
+ * `unproductive_iterations` as zero, against 1,000 for the same hundred
  * anchored the day before the window, which return the same seven
  * hundred occurrences and the same zero. Five thousand of them — a
  * large calendar, not a contrived one — is 18 million iterations, which
@@ -416,10 +417,7 @@ interface ScanBudget {
 }
 
 /** The storage-side narrowing one pass applies on top of type and state. */
-type EventScanNarrowing = Pick<
-  ItemFilters,
-  "hasProperty" | "startsAtFrom" | "startsAtTo"
->;
+type EventScanNarrowing = Pick<ItemFilters, "hasProperty" | "spanOverlaps">;
 
 /**
  * What the window pass keeps from a row.
@@ -432,6 +430,9 @@ interface WindowSeed {
   id: string;
   starts_at: string;
   ends_at?: string;
+  /** The span the window is matched against, as the normalized columns
+   *  derive it: the stated end, else `duration`, else a whole day. */
+  span: { start: string | null; end: string | null };
 }
 
 /**
@@ -562,6 +563,10 @@ function projectSeries(item: Item): SeriesScanResult | undefined {
       id: item.id,
       starts_at: startsAt,
       ends_at: stringProp(item, "ends_at"),
+      ...(typeof item.properties.duration === "number"
+        ? { duration: item.properties.duration }
+        : {}),
+      ...(item.properties.all_day === true ? { all_day: true } : {}),
       timezone: stringProp(item, "timezone"),
       recurrence,
     },
@@ -593,11 +598,31 @@ function projectWindow(item: Item): WindowSeed | undefined {
   // which is the best answer available for it. It is not a silent one:
   // the series pass reports the unapplied rule in `series_errors`.
   if (recurrenceProp(item).length > 0) return undefined;
+  const span = instantColumnValues(item.properties);
   return {
     id: item.id,
     starts_at: startsAt,
     ends_at: stringProp(item, "ends_at"),
+    span: { start: span.starts_at, end: span.ends_at },
   };
+}
+
+/**
+ * Whether a span overlaps `[from, to)`, as RFC 4791 reads a time range: it
+ * starts before the window ends and ends after it opens. A span with no
+ * length overlaps where it starts.
+ */
+function overlapsWindow(
+  start: string | null,
+  end: string | null,
+  from: Date,
+  to: Date,
+): boolean {
+  if (start === null) return false;
+  const s = Date.parse(start);
+  if (s >= to.getTime()) return false;
+  const e = end === null ? s : Date.parse(end);
+  return e > s ? e > from.getTime() : s >= from.getTime();
 }
 
 /**
@@ -774,7 +799,7 @@ const ScanSchema = z.object({
     .number()
     .int()
     .describe(
-      "Series left unexpanded because `max_unproductive_iterations` was reached before they were reached. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed.",
+      "Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed.",
     ),
 });
 
@@ -812,16 +837,13 @@ const OccurrencesResponseSchema = z
       .describe(
         "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total.",
       ),
-    /** Present and true when the request stopped expanding series before
-     *  it had walked them all, having spent `scan.max_unproductive_iterations`
-     *  on expansions that returned no occurrence. `data` may be missing
-     *  occurrences the unexpanded series held, and
-     *  `scan.series_unexpanded` says how many there were. */
+    /** Present and true when a series' expansion did not finish. See the
+     *  description below. */
     expansion_incomplete: z
       .boolean()
       .optional()
       .describe(
-        "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
+        "Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
       ),
   })
   .openapi("OccurrencePage");
@@ -833,12 +855,20 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on expansions that return no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the data gives it work.",
+    "Returns the events that overlap a time window, expanding recurring series from their rules at read time rather than storing occurrences. An event overlaps when it starts before the window ends and ends after it opens, as RFC 4791 reads a time range, so one already running when the window opens is included and one ending as it opens is not; an event with no length is included where it starts. An event's end is its `ends_at`, else its start plus `duration`, else the day after its start for a whole-day event. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`, and appears in the windows its own times overlap rather than in the one its old slot sat in. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for every event type, which a request narrowed by `type` or a credential not permitted an event type never sees all of. Expansion itself is bounded too: each series' walk stops at a bound on the candidate times its rule considers and on its time, and a request spends at most `scan.max_unproductive_iterations` on expansions that return no occurrence; a series stopped either way sets `expansion_incomplete` and counts in `scan.series_unexpanded`, rather than running for as long as the data gives it work.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      from: z.string().describe("Window start, ISO 8601. Inclusive."),
-      to: z.string().describe("Window end, ISO 8601. Exclusive."),
+      from: z
+        .string()
+        .describe(
+          "Window start, ISO 8601. An event ending at or before it is outside the window; one with no length starting at it is inside.",
+        ),
+      to: z
+        .string()
+        .describe(
+          "Window end, ISO 8601. An event starting at or after it is outside the window.",
+        ),
       type: z
         .string()
         .optional()
@@ -852,7 +882,7 @@ const occurrencesRoute = createRoute({
       content: {
         "application/json": { schema: OccurrencesResponseSchema },
       },
-      description: "Occurrences in the window, ordered by start time",
+      description: "Occurrences overlapping the window, ordered by start time",
     },
     400: {
       content: {
@@ -1063,10 +1093,7 @@ export function occurrenceRoutes(
       storage,
       wanted,
       budget,
-      {
-        startsAtFrom: from.toISOString(),
-        startsAtTo: to.toISOString(),
-      },
+      { spanOverlaps: { from: from.toISOString(), to: to.toISOString() } },
       projectWindow,
     );
 
@@ -1252,6 +1279,9 @@ export function occurrenceRoutes(
         // genuine bug and stays loud.
         if (!(err instanceof RecurrenceExpansionError)) throw err;
         appendSeriesError(seed.id, err.message);
+        // Stopped by its own bound rather than refused: the series may hold
+        // occurrences in this window that were never reached.
+        if (err instanceof RecurrenceExpansionStopped) seriesUnexpanded += 1;
       } finally {
         // In a `finally` because the refusal above is the expensive
         // case: a rule that walks the full iteration cap and yields
@@ -1296,7 +1326,12 @@ export function occurrenceRoutes(
       // one place the normalized column and the stored value are read
       // against each other, so a column that ever disagreed with its row
       // shows up as a missing event rather than a wrong one.
-      if (Number.isNaN(at.getTime()) || at < from || at >= to) continue;
+      if (
+        Number.isNaN(at.getTime()) ||
+        !overlapsWindow(seed.span.start, seed.span.end, from, to)
+      ) {
+        continue;
+      }
       appendPending({
         starts_at: at.toISOString(),
         ends_at:
@@ -1361,6 +1396,18 @@ export function occurrenceRoutes(
        */
       const itemIsAuthority =
         occurrence.series_id === undefined || occurrence.replaces !== undefined;
+
+      if (itemIsAuthority && occurrence.replaces !== undefined) {
+        // A moved occurrence belongs to the window its own times overlap,
+        // not to the one its old slot sat in. Its slot is still shadowed.
+        const span = instantColumnValues(shown.properties);
+        if (
+          span.starts_at !== null &&
+          !overlapsWindow(span.starts_at, span.ends_at, from, to)
+        ) {
+          continue;
+        }
+      }
 
       if (itemIsAuthority) {
         // The fallback is load-bearing rather than incidental: a row

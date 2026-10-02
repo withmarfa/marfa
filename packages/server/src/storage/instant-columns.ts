@@ -40,9 +40,7 @@ function normalizeInstant(value: unknown): string | null {
     // A naive datetime is read as UTC, explicitly. Handing it to `new
     // Date()` unqualified would resolve it in whatever zone the server
     // happens to run in, so the same row would normalize differently on
-    // two machines. The SQL backfills read naive values as UTC as well,
-    // and the writers have to agree byte for byte or a backfilled row and
-    // a rewritten one land on different instants.
+    // two machines.
     candidate = `${raw.replace(" ", "T")}Z`;
   }
 
@@ -61,12 +59,37 @@ function normalizeInstant(value: unknown): string | null {
  * Keyed on field presence rather than on item type: any type declaring
  * the event shape gets the columns maintained, and nothing has to
  * enumerate which types those are.
+ *
+ * `ends_at` is when the row stops occupying time, which is what a window
+ * asks: the stated end, else the start plus `duration` seconds, else the
+ * day after the start for a whole-day row. A row with none of these has no
+ * length, and the column is null.
  */
 export function instantColumnValues(
   properties: Record<string, unknown>,
 ): InstantColumnValues {
+  const startsAt = normalizeInstant(properties.starts_at);
   return {
-    starts_at: normalizeInstant(properties.starts_at),
-    ends_at: normalizeInstant(properties.ends_at),
+    starts_at: startsAt,
+    ends_at:
+      normalizeInstant(properties.ends_at) ?? impliedEnd(startsAt, properties),
   };
+}
+
+function impliedEnd(
+  startsAt: string | null,
+  properties: Record<string, unknown>,
+): string | null {
+  if (startsAt === null) return null;
+  const start = Date.parse(startsAt);
+  const duration = properties.duration;
+  const end =
+    typeof duration === "number" && duration > 0
+      ? start + duration * 1000
+      : properties.all_day === true
+        ? start + 86_400_000
+        : Number.NaN;
+  // Past the range a Date can hold there is no instant to store, so no end.
+  const at = new Date(end);
+  return Number.isNaN(at.getTime()) ? null : at.toISOString();
 }

@@ -485,13 +485,14 @@ function itemFilterConditions(filters: ItemFilters): SQL[] {
   }
 
   // The normalized instant columns compare as text because they are
-  // written in one fixed-width shape, so the calendar's window is a
-  // range scan rather than a read of every event.
-  if (filters.startsAtFrom !== undefined) {
-    conditions.push(sql`${items.starts_at} >= ${filters.startsAtFrom}`);
-  }
-  if (filters.startsAtTo !== undefined) {
-    conditions.push(sql`${items.starts_at} < ${filters.startsAtTo}`);
+  // written in one fixed-width shape. Two disjuncts rather than one
+  // `starts_at < to AND ends_at > from`, so each is a range over its own
+  // index instead of the whole calendar's history.
+  if (filters.spanOverlaps !== undefined) {
+    const { from, to } = filters.spanOverlaps;
+    conditions.push(
+      sql`((${items.starts_at} >= ${from} AND ${items.starts_at} < ${to}) OR (${items.ends_at} > ${from} AND ${items.starts_at} < ${from}))`,
+    );
   }
 
   if (filters.hasProperty !== undefined) {

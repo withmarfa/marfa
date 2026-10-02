@@ -34,7 +34,7 @@ pub struct OccurrencePageScan {
     /// Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it.
     #[serde(rename = "max_unproductive_iterations")]
     pub max_unproductive_iterations: i32,
-    /// Series left unexpanded because `max_unproductive_iterations` was reached before they were reached. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed.
+    /// Series whose expansion did not finish: stopped by the bound on one series' walk, which counts the candidate times its rule considers and its time, or never reached because `max_unproductive_iterations` was spent first. A stopped series is also listed in `series_errors`. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed.
     #[serde(rename = "series_unexpanded")]
     pub series_unexpanded: i32,
 }

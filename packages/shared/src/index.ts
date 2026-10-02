@@ -8,3 +8,4 @@ export * from "./edge-registry.js";
 export * from "./scopes.js";
 export * from "./query-parser.js";
 export * from "./time-zones.js";
+export * from "./recurrence.js";

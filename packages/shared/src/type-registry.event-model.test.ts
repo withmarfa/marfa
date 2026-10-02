@@ -76,3 +76,38 @@ describe("an event that starts in one zone and ends in another", () => {
     expect(props.end_timezone).toBe("America/New_York");
   });
 });
+
+describe("an event's schedule fields", () => {
+  it("refuses a rule that names no date that exists, naming recurrence", () => {
+    const result = validateProperties("core.event", {
+      title: "Leap day",
+      starts_at: "2026-01-15T09:00:00Z",
+      recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.map((e) => e.field)).toEqual(["recurrence"]);
+    }
+  });
+
+  it("refuses a zone the zone database does not resolve, naming the field", () => {
+    const result = validateProperties("core.event", {
+      title: "Standup",
+      timezone: "Europe/Berlim",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.errors.map((e) => e.field)).toEqual(["timezone"]);
+    }
+  });
+
+  it("takes an ordinary weekly series in its zone", () => {
+    const props = accepted("core.event", {
+      title: "Standup",
+      starts_at: "2026-01-06T09:00:00+01:00",
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU", "EXDATE:20260113T080000Z"],
+    });
+    expect(props.recurrence).toHaveLength(2);
+  });
+});

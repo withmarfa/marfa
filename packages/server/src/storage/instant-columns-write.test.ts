@@ -178,7 +178,7 @@ describe("the instant columns on the write path", () => {
     );
   });
 
-  it("narrows a list read to the window, in SQL", async () => {
+  it("narrows a list read to the rows overlapping the window, in SQL", async () => {
     // The filters are asserted against the store rather than through
     // `/occurrences`, because that route keeps an in-memory window
     // check as a belt: a filter that silently did nothing would still
@@ -196,19 +196,39 @@ describe("the instant columns on the write path", () => {
       title: "narrowing: on the exclusive end",
       starts_at: "2028-01-02T00:00:00.000Z",
     });
+    const running = await createItem({
+      title: "narrowing: started before, still running",
+      starts_at: "2027-12-31T22:00:00.000Z",
+      ends_at: "2028-01-01T02:00:00+01:00",
+    });
+    const lasting = await createItem({
+      title: "narrowing: started before, running by its duration",
+      starts_at: "2027-12-31T23:00:00.000Z",
+      duration: 7200,
+    });
+    const ended = await createItem({
+      title: "narrowing: ended as the window opens",
+      starts_at: "2027-12-31T22:00:00.000Z",
+      ends_at: "2028-01-01T00:00:00.000Z",
+    });
 
     const page = await ctx.storage.items.list({
       type: "core.event",
       state: "active",
-      startsAtFrom: "2028-01-01T00:00:00.000Z",
-      startsAtTo: "2028-01-02T00:00:00.000Z",
+      spanOverlaps: {
+        from: "2028-01-01T00:00:00.000Z",
+        to: "2028-01-02T00:00:00.000Z",
+      },
     });
     const ids = page.data.map((item) => item.id);
     expect(ids).toContain(inside);
-    // The lower bound is inclusive and the upper exclusive, and both are
+    expect(ids).toContain(running);
+    expect(ids).toContain(lasting);
+    // The window opens inclusive and closes exclusive, and both ends are
     // read as instants rather than as the strings they were stored in.
     expect(ids).not.toContain(before);
     expect(ids).not.toContain(after);
+    expect(ids).not.toContain(ended);
   });
 
   it("narrows a list read to rows carrying a property key", async () => {

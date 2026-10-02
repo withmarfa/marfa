@@ -82,6 +82,39 @@ describe("instantColumnValues", () => {
     });
   });
 
+  it("derives the end from duration, or a whole day, when none is stated", () => {
+    expect(
+      instantColumnValues({
+        starts_at: "2026-05-05T09:00:00Z",
+        duration: 5400,
+      }),
+    ).toEqual({
+      starts_at: "2026-05-05T09:00:00.000Z",
+      ends_at: "2026-05-05T10:30:00.000Z",
+    });
+    expect(
+      instantColumnValues({ starts_at: "2026-05-05", all_day: true }),
+    ).toEqual({
+      starts_at: "2026-05-05T00:00:00.000Z",
+      ends_at: "2026-05-06T00:00:00.000Z",
+    });
+    // A stated end wins over both.
+    expect(
+      instantColumnValues({
+        starts_at: "2026-05-05T09:00:00Z",
+        ends_at: "2026-05-05T09:15:00Z",
+        duration: 5400,
+      }).ends_at,
+    ).toBe("2026-05-05T09:15:00.000Z");
+  });
+
+  it("derives no end from a duration no instant can hold", () => {
+    expect(
+      instantColumnValues({ starts_at: "2026-05-05T09:00:00Z", duration: 1e13 })
+        .ends_at,
+    ).toBeNull();
+  });
+
   it("answers null for junk, absence, and non-strings", () => {
     expect(instantColumnValues({ starts_at: "next tuesday" })).toEqual({
       starts_at: null,

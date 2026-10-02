@@ -312,11 +312,12 @@ function syntheticCalendar(
     }
     const startsAt = item.properties.starts_at;
     if (typeof startsAt !== "string") return false;
-    if (filters.startsAtFrom !== undefined && startsAt < filters.startsAtFrom) {
-      return false;
-    }
-    return !(
-      filters.startsAtTo !== undefined && startsAt >= filters.startsAtTo
+    if (filters.spanOverlaps === undefined) return true;
+    const { from, to } = filters.spanOverlaps;
+    const endsAt = item.properties.ends_at;
+    return (
+      (startsAt >= from && startsAt < to) ||
+      (typeof endsAt === "string" && endsAt > from && startsAt < from)
     );
   };
 
@@ -951,11 +952,12 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // response is never comparing against a number the route is not
     // using.
     expect(body.scan.max_unproductive_iterations).toBe(BUDGET);
-    // The five past the ceiling were never walked, and the response says
-    // so rather than stopping quietly. A calendar that is missing part
-    // of itself and does not admit it is the failure this whole file is
+    // The five past the ceiling were never walked and the ones walked
+    // were each stopped by their own bound, and the response says so
+    // rather than stopping quietly. A calendar that is missing part of
+    // itself and does not admit it is the failure this whole file is
     // organized around.
-    expect(body.scan.series_unexpanded).toBe(5);
+    expect(body.scan.series_unexpanded).toBe(TO_FILL + 5);
     expect(body.expansion_incomplete).toBe(true);
     // Only the ones actually walked are reported as failures, which is
     // what makes the two numbers say different things.
@@ -1131,8 +1133,11 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
       return work.iterations;
     };
 
-    expect(walked(far)).toBe(366_000);
-    expect(walked(near)).toBe(900);
+    // One candidate a day, from each rule's anchor to the day after the
+    // window closes, which the walk reads to the end of in case a zone
+    // puts that day's reading inside the window.
+    expect(walked(far)).toBe(100 * 3_661);
+    expect(walked(near)).toBe(100 * 10);
   });
 
   it("says on the refusal that expansion was already truncated", async () => {
@@ -1169,7 +1174,7 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     expect(body.error.code).toBe("validation_error");
     expect(body.error.details?.max_occurrences).toBe(5_000);
     expect(body.error.details?.expansion_incomplete).toBe(true);
-    expect(body.error.details?.series_unexpanded).toBe(5);
+    expect(body.error.details?.series_unexpanded).toBe(TO_FILL + 5);
   });
 });
 

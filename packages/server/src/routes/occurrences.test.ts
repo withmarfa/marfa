@@ -6,7 +6,11 @@
  * times, and refusing an unbounded ask instead of trimming it.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  overwritePropertiesUnchecked,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { MAX_WINDOW_DAYS } from "./occurrences.js";
 
@@ -57,6 +61,27 @@ async function createEvent(
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: { id: string } }).item.id;
+}
+
+/**
+ * A row carrying properties no write door accepts, stored past them: the
+ * refusal is the witness that the shape cannot be written, and the row is
+ * what an instance holding one still has to read.
+ */
+async function storeRefusedEvent(
+  properties: Record<string, unknown>,
+): Promise<string> {
+  const refused = await request(ctx.app, "POST", "/items", {
+    key: memberKey,
+    body: { type: "core.event", properties },
+  });
+  expect(refused.status).toBe(400);
+  expect(
+    ((await refused.json()) as { error: { code: string } }).error.code,
+  ).toBe("invalid_properties");
+  const id = await createEvent({ title: String(properties.title) });
+  await overwritePropertiesUnchecked(ctx.storage, id, properties);
+  return id;
 }
 
 async function occurrences(
@@ -372,22 +397,41 @@ describe("GET /occurrences", () => {
     expect(mine[0]?.message).toContain("in this window");
   });
 
-  it("leaves out an event that straddles the window's start", async () => {
-    // Pinning what the route does, not arguing for it: the window is
-    // matched on the start instant alone, so an event already running
-    // when the window opens is not on it. The SQL narrowing has to make
-    // the same call the in-memory filter did, and this is where a
-    // change of mind would show up.
+  it("includes an event that started before the window and is still running", async () => {
     const id = await createEvent({
       title: "Started before the window",
       starts_at: "2027-06-30T22:00:00.000Z",
       ends_at: "2027-07-01T02:00:00.000Z",
     });
+    const ended = await createEvent({
+      title: "Ended as the window opened",
+      starts_at: "2027-06-30T22:00:00.000Z",
+      ends_at: "2027-07-01T00:00:00.000Z",
+    });
     const { rows } = await occurrences(
       "2027-07-01T00:00:00Z",
       "2027-07-05T00:00:00Z",
     );
-    expect(rows.some((r) => r.item.id === id)).toBe(false);
+    const shown = rows.filter((r) => r.item.id === id);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.starts_at).toBe("2027-06-30T22:00:00.000Z");
+    expect(rows.some((r) => r.item.id === ended)).toBe(false);
+  });
+
+  it("includes a series occurrence still running when the window opens", async () => {
+    const id = await createEvent({
+      title: "Night shift",
+      starts_at: "2027-07-10T22:00:00.000Z",
+      ends_at: "2027-07-11T06:00:00.000Z",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=5"],
+    });
+    const { rows } = await occurrences(
+      "2027-07-13T00:00:00Z",
+      "2027-07-13T12:00:00Z",
+    );
+    expect(
+      rows.filter((r) => r.series_id === id).map((r) => r.starts_at),
+    ).toEqual(["2027-07-12T22:00:00.000Z"]);
   });
 
   it("shadows an occurrence whose exception was moved out of the window", async () => {
@@ -438,13 +482,16 @@ describe("GET /occurrences", () => {
           r.starts_at === "2027-08-02T10:00:00.000Z",
       ),
     ).toHaveLength(1);
-    // The exception itself appears once and only through the series,
-    // carrying its own out-of-window time and the slot it replaces.
-    const shown = rows.filter((r) => r.item.id === movedId);
+    // The exception belongs to the window its own time falls in, not to
+    // the one its old slot sat in.
+    expect(rows.filter((r) => r.item.id === movedId)).toHaveLength(0);
+    const october = await occurrences(
+      "2027-10-01T00:00:00Z",
+      "2027-10-15T00:00:00Z",
+    );
+    const shown = october.rows.filter((r) => r.item.id === movedId);
     expect(shown).toHaveLength(1);
     expect(shown[0]?.starts_at).toBe("2027-10-06T10:00:00.000Z");
-    expect(shown[0]?.replaces).toBe("2027-08-09T10:00:00.000Z");
-    expect(shown[0]?.series_id).toBe(seriesId);
   });
 
   it("puts mixed offsets on the right side of the window boundary", async () => {
@@ -480,7 +527,7 @@ describe("GET /occurrences", () => {
   });
 
   it("reports a malformed rule against its series and keeps the rest of the calendar", async () => {
-    const badId = await createEvent({
+    const badId = await storeRefusedEvent({
       title: "Rule with no frequency",
       starts_at: "2027-04-01T09:00:00.000Z",
       recurrence: ["RRULE:INTERVAL=2"],
@@ -572,12 +619,9 @@ describe("the occurrence ceiling", () => {
 });
 
 describe("a row whose declared rule cannot be used", () => {
-  // Every one of these writes with a 201: `core.event` requires `title`
-  // and nothing else, and `recurrence` is declared as an array of
-  // strings but validated only as an array. Each used to leave the
-  // response asserting `series_errors: 0` over a row it had quietly
-  // dropped or quietly misread, which is worse than saying nothing:
-  // nobody investigates a calendar that reports itself complete.
+  // Each of these is refused on write, and a row stored past the doors
+  // still has to be named rather than dropped or misread: nobody
+  // investigates a calendar that reports itself complete.
   //
   // Anchored in 2031, past every other fixture's window. The series
   // pass is unwindowed, so these rows are scanned by every read in this
@@ -590,7 +634,7 @@ describe("a row whose declared rule cannot be used", () => {
     // anchor to expand from, and the window pass drops it for carrying a
     // rule. It is reachable, it is invisible, and the only honest thing
     // the response can do is name it.
-    const id = await createEvent({
+    const id = await storeRefusedEvent({
       title: "a rule with nothing to unfold",
       recurrence: ["RRULE:FREQ=WEEKLY"],
     });
@@ -608,7 +652,7 @@ describe("a row whose declared rule cannot be used", () => {
     // own times describe, which is the best answer available. What was
     // wrong was that the rule went unapplied without a word: a caller
     // asking for a repeating meeting got exactly one and no reason.
-    const id = await createEvent({
+    const id = await storeRefusedEvent({
       title: "a rule made of numbers",
       starts_at: "2031-05-02T09:00:00.000Z",
       recurrence: [7, 9],
@@ -628,7 +672,7 @@ describe("a row whose declared rule cannot be used", () => {
     // puts back the very occurrence it existed to remove. So the series
     // expands — refusing it would take a working meeting off the
     // calendar — and the response says a line was ignored.
-    const id = await createEvent({
+    const id = await storeRefusedEvent({
       title: "a rule with an unreadable line",
       starts_at: "2031-05-02T14:00:00.000Z",
       recurrence: ["RRULE:FREQ=DAILY;COUNT=3", { EXDATE: "nope" }],
@@ -652,7 +696,7 @@ describe("a row whose declared rule cannot be used", () => {
     // it is a number of failures, and a caller wanting rules groups on
     // `item_id`. It also decides the cap's unit: this row consumes two
     // of the 500 entries, not one.
-    const id = await createEvent({
+    const id = await storeRefusedEvent({
       title: "broken two ways",
       starts_at: "2031-05-04T09:00:00.000Z",
       recurrence: [42, "EXRULE:FREQ=DAILY"],
@@ -695,15 +739,10 @@ describe("a row whose declared rule cannot be used", () => {
 });
 
 describe("a series carrying a timezone that does not resolve", () => {
-  // `core.event.timezone` is declared `{"type": "string"}` with no
-  // format, so every one of these writes with a 201, and `Intl` raises
-  // a `RangeError` rather than returning anything for them. The raise
-  // reached this route as a bug rather than as a series' own failure, so
-  // one row took the whole calendar down with a 500 — permanently, on
-  // every window, because the series pass is unwindowed and no narrowing
-  // reaches it. The healthy meeting below is the half that makes it
-  // matter: it was lost too, and its owner could do nothing about it but
-  // find and delete a row they had no reason to suspect.
+  // Each of these is refused on write, and `Intl` raises a `RangeError`
+  // for a row stored past the doors. That raise has to stay this series'
+  // failure: the series pass is unwindowed, so a raise escaping it would
+  // answer every window with a 500 and lose the healthy meeting beside it.
   const FROM = "2033-02-01T00:00:00Z";
   const TO = "2033-02-08T00:00:00Z";
 
@@ -713,7 +752,7 @@ describe("a series carrying a timezone that does not resolve", () => {
     ["a GMT offset", "GMT+2"],
     ["a Windows zone name", "Pacific Standard Time"],
   ])("degrades that series and not the read: %s", async (_label, zone) => {
-    const badId = await createEvent({
+    const badId = await storeRefusedEvent({
       title: `unresolvable zone ${zone}`,
       starts_at: "2033-02-02T09:00:00.000Z",
       timezone: zone,
@@ -771,5 +810,95 @@ describe("the scan block", () => {
     expect(body.scan.max_unproductive_iterations).toBeGreaterThan(0);
     expect(body.scan.series_unexpanded).toBe(0);
     expect(body.expansion_incomplete).toBeUndefined();
+  });
+});
+
+describe("a stored rule that would otherwise hold the read", () => {
+  // Rules that never produce an occurrence, which a step that is not
+  // metered can walk forever, and one that is merely too frequent to walk
+  // from its start. The first are refused on write; a row stored past the
+  // doors still has to be answered.
+  const FROM = "2034-03-01T00:00:00Z";
+  const TO = "2034-03-08T00:00:00Z";
+
+  it("answers within its bound while /health keeps answering", async () => {
+    const ids: string[] = [];
+    for (const line of [
+      "RRULE:FREQ=DAILY;BYMONTH=2;BYMONTHDAY=30",
+      "RRULE:FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30",
+      "RRULE:FREQ=SECONDLY;BYMONTH=2;BYMONTHDAY=30",
+    ]) {
+      ids.push(
+        await storeRefusedEvent({
+          title: `held ${line}`,
+          starts_at: "1990-01-15T09:00:00.000Z",
+          recurrence: [line],
+        }),
+      );
+    }
+    // Writable, because it repeats at once; it is its age that makes it
+    // too costly to walk to the window.
+    ids.push(
+      await createEvent({
+        title: "every second since 1990",
+        starts_at: "1990-01-15T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=SECONDLY"],
+      }),
+    );
+    const healthyId = await createEvent({
+      title: "a meeting beside them",
+      starts_at: "2034-03-02T09:00:00.000Z",
+    });
+
+    const started = Date.now();
+    const read = request(
+      ctx.app,
+      "GET",
+      `/occurrences?from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`,
+      { key: memberKey },
+    );
+    const health = await request(ctx.app, "GET", "/health");
+    expect(health.status).toBe(200);
+    const res = await read;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      series_errors?: SeriesError[];
+      expansion_incomplete?: boolean;
+      scan: { series_unexpanded: number };
+    };
+    expect(body.data.some((r) => r.item.id === healthyId)).toBe(true);
+    expect(body.data.some((r) => ids.includes(r.item.id))).toBe(false);
+    // The rule too costly to walk is stopped inside its walk and named,
+    // and the read says its calendar may be partial.
+    const stopped = body.series_errors?.find((e) => e.item_id === ids[3]);
+    expect(stopped?.message).toContain("stopped");
+    expect(body.expansion_incomplete).toBe(true);
+    // Every series stopped this way counts, and only those: the
+    // file shares one instance, so earlier tests' rows can be stopped too.
+    expect(body.scan.series_unexpanded).toBe(
+      (body.series_errors ?? []).filter((e) =>
+        e.message.includes("was stopped"),
+      ).length,
+    );
+  });
+});
+
+describe("a series whose length no instant can hold", () => {
+  it("is refused on write, and a stored one is named while the read answers", async () => {
+    const id = await storeRefusedEvent({
+      title: "a century-plus meeting",
+      starts_at: "2035-01-02T09:00:00.000Z",
+      duration: 1e13,
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=DAILY"],
+    });
+    const { status, errors } = await occurrences(
+      "2035-01-01T00:00:00Z",
+      "2035-01-08T00:00:00Z",
+    );
+    expect(status).toBe(200);
+    expect(errors.filter((e) => e.item_id === id)).toHaveLength(1);
   });
 });
