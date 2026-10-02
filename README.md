@@ -53,7 +53,7 @@ marfa status                  # now with the item counts
 
 On a system with no keychain, set `MARFA_API_KEY` to the working key and skip `marfa keys keep`.
 
-`.env.example` carries the variables an instance usually sets, not the full list: `packages/server/src/config.ts` is where the list actually lives. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
+`.env.example` lists every setting the server reads; the settings schema in `packages/server/src/config.ts` defines each one's type, bounds and default, and the server refuses to start on a value outside them. [`deploy/`](./deploy) is how an instance runs with its database and blobs backed up to a bucket, and `pnpm --filter @withmarfa/conformance drill:restore` is the drill that rebuilds one from the bucket alone.
 
 ## What is authoritative
 

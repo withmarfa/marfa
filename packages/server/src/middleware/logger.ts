@@ -479,11 +479,18 @@ function describeErrorValue(err: unknown): string {
   return text;
 }
 
+let logStacks = true;
+
+/** Whether a logged error carries its stack. Boot turns it off in
+ *  production, where the stack is noise in the log. */
+export function setLogStacks(include: boolean): void {
+  logStacks = include;
+}
+
 /**
  * Structured form of a thrown value: message, name, the diagnostic fields
  * above, the full cause chain, and every branch of an `AggregateError`.
- * Stacks ride along outside production, where they are worth more than the
- * noise they add.
+ * Stacks ride along while {@link setLogStacks} says so.
  *
  * Every field is read through a guard. An `Error` subclass that computes its
  * `message` lazily — and throws while doing so, because whatever it needed is
@@ -507,7 +514,7 @@ export function serializeError(err: unknown, depth = 0): unknown {
     }
   }
 
-  if (process.env.NODE_ENV !== "production") {
+  if (logStacks) {
     const stack = readProperty(err, "stack");
     if (typeof stack === "string") out.stack = stack;
   }

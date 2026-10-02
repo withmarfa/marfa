@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
   expandBundlesToScopes,
   isPermission,
@@ -10,10 +10,8 @@ import {
   buildAllowedScopes,
   requestableNamespaceRoots,
 } from "./oauth-provider.js";
-import {
-  DEFAULT_PERMISSION_BUNDLES,
-  loadPermissionBundles,
-} from "../config.js";
+import type { PermissionBundle } from "@withmarfa/shared";
+import { DEFAULT_PERMISSION_BUNDLES, loadConfig } from "../config.js";
 
 describe("buildAllowedScopes", () => {
   it("includes the global type wildcards (Customize full-access path)", () => {
@@ -255,52 +253,55 @@ describe("permission bundles bind to the type registry", () => {
   });
 });
 
-describe("loadPermissionBundles", () => {
-  it("returns the defaults when unset", () => {
-    expect(loadPermissionBundles(undefined)).toBe(DEFAULT_PERMISSION_BUNDLES);
+describe("MARFA_PERMISSION_BUNDLES", () => {
+  /** The override the settings read, or the refusal's text. */
+  function read(raw: string): PermissionBundle[] | string {
+    try {
+      return (
+        loadConfig({ MARFA_PERMISSION_BUNDLES: raw }).permissionBundles ?? []
+      );
+    } catch (err) {
+      return (err as Error).message;
+    }
+  }
+
+  it("is no override when unset", () => {
+    expect(loadConfig({}).permissionBundles).toBeUndefined();
   });
 
-  it("falls back to defaults on malformed JSON", () => {
-    expect(loadPermissionBundles("{not json")).toBe(DEFAULT_PERMISSION_BUNDLES);
-  });
-
-  it("falls back to defaults on a non-array payload", () => {
-    expect(loadPermissionBundles('{"id":"x"}')).toBe(
-      DEFAULT_PERMISSION_BUNDLES,
-    );
-  });
-
-  it("falls back to defaults when an entry is malformed", () => {
-    expect(loadPermissionBundles('[{"label":"no id or scopes"}]')).toBe(
-      DEFAULT_PERMISSION_BUNDLES,
+  it("refuses to boot on malformed JSON or a non-array payload", () => {
+    expect(read("{not json")).toContain("MARFA_PERMISSION_BUNDLES");
+    expect(read('{"id":"x"}')).toContain("MARFA_PERMISSION_BUNDLES");
+    expect(read('[{"label":"no id or scopes"}]')).toContain(
+      "MARFA_PERMISSION_BUNDLES",
     );
   });
 
   it("accepts a valid override array", () => {
-    const raw = JSON.stringify([
-      {
-        id: "x",
-        label: "X",
-        description: "",
-        scopes: ["core.note:read"],
-        default_on: true,
-      },
-    ]);
-    const out = loadPermissionBundles(raw);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.id).toBe("x");
+    const out = read(
+      JSON.stringify([
+        {
+          id: "x",
+          label: "X",
+          description: "",
+          scopes: ["core.note:read"],
+          default_on: true,
+        },
+      ]),
+    );
+    expect(Array.isArray(out) && out[0]?.id).toBe("x");
   });
 
   // `default_on` decides whether a bundle's toggles start ticked, so an
   // override that omits it is not a bundle with a sensible default: it is a
   // bundle whose grant behavior nobody stated. The field is required on
   // `PermissionBundle`, and an override is JSON the type system never
-  // checks, so the predicate has to.
+  // checks, so the schema has to.
   it("refuses an entry that omits default_on", () => {
     const raw = JSON.stringify([
       { id: "x", label: "X", description: "", scopes: ["core.note:read"] },
     ]);
-    expect(loadPermissionBundles(raw)).toBe(DEFAULT_PERMISSION_BUNDLES);
+    expect(read(raw)).toContain("offending entries: x");
   });
 
   it("refuses an entry whose default_on is not a boolean", () => {
@@ -309,68 +310,43 @@ describe("loadPermissionBundles", () => {
     // turned an operator's explicit off into an on.
     for (const value of ['"false"', '"true"', "0", "1", "null"]) {
       const raw = `[{"id":"x","label":"X","description":"","scopes":["core.note:read"],"default_on":${value}}]`;
-      expect(loadPermissionBundles(raw)).toBe(DEFAULT_PERMISSION_BUNDLES);
+      expect(read(raw), value).toContain("offending entries: x");
     }
   });
 
   it("accepts default_on: false, which is the point of checking it", () => {
-    const raw = JSON.stringify([
-      {
-        id: "x",
-        label: "X",
-        description: "",
-        scopes: ["core.note:read"],
-        default_on: false,
-      },
-    ]);
-    const out = loadPermissionBundles(raw);
-    expect(out).toHaveLength(1);
-    expect(out[0]?.default_on).toBe(false);
+    const out = read(
+      JSON.stringify([
+        {
+          id: "x",
+          label: "X",
+          description: "",
+          scopes: ["core.note:read"],
+          default_on: false,
+        },
+      ]),
+    );
+    expect(Array.isArray(out) && out[0]?.default_on).toBe(false);
   });
 
   it("names the offending entries so an operator can find them", () => {
-    // A rejected override reverts the instance to the shipped bundles, and
-    // the operator's next signal is otherwise a consent screen that does not
-    // offer what they configured, with nothing pointing at the variable.
-    const spy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    try {
-      loadPermissionBundles(
-        JSON.stringify([
-          {
-            id: "good",
-            label: "",
-            description: "",
-            scopes: [],
-            default_on: true,
-          },
-          { id: "bad-one", label: "", description: "", scopes: [] },
-          { label: "no id", description: "", scopes: [] },
-        ]),
-      );
-      const message = spy.mock.calls.map((c) => String(c[0])).join(" ");
-      expect(message).toContain("bad-one");
-      // The entry with no id is found by position, since it has no name.
-      expect(message).toContain("index 2");
-      expect(message).not.toContain("good");
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  it("refuses the whole override when one entry is missing the field", () => {
-    // Whole-array, matching the shape the other malformed cases already
-    // take. A half-applied bundle set is a consent screen nobody described.
-    const raw = JSON.stringify([
-      {
-        id: "good",
-        label: "Good",
-        description: "",
-        scopes: ["core.note:read"],
-        default_on: true,
-      },
-      { id: "bad", label: "Bad", description: "", scopes: ["core.task:read"] },
-    ]);
-    expect(loadPermissionBundles(raw)).toBe(DEFAULT_PERMISSION_BUNDLES);
+    const message = read(
+      JSON.stringify([
+        {
+          id: "good",
+          label: "",
+          description: "",
+          scopes: [],
+          default_on: true,
+        },
+        { id: "bad-one", label: "", description: "", scopes: [] },
+        { label: "no id", description: "", scopes: [] },
+      ]),
+    );
+    expect(message).toContain("bad-one");
+    // The entry with no id is found by position, since it has no name.
+    expect(message).toContain("index 2");
+    expect(message).not.toContain("good");
   });
 });
 

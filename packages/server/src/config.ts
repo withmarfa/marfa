@@ -1,4 +1,7 @@
-import { dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { z } from "zod";
 import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
@@ -9,29 +12,11 @@ import {
 import type { CidrRange } from "./middleware/client-ip.js";
 
 /**
- * Numeric env-var read with explicit "missing or empty → default" semantics.
- *
- * The `Number(env) || default` shorthand silently swallows zero: an
- * operator could not switch a housekeeping job off by setting its
- * retention to `0`, because `0` is falsy and the default wins. So every
- * numeric env read in the server, this helper and the parsers below it,
- * checks for undefined or empty explicitly: that falls back to the
- * default, and any other value (including `0`, negatives, or `NaN`) is
- * honored as written.
- *
- * If you need range/validity checking on top, parse explicitly (see
- * `parseEventLogRetentionHours` for an example with warnings on bad input).
- */
-export function envNumber(raw: string | undefined, fallback: number): number {
-  return raw !== undefined && raw !== "" ? Number(raw) : fallback;
-}
-
-/**
  * The cap on every door under `/keys` when the instance names none.
  *
- * Written down once and read in both places that need it: `loadConfig`
- * below, and the path table in `app.ts` that a test context's `AppConfig`
- * literal leaves unset.
+ * Written down once and read in both places that need it: the settings
+ * schema below, and the path table in `app.ts` that a test context's
+ * `AppConfig` literal leaves unset.
  */
 export const DEFAULT_KEYS_RATE_LIMIT = 200;
 
@@ -70,22 +55,6 @@ export const DEFAULT_INBOUND_LIMITS: InboundLimits = {
 };
 
 export const DEFAULT_CONNECTOR_HOLD_MS = 180_000;
-
-/**
- * Refuses a window under a second, which a live process cannot renew in
- * time, or over an hour, which a crashed one would keep its successor out for.
- */
-export function parseConnectorHoldMs(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return DEFAULT_CONNECTOR_HOLD_MS;
-  const trimmed = raw.trim();
-  const value = Number(trimmed);
-  if (!/^\d+$/.test(trimmed) || value < 1_000 || value > 3_600_000) {
-    throw new Error(
-      `MARFA_CONNECTOR_HOLD_MS must be a whole number of milliseconds from 1000 to 3600000; got "${raw}"`,
-    );
-  }
-  return value;
-}
 
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
@@ -127,9 +96,9 @@ export interface AppConfig {
   apiKeySalt: string;
   corsOrigins: string[];
   /** Named consent-screen permission bundles (see `DEFAULT_PERMISSION_BUNDLES`).
-   *  Overridable via `MARFA_PERMISSION_BUNDLES`. Optional on the type so test
-   *  contexts that construct AppConfig literals compile; `loadConfig` always
-   *  populates it, and readers fall back to `getPermissionBundles()`. */
+   *  `loadConfig` sets it only from the operator's override,
+   *  `MARFA_PERMISSION_BUNDLES`; boot fills it otherwise, and readers fall
+   *  back to `getPermissionBundles()`. */
   permissionBundles?: PermissionBundle[];
   rateLimitEnabled: boolean;
   enableHsts: boolean;
@@ -299,9 +268,8 @@ export interface AppConfig {
   bulkActionPollBackoffMultiplier?: number;
   /** Whether outbound webhooks may reach loopback, private and other
    *  non-public addresses, for an operator whose receivers run on a private
-   *  network. Off unless `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` is `true`;
-   *  optional on the type so test contexts constructing `AppConfig`
-   *  literals keep the default. */
+   *  network. Optional on the type so test contexts constructing
+   *  `AppConfig` literals keep the default, off. */
   webhookAllowPrivateAddresses?: boolean;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
@@ -322,8 +290,8 @@ export interface AppConfig {
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
   authBaseUrl: string;
-  /** Shared secret for cookie signing. Required in production; falls back
-   *  to a per-process ephemeral secret in dev. */
+  /** Signs Better Auth's cookies and authorize query, and keys the blob
+   *  link. Required in production; minted per process otherwise. */
   authSecret: string;
   /** How long a write refused with `SQLITE_BUSY` is retried before it
    *  answers `503 write_contention`. Read from
@@ -366,51 +334,20 @@ export interface AppConfig {
   /** Optional on the type so a test context's `AppConfig` literal takes
    *  `DEFAULT_CONNECTOR_HOLD_MS`. */
   connectorHoldMs?: number;
-  /** Deployed-build identifier, surfaced on `GET /` as `version`. Filled
-   *  by `index.ts` from `version.json` at startup; defaults to `"dev"`
-   *  when no version file is present (local development). It is not the
-   *  contract version, which `GET /` answers as `contract`. */
+  /** Deployed-build identifier, surfaced on `GET /` as `version` and on
+   *  telemetry as the service version: the `sha` in `version.json`, which
+   *  the image writes at build time. Unset in development, where readers
+   *  report `"dev"`. It is not the contract version, which `GET /` answers
+   *  as `contract`. */
   versionSha?: string;
-  /**
-   * OpenTelemetry configuration. The instrumentation bootstrap
-   * (`src/instrumentation.ts`) reads its toggle + exporter config from the
-   * environment directly because it must run before `loadConfig` (and
-   * before any instrumented module loads). These fields exist so the rest
-   * of the server can read the *resolved* OTel config from the single
-   * config source — they are NOT the wiring path for the SDK itself.
-   *
-   * Default OFF, so nothing is exported and the SDK is never loaded unless
-   * an operator asks for it with `MARFA_OTEL_ENABLED=true`.
-   * Standard `OTEL_EXPORTER_OTLP_*` env vars carry endpoint + headers;
-   * `MARFA_OTEL_*` carries Marfa policy (toggle, sampling). Optional on
-   * the type so `AppConfig` literals
-   * in tests keep compiling.
-   */
-  otelEnabled?: boolean;
-  otelServiceName?: string;
-  /** Deployment environment stamped onto the `deployment.environment` OTel
-   *  resource attribute (`MARFA_OTEL_ENVIRONMENT`). No fallback: the value is
-   *  stated per environment or absent, because the only thing available to
-   *  infer from is `NODE_ENV`, which reports how the image was built rather
-   *  than which deployment is running it. Mirrored here for
-   *  read-from-one-place consistency; the bootstrap in `instrumentation.ts`
-   *  reads the env var directly (it runs before `loadConfig`) and refuses to
-   *  start without it when telemetry is actually being exported. */
-  otelEnvironment?: string;
-  /** OTLP traces endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`). Unset,
-   *  with no `OTEL_EXPORTER_OTLP_ENDPOINT` to fall back on, no trace
-   *  pipeline is built and only logs export. */
-  otelTracesEndpoint?: string;
-  /** OTLP logs endpoint (`OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`). A deployment
-   *  exporting to PostHog points this at
-   *  `https://eu.i.posthog.com/i/v1/logs`. */
-  otelLogsEndpoint?: string;
-  /** Exporter headers parsed from `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`).
-   *  Carries e.g. `Authorization=Bearer <phc_...>` for PostHog. */
-  otelHeaders?: Record<string, string>;
-  /** Baseline trace sample ratio (`MARFA_OTEL_SAMPLE_RATIO`, default 0.05).
-   *  Errors export at 100% regardless — see `otel/error-aware-sampler.ts`. */
-  otelSampleRatio?: number;
+  /** The whole of `version.json`, which `/health` reports. */
+  versionFile?: Record<string, unknown>;
+  /** Where this deployment says it runs, reported on `/health`; unset when
+   *  it states nothing. */
+  placement?: Placement;
+  /** Telemetry, read by `instrumentation.ts`. Optional on the type so a test
+   *  context's `AppConfig` literal need not supply it. */
+  otel?: OtelSettings;
   /** Liveness heartbeat target (`MARFA_HEARTBEAT_URL`). Empty = off, the
    *  default. When set, the server GETs this URL on its housekeeping
    *  cadence so something running elsewhere can notice when the pings
@@ -430,94 +367,36 @@ export interface AppConfig {
    *  memory bound: viewers hold no database connection, so any limit is
    *  a stated choice rather than a pool artifact. */
   sseMaxViewers?: number;
+  /** Names in the environment that look like a misspelled setting; boot
+   *  logs each one. */
+  settingWarnings?: string[];
 }
 
-const DEFAULT_SALT = "dev-salt-change-in-production";
-
-const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
-
-/**
- * Parses `MARFA_EVENT_LOG_RETENTION_HOURS`. Unset → default (168 / 7 days).
- * Non-positive, non-integer, or unparseable values log a warning and fall
- * back to the default rather than throwing — cleanup is belt-and-braces
- * and we'd rather run the server with sensible retention than fail boot.
- * Exported for direct unit testing.
- */
-export function parseEventLogRetentionHours(raw: string | undefined): number {
-  if (raw === undefined || raw === "") return DEFAULT_EVENT_LOG_RETENTION_HOURS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0 || !Number.isInteger(parsed)) {
-    console.warn(
-      `Invalid MARFA_EVENT_LOG_RETENTION_HOURS=${raw}, falling back to ${String(DEFAULT_EVENT_LOG_RETENTION_HOURS)}`,
-    );
-    return DEFAULT_EVENT_LOG_RETENTION_HOURS;
-  }
-  return parsed;
+/** Where the deployment says it runs: free text, set per environment. */
+export interface Placement {
+  region?: string;
+  location?: string;
+  country?: string;
 }
 
-const DEFAULT_GRANT_INACTIVITY_DAYS = 365;
-
-/** The inactivity window in days: `0` switches the retirement housekeeping
- *  job off; a value that is not a non-negative integer is refused with a
- *  warning and the default stands, because `Number("thirty")` is `NaN`,
- *  `NaN > 0` is false, and the housekeeping job would otherwise be silently
- *  never registered for an operator who believes it is running. */
-export function parseGrantInactivityDays(raw: string | undefined): number {
-  if (raw === undefined || raw === "") return DEFAULT_GRANT_INACTIVITY_DAYS;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 0) {
-    console.warn(
-      `Invalid MARFA_GRANT_INACTIVITY_DAYS=${raw}, falling back to ${String(DEFAULT_GRANT_INACTIVITY_DAYS)}`,
-    );
-    return DEFAULT_GRANT_INACTIVITY_DAYS;
-  }
-  return parsed;
-}
-
-const DEFAULT_OTEL_SAMPLE_RATIO = 0.05;
-
-/**
- * Parses `MARFA_OTEL_SAMPLE_RATIO` — the baseline head-sampling ratio for
- * traces. Unset → default (0.05). Out-of-range or unparseable values warn
- * and clamp into [0, 1] (or fall back to the default), mirroring the
- * fail-soft stance of `parseEventLogRetentionHours`. Exported for unit
- * testing. Errors always export at 100% regardless of this ratio — see
- * `otel/error-aware-sampler.ts`.
- */
-export function parseOtelSampleRatio(raw: string | undefined): number {
-  if (raw === undefined || raw === "") return DEFAULT_OTEL_SAMPLE_RATIO;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) {
-    console.warn(
-      `Invalid MARFA_OTEL_SAMPLE_RATIO=${raw}, falling back to ${String(DEFAULT_OTEL_SAMPLE_RATIO)}`,
-    );
-    return DEFAULT_OTEL_SAMPLE_RATIO;
-  }
-  if (parsed < 0) return 0;
-  if (parsed > 1) return 1;
-  return parsed;
-}
-
-/**
- * Parses the OTLP exporter headers env var (`OTEL_EXPORTER_OTLP_HEADERS`),
- * a comma-separated list of `key=value` pairs per the OTLP exporter spec
- * (e.g. `Authorization=Bearer abc123,X-Scope=acme`). Whitespace around
- * keys/values is trimmed; the value may itself contain `=` (split on the
- * first only). Malformed entries are skipped. Exported for unit testing.
- */
-export function parseOtelHeaders(
-  raw: string | undefined,
-): Record<string, string> {
-  if (!raw) return {};
-  const out: Record<string, string> = {};
-  for (const pair of raw.split(",")) {
-    const eq = pair.indexOf("=");
-    if (eq <= 0) continue;
-    const key = pair.slice(0, eq).trim();
-    const value = pair.slice(eq + 1).trim();
-    if (key) out[key] = value;
-  }
-  return out;
+export interface OtelSettings {
+  /** Nothing is exported, and the SDK never loads, unless this is on. */
+  enabled: boolean;
+  serviceName: string;
+  /** Stamped on `deployment.environment`; required while exporting. */
+  environment: string | undefined;
+  /** Each signal's resolved URL, empty when that signal is not exported. */
+  tracesEndpoint: string;
+  logsEndpoint: string;
+  /** Each signal's headers: the general ones, overridden by its own. */
+  tracesHeaders: Record<string, string>;
+  logsHeaders: Record<string, string>;
+  /** Baseline trace sample ratio; errors export whatever it says, see
+   *  `otel/error-aware-sampler.ts`. */
+  sampleRatio: number;
+  /** Exception reporting to PostHog, on when both are set. */
+  posthogHost: string;
+  posthogToken: string;
 }
 
 /**
@@ -538,121 +417,22 @@ export const DEFAULT_PERMISSION_BUNDLES: PermissionBundle[] =
   buildDefaultPermissionBundles();
 
 /**
- * Parse the operator override `MARFA_PERMISSION_BUNDLES` (a JSON array of
- * `PermissionBundle`). Falls back to {@link DEFAULT_PERMISSION_BUNDLES} on
- * absent, non-array, or malformed input — a bad override must never strand
- * the consent screen with zero bundles.
- *
- * **A missing `default_on` is an error, not a default.** The field is
- * required on `PermissionBundle`, and an override is JSON the type system
- * never checks.
- *
- * Neither implicit reading is better than refusing. Defaulting to `true`
- * makes a required field optional in practice and turns an operator who
- * meant `false` and misspelled the key into an on-by-default grant, which
- * is the wrong direction to fail on a permission question. Defaulting to
- * `false` fails in the safe direction and silently, producing a consent
- * screen that looks broken and a grant that reaches nothing. Refusing the
- * override says so, keeps the type honest, and leaves a working screen up.
- */
-export function loadPermissionBundles(
-  raw: string | undefined,
-): PermissionBundle[] {
-  if (!raw) return DEFAULT_PERMISSION_BUNDLES;
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      console.warn(
-        "MARFA_PERMISSION_BUNDLES is not a JSON array; using defaults.",
-      );
-      return DEFAULT_PERMISSION_BUNDLES;
-    }
-    const isValidBundle = (b: unknown): b is PermissionBundle =>
-      typeof b === "object" &&
-      b !== null &&
-      typeof (b as PermissionBundle).id === "string" &&
-      Array.isArray((b as PermissionBundle).scopes) &&
-      typeof (b as PermissionBundle).default_on === "boolean";
-    // Names the entry an operator has to go and fix: its id when it has one,
-    // its position when it does not, since a missing id is one of the ways an
-    // entry lands here.
-    const nameOf = (b: unknown, i: number): string => {
-      const id: unknown = (b as { id?: unknown } | null)?.id;
-      return typeof id === "string" && id.length > 0
-        ? id
-        : `index ${String(i)}`;
-    };
-    const rejected: string[] = [];
-    const bundles: PermissionBundle[] = [];
-    parsed.forEach((b: unknown, i: number) => {
-      if (isValidBundle(b)) bundles.push(b);
-      else rejected.push(nameOf(b, i));
-    });
-    if (rejected.length > 0) {
-      // Loud, and it names them. A rejected override silently reverts the
-      // instance to the shipped bundles, and the operator's next signal is a
-      // consent screen that does not offer what they configured — with
-      // nothing on it pointing at the environment variable. Naming the
-      // entries turns that into a one-line fix.
-      console.error(
-        `MARFA_PERMISSION_BUNDLES rejected; using defaults. ` +
-          `Each entry needs a string id, a scopes array, and a boolean default_on. ` +
-          `Offending entries: ${rejected.join(", ")}.`,
-      );
-      return DEFAULT_PERMISSION_BUNDLES;
-    }
-    return bundles;
-  } catch (err) {
-    console.warn(
-      `Failed to parse MARFA_PERMISSION_BUNDLES (${String(err)}); using defaults.`,
-    );
-    return DEFAULT_PERMISSION_BUNDLES;
-  }
-}
-
-/**
- * Bundles installed at boot, when the runtime custom-type namespaces have
- * been folded in. Null until then; every reader falls back to the
- * environment/default resolution so nothing changes for callers that run
- * before boot completes (config load, tests that never call the setter).
+ * Bundles installed at boot: the operator's override when one is set,
+ * otherwise the defaults with the runtime custom-type namespaces folded in.
+ * Null until then, and in a test that never installs any.
  */
 let activePermissionBundles: PermissionBundle[] | null = null;
 
-/**
- * Install the active bundle set. Called once at boot after storage is up
- * (so the custom-type namespace read has a database to ask), and by tests
- * that exercise the runtime-namespace path. The operator override
- * `MARFA_PERMISSION_BUNDLES` outranks it: when that is set, boot skips the
- * call and the override stays authoritative.
- */
+/** Install the active bundle set. Called once at boot, and by tests. */
 export function setActivePermissionBundles(
   bundles: PermissionBundle[] | null,
 ): void {
   activePermissionBundles = bundles;
 }
 
-/**
- * Whether the operator override is both set and usable.
- *
- * Boot skips folding the runtime custom-type namespaces in when an override
- * is present, because the override outranks the derivation. Presence and
- * validity are different questions, and only the second one should suppress
- * the derivation: a rejected override falls back to the shipped defaults, so
- * keying on presence alone would drop the handle namespaces the runtime
- * custom types need on top of dropping the override.
- */
-export function hasUsablePermissionBundleOverride(): boolean {
-  const raw = process.env.MARFA_PERMISSION_BUNDLES;
-  if (!raw) return false;
-  return loadPermissionBundles(raw) !== DEFAULT_PERMISSION_BUNDLES;
-}
-
 /** Resolve the active permission bundles. */
 export function getPermissionBundles(): PermissionBundle[] {
-  return (
-    activePermissionBundles ??
-    loadPermissionBundles(process.env.MARFA_PERMISSION_BUNDLES)
-  );
+  return activePermissionBundles ?? DEFAULT_PERMISSION_BUNDLES;
 }
 
 /**
@@ -668,339 +448,771 @@ export function defaultTessdataDir(sqlitePath: string): string {
   return join(dirname(sqlitePath), "tessdata");
 }
 
-export function loadConfig(): AppConfig {
-  const corsRaw = process.env.CORS_ORIGINS ?? "";
-  const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
-  const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
-  if (process.env.NODE_ENV === "production") {
-    if (!apiKeySalt || apiKeySalt === DEFAULT_SALT) {
-      throw new Error(
-        "API_KEY_SALT must be set to a unique value in production. " +
-          "Generate one with: openssl rand -hex 32",
-      );
-    }
-    if (apiKeySalt.length < 32) {
-      throw new Error(
-        "API_KEY_SALT must be at least 32 characters. " +
-          "Generate one with: openssl rand -hex 32",
-      );
-    }
-    // MARFA_AUTH_SECRET has two consumers: better-auth signs its
-    // cookies and the OAuth authorize query with it (`app.ts`,
-    // `auth/instance.ts`), and the blob link's signature is keyed by
-    // `crypto/derive-key.ts` from it. Unset, better-auth would sign with a
-    // secret minted per process, so every session and authorize query
-    // would die at the next restart, and the crypto layer, which refuses
-    // rather than falls back in production, would throw at the first
-    // blob-link mint instead of at boot. Enforce presence here so both
-    // fail at boot or not at all.
-    if (!authSecret || authSecret.length < 32) {
-      throw new Error(
-        "MARFA_AUTH_SECRET must be set to at least 32 characters in production. " +
-          "Generate one with: openssl rand -hex 32",
-      );
-    }
-  }
+// ---------------------------------------------------------------------------
+// The settings schema
+// ---------------------------------------------------------------------------
 
-  const port = envNumber(process.env.PORT, 8600);
-  const sqlitePath = process.env.SQLITE_PATH ?? "./data/marfa.db";
-  return {
-    isProduction: process.env.NODE_ENV === "production",
-    port,
-    sqlitePath,
-    blobPath: process.env.BLOB_PATH ?? "./data/blobs",
-    maxRequestBytes: envNumber(process.env.MARFA_MAX_REQUEST_BYTES, 1_048_576),
-    maxBulkRequestBytes: envNumber(
-      process.env.MARFA_MAX_BULK_REQUEST_BYTES,
-      16 * 1024 * 1024,
-    ),
-    s3Bucket: process.env.S3_BUCKET ?? "",
-    s3Region: process.env.S3_REGION ?? "us-east-1",
-    s3Endpoint: process.env.S3_ENDPOINT ?? "",
-    s3AccessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
-    s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
-    s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE !== "false",
-    s3Prefix: process.env.S3_PREFIX?.trim() ? process.env.S3_PREFIX : "blobs",
-    apiKeySalt,
-    corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
-    permissionBundles: getPermissionBundles(),
-    rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
-    enableHsts: process.env.ENABLE_HSTS === "true",
-    auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
-    revokedGrantRetentionDays: envNumber(
-      process.env.MARFA_REVOKED_GRANT_RETENTION_DAYS,
-      90,
-    ),
-    grantInactivityDays: parseGrantInactivityDays(
-      process.env.MARFA_GRANT_INACTIVITY_DAYS,
-    ),
-    auditCleanupIntervalMs: envNumber(
-      process.env.AUDIT_CLEANUP_INTERVAL_MS,
-      86_400_000,
-    ),
-    eventLogRetentionHours: parseEventLogRetentionHours(
-      process.env.MARFA_EVENT_LOG_RETENTION_HOURS,
-    ),
-    eventLogCleanupIntervalMs: envNumber(
-      process.env.MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS,
-      3_600_000,
-    ),
-    versionThinningIntervalMs: envNumber(
-      process.env.VERSION_THINNING_INTERVAL_MS,
-      3_600_000,
-    ),
-    versionRecentDays: envNumber(process.env.VERSION_RECENT_DAYS, 30),
-    versionDailySnapshotDays: envNumber(
-      process.env.VERSION_DAILY_SNAPSHOT_DAYS,
-      90,
-    ),
-    versionWeeklySnapshotDays: envNumber(
-      process.env.VERSION_WEEKLY_SNAPSHOT_DAYS,
-      365,
-    ),
-    versionMaxVersions: envNumber(process.env.VERSION_MAX_VERSIONS, 500),
-    trashRetentionDays: envNumber(process.env.TRASH_RETENTION_DAYS, 60),
-    trashPurgeIntervalMs: envNumber(
-      process.env.TRASH_PURGE_INTERVAL_MS,
-      86_400_000,
-    ),
-    authSessionCleanupIntervalMs: envNumber(
-      process.env.AUTH_SESSION_CLEANUP_INTERVAL_MS,
-      3_600_000,
-    ),
-    dcrClientRetentionDays: envNumber(
-      process.env.MARFA_DCR_CLIENT_RETENTION_DAYS,
-      30,
-    ),
-    dcrClientCleanupIntervalMs: envNumber(
-      process.env.MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS,
-      86_400_000,
-    ),
-    rateLimitCleanupIntervalMs: envNumber(
-      process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
-      3_600_000,
-    ),
-    blobCleanupIntervalMs: envNumber(
-      process.env.MARFA_BLOB_CLEANUP_INTERVAL_MS,
-      86_400_000,
-    ),
-    blobCleanupGraceMs: envNumber(
-      process.env.MARFA_BLOB_CLEANUP_GRACE_MS,
-      86_400_000,
-    ),
-    // A positive integer, refused otherwise: a value that resolved to NaN
-    // would compare false against every count and let the last copy go.
-    blobMinCopies:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_MIN_COPIES,
-        "MARFA_BLOB_MIN_COPIES",
-      ) ?? 1,
-    // Positive integers, refused otherwise, for the same reason as the
-    // minimum: a value that resolved to NaN or zero would make every run
-    // copy or check nothing, silently, and neither housekeeping job has an
-    // off switch.
-    blobReplicateIntervalMs:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_REPLICATE_INTERVAL_MS,
-        "MARFA_BLOB_REPLICATE_INTERVAL_MS",
-      ) ?? 60_000,
-    blobReplicateBatch:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_REPLICATE_BATCH,
-        "MARFA_BLOB_REPLICATE_BATCH",
-      ) ?? 100,
-    blobReplicateBatchBytes:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_REPLICATE_BATCH_BYTES,
-        "MARFA_BLOB_REPLICATE_BATCH_BYTES",
-      ) ?? 1024 * 1024 * 1024,
-    blobIntegrityIntervalMs:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_INTEGRITY_INTERVAL_MS,
-        "MARFA_BLOB_INTEGRITY_INTERVAL_MS",
-      ) ?? 3_600_000,
-    blobIntegrityBatch:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_INTEGRITY_BATCH,
-        "MARFA_BLOB_INTEGRITY_BATCH",
-      ) ?? 500,
-    blobIntegrityBatchBytes:
-      parsePositiveIntegerEnv(
-        process.env.MARFA_BLOB_INTEGRITY_BATCH_BYTES,
-        "MARFA_BLOB_INTEGRITY_BATCH_BYTES",
-      ) ?? 1024 * 1024 * 1024,
-    enrichmentEnabled: process.env.MARFA_ENRICHMENT_ENABLED !== "false",
-    enrichmentIntervalMs: envNumber(
-      process.env.MARFA_ENRICHMENT_INTERVAL_MS,
-      30_000,
-    ),
-    enrichmentBatchSize: envNumber(process.env.MARFA_ENRICHMENT_BATCH_SIZE, 8),
-    enrichmentItemTimeoutMs: envNumber(
-      process.env.MARFA_ENRICHMENT_ITEM_TIMEOUT_MS,
-      60_000,
-    ),
-    enrichmentMaxBlobBytes: envNumber(
-      process.env.MARFA_ENRICHMENT_MAX_BLOB_BYTES,
-      20 * 1024 * 1024,
-    ),
-    // Derived from the validator's cap, not restated: a text cap above it
-    // would extract a long document onto an item that could never be
-    // written to again.
-    enrichmentMaxTextChars: envNumber(
-      process.env.MARFA_ENRICHMENT_MAX_TEXT_CHARS,
-      DEFAULT_MAX_STRING_LENGTH,
-    ),
-    enrichmentMaxAttempts: envNumber(
-      process.env.MARFA_ENRICHMENT_MAX_ATTEMPTS,
-      3,
-    ),
-    enrichmentOcrEnabled: process.env.MARFA_ENRICHMENT_OCR_ENABLED !== "false",
-    enrichmentTessdataDir:
-      process.env.MARFA_ENRICHMENT_TESSDATA_DIR ??
-      defaultTessdataDir(sqlitePath),
-    bulkActionJobRetentionMs: envNumber(
-      process.env.MARFA_BULK_ACTION_JOB_RETENTION_MS,
-      7 * 24 * 3_600_000,
-    ),
-    bulkActionJobGcIntervalMs: envNumber(
-      process.env.MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS,
-      3_600_000,
-    ),
-    bulkActionPollIntervalMs: envNumber(
-      process.env.MARFA_BULK_ACTION_POLL_INTERVAL_MS,
-      500,
-    ),
-    bulkActionPollMaxIntervalMs: envNumber(
-      process.env.MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS,
-      60_000,
-    ),
-    bulkActionPollBackoffMultiplier: envNumber(
-      process.env.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
-      2,
-    ),
-    webhookAllowPrivateAddresses:
-      process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES === "true",
-    errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
-    errorWebhookTimeoutMs: envNumber(
-      process.env.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
-      5000,
-    ),
-    // Parse + validate at startup. Malformed CIDRs throw — we want bad
-    // config to surface immediately, not silently degrade.
-    trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
-    trustedProxyHeader: parseTrustedProxyHeader(
-      process.env.TRUSTED_PROXY_HEADER,
-    ),
-    authBaseUrl:
-      process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
-    authSecret,
-    sqliteBusyBudgetMs: envNumber(process.env.SQLITE_BUSY_BUDGET_MS, 5_000),
-    rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
-    rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
-    rateLimitKeysLimit: envNumber(
-      process.env.RATE_LIMIT_KEYS_REQUESTS,
-      DEFAULT_KEYS_RATE_LIMIT,
-    ),
-    rateLimitAggregateMultiplier: envNumber(
-      process.env.RATE_LIMIT_AGGREGATE_MULTIPLIER,
-      4,
-    ),
-    inbound: {
-      maxBytes: envNumber(
-        process.env.MARFA_INBOUND_MAX_BYTES,
-        DEFAULT_INBOUND_LIMITS.maxBytes,
-      ),
-      requestsPerWindow: envNumber(
-        process.env.RATE_LIMIT_INBOUND_REQUESTS,
-        DEFAULT_INBOUND_LIMITS.requestsPerWindow,
-      ),
-      backlogDeliveries: envNumber(
-        process.env.MARFA_INBOUND_BACKLOG_DELIVERIES,
-        DEFAULT_INBOUND_LIMITS.backlogDeliveries,
-      ),
-      backlogBytes: envNumber(
-        process.env.MARFA_INBOUND_BACKLOG_BYTES,
-        DEFAULT_INBOUND_LIMITS.backlogBytes,
-      ),
-      inFlightBytes: envNumber(
-        process.env.MARFA_INBOUND_IN_FLIGHT_BYTES,
-        DEFAULT_INBOUND_LIMITS.inFlightBytes,
-      ),
-      readTimeoutMs: envNumber(
-        process.env.MARFA_INBOUND_READ_TIMEOUT_MS,
-        DEFAULT_INBOUND_LIMITS.readTimeoutMs,
-      ),
-      handledRetentionDays: envNumber(
-        process.env.MARFA_INBOUND_HANDLED_RETENTION_DAYS,
-        DEFAULT_INBOUND_LIMITS.handledRetentionDays,
-      ),
-      pendingRetentionDays: envNumber(
-        process.env.MARFA_INBOUND_PENDING_RETENTION_DAYS,
-        DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
-      ),
-    },
-    connectorHoldMs: parseConnectorHoldMs(process.env.MARFA_CONNECTOR_HOLD_MS),
-    otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
-    otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
-    otelEnvironment: process.env.MARFA_OTEL_ENVIRONMENT,
-    otelTracesEndpoint:
-      process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
-      "",
-    otelLogsEndpoint:
-      process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ??
-      process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
-      "",
-    otelHeaders: parseOtelHeaders(
-      process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS ??
-        process.env.OTEL_EXPORTER_OTLP_HEADERS,
-    ),
-    otelSampleRatio: parseOtelSampleRatio(process.env.MARFA_OTEL_SAMPLE_RATIO),
-    heartbeatUrl: process.env.MARFA_HEARTBEAT_URL ?? "",
-    heartbeatIntervalMs: envNumber(
-      process.env.MARFA_HEARTBEAT_INTERVAL_MS,
-      60_000,
-    ),
-    housekeepingPollIntervalMs: envNumber(
-      process.env.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,
-      1_000,
-    ),
-    sseMaxViewers: parseSseMaxViewers(process.env.MARFA_SSE_MAX_VIEWERS),
+/**
+ * One setting: what an unset or blank value resolves to, and how a stated
+ * value is read. A parser throws to refuse; the message completes "NAME ...".
+ * Blank counts as unset, so an orchestrator that writes `NAME=` for every
+ * variable it knows about leaves the default standing.
+ */
+function setting<T>(parse: (value: string) => T, fallback: () => T) {
+  return z
+    .string()
+    .optional()
+    .transform((raw, ctx): T => {
+      const value = raw?.trim();
+      if (value === undefined || value === "") return fallback();
+      try {
+        return parse(value);
+      } catch (err) {
+        ctx.addIssue({
+          code: "custom",
+          message: err instanceof Error ? err.message : String(err),
+        });
+        return z.NEVER;
+      }
+    });
+}
+
+/**
+ * A secret is used exactly as written, never trimmed: a value read from a
+ * file often ends in a newline, and trimming it would key every hash and
+ * signature with something other than what was set. Surrounding whitespace
+ * is refused instead, so neither reading happens silently.
+ */
+const secretSetting = z
+  .string()
+  .optional()
+  .transform((raw, ctx): string | undefined => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    if (raw !== raw.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "has whitespace around it, which would be part of the secret; remove it",
+      });
+      return z.NEVER;
+    }
+    return raw;
+  });
+
+/** Plain digits only, not `Number()`'s grammar: `1e2` is not a hundred and `0x10` is not sixteen. */
+function wholeNumber(min: number, max = Number.MAX_SAFE_INTEGER) {
+  return (value: string): number => {
+    const parsed = Number(value);
+    if (!/^\d+$/.test(value) || parsed < min || parsed > max) {
+      const range =
+        max === Number.MAX_SAFE_INTEGER
+          ? `${String(min)} or more`
+          : `from ${String(min)} to ${String(max)}`;
+      throw new Error(`must be a whole number, ${range}`);
+    }
+    return parsed;
   };
 }
 
-/**
- * Refuses to boot on a value that is not a non-negative integer.
- * `envNumber` would resolve garbage to NaN, and `NaN > 0` is false, so
- * a typo would silently switch a stated viewer ceiling off.
- */
-export function parseSseMaxViewers(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === "") return 0;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) {
-    throw new Error(
-      `MARFA_SSE_MAX_VIEWERS must be a non-negative integer (0 = uncapped); got "${raw}"`,
-    );
+function decimal(min: number, max: number) {
+  return (value: string): number => {
+    const parsed = Number(value);
+    if (
+      !/^\d+(\.\d+)?$/.test(value) ||
+      !Number.isFinite(parsed) ||
+      parsed < min ||
+      parsed > max
+    ) {
+      throw new Error(`must be a number from ${String(min)} to ${String(max)}`);
+    }
+    return parsed;
+  };
+}
+
+const TRUE_WORDS = new Set(["true", "1", "yes", "on"]);
+const FALSE_WORDS = new Set(["false", "0", "no", "off"]);
+
+function flag(value: string): boolean {
+  const word = value.toLowerCase();
+  if (TRUE_WORDS.has(word)) return true;
+  if (FALSE_WORDS.has(word)) return false;
+  throw new Error("must be true or false (also 1/0, yes/no, on/off)");
+}
+
+function httpUrl(value: string): string {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("must be an absolute http or https URL");
   }
-  return Number(trimmed);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("must be an absolute http or https URL");
+  }
+  return value;
+}
+
+function text(value: string): string {
+  return value;
+}
+
+/** The comparison is exact, so `https://app.example/` would never match an `Origin` header. */
+function origins(value: string): string[] {
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      let origin: string;
+      try {
+        origin = new URL(entry).origin;
+      } catch {
+        origin = "null";
+      }
+      if (origin !== entry) {
+        throw new Error(
+          `must list origins, scheme and host with no path or trailing slash; "${entry}" is not one`,
+        );
+      }
+      return entry;
+    });
 }
 
 /**
- * Parse a positive-integer environment variable. Unset or empty → undefined,
- * which keeps the consumer's own default. Anything else that is not a
- * positive integer throws at boot rather than warning.
- *
- * Plain digits only, not `Number()`'s grammar: "1e2" parses to 100, and a
- * sizing knob silently taking a hundred is the surprise this refuses.
+ * `key=value` pairs separated by commas, values percent-decoded, as the OTLP
+ * exporters read the `OTEL_EXPORTER_OTLP_*_HEADERS` variables themselves.
  */
-export function parsePositiveIntegerEnv(
-  raw: string | undefined,
-  name: string,
-): number | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed) || Number(trimmed) < 1) {
-    throw new Error(`${name} must be a positive integer, got "${raw}".`);
+function otlpHeaders(value: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const pair of value.split(",")) {
+    if (pair.trim() === "") continue;
+    const eq = pair.indexOf("=");
+    const key = eq > 0 ? pair.slice(0, eq).trim() : "";
+    const raw = eq > 0 ? pair.slice(eq + 1).trim() : "";
+    let decoded: string | undefined;
+    try {
+      decoded = decodeURIComponent(raw);
+    } catch {
+      decoded = undefined;
+    }
+    if (!key || !raw || decoded === undefined) {
+      throw new Error(
+        "must be comma-separated key=value pairs with percent-encoded values",
+      );
+    }
+    out[key] = decoded;
   }
-  return Number(trimmed);
+  return out;
+}
+
+/**
+ * The override is JSON the type system never checks, so a missing
+ * `default_on` is refused rather than defaulted: `true` would turn a
+ * misspelled key into an on-by-default grant, and `false` would leave a
+ * consent screen that grants nothing without saying why.
+ */
+function permissionBundles(value: string): PermissionBundle[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("must be a JSON array of permission bundles");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("must be a JSON array of permission bundles");
+  }
+  const rejected: string[] = [];
+  parsed.forEach((entry: unknown, i: number) => {
+    const b = entry as Partial<PermissionBundle> | null;
+    const valid =
+      typeof b === "object" &&
+      b !== null &&
+      typeof b.id === "string" &&
+      b.id.length > 0 &&
+      Array.isArray(b.scopes) &&
+      b.scopes.every((s) => typeof s === "string") &&
+      typeof b.default_on === "boolean";
+    if (!valid) {
+      const id: unknown = b?.id;
+      rejected.push(
+        typeof id === "string" && id.length > 0 ? id : `index ${String(i)}`,
+      );
+    }
+  });
+  if (rejected.length > 0) {
+    throw new Error(
+      `needs a string id, an array of scopes and a boolean default_on on every entry; offending entries: ${rejected.join(", ")}`,
+    );
+  }
+  return parsed as PermissionBundle[];
+}
+
+function fromThrowingParser<T>(parse: (raw: string) => T) {
+  return (value: string): T => {
+    try {
+      return parse(value);
+    } catch (err) {
+      // The parsers name the setting themselves; the schema names it again.
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(message.replace(/^[A-Z_]+:\s*/, ""), { cause: err });
+    }
+  };
+}
+
+const optionalText = setting<string | undefined>(text, () => undefined);
+const optionalUrl = setting<string | undefined>(httpUrl, () => undefined);
+const blankText = setting(text, () => "");
+const count = (fallback: number, min = 1, max?: number) =>
+  setting(wholeNumber(min, max), () => fallback);
+const on = (fallback: boolean) => setting(flag, () => fallback);
+
+/**
+ * Every setting the server reads, by the environment variable that carries
+ * it. Read once, at boot, by {@link loadConfig}; nothing else in the server
+ * reads the environment. A value outside its rule stops the server with a
+ * message naming the setting. `.env.example` lists every name here.
+ */
+const settingsShape = {
+  NODE_ENV: setting(
+    (value) => {
+      if (
+        value !== "production" &&
+        value !== "development" &&
+        value !== "test"
+      ) {
+        throw new Error("must be production, development or test");
+      }
+      return value;
+    },
+    () => "development" as const,
+  ),
+  PORT: count(8600, 1, 65_535),
+  SQLITE_PATH: setting(text, () => "./data/marfa.db"),
+  SQLITE_BUSY_BUDGET_MS: count(5_000, 0),
+  BLOB_PATH: setting(text, () => "./data/blobs"),
+  MARFA_MAX_REQUEST_BYTES: count(1_048_576),
+  MARFA_MAX_BULK_REQUEST_BYTES: count(16 * 1024 * 1024),
+
+  S3_BUCKET: blankText,
+  S3_REGION: setting(text, () => "us-east-1"),
+  S3_ENDPOINT: setting(httpUrl, () => ""),
+  S3_ACCESS_KEY_ID: blankText,
+  S3_SECRET_ACCESS_KEY: secretSetting,
+  S3_FORCE_PATH_STYLE: on(true),
+  S3_PREFIX: setting(text, () => "blobs"),
+  MARFA_BLOB_MIN_COPIES: count(1),
+  MARFA_BLOB_REPLICATE_INTERVAL_MS: count(60_000),
+  MARFA_BLOB_REPLICATE_BATCH: count(100),
+  MARFA_BLOB_REPLICATE_BATCH_BYTES: count(1024 * 1024 * 1024),
+  MARFA_BLOB_INTEGRITY_INTERVAL_MS: count(3_600_000),
+  MARFA_BLOB_INTEGRITY_BATCH: count(500),
+  MARFA_BLOB_INTEGRITY_BATCH_BYTES: count(1024 * 1024 * 1024),
+  MARFA_BLOB_CLEANUP_INTERVAL_MS: count(86_400_000, 0),
+  MARFA_BLOB_CLEANUP_GRACE_MS: count(86_400_000, 0),
+
+  MARFA_ENRICHMENT_ENABLED: on(true),
+  MARFA_ENRICHMENT_OCR_ENABLED: on(true),
+  MARFA_ENRICHMENT_TESSDATA_DIR: optionalText,
+  MARFA_ENRICHMENT_INTERVAL_MS: count(30_000),
+  MARFA_ENRICHMENT_BATCH_SIZE: count(8),
+  MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: count(60_000),
+  MARFA_ENRICHMENT_MAX_BLOB_BYTES: count(20 * 1024 * 1024),
+  // The validator's cap, not restated: above it, the sweeper's validation
+  // parks an over-long extraction rather than storing it.
+  MARFA_ENRICHMENT_MAX_TEXT_CHARS: count(DEFAULT_MAX_STRING_LENGTH),
+  MARFA_ENRICHMENT_MAX_ATTEMPTS: count(3),
+
+  TRUSTED_PROXY_CIDRS: setting<CidrRange[]>(
+    fromThrowingParser(parseTrustedProxyCidrs),
+    () => [],
+  ),
+  TRUSTED_PROXY_HEADER: setting<string | null>(
+    fromThrowingParser(parseTrustedProxyHeader),
+    () => null,
+  ),
+
+  API_KEY_SALT: secretSetting,
+  MARFA_AUTH_SECRET: secretSetting,
+  MARFA_AUTH_BASE_URL: optionalUrl,
+  CORS_ORIGINS: setting(origins, () => []),
+  MARFA_PERMISSION_BUNDLES: setting<PermissionBundle[] | undefined>(
+    permissionBundles,
+    () => undefined,
+  ),
+  ENABLE_HSTS: on(false),
+
+  RATE_LIMIT_ENABLED: on(true),
+  RATE_LIMIT_REQUESTS: count(1000),
+  RATE_LIMIT_WINDOW_MS: count(60_000),
+  RATE_LIMIT_KEYS_REQUESTS: count(DEFAULT_KEYS_RATE_LIMIT),
+  RATE_LIMIT_AGGREGATE_MULTIPLIER: count(4, 0),
+  MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS: count(3_600_000),
+
+  MARFA_CONNECTOR_HOLD_MS: count(DEFAULT_CONNECTOR_HOLD_MS, 1_000, 3_600_000),
+  MARFA_INBOUND_MAX_BYTES: count(DEFAULT_INBOUND_LIMITS.maxBytes),
+  RATE_LIMIT_INBOUND_REQUESTS: count(DEFAULT_INBOUND_LIMITS.requestsPerWindow),
+  MARFA_INBOUND_BACKLOG_DELIVERIES: count(
+    DEFAULT_INBOUND_LIMITS.backlogDeliveries,
+  ),
+  MARFA_INBOUND_BACKLOG_BYTES: count(DEFAULT_INBOUND_LIMITS.backlogBytes),
+  MARFA_INBOUND_IN_FLIGHT_BYTES: count(DEFAULT_INBOUND_LIMITS.inFlightBytes),
+  MARFA_INBOUND_READ_TIMEOUT_MS: count(DEFAULT_INBOUND_LIMITS.readTimeoutMs),
+  MARFA_INBOUND_HANDLED_RETENTION_DAYS: count(
+    DEFAULT_INBOUND_LIMITS.handledRetentionDays,
+    0,
+  ),
+  MARFA_INBOUND_PENDING_RETENTION_DAYS: count(
+    DEFAULT_INBOUND_LIMITS.pendingRetentionDays,
+    0,
+  ),
+
+  MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: count(1_000),
+  AUDIT_RETENTION_DAYS: count(90, 0),
+  AUDIT_CLEANUP_INTERVAL_MS: count(86_400_000),
+  MARFA_REVOKED_GRANT_RETENTION_DAYS: count(90, 0),
+  MARFA_GRANT_INACTIVITY_DAYS: count(365, 0),
+  MARFA_EVENT_LOG_RETENTION_HOURS: count(168),
+  MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS: count(3_600_000),
+  VERSION_THINNING_INTERVAL_MS: count(3_600_000),
+  VERSION_RECENT_DAYS: count(30, 0),
+  VERSION_DAILY_SNAPSHOT_DAYS: count(90, 0),
+  VERSION_WEEKLY_SNAPSHOT_DAYS: count(365, 0),
+  VERSION_MAX_VERSIONS: count(500),
+  TRASH_RETENTION_DAYS: count(60, 0),
+  TRASH_PURGE_INTERVAL_MS: count(86_400_000),
+  AUTH_SESSION_CLEANUP_INTERVAL_MS: count(3_600_000),
+  MARFA_DCR_CLIENT_RETENTION_DAYS: count(30, 0),
+  MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS: count(86_400_000),
+  MARFA_BULK_ACTION_JOB_RETENTION_MS: count(7 * 24 * 3_600_000, 0),
+  MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS: count(3_600_000),
+  MARFA_BULK_ACTION_POLL_INTERVAL_MS: count(500),
+  MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS: count(60_000),
+  MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER: setting(decimal(1, 100), () => 2),
+  MARFA_SSE_MAX_VIEWERS: count(0, 0),
+
+  MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES: on(false),
+  ERROR_WEBHOOK_URL: setting(httpUrl, () => ""),
+  MARFA_ERROR_WEBHOOK_TIMEOUT_MS: count(5_000),
+  MARFA_HEARTBEAT_URL: setting(httpUrl, () => ""),
+  MARFA_HEARTBEAT_INTERVAL_MS: count(60_000),
+  MARFA_PLACEMENT_REGION: optionalText,
+  MARFA_PLACEMENT_LOCATION: optionalText,
+  MARFA_PLACEMENT_COUNTRY: optionalText,
+
+  MARFA_OTEL_ENABLED: on(false),
+  MARFA_OTEL_ENVIRONMENT: optionalText,
+  MARFA_OTEL_SAMPLE_RATIO: setting(decimal(0, 1), () => 0.05),
+  OTEL_SERVICE_NAME: setting(text, () => "marfa-server"),
+  OTEL_EXPORTER_OTLP_ENDPOINT: optionalUrl,
+  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: optionalUrl,
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: optionalUrl,
+  OTEL_EXPORTER_OTLP_HEADERS: setting(otlpHeaders, () => ({})),
+  OTEL_EXPORTER_OTLP_TRACES_HEADERS: setting(otlpHeaders, () => ({})),
+  OTEL_EXPORTER_OTLP_LOGS_HEADERS: setting(otlpHeaders, () => ({})),
+  MARFA_POSTHOG_HOST: optionalUrl,
+  MARFA_POSTHOG_PROJECT_TOKEN: secretSetting,
+};
+
+/** Every setting's name, in the order the schema states them. */
+export const SETTING_NAMES: readonly string[] = Object.keys(settingsShape);
+
+/** Never echoed into a refusal, which lands in a log. */
+const SECRET_SETTINGS = new Set([
+  "API_KEY_SALT",
+  "MARFA_AUTH_SECRET",
+  "S3_SECRET_ACCESS_KEY",
+  "MARFA_POSTHOG_PROJECT_TOKEN",
+  "OTEL_EXPORTER_OTLP_HEADERS",
+  "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+  "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+  "MARFA_PERMISSION_BUNDLES",
+]);
+
+const DEFAULT_SALT = "dev-salt-change-in-production";
+const SECRET_MIN_LENGTH = 32;
+const SECRET_MIN_BITS = 96;
+
+/**
+ * Text from `.env.example` and the built-in salt, compared with case and
+ * punctuation stripped so `change_me` and `CHANGE ME` are caught too.
+ */
+const PLACEHOLDER_FRAGMENTS = ["changeme", "changeinproduction", "opensslrand"];
+
+/**
+ * Bits by the empirical character distribution, which is an upper bound on
+ * a secret's real entropy: it catches a value drawn from too few
+ * characters, and `openssl rand -hex 32` scores about 250. A value that
+ * repeats one shorter run is caught apart from it.
+ */
+function estimatedBits(secret: string): number {
+  const counts = new Map<string, number>();
+  for (const ch of secret) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let perChar = 0;
+  for (const n of counts.values()) {
+    const p = n / secret.length;
+    perChar -= p * Math.log2(p);
+  }
+  return perChar * secret.length;
+}
+
+function weakSecret(secret: string | undefined): string | undefined {
+  if (secret === undefined) return "must be set in production";
+  if (secret.length < SECRET_MIN_LENGTH) {
+    return `must be at least ${String(SECRET_MIN_LENGTH)} characters`;
+  }
+  const letters = secret.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (PLACEHOLDER_FRAGMENTS.some((fragment) => letters.includes(fragment))) {
+    return "is a placeholder anyone can read, not a secret";
+  }
+  if (estimatedBits(secret) < SECRET_MIN_BITS || /^(.+?)\1+$/.test(secret)) {
+    return "is too predictable to be a secret";
+  }
+  return undefined;
+}
+
+const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
+  const refuse = (name: string, message: string) => {
+    ctx.addIssue({ code: "custom", path: [name], message });
+  };
+  const generate = "; generate one with `openssl rand -hex 32`";
+  // Outside production a short secret is still refused, because
+  // `crypto/derive-key.ts` and Better Auth both sign with it.
+  const shortSecret =
+    s.MARFA_AUTH_SECRET !== undefined &&
+    s.MARFA_AUTH_SECRET.length < SECRET_MIN_LENGTH;
+  if (shortSecret) {
+    refuse(
+      "MARFA_AUTH_SECRET",
+      `must be at least ${String(SECRET_MIN_LENGTH)} characters${generate}`,
+    );
+  }
+  if (s.NODE_ENV === "production") {
+    // MARFA_AUTH_SECRET signs Better Auth's cookies and authorize query and
+    // keys the credential-free blob link, so a readable one lets anyone
+    // forge a link to any blob whose hash they know.
+    const salt = weakSecret(s.API_KEY_SALT);
+    if (salt) refuse("API_KEY_SALT", salt + generate);
+    const secret = weakSecret(s.MARFA_AUTH_SECRET);
+    if (secret && !shortSecret) refuse("MARFA_AUTH_SECRET", secret + generate);
+    // Unset, the issuer, cookie domain and every minted link would name
+    // localhost.
+    if (s.MARFA_AUTH_BASE_URL === undefined) {
+      refuse(
+        "MARFA_AUTH_BASE_URL",
+        "must be set in production to the public URL clients reach this server at",
+      );
+    }
+  }
+  // Windows are tested in order, so one shorter than the window before it
+  // is swallowed by that window: the setting would silently do nothing.
+  if (s.VERSION_DAILY_SNAPSHOT_DAYS < s.VERSION_RECENT_DAYS) {
+    refuse(
+      "VERSION_DAILY_SNAPSHOT_DAYS",
+      "must be at least VERSION_RECENT_DAYS",
+    );
+  }
+  if (s.VERSION_WEEKLY_SNAPSHOT_DAYS < s.VERSION_DAILY_SNAPSHOT_DAYS) {
+    refuse(
+      "VERSION_WEEKLY_SNAPSHOT_DAYS",
+      "must be at least VERSION_DAILY_SNAPSHOT_DAYS",
+    );
+  }
+  if (
+    s.MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS <
+    s.MARFA_BULK_ACTION_POLL_INTERVAL_MS
+  ) {
+    refuse(
+      "MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS",
+      "must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS",
+    );
+  }
+  // With one alone no exception could be reported; only telemetry reports.
+  const reports = s.MARFA_OTEL_ENABLED;
+  if (
+    reports &&
+    s.MARFA_POSTHOG_HOST !== undefined &&
+    !s.MARFA_POSTHOG_PROJECT_TOKEN
+  ) {
+    refuse("MARFA_POSTHOG_HOST", "needs MARFA_POSTHOG_PROJECT_TOKEN set too");
+  }
+  if (
+    reports &&
+    s.MARFA_POSTHOG_PROJECT_TOKEN !== undefined &&
+    !s.MARFA_POSTHOG_HOST
+  ) {
+    refuse("MARFA_POSTHOG_PROJECT_TOKEN", "needs MARFA_POSTHOG_HOST set too");
+  }
+  // Stated rather than inferred: `NODE_ENV` says how the image was built,
+  // which is `production` on every box, so inferring the environment once
+  // labeled a staging deployment's telemetry as production's.
+  const exports =
+    s.OTEL_EXPORTER_OTLP_ENDPOINT !== undefined ||
+    s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT !== undefined ||
+    s.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT !== undefined ||
+    s.MARFA_POSTHOG_HOST !== undefined;
+  if (
+    s.MARFA_OTEL_ENABLED &&
+    exports &&
+    s.MARFA_OTEL_ENVIRONMENT === undefined
+  ) {
+    refuse(
+      "MARFA_OTEL_ENVIRONMENT",
+      "must name the deployment (such as staging or production) when MARFA_OTEL_ENABLED exports telemetry",
+    );
+  }
+});
+
+/** Edits (insert, delete, substitute) between two names. */
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        (previous[j] ?? 0) + 1,
+        (current[j - 1] ?? 0) + 1,
+        (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length] ?? 0;
+}
+
+/**
+ * An unknown `MARFA_*` name close to a setting's, which is most likely that
+ * setting misspelled and so silently left at its default. Warned rather
+ * than refused: test, client and device variables share the prefix.
+ */
+function misspelledSettings(env: Record<string, string | undefined>): string[] {
+  const known = new Set(SETTING_NAMES);
+  const warnings: string[] = [];
+  for (const name of Object.keys(env)) {
+    if (!name.startsWith("MARFA_") || known.has(name)) continue;
+    const near = SETTING_NAMES.find(
+      (setting) => editDistance(name, setting) <= 2,
+    );
+    if (near !== undefined) {
+      warnings.push(
+        `${name} is not a setting and is ignored; did you mean ${near}?`,
+      );
+    }
+  }
+  return warnings;
+}
+
+/** A boot refused over its settings. The message names every bad one. */
+export class SettingsError extends Error {
+  constructor(readonly problems: string[]) {
+    super(
+      `The server cannot start; fix these settings:\n${problems.map((p) => `  ${p}`).join("\n")}`,
+    );
+    this.name = "SettingsError";
+  }
+}
+
+/**
+ * The general endpoint is a base: each signal posts to its own path under
+ * it, as the OTLP exporters resolve it themselves. A signal's own endpoint
+ * is used as written.
+ */
+function otlpSignalUrl(
+  specific: string | undefined,
+  general: string | undefined,
+  path: "v1/traces" | "v1/logs",
+): string {
+  if (specific !== undefined) return specific;
+  if (general === undefined) return "";
+  return `${general.endsWith("/") ? general : `${general}/`}${path}`;
+}
+
+/**
+ * `version.json` is written into the image at build time and absent in
+ * development. Read with the settings, once, because the root document,
+ * `/health` and telemetry all report it.
+ */
+function readVersionFile(): Record<string, unknown> | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(resolve(process.cwd(), "version.json"), "utf8");
+  } catch {
+    return undefined;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new SettingsError(["version.json is not valid JSON"]);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new SettingsError(["version.json must hold a JSON object"]);
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Read every setting from `env` through the schema. Throws a
+ * {@link SettingsError} naming each setting whose value breaks its rule.
+ */
+export function loadConfig(
+  env: Record<string, string | undefined> = process.env,
+): AppConfig {
+  const result = settingsSchema.safeParse(env);
+  if (!result.success) {
+    const problems = result.error.issues.map((issue) => {
+      const name = String(issue.path[0] ?? "settings");
+      const raw = env[name];
+      const shown =
+        raw === undefined || raw.trim() === "" || SECRET_SETTINGS.has(name)
+          ? ""
+          : ` (got "${raw}")`;
+      return `${name} ${issue.message}${shown}`;
+    });
+    throw new SettingsError(problems);
+  }
+  const s = result.data;
+  const warnings = misspelledSettings(env);
+  const versionFile = readVersionFile();
+  const sha = versionFile?.sha;
+  const placement = {
+    ...(s.MARFA_PLACEMENT_REGION && { region: s.MARFA_PLACEMENT_REGION }),
+    ...(s.MARFA_PLACEMENT_LOCATION && { location: s.MARFA_PLACEMENT_LOCATION }),
+    ...(s.MARFA_PLACEMENT_COUNTRY && { country: s.MARFA_PLACEMENT_COUNTRY }),
+  };
+
+  return {
+    isProduction: s.NODE_ENV === "production",
+    port: s.PORT,
+    sqlitePath: s.SQLITE_PATH,
+    blobPath: s.BLOB_PATH,
+    maxRequestBytes: s.MARFA_MAX_REQUEST_BYTES,
+    maxBulkRequestBytes: s.MARFA_MAX_BULK_REQUEST_BYTES,
+    s3Bucket: s.S3_BUCKET,
+    s3Region: s.S3_REGION,
+    s3Endpoint: s.S3_ENDPOINT,
+    s3AccessKeyId: s.S3_ACCESS_KEY_ID,
+    s3SecretAccessKey: s.S3_SECRET_ACCESS_KEY ?? "",
+    s3ForcePathStyle: s.S3_FORCE_PATH_STYLE,
+    s3Prefix: s.S3_PREFIX,
+    apiKeySalt: s.API_KEY_SALT ?? DEFAULT_SALT,
+    corsOrigins: s.CORS_ORIGINS,
+    permissionBundles: s.MARFA_PERMISSION_BUNDLES,
+    rateLimitEnabled: s.RATE_LIMIT_ENABLED,
+    enableHsts: s.ENABLE_HSTS,
+    auditRetentionDays: s.AUDIT_RETENTION_DAYS,
+    auditCleanupIntervalMs: s.AUDIT_CLEANUP_INTERVAL_MS,
+    revokedGrantRetentionDays: s.MARFA_REVOKED_GRANT_RETENTION_DAYS,
+    grantInactivityDays: s.MARFA_GRANT_INACTIVITY_DAYS,
+    eventLogRetentionHours: s.MARFA_EVENT_LOG_RETENTION_HOURS,
+    eventLogCleanupIntervalMs: s.MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS,
+    versionThinningIntervalMs: s.VERSION_THINNING_INTERVAL_MS,
+    versionRecentDays: s.VERSION_RECENT_DAYS,
+    versionDailySnapshotDays: s.VERSION_DAILY_SNAPSHOT_DAYS,
+    versionWeeklySnapshotDays: s.VERSION_WEEKLY_SNAPSHOT_DAYS,
+    versionMaxVersions: s.VERSION_MAX_VERSIONS,
+    trashRetentionDays: s.TRASH_RETENTION_DAYS,
+    trashPurgeIntervalMs: s.TRASH_PURGE_INTERVAL_MS,
+    authSessionCleanupIntervalMs: s.AUTH_SESSION_CLEANUP_INTERVAL_MS,
+    dcrClientRetentionDays: s.MARFA_DCR_CLIENT_RETENTION_DAYS,
+    dcrClientCleanupIntervalMs: s.MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS,
+    rateLimitCleanupIntervalMs: s.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
+    blobCleanupIntervalMs: s.MARFA_BLOB_CLEANUP_INTERVAL_MS,
+    blobCleanupGraceMs: s.MARFA_BLOB_CLEANUP_GRACE_MS,
+    blobMinCopies: s.MARFA_BLOB_MIN_COPIES,
+    blobReplicateIntervalMs: s.MARFA_BLOB_REPLICATE_INTERVAL_MS,
+    blobReplicateBatch: s.MARFA_BLOB_REPLICATE_BATCH,
+    blobReplicateBatchBytes: s.MARFA_BLOB_REPLICATE_BATCH_BYTES,
+    blobIntegrityIntervalMs: s.MARFA_BLOB_INTEGRITY_INTERVAL_MS,
+    blobIntegrityBatch: s.MARFA_BLOB_INTEGRITY_BATCH,
+    blobIntegrityBatchBytes: s.MARFA_BLOB_INTEGRITY_BATCH_BYTES,
+    enrichmentEnabled: s.MARFA_ENRICHMENT_ENABLED,
+    enrichmentIntervalMs: s.MARFA_ENRICHMENT_INTERVAL_MS,
+    enrichmentBatchSize: s.MARFA_ENRICHMENT_BATCH_SIZE,
+    enrichmentItemTimeoutMs: s.MARFA_ENRICHMENT_ITEM_TIMEOUT_MS,
+    enrichmentMaxBlobBytes: s.MARFA_ENRICHMENT_MAX_BLOB_BYTES,
+    enrichmentMaxTextChars: s.MARFA_ENRICHMENT_MAX_TEXT_CHARS,
+    enrichmentMaxAttempts: s.MARFA_ENRICHMENT_MAX_ATTEMPTS,
+    enrichmentOcrEnabled: s.MARFA_ENRICHMENT_OCR_ENABLED,
+    enrichmentTessdataDir:
+      s.MARFA_ENRICHMENT_TESSDATA_DIR ?? defaultTessdataDir(s.SQLITE_PATH),
+    bulkActionJobRetentionMs: s.MARFA_BULK_ACTION_JOB_RETENTION_MS,
+    bulkActionJobGcIntervalMs: s.MARFA_BULK_ACTION_JOB_GC_INTERVAL_MS,
+    bulkActionPollIntervalMs: s.MARFA_BULK_ACTION_POLL_INTERVAL_MS,
+    bulkActionPollMaxIntervalMs: s.MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS,
+    bulkActionPollBackoffMultiplier:
+      s.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
+    webhookAllowPrivateAddresses: s.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES,
+    errorWebhookUrl: s.ERROR_WEBHOOK_URL,
+    errorWebhookTimeoutMs: s.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,
+    trustedProxyCidrs: s.TRUSTED_PROXY_CIDRS,
+    trustedProxyHeader: s.TRUSTED_PROXY_HEADER,
+    authBaseUrl: s.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(s.PORT)}`,
+    // Minted per process outside production, where a restart ending every
+    // session is the documented behavior; production refuses to boot
+    // without one.
+    authSecret: s.MARFA_AUTH_SECRET ?? randomBytes(32).toString("hex"),
+    sqliteBusyBudgetMs: s.SQLITE_BUSY_BUDGET_MS,
+    rateLimitDefaultLimit: s.RATE_LIMIT_REQUESTS,
+    rateLimitWindowMs: s.RATE_LIMIT_WINDOW_MS,
+    rateLimitKeysLimit: s.RATE_LIMIT_KEYS_REQUESTS,
+    rateLimitAggregateMultiplier: s.RATE_LIMIT_AGGREGATE_MULTIPLIER,
+    inbound: {
+      maxBytes: s.MARFA_INBOUND_MAX_BYTES,
+      requestsPerWindow: s.RATE_LIMIT_INBOUND_REQUESTS,
+      backlogDeliveries: s.MARFA_INBOUND_BACKLOG_DELIVERIES,
+      backlogBytes: s.MARFA_INBOUND_BACKLOG_BYTES,
+      inFlightBytes: s.MARFA_INBOUND_IN_FLIGHT_BYTES,
+      readTimeoutMs: s.MARFA_INBOUND_READ_TIMEOUT_MS,
+      handledRetentionDays: s.MARFA_INBOUND_HANDLED_RETENTION_DAYS,
+      pendingRetentionDays: s.MARFA_INBOUND_PENDING_RETENTION_DAYS,
+    },
+    connectorHoldMs: s.MARFA_CONNECTOR_HOLD_MS,
+    versionSha: typeof sha === "string" && sha !== "" ? sha : undefined,
+    versionFile,
+    placement: Object.keys(placement).length > 0 ? placement : undefined,
+    otel: {
+      enabled: s.MARFA_OTEL_ENABLED,
+      serviceName: s.OTEL_SERVICE_NAME,
+      environment: s.MARFA_OTEL_ENVIRONMENT,
+      tracesEndpoint: otlpSignalUrl(
+        s.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT,
+        s.OTEL_EXPORTER_OTLP_ENDPOINT,
+        "v1/traces",
+      ),
+      logsEndpoint: otlpSignalUrl(
+        s.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+        s.OTEL_EXPORTER_OTLP_ENDPOINT,
+        "v1/logs",
+      ),
+      tracesHeaders: {
+        ...s.OTEL_EXPORTER_OTLP_HEADERS,
+        ...s.OTEL_EXPORTER_OTLP_TRACES_HEADERS,
+      },
+      logsHeaders: {
+        ...s.OTEL_EXPORTER_OTLP_HEADERS,
+        ...s.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
+      },
+      sampleRatio: s.MARFA_OTEL_SAMPLE_RATIO,
+      posthogHost: s.MARFA_POSTHOG_HOST ?? "",
+      posthogToken: s.MARFA_POSTHOG_PROJECT_TOKEN ?? "",
+    },
+    heartbeatUrl: s.MARFA_HEARTBEAT_URL,
+    heartbeatIntervalMs: s.MARFA_HEARTBEAT_INTERVAL_MS,
+    housekeepingPollIntervalMs: s.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,
+    sseMaxViewers: s.MARFA_SSE_MAX_VIEWERS,
+    ...(warnings.length > 0 && { settingWarnings: warnings }),
+  };
+}
+
+let booted: AppConfig | undefined;
+
+/**
+ * The process's settings, read on first call and the same object after.
+ * The telemetry preload and the server entry both run in one process, and
+ * this is how the second reads what the first already read, the dev
+ * secret minted on the first read included.
+ */
+export function bootConfig(): AppConfig {
+  booted ??= loadConfig(process.env);
+  return booted;
 }

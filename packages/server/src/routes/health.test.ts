@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { healthRoutes, PROBE_TIMEOUT_MS } from "./health.js";
+import { loadConfig } from "../config.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
@@ -65,6 +66,7 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(null)),
+      {},
     );
 
     const res = await app.request("/");
@@ -80,6 +82,7 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => never),
       buildBlobs(() => Promise.resolve(null)),
+      {},
     );
 
     const started = Date.now();
@@ -102,6 +105,7 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => never),
+      {},
     );
 
     const res = await app.request("/");
@@ -118,6 +122,7 @@ describe("GET /health", () => {
     const app = healthRoutes(
       buildStorage(() => Promise.reject(new Error("connection refused"))),
       buildBlobs(() => Promise.resolve(null)),
+      {},
     );
 
     const res = await app.request("/");
@@ -139,41 +144,26 @@ describe("GET /health", () => {
  * that way for four months behind a green pipeline.
  */
 describe("GET /health placement", () => {
-  const withEnv = async (
-    vars: Record<string, string | undefined>,
-    run: () => Promise<void>,
-  ) => {
-    const saved = { ...process.env };
-    Object.assign(process.env, vars);
-    try {
-      await run();
-    } finally {
-      process.env = saved;
-    }
-  };
-
-  const build = () =>
+  // Through the settings, so the case covers the names an operator sets.
+  const build = (env: Record<string, string>) =>
     healthRoutes(
       buildStorage(() => Promise.resolve(1)),
       buildBlobs(() => Promise.resolve(null)),
+      loadConfig(env),
     );
 
   it("reports what the deployment states about itself", async () => {
-    await withEnv(
-      {
-        MARFA_PLACEMENT_REGION: "lon1",
-        MARFA_PLACEMENT_LOCATION: "London",
-        MARFA_PLACEMENT_COUNTRY: "GB",
-      },
-      async () => {
-        const body = (await (await build().request("/")).json()) as HealthBody;
-        expect(body.placement).toEqual({
-          region: "lon1",
-          location: "London",
-          country: "GB",
-        });
-      },
-    );
+    const app = build({
+      MARFA_PLACEMENT_REGION: "lon1",
+      MARFA_PLACEMENT_LOCATION: "London",
+      MARFA_PLACEMENT_COUNTRY: "GB",
+    });
+    const body = (await (await app.request("/")).json()) as HealthBody;
+    expect(body.placement).toEqual({
+      region: "lon1",
+      location: "London",
+      country: "GB",
+    });
   });
 
   // Nothing sets these unless an operator does. A deployment that has not
@@ -181,31 +171,14 @@ describe("GET /health placement", () => {
   // empty string, because a caller reading "" as a region would compare it
   // against the expected one and fail a deploy that is fine.
   it("omits the block entirely when nothing is configured", async () => {
-    await withEnv(
-      {
-        MARFA_PLACEMENT_REGION: undefined,
-        MARFA_PLACEMENT_LOCATION: undefined,
-        MARFA_PLACEMENT_COUNTRY: undefined,
-      },
-      async () => {
-        const body = (await (await build().request("/")).json()) as HealthBody;
-        expect(body.placement).toBeUndefined();
-      },
-    );
+    const body = (await (await build({}).request("/")).json()) as HealthBody;
+    expect(body.placement).toBeUndefined();
   });
 
   it("reports a partial placement rather than dropping it", async () => {
-    await withEnv(
-      {
-        MARFA_PLACEMENT_REGION: "lon1",
-        MARFA_PLACEMENT_LOCATION: undefined,
-        MARFA_PLACEMENT_COUNTRY: undefined,
-      },
-      async () => {
-        const body = (await (await build().request("/")).json()) as HealthBody;
-        expect(body.placement).toEqual({ region: "lon1" });
-      },
-    );
+    const app = build({ MARFA_PLACEMENT_REGION: "lon1" });
+    const body = (await (await app.request("/")).json()) as HealthBody;
+    expect(body.placement).toEqual({ region: "lon1" });
   });
 });
 
@@ -220,6 +193,7 @@ describe("GET /health unrecognized stored values", () => {
     return healthRoutes(
       buildStorage(() => Promise.resolve(3)),
       buildBlobs(() => Promise.resolve(null)),
+      {},
     );
   }
 

@@ -210,4 +210,36 @@ describe("computeVersionsToDelete", () => {
     const toDelete = computeVersionsToDelete(versions, DEFAULTS, now);
     expect(toDelete).toEqual([]);
   });
+
+  it("keeps every version when a window cannot be decided", () => {
+    // Ten versions from the last ten minutes, the latest last.
+    const versions = Array.from({ length: 10 }, (_, i) =>
+      makeVersion(`v${String(i)}`, i + 1, hoursAgo((10 - i) / 60, now)),
+    );
+    // The witness: windows of zero days put all but the latest in no window.
+    const none = {
+      ...DEFAULTS,
+      recentDays: 0,
+      dailySnapshotDays: 0,
+      weeklySnapshotDays: 0,
+    };
+    expect(computeVersionsToDelete(versions, none, now)).toHaveLength(9);
+    for (const field of [
+      "recentDays",
+      "dailySnapshotDays",
+      "weeklySnapshotDays",
+    ] as const) {
+      const policy = { ...none, [field]: Number("30 days") };
+      expect(computeVersionsToDelete(versions, policy, now)).toEqual([]);
+    }
+  });
+
+  it("keeps a version whose timestamp cannot be read", () => {
+    const versions = [
+      makeVersion("v1", 1, "not a time"),
+      makeVersion("v2", 2, daysAgo(400, now)),
+      makeVersion("v3", 3, daysAgo(1, now)),
+    ];
+    expect(computeVersionsToDelete(versions, DEFAULTS, now)).toEqual(["v2"]);
+  });
 });

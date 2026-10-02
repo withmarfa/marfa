@@ -10,12 +10,11 @@
  * auto-instrumentation to patch them. A `--import` preload finishes (its
  * top-level await is awaited) before the main entry loads.
  *
- * Config is read from the environment DIRECTLY — the one sanctioned
- * exception to the single-config-read-site invariant, because this runs
- * before `loadConfig` and before any app code. The pure parsers are reused
- * from `config.ts` (no side effects on import).
+ * Settings come from `bootConfig()`, the same read the server entry gets
+ * after this preload finishes, so a bad value stops the process here,
+ * before anything else has started.
  *
- * Full no-op when `MARFA_OTEL_ENABLED !== "true"`: the heavy SDK modules are
+ * Full no-op while `MARFA_OTEL_ENABLED` is off: the heavy SDK modules are
  * dynamically imported only inside the enabled branch, so a disabled boot
  * never loads them. Traces and logs are independently gated on their
  * endpoint being set — a deployment exporting to PostHog sets only the
@@ -29,7 +28,8 @@
  * leaves error tracking empty. `posthog-node` builds those events from a
  * thrown value, stack frames included.
  */
-import { parseOtelHeaders, parseOtelSampleRatio } from "./config.js";
+import { bootConfig, SettingsError } from "./config.js";
+import type { AppConfig } from "./config.js";
 
 declare global {
   /**
@@ -52,7 +52,7 @@ declare global {
 }
 
 function bootLog(
-  level: "info" | "warn",
+  level: "info" | "warn" | "error",
   message: string,
   extra: Record<string, unknown> = {},
 ): void {
@@ -61,58 +61,40 @@ function bootLog(
   );
 }
 
-async function start(): Promise<void> {
-  if (process.env.MARFA_OTEL_ENABLED !== "true") return;
-
-  const tracesEndpoint =
-    process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ??
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
-    "";
-  const logsEndpoint =
-    process.env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT ??
-    process.env.OTEL_EXPORTER_OTLP_ENDPOINT ??
-    "";
-  const headers = parseOtelHeaders(
-    process.env.OTEL_EXPORTER_OTLP_TRACES_HEADERS ??
-      process.env.OTEL_EXPORTER_OTLP_HEADERS,
-  );
-  const sampleRatio = parseOtelSampleRatio(process.env.MARFA_OTEL_SAMPLE_RATIO);
-  const serviceName = process.env.OTEL_SERVICE_NAME ?? "marfa-server";
-  const posthogHost = process.env.MARFA_POSTHOG_HOST ?? "";
-  const posthogToken = process.env.MARFA_POSTHOG_PROJECT_TOKEN ?? "";
-  if (Boolean(posthogHost) !== Boolean(posthogToken)) {
-    throw new Error(
-      "MARFA_POSTHOG_HOST and MARFA_POSTHOG_PROJECT_TOKEN are set together or not at all; with one alone no exception could be reported.",
-    );
+function readConfig(): AppConfig {
+  try {
+    return bootConfig();
+  } catch (err) {
+    if (!(err instanceof SettingsError)) throw err;
+    bootLog("error", "Failed to start server", { error: err.message });
+    process.exit(1);
   }
+}
+
+async function start(): Promise<void> {
+  const config = readConfig();
+  const otel = config.otel;
+  if (!otel?.enabled) return;
+
+  const {
+    tracesEndpoint,
+    logsEndpoint,
+    sampleRatio,
+    serviceName,
+    posthogHost,
+    posthogToken,
+  } = otel;
   const reportExceptions = Boolean(posthogHost);
 
   if (!tracesEndpoint && !logsEndpoint && !reportExceptions) {
     bootLog(
       "warn",
-      "MARFA_OTEL_ENABLED=true but no OTLP endpoint or PostHog host set; OpenTelemetry is inert.",
+      "MARFA_OTEL_ENABLED is on but no OTLP endpoint or PostHog host is set; OpenTelemetry is inert.",
     );
     return;
   }
-
-  // The environment has to be stated, not inferred. This once fell back to
-  // `NODE_ENV`, which on a containerised deployment is `production` on every
-  // box because that is how the image is built — so staging exported months
-  // of logs wearing production's name, and anything filtering on the
-  // attribute silently narrowed to rows written before the cutover while
-  // looking healthy. There is no value to guess from; a deployment that
-  // exports telemetry must say which one it is.
-  //
-  // Checked after the endpoint guard on purpose: a configuration that
-  // exports nothing has nothing to label, and should not be made unbootable
-  // over a variable that would go unused.
-  const deploymentEnvironment = process.env.MARFA_OTEL_ENVIRONMENT;
-  if (!deploymentEnvironment) {
-    throw new Error(
-      "MARFA_OTEL_ENVIRONMENT must be set when MARFA_OTEL_ENABLED=true and an OTLP endpoint is configured. " +
-        "It names the environment exporting the telemetry (e.g. staging, production); NODE_ENV describes the build, not the deployment.",
-    );
-  }
+  // The settings schema refuses an exporting configuration without it.
+  const deploymentEnvironment = otel.environment ?? "";
 
   // Resource attribute key for the deployment environment. The literal
   // string is used deliberately rather than a `@opentelemetry/semantic-conventions`
@@ -125,7 +107,7 @@ async function start(): Promise<void> {
     await import("@opentelemetry/semantic-conventions");
   const resourceAttributes = {
     [ATTR_SERVICE_NAME]: serviceName,
-    [ATTR_SERVICE_VERSION]: process.env.MARFA_VERSION_SHA ?? "dev",
+    [ATTR_SERVICE_VERSION]: config.versionSha ?? "dev",
     "deployment.environment": deploymentEnvironment,
   };
   const resource = resourceFromAttributes(resourceAttributes);
@@ -159,7 +141,7 @@ async function start(): Promise<void> {
 
     const traceExporter = new OTLPTraceExporter({
       url: tracesEndpoint,
-      headers,
+      headers: otel.tracesHeaders,
     });
     const provider = new NodeTracerProvider({
       resource,
@@ -198,7 +180,10 @@ async function start(): Promise<void> {
       import("./otel/redaction.js"),
     ]);
 
-    const logExporter = new OTLPLogExporter({ url: logsEndpoint, headers });
+    const logExporter = new OTLPLogExporter({
+      url: logsEndpoint,
+      headers: otel.logsHeaders,
+    });
     const provider = new LoggerProvider({
       resource,
       processors: [

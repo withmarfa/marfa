@@ -194,10 +194,6 @@ export function exportRoutes(
       c.get("apiKey"),
     ).source_filter;
 
-    if (query.format === "archive") {
-      return handleArchiveExport(c, storage, blobs, sourceFilter, instanceId);
-    }
-
     // Pattern grammar, matching `GET /items` and `/search`: the parameter
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
@@ -227,6 +223,24 @@ export function exportRoutes(
     const source = query.source;
 
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
+
+    // Both formats are one door with one query schema, so the archive reads
+    // the filter the NDJSON path has just validated rather than the raw
+    // query.
+    if (query.format === "archive") {
+      return handleArchiveExport(c, storage, blobs, instanceId, {
+        type,
+        state,
+        all_states: allStates,
+        source,
+        occurred_after: occurredAfter,
+        occurred_before: occurredBefore,
+        allowed_types: allowedTypes,
+        excluded_types: excludedTypes,
+        source_filter: sourceFilter,
+      });
+    }
+
     const encoder = new TextEncoder();
 
     async function* records(): AsyncGenerator<string> {
@@ -388,27 +402,28 @@ async function readFromAnyStore(
   return null;
 }
 
+/** The export's filter, resolved once by the route handler. */
+interface ExportFilter {
+  type: string | undefined;
+  state: ReturnType<typeof resolveStateFilter>["state"];
+  all_states: ReturnType<typeof resolveStateFilter>["all_states"];
+  source: string | undefined;
+  occurred_after: ReturnType<typeof normalizeTimeBound>;
+  occurred_before: ReturnType<typeof normalizeTimeBound>;
+  allowed_types: ReturnType<typeof getTypeFilter>["allowed"];
+  excluded_types: ReturnType<typeof getTypeFilter>["excluded"];
+  /** The instance's `source_filter` lever. */
+  source_filter: SourceFilterSettings | undefined;
+}
+
 async function handleArchiveExport(
   c: HonoContext,
   storage: Storage,
   blobs: BlobLayer,
-  /** The instance's `source_filter` lever, resolved by the route handler. */
-  sourceFilter: SourceFilterSettings | undefined,
   /** The instance writing the archive, for the manifest. */
   instanceId: string,
+  filter: ExportFilter,
 ): Promise<Response> {
-  const type = c.req.query("type");
-  assertTypeFilter(type);
-  // The NDJSON path's twin, and it has to read the parameter the same way:
-  // the two formats are one door with one query schema, so a sentinel
-  // honored by one and stripped by the other would be worse than neither.
-  const { state, all_states: allStates } = resolveStateFilter(
-    c.req.query("state"),
-  );
-  const occurredAfter = c.req.query("occurred_after");
-  const occurredBefore = c.req.query("occurred_before");
-  const source = c.req.query("source");
-  const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
   const callerKey = requireAuth(c);
 
   const lines: string[] = [];
@@ -427,16 +442,8 @@ async function handleArchiveExport(
     let cursor: string | undefined;
     do {
       const result = await storage.items.list({
-        type,
-        state,
-        all_states: allStates,
+        ...filter,
         exclude_states: EXPORT_EXCLUDED_STATES,
-        source,
-        occurred_after: occurredAfter,
-        occurred_before: occurredBefore,
-        allowed_types: allowedTypes,
-        excluded_types: excludedTypes,
-        source_filter: sourceFilter,
         limit: 200,
         cursor,
       });

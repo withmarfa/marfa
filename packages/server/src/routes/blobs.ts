@@ -599,7 +599,7 @@ export function blobRoutes(
   storage: Storage,
   blobs: BlobLayer,
   housekeeping: Pick<Housekeeping, "wake">,
-  config: Pick<AppConfig, "authBaseUrl" | "blobMinCopies">,
+  config: Pick<AppConfig, "authBaseUrl" | "authSecret" | "blobMinCopies">,
 ) {
   const minCopies = config.blobMinCopies ?? 1;
   const router = createOpenAPIRouter<AppEnv>();
@@ -829,7 +829,12 @@ export function blobRoutes(
       return c.json({ url, expires_in: ttl }, 200);
     }
 
-    const url = mintBlobLink(linkOrigin, hash, blobLinkExpiry(Date.now(), ttl));
+    const url = mintBlobLink(
+      config.authSecret,
+      linkOrigin,
+      hash,
+      blobLinkExpiry(Date.now(), ttl),
+    );
     return c.json({ url, expires_in: ttl }, 200);
   });
 
@@ -850,7 +855,13 @@ export function blobRoutes(
     const hash = normalizeHash(c.req.valid("param").hash);
     const { expires, signature } = c.req.valid("query");
     if (
-      !verifyBlobLink(hash, expires, signature, Math.floor(Date.now() / 1000))
+      !verifyBlobLink(
+        config.authSecret,
+        hash,
+        expires,
+        signature,
+        Math.floor(Date.now() / 1000),
+      )
     ) {
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,

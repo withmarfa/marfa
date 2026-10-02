@@ -52,6 +52,9 @@ function isoWeekKey(date: Date): string {
  * - Beyond weekly window: delete
  *
  * Invariants:
+ * - Never deletes a version whose window cannot be decided: a policy or a
+ *   timestamp that is not a number makes every comparison false, and
+ *   "in no window" would otherwise mean delete
  * - Never deletes the most recent version (by version number)
  * - Never deletes if only 1 version exists
  * - Hard cap: if kept > maxVersions, drop oldest first
@@ -77,10 +80,16 @@ export function computeVersionsToDelete(
   const dailyBuckets = new Map<string, Version[]>();
   const weeklyBuckets = new Map<string, Version[]>();
 
+  const undecidable = [recentCutoff, dailyCutoff, weeklyCutoff].some((d) =>
+    Number.isNaN(d.getTime()),
+  );
+
   for (const v of versions) {
     const createdAt = new Date(v.created_at);
 
-    if (createdAt >= recentCutoff) {
+    if (undecidable || Number.isNaN(createdAt.getTime())) {
+      keepIds.add(v.id);
+    } else if (createdAt >= recentCutoff) {
       keepIds.add(v.id);
     } else if (createdAt >= dailyCutoff) {
       const dayKey = v.created_at.slice(0, 10);
