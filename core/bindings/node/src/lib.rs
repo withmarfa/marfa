@@ -538,8 +538,6 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport> {
     })
 }
 
-/// A property bag from JavaScript. Absent is empty; anything but an object
-/// is refused rather than coerced, since a device sends what it was given.
 fn object(value: Option<serde_json::Value>) -> Result<serde_json::Map<String, serde_json::Value>> {
     match value {
         None => Ok(serde_json::Map::new()),
@@ -668,8 +666,6 @@ pub struct Change {
     pub cursor: String,
 }
 
-/// What the follow's thread hands the JavaScript thread, in the order it
-/// happened.
 enum Told {
     Change(Change),
     End(Option<String>),
@@ -1425,8 +1421,6 @@ mod tests {
         }
     }
 
-    /// Each outcome lands on its own variant carrying what it carries. The
-    /// variants hold no comparison, so each is matched out.
     #[test]
     fn every_outcome_crosses_with_what_it_carries() {
         use marfa_core::Outcome as O;

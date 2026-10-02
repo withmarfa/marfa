@@ -1,7 +1,5 @@
 // @ts-check
-// The held stream and the reading open, as a Node caller meets them, against
-// a server this file scripts. Run with `--expose-gc`: one case lets a
-// subscription be collected.
+// Run with `--expose-gc`: one case lets a subscription be collected.
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -13,8 +11,6 @@ import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { Handle, MarfaCore, Tier } from "../index.js";
 
-/** The contract every answer names, as a real server's does: the one the
- * core is built for, read off the document it is built from. */
 const CONTRACT = /** @type {{ info: { version: string } }} */ (
   JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
 ).info.version;
@@ -22,7 +18,6 @@ const CONTRACT = /** @type {{ info: { version: string } }} */ (
 const AT = "2026-01-01T00:00:00Z";
 
 /**
- * One `item.created` frame.
  * @param {string} id
  * @param {number} cursor
  */
@@ -51,16 +46,13 @@ function created(id, cursor) {
 /** @typedef {import("node:http").ServerResponse} Response */
 /** @typedef {import("../index.js").Subscription} Subscription */
 
-/** A stream held open, saying only keepalives. @param {Response} res */
+/** @param {Response} res */
 function held(res) {
   const keepalive = setInterval(() => res.write(": keepalive\n\n"), 50);
   res.on("close", () => clearInterval(keepalive));
 }
 
 /**
- * A server whose event streams the test writes. A hydration's first read,
- * which names no cursor, is answered with the head; every stream after it
- * by `streams` in turn, the last repeating.
  * @param {Array<(res: Response) => void>} streams
  */
 async function scripted(streams) {
@@ -114,7 +106,6 @@ async function scripted(streams) {
     throw new Error("no port");
   return {
     url: `http://127.0.0.1:${address.port}`,
-    /** How many streams a follow has asked for. */
     followed: () => followed,
     close: () => {
       for (const res of open) res.destroy();
@@ -125,7 +116,6 @@ async function scripted(streams) {
 }
 
 /**
- * A fresh directory for one case's store, taken away after it.
  * @param {import("node:test").TestContext} t
  */
 function storeFor(t) {
@@ -135,7 +125,6 @@ function storeFor(t) {
 }
 
 /**
- * A store hydrated from a scripted server whose follow streams are `streams`.
  * @param {import("node:test").TestContext} t
  * @param {Array<(res: Response) => void>} streams
  */
@@ -231,7 +220,6 @@ test(
         },
       );
     })();
-    // The witness: the follow is running, holding a stream.
     while (server.followed() === 0) await sleep(10);
     const deadline = Date.now() + 10_000;
     while (!ended && Date.now() < deadline) {
@@ -291,8 +279,6 @@ test(
       worker.once("error", reject);
     });
     await worker.terminate();
-    // The witness: the store is held while the worker's follow runs, so a
-    // writer here after it is one the follow let go to.
     let handle = Handle.Reader;
     const deadline = Date.now() + 10_000;
     while (handle !== Handle.Writer && Date.now() < deadline) {
@@ -330,8 +316,6 @@ test(
       () => reopenedAs(MarfaCore.open(path).heldHandle()),
     );
     while (server.followed() === 0) await sleep(10);
-    // The app lets go of its own handle, and it is collected, before it
-    // stops the follow: what holds the store after that is the follow's.
     core = null;
     const deadline = Date.now() + 10_000;
     while (!collected && Date.now() < deadline) {
@@ -360,7 +344,6 @@ test(
       "a reading open made a store where there was none",
     );
 
-    // Beside a live writer, from the same process.
     const { path, core: writer } = await hydrated(t, [held]);
     const reader = MarfaCore.openReader(path);
     assert.equal(reader.heldHandle(), Handle.Reader);
