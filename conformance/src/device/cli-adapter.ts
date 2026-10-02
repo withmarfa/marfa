@@ -762,7 +762,7 @@ export interface ScanReport {
   skipped: number;
   /** Files that are not documents a watch left for a later pass, still
    *  changing (`folders.md` 51). */
-  settling: number;
+  settling: string[];
   /** Files bound to a row the copy lost, queued again because they changed
    *  or moved (`folders.md` 38). Counted in `created` too. */
   requeued: number;

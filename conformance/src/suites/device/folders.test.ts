@@ -2817,6 +2817,48 @@ describe("files and items", () => {
     expect(uploads()[0]).toEqual(whole);
   });
 
+  it("says once that a file which never stops changing has not been sent", async () => {
+    harness = await folderHarness("folder-watch-never-settles", {
+      settings: { search: { types: ["core.note", "core.file"] } },
+    });
+    scriptFolderWrites(harness);
+    acceptUploads(harness.server);
+    const log = join(harness.dir, "capture.bin");
+    writeFileSync(log, Buffer.alloc(0));
+    let written = 0;
+    const writing = setInterval(() => {
+      written += 1;
+      appendFileSync(log, Buffer.alloc(1024, written % 256));
+    }, 50);
+    const said = "capture.bin: still changing, so not sent yet";
+    const watching = harness.folder.watchText();
+    try {
+      // Long enough for several passes the folder never settles for.
+      await vi.waitFor(
+        () => {
+          expect(watching.stdout).toContain(said);
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 11_000));
+      expect(
+        watching.stdout.split(said).length - 1,
+        `a watch said the same still-changing file at every pass: ${watching.stdout}`,
+      ).toBe(1);
+      expect(
+        harness.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/blobs",
+        ),
+        "a file that never stopped changing was uploaded part-written",
+      ).toEqual([]);
+      expect(watching.running(), watching.stderr).toBe(true);
+    } finally {
+      clearInterval(writing);
+      await watching.stop();
+    }
+  });
+
   describe("a copy that falls behind the log", () => {
     const id = "01a00000-0000-7000-8000-0000000000c3";
     const agedOut: Answer = {

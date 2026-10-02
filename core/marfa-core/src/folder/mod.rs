@@ -119,7 +119,7 @@ pub struct ScanReport {
     pub registry: Option<String>,
     pub skipped: usize,
     /// Files that are not documents left for a later pass, still changing.
-    pub settling: usize,
+    pub settling: Vec<String>,
     /// Counted in `created` too.
     pub requeued: usize,
     pub lost: usize,
@@ -1022,7 +1022,7 @@ impl Folder {
                 && !is_document(&path)
                 && changed_within(&path, settle)
             {
-                report.settling += 1;
+                report.settling.push(identity::relative(&self.root, &path)?);
                 continue;
             }
             // Unreadable now, a dataless placeholder say: the next scan reads
@@ -3972,7 +3972,6 @@ fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
-/// What a quick pass compares with what its last read recorded.
 /// The status change time where the system keeps one, which an editor
 /// restoring the modification time does not move back.
 fn changed_within(path: &Path, settle: Duration) -> bool {
@@ -3999,6 +3998,7 @@ fn changed_within(path: &Path, settle: Duration) -> bool {
     })
 }
 
+/// What a quick pass compares with what its last read recorded.
 fn stat_of(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let modified = metadata
