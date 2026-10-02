@@ -212,6 +212,8 @@ src/models/invalid_id_refusal.rs
 src/models/invalid_id_refusal_error.rs
 src/models/invalid_properties_or_validation_error_refusal.rs
 src/models/invalid_properties_or_validation_error_refusal_error.rs
+src/models/invalid_schema_or_missing_required_field_or_validation_error_refusal.rs
+src/models/invalid_schema_or_missing_required_field_or_validation_error_refusal_error.rs
 src/models/item.rs
 src/models/item_ancestor_unavailable.rs
 src/models/item_detail.rs

@@ -2203,20 +2203,20 @@ export interface components {
             written_at: "source" | "target";
         };
         EdgePropertyDefinition: {
-            /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
+            /** @description A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be. */
             type: string;
             description?: string;
             required?: boolean;
             enum_values?: string[];
-            /** @description A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail. */
+            /** @description A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be. */
             items_type?: string;
             /** @description A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail. */
             format?: string;
         };
-        MissingRequiredFieldOrValidationErrorRefusal: {
+        InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "missing_required_field" | "validation_error";
+                code: "invalid_schema" | "missing_required_field" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2529,6 +2529,16 @@ export interface components {
             item: components["schemas"]["Item"];
             series_id?: string;
             replaces?: string;
+        };
+        MissingRequiredFieldOrValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "missing_required_field" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
         };
         TagCountPage: {
             data: components["schemas"]["TagCount"][];
@@ -8249,7 +8259,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description No credential, or one this server does not accept. Every operation that declares a security scheme answers this before it reads the path, the query or the body. */

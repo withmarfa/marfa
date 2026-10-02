@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct EdgePropertyDefinition {
-    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
+    /// A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be.
     #[serde(rename = "type")]
     pub r#type: String,
     #[serde(rename = "description", skip_serializing_if = "Option::is_none")]
@@ -22,7 +22,7 @@ pub struct EdgePropertyDefinition {
     pub required: Option<bool>,
     #[serde(rename = "enum_values", skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
-    /// A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.
+    /// A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be.
     #[serde(rename = "items_type", skip_serializing_if = "Option::is_none")]
     pub items_type: Option<String>,
     /// A refinement of a string property, stored as given, and never `thumbnail`: an edge carries no thumbnail.
