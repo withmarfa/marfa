@@ -62,6 +62,8 @@ async function scripted() {
         ],
         next_cursor: null,
       });
+    } else if (path === "/edge-types") {
+      json({ data: [], next_cursor: null });
     } else if (path === "/keys/current") {
       json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {

@@ -184,6 +184,116 @@ pub struct Status {
     pub hydration: Hydration,
     pub items: u64,
     pub edges: u64,
+    /// Moves each time a refresh changes the catalog; none where the copy has
+    /// never held one.
+    pub catalog_version: Option<u64>,
+}
+
+/// A field of an item type, or a property of an edge type.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct TypeField {
+    pub name: String,
+    /// The field's own type, such as `string` or `thumbnail`.
+    pub field_type: String,
+    pub required: bool,
+    pub description: Option<String>,
+    /// The type that declares it: the type itself, or the nearest one it
+    /// inherits the field from.
+    pub declared_by: String,
+    /// The definition whole, as the server answers it, as one JSON object.
+    pub definition_json: String,
+}
+
+/// An item type as the copy holds it, with the fields it inherits.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct ItemType {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub parent: Option<String>,
+    pub version: i64,
+    pub fields: Vec<TypeField>,
+    pub title_field: Option<String>,
+    pub body_field: Option<String>,
+    pub link_field: Option<String>,
+    pub roles: Vec<String>,
+    pub compatible_with: Vec<String>,
+}
+
+/// The end of an edge whose file writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum EdgeEnd {
+    Source,
+    Target,
+}
+
+/// An edge type as the copy holds it.
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct EdgeType {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub cardinality: String,
+    /// The name the edge goes by read from its target.
+    pub reverse_name: Option<String>,
+    pub written_at: EdgeEnd,
+    pub source_type_constraints: Vec<String>,
+    pub target_type_constraints: Vec<String>,
+    pub cascade_on_delete: String,
+    pub properties: Vec<TypeField>,
+    pub shipped: bool,
+}
+
+impl From<marfa_core::TypeField> for TypeField {
+    fn from(field: marfa_core::TypeField) -> Self {
+        TypeField {
+            name: field.name,
+            field_type: field.r#type,
+            required: field.required,
+            description: field.description,
+            declared_by: field.declared_by,
+            definition_json: field.definition.to_string(),
+        }
+    }
+}
+
+impl From<marfa_core::ItemType> for ItemType {
+    fn from(held: marfa_core::ItemType) -> Self {
+        ItemType {
+            id: held.id,
+            label: held.label,
+            description: held.description,
+            parent: held.parent,
+            version: held.version,
+            fields: held.fields.into_iter().map(Into::into).collect(),
+            title_field: held.title_field,
+            body_field: held.body_field,
+            link_field: held.link_field,
+            roles: held.roles,
+            compatible_with: held.compatible_with,
+        }
+    }
+}
+
+impl From<marfa_core::EdgeType> for EdgeType {
+    fn from(held: marfa_core::EdgeType) -> Self {
+        EdgeType {
+            id: held.id,
+            label: held.label,
+            description: held.description,
+            cardinality: held.cardinality,
+            reverse_name: held.reverse_name,
+            written_at: match held.written_at {
+                marfa_core::End::Source => EdgeEnd::Source,
+                marfa_core::End::Target => EdgeEnd::Target,
+            },
+            source_type_constraints: held.source_type_constraints,
+            target_type_constraints: held.target_type_constraints,
+            cascade_on_delete: held.cascade_on_delete,
+            properties: held.properties.into_iter().map(Into::into).collect(),
+            shipped: held.shipped,
+        }
+    }
 }
 
 /// The kinds of write a queue holds.
@@ -438,6 +548,10 @@ pub enum MarfaError {
     HydrationIncomplete {
         message: String,
     },
+    /// The copy has never held the type catalog: a hydration reads it.
+    NoCatalog {
+        message: String,
+    },
     WrongSchema {
         expected: String,
         found: String,
@@ -501,6 +615,7 @@ impl MarfaError {
             | MarfaError::NoServer { message }
             | MarfaError::NoCursor { message }
             | MarfaError::HydrationIncomplete { message }
+            | MarfaError::NoCatalog { message }
             | MarfaError::WrongSchema { message, .. }
             | MarfaError::ReadingHandle { message }
             | MarfaError::CatchUpTooOld { message, .. }
@@ -549,6 +664,7 @@ impl From<marfa_core::CoreError> for MarfaError {
             E::NoServer => MarfaError::NoServer { message },
             E::NoCursor => MarfaError::NoCursor { message },
             E::HydrationIncomplete => MarfaError::HydrationIncomplete { message },
+            E::NoCatalog => MarfaError::NoCatalog { message },
             E::WrongSchema {
                 expected,
                 found,
@@ -1075,7 +1191,38 @@ impl MarfaCore {
             },
             items: status.items,
             edges: status.edges,
+            catalog_version: status.catalog_version,
         })
+    }
+
+    /// Every item type the copy holds, by id, read from the copy alone.
+    pub fn item_types(&self) -> Result<Vec<ItemType>, MarfaError> {
+        Ok(self
+            .inner
+            .item_types()?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// `NotFound` where the catalog holds no such type.
+    pub fn item_type(&self, id: String) -> Result<ItemType, MarfaError> {
+        Ok(self.inner.item_type(&id)?.into())
+    }
+
+    /// Every edge type the copy holds, by id, read from the copy alone.
+    pub fn edge_types(&self) -> Result<Vec<EdgeType>, MarfaError> {
+        Ok(self
+            .inner
+            .edge_types()?
+            .into_iter()
+            .map(Into::into)
+            .collect())
+    }
+
+    /// `NotFound` where the catalog holds no such edge type.
+    pub fn edge_type(&self, id: String) -> Result<EdgeType, MarfaError> {
+        Ok(self.inner.edge_type(&id)?.into())
     }
 
     /// Which handle this process holds: the one that may write, or a second
@@ -1424,6 +1571,7 @@ mod tests {
             (E::NoServer.into(), "NoServer"),
             (E::NoCursor.into(), "NoCursor"),
             (E::HydrationIncomplete.into(), "HydrationIncomplete"),
+            (E::NoCatalog.into(), "NoCatalog"),
             (E::ReadingHandle.into(), "ReadingHandle"),
             (
                 E::WrongSchema {
@@ -1482,11 +1630,11 @@ mod tests {
             );
         }
         assert!(matches!(
-            &crossed[18].0,
+            &crossed[19].0,
             MarfaError::BytesAbsent { hash, .. } if hash == "sha256:h"
         ));
         assert!(matches!(
-            &crossed[19].0,
+            &crossed[20].0,
             MarfaError::ContractMismatch { served: Some(served), expected: 3, .. } if served == "4"
         ));
     }
@@ -1516,6 +1664,55 @@ mod tests {
                 "{crossed:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_copy_with_no_catalog_refuses_a_read_of_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite").display().to_string();
+        let core = MarfaCore::open(path, None, None).unwrap();
+        assert_eq!(core.status().unwrap().catalog_version, None);
+        assert!(matches!(
+            core.item_types(),
+            Err(MarfaError::NoCatalog { .. })
+        ));
+        assert!(matches!(
+            core.edge_type("parent-of".into()),
+            Err(MarfaError::NoCatalog { .. })
+        ));
+    }
+
+    #[test]
+    fn an_edge_type_crosses_with_its_reverse_name_and_the_end_that_writes_it() {
+        let mut held = marfa_core::EdgeType {
+            id: "mentor-of".into(),
+            label: None,
+            description: None,
+            cardinality: "one-to-many".into(),
+            reverse_name: Some("mentored-by".into()),
+            written_at: marfa_core::End::Target,
+            source_type_constraints: vec!["*".into()],
+            target_type_constraints: vec!["*".into()],
+            cascade_on_delete: "orphan".into(),
+            properties: vec![marfa_core::TypeField {
+                name: "since".into(),
+                r#type: "string".into(),
+                required: false,
+                description: None,
+                declared_by: "mentor-of".into(),
+                definition: serde_json::json!({ "type": "string" }),
+            }],
+            shipped: false,
+        };
+        let crossed = EdgeType::from(held.clone());
+        assert_eq!(crossed.reverse_name.as_deref(), Some("mentored-by"));
+        assert_eq!(crossed.written_at, EdgeEnd::Target);
+        assert_eq!(
+            crossed.properties[0].definition_json,
+            r#"{"type":"string"}"#
+        );
+        held.written_at = marfa_core::End::Source;
+        assert_eq!(EdgeType::from(held).written_at, EdgeEnd::Source);
     }
 
     #[test]
@@ -1613,6 +1810,7 @@ mod tests {
                     );
                     let _ = match (path.as_str(), resumed) {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
+                        ("/edge-types", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
                         ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),
                         ("/items", _) if head.starts_with("POST") => {
                             let body = r#"{"error":{"code":"forbidden","message":"not claimed","details":{"source":"notes"}}}"#;

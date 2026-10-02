@@ -73,6 +73,8 @@ async function scripted(streams) {
         data: [{ id: "core.note", display_hints: { title_field: "title" } }],
         next_cursor: null,
       });
+    } else if (path === "/edge-types") {
+      json({ data: [], next_cursor: null });
     } else if (path === "/keys/current") {
       json({ type_permissions: { "*": "write" } });
     } else if (path === "/items") {

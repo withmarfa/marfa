@@ -174,6 +174,112 @@ pub struct Status {
     pub hydration: Hydration,
     pub items: i64,
     pub edges: i64,
+    /// Moves each time a refresh changes the catalog; absent where the copy
+    /// has never held one.
+    pub catalog_version: Option<i64>,
+}
+
+/// A field of an item type, or a property of an edge type.
+#[napi(object)]
+pub struct TypeField {
+    pub name: String,
+    /// The field's own type, such as `string` or `thumbnail`.
+    #[napi(js_name = "type")]
+    pub type_: String,
+    pub required: bool,
+    pub description: Option<String>,
+    /// The type that declares it: the type itself, or the nearest one it
+    /// inherits the field from.
+    pub declared_by: String,
+    /// The definition whole, as the server answers it.
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub definition: serde_json::Value,
+}
+
+/// An item type as the copy holds it, with the fields it inherits.
+#[napi(object)]
+pub struct ItemType {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub parent: Option<String>,
+    pub version: i64,
+    pub fields: Vec<TypeField>,
+    pub title_field: Option<String>,
+    pub body_field: Option<String>,
+    pub link_field: Option<String>,
+    pub roles: Vec<String>,
+    pub compatible_with: Vec<String>,
+}
+
+/// The end of an edge whose file writes it.
+#[napi(string_enum = "snake_case")]
+pub enum EdgeEnd {
+    Source,
+    Target,
+}
+
+/// An edge type as the copy holds it.
+#[napi(object)]
+pub struct EdgeType {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub cardinality: String,
+    /// The name the edge goes by read from its target.
+    pub reverse_name: Option<String>,
+    pub written_at: EdgeEnd,
+    pub source_type_constraints: Vec<String>,
+    pub target_type_constraints: Vec<String>,
+    pub cascade_on_delete: String,
+    pub properties: Vec<TypeField>,
+    pub shipped: bool,
+}
+
+fn type_field(field: marfa_core::TypeField) -> TypeField {
+    TypeField {
+        name: field.name,
+        type_: field.r#type,
+        required: field.required,
+        description: field.description,
+        declared_by: field.declared_by,
+        definition: field.definition,
+    }
+}
+
+fn item_type(held: marfa_core::ItemType) -> ItemType {
+    ItemType {
+        id: held.id,
+        label: held.label,
+        description: held.description,
+        parent: held.parent,
+        version: held.version,
+        fields: held.fields.into_iter().map(type_field).collect(),
+        title_field: held.title_field,
+        body_field: held.body_field,
+        link_field: held.link_field,
+        roles: held.roles,
+        compatible_with: held.compatible_with,
+    }
+}
+
+fn edge_type(held: marfa_core::EdgeType) -> EdgeType {
+    EdgeType {
+        id: held.id,
+        label: held.label,
+        description: held.description,
+        cardinality: held.cardinality,
+        reverse_name: held.reverse_name,
+        written_at: match held.written_at {
+            marfa_core::End::Source => EdgeEnd::Source,
+            marfa_core::End::Target => EdgeEnd::Target,
+        },
+        source_type_constraints: held.source_type_constraints,
+        target_type_constraints: held.target_type_constraints,
+        cascade_on_delete: held.cascade_on_delete,
+        properties: held.properties.into_iter().map(type_field).collect(),
+        shipped: held.shipped,
+    }
 }
 
 /// The kinds of write a queue holds.
@@ -637,6 +743,7 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::NoServer => ("no_server", error.to_string()),
         E::NoCursor => ("no_cursor", error.to_string()),
         E::HydrationIncomplete => ("hydration_incomplete", error.to_string()),
+        E::NoCatalog => ("no_catalog", error.to_string()),
         E::WrongSchema { .. } => ("wrong_schema", error.to_string()),
         E::ReadingHandle => ("reading_handle", error.to_string()),
         E::CatchUpTooOld { .. } => ("catch_up_too_old", error.to_string()),
@@ -1107,7 +1214,44 @@ impl MarfaCore {
             hydration: status.hydration.into(),
             items: count(status.items),
             edges: count(status.edges),
+            catalog_version: status.catalog_version.map(count),
         })
+    }
+
+    /// Every item type the copy holds, by id, read from the copy alone.
+    #[napi]
+    pub fn item_types(&self) -> Result<Vec<ItemType>> {
+        Ok(self
+            .inner
+            .item_types()
+            .map_err(failure)?
+            .into_iter()
+            .map(item_type)
+            .collect())
+    }
+
+    /// `not_found` where the catalog holds no such type.
+    #[napi]
+    pub fn item_type(&self, id: String) -> Result<ItemType> {
+        Ok(item_type(self.inner.item_type(&id).map_err(failure)?))
+    }
+
+    /// Every edge type the copy holds, by id, read from the copy alone.
+    #[napi]
+    pub fn edge_types(&self) -> Result<Vec<EdgeType>> {
+        Ok(self
+            .inner
+            .edge_types()
+            .map_err(failure)?
+            .into_iter()
+            .map(edge_type)
+            .collect())
+    }
+
+    /// `not_found` where the catalog holds no such edge type.
+    #[napi]
+    pub fn edge_type(&self, id: String) -> Result<EdgeType> {
+        Ok(edge_type(self.inner.edge_type(&id).map_err(failure)?))
     }
 
     /// Which handle this process holds: the one that may write, or a second
