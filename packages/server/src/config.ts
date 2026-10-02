@@ -474,6 +474,28 @@ function setting<T>(parse: (value: string) => T, fallback: () => T) {
     });
 }
 
+/**
+ * A secret is used exactly as written, never trimmed: a value read from a
+ * file often ends in a newline, and trimming it would key every hash and
+ * signature with something other than what was set. Surrounding whitespace
+ * is refused instead, so neither reading happens silently.
+ */
+const secretSetting = z
+  .string()
+  .optional()
+  .transform((raw, ctx): string | undefined => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    if (raw !== raw.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "has whitespace around it, which would be part of the secret; remove it",
+      });
+      return z.NEVER;
+    }
+    return raw;
+  });
+
 /** Plain digits only, not `Number()`'s grammar: `1e2` is not a hundred and `0x10` is not sixteen. */
 function wholeNumber(min: number, max = Number.MAX_SAFE_INTEGER) {
   return (value: string): number => {
@@ -672,7 +694,7 @@ const settingsShape = {
   S3_REGION: setting(text, () => "us-east-1"),
   S3_ENDPOINT: setting(httpUrl, () => ""),
   S3_ACCESS_KEY_ID: blankText,
-  S3_SECRET_ACCESS_KEY: blankText,
+  S3_SECRET_ACCESS_KEY: secretSetting,
   S3_FORCE_PATH_STYLE: on(true),
   S3_PREFIX: setting(text, () => "blobs"),
   MARFA_BLOB_MIN_COPIES: count(1),
@@ -706,8 +728,8 @@ const settingsShape = {
     () => null,
   ),
 
-  API_KEY_SALT: optionalText,
-  MARFA_AUTH_SECRET: optionalText,
+  API_KEY_SALT: secretSetting,
+  MARFA_AUTH_SECRET: secretSetting,
   MARFA_AUTH_BASE_URL: optionalUrl,
   CORS_ORIGINS: setting(origins, () => []),
   MARFA_PERMISSION_BUNDLES: setting<PermissionBundle[] | undefined>(
@@ -785,7 +807,7 @@ const settingsShape = {
   OTEL_EXPORTER_OTLP_TRACES_HEADERS: setting(otlpHeaders, () => ({})),
   OTEL_EXPORTER_OTLP_LOGS_HEADERS: setting(otlpHeaders, () => ({})),
   MARFA_POSTHOG_HOST: optionalUrl,
-  MARFA_POSTHOG_PROJECT_TOKEN: optionalText,
+  MARFA_POSTHOG_PROJECT_TOKEN: secretSetting,
 };
 
 /** Every setting's name, in the order the schema states them. */
@@ -1000,7 +1022,7 @@ export function loadConfig(
     s3Region: s.S3_REGION,
     s3Endpoint: s.S3_ENDPOINT,
     s3AccessKeyId: s.S3_ACCESS_KEY_ID,
-    s3SecretAccessKey: s.S3_SECRET_ACCESS_KEY,
+    s3SecretAccessKey: s.S3_SECRET_ACCESS_KEY ?? "",
     s3ForcePathStyle: s.S3_FORCE_PATH_STYLE,
     s3Prefix: s.S3_PREFIX,
     apiKeySalt: s.API_KEY_SALT ?? DEFAULT_SALT,

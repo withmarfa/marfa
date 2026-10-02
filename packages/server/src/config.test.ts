@@ -157,6 +157,29 @@ describe("the settings schema", () => {
     );
   });
 
+  // A secret read from a file often ends in a newline. Trimmed, it would
+  // be a different salt or key than the one that was set, and every key
+  // hash, session and blob link would stop matching without a word.
+  it("refuses a secret with surrounding whitespace, and reads one that is all whitespace as unset", () => {
+    for (const name of [
+      "API_KEY_SALT",
+      "MARFA_AUTH_SECRET",
+      "S3_SECRET_ACCESS_KEY",
+      "MARFA_POSTHOG_PROJECT_TOKEN",
+    ]) {
+      for (const raw of [`${STRONG()}\n`, ` ${STRONG()}`]) {
+        expect(refusal({ [name]: raw }), name).toContain(
+          `${name} has whitespace around it`,
+        );
+      }
+    }
+    const secret = STRONG();
+    expect(loadConfig({ MARFA_AUTH_SECRET: secret }).authSecret).toBe(secret);
+    expect(loadConfig({ API_KEY_SALT: " \n" }).apiKeySalt).toBe(
+      loadConfig({}).apiKeySalt,
+    );
+  });
+
   it("never echoes a secret's value into a refusal", () => {
     const message = refusal({ MARFA_AUTH_SECRET: "short-secret" });
     expect(message).toContain("MARFA_AUTH_SECRET must be at least 32");
