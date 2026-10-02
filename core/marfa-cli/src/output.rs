@@ -219,7 +219,16 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             }
             lines.push(line);
         }
-        lines.push(format!("answered {}, held {}", drain.answered, drain.held));
+        lines.push(format!(
+            "answered {}, held {}{}",
+            drain.answered,
+            drain.held,
+            if drain.unsent > 0 {
+                format!(", {} settled without being sent", drain.unsent)
+            } else {
+                String::new()
+            }
+        ));
         lines.extend(undelivered(drain));
         if let Some(wait) = drain.retry_after_seconds {
             lines.push(format!(

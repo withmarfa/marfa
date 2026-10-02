@@ -546,6 +546,10 @@ pub struct DrainReport {
     /// Writes it could not deliver, each still waiting, uncounted, for the
     /// next drain.
     pub undelivered: u64,
+    /// Writes it settled without the server answering them: refused for a
+    /// write they waited on or for bytes no longer held, settled by another
+    /// write's answer, or counted for a request that could not be made.
+    pub unsent: u64,
     /// Why the drain ended before the queue was through: the server could
     /// not be reached, failed, or asked to be left alone for a while.
     pub unavailable: Option<String>,
@@ -1036,6 +1040,7 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
         answered: report.answered as u64,
         held: report.held as u64,
         undelivered: report.undelivered as u64,
+        unsent: report.unsent as u64,
         unavailable: report.unavailable,
         verdicts,
         stopped: report.stopped,
@@ -1994,6 +1999,7 @@ mod tests {
             answered: 2,
             held: 1,
             undelivered: 3,
+            unsent: 4,
             unavailable: Some("the server could not be reached".into()),
             verdicts: Vec::new(),
             stopped: None,
@@ -2006,6 +2012,7 @@ mod tests {
                 report.answered,
                 report.held,
                 report.undelivered,
+                report.unsent,
                 report.unavailable.as_deref(),
                 report.unclaimed_sources,
                 report.retry_after_seconds,
@@ -2014,6 +2021,7 @@ mod tests {
                 2,
                 1,
                 3,
+                4,
                 Some("the server could not be reached"),
                 vec!["notes".to_string()],
                 Some(7)

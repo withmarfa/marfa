@@ -99,9 +99,12 @@ const RETRY_MOST: Duration = Duration::from_secs(30);
 
 fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Result<(), CliError> {
     let mut retry = RETRY_FIRST;
+    // Said once for each run of failures, as the reachability line is.
+    let mut said = false;
     while !stop.load(Ordering::SeqCst) {
         let followed = folder.resume().and_then(|hydrated| {
             retry = RETRY_FIRST;
+            said = false;
             if hydrated.is_some() {
                 let _ = wakes.send(Wake::Server);
             }
@@ -123,7 +126,12 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
             Err(CoreError::CatchUpTooOld { .. }) => {}
             Err(error) if error.is_environmental() => {
                 let (wait, next) = retry_schedule(retry, &error);
-                eprintln!("could not hydrate ({error}); trying again in {wait:?}");
+                if !said {
+                    eprintln!(
+                        "could not hydrate ({error}); trying again after a wait that doubles to {RETRY_MOST:?}"
+                    );
+                    said = true;
+                }
                 wait_unless_stopped(stop, wait);
                 retry = next;
             }

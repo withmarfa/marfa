@@ -527,6 +527,10 @@ pub struct DrainReport {
     /// Writes it could not deliver, each still waiting, uncounted, for the
     /// next drain.
     pub undelivered: i64,
+    /// Writes it settled without the server answering them: refused for a
+    /// write they waited on or for bytes no longer held, settled by another
+    /// write's answer, or counted for a request that could not be made.
+    pub unsent: i64,
     /// Why the drain ended before the queue was through: the server could
     /// not be reached, failed, or asked to be left alone for a while.
     pub unavailable: Option<String>,
@@ -747,6 +751,7 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport> {
         answered: count(report.answered as u64),
         held: count(report.held as u64),
         undelivered: count(report.undelivered as u64),
+        unsent: count(report.unsent as u64),
         unavailable: report.unavailable,
         verdicts,
         stopped: report.stopped,

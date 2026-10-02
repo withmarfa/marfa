@@ -239,6 +239,21 @@ impl Http {
         Ok(response)
     }
 
+    /// A `401` naming no contract is a proxy's or an access gateway's, not
+    /// the server's word on the key: read as the credential refused, it
+    /// would stop a watch that only had to wait for the gateway.
+    fn unnamed(&self, served: Option<&str>, refused: CoreError) -> CoreError {
+        match refused {
+            CoreError::Unauthorized { code, message } if served.is_none() => {
+                CoreError::Network(format!(
+                    "something in front of {} answered 401 naming no contract ({code}: {message}), so the server was not reached",
+                    self.origin()
+                ))
+            }
+            refused => refused,
+        }
+    }
+
     /// Identifies a server without identifying a key.
     pub fn origin(&self) -> String {
         format!(
@@ -503,9 +518,10 @@ impl Http {
         let status = response.status().as_u16();
         self.hold(&response, status, false)?;
         if !(200..300).contains(&status) {
+            let served = header(&response, CONTRACT_HEADER);
             let retry_after = retry_after(&response);
             let text = response.into_body().read_to_string().unwrap_or_default();
-            return Err(refusal(status, &text, retry_after));
+            return Err(self.unnamed(served.as_deref(), refusal(status, &text, retry_after)));
         }
         Ok(Box::new(response.into_body().into_reader()))
     }
@@ -664,7 +680,7 @@ impl Http {
                     code,
                     message,
                 },
-                refused => refused,
+                refused => self.unnamed(served.as_deref(), refused),
             });
         }
         serde_json::from_str(&text)
