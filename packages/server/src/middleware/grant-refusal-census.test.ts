@@ -145,7 +145,10 @@ describe("every door that refuses a missing grant names it", () => {
   let reader: string;
   /** Write on notes, nothing on edges or extensions. */
   let writer: string;
+  /** Write on notes, read on `references` edges. */
+  let edgeReader: string;
   let note: string;
+  let binned: string;
   let edge: string;
 
   beforeAll(async () => {
@@ -160,6 +163,11 @@ describe("every door that refuses a missing grant names it", () => {
       edge_permissions: {},
       extension_permissions: {},
     });
+    edgeReader = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { references: "read" },
+      extension_permissions: {},
+    });
     const made = async (): Promise<string> => {
       const res = await request(ctx.app, "POST", "/items", {
         key: ctx.workingKey,
@@ -169,6 +177,10 @@ describe("every door that refuses a missing grant names it", () => {
     };
     note = await made();
     const other = await made();
+    binned = await made();
+    await request(ctx.app, "DELETE", `/items/${binned}`, {
+      key: ctx.workingKey,
+    });
     const res = await request(ctx.app, "POST", "/edges", {
       key: ctx.workingKey,
       body: { source_id: note, target_id: other, edge_type: "references" },
@@ -211,6 +223,18 @@ describe("every door that refuses a missing grant names it", () => {
       door: "DELETE /items/{id}",
       key: () => reader,
       send: () => ["DELETE", `/items/${note}`],
+      grant: typeWrite,
+    },
+    {
+      door: "POST /items/{id}/restore",
+      key: () => reader,
+      send: () => ["POST", `/items/${binned}/restore`],
+      grant: typeWrite,
+    },
+    {
+      door: "DELETE /items/{id}/purge",
+      key: () => reader,
+      send: () => ["DELETE", `/items/${binned}/purge`],
       grant: typeWrite,
     },
     {
@@ -260,6 +284,22 @@ describe("every door that refuses a missing grant names it", () => {
       grant: { kind: "edge_type", name: "references", level: "write" },
     },
     {
+      door: "PATCH /edges/{id}",
+      key: () => edgeReader,
+      send: () => [
+        "PATCH",
+        `/edges/${edge}`,
+        { properties: { a: 1 }, version: 1 },
+      ],
+      grant: { kind: "edge_type", name: "references", level: "write" },
+    },
+    {
+      door: "DELETE /edges/{id}",
+      key: () => edgeReader,
+      send: () => ["DELETE", `/edges/${edge}`],
+      grant: { kind: "edge_type", name: "references", level: "write" },
+    },
+    {
       door: "PATCH /items/{id} with inline edges",
       key: () => writer,
       send: () => [
@@ -304,22 +344,63 @@ describe("every door that refuses a missing grant names it", () => {
     });
   }
 
-  it("PATCH /edges/{id}, a move of an edge the key may not write", async () => {
-    const res = await request(ctx.app, "PATCH", `/edges/${edge}`, {
+  // The bulk doors carry the grant where each carries an inner refusal:
+  // inside `details` of the rollback under `atomic`, on the entry otherwise.
+  const bulkEdge = (): {
+    source_id: string;
+    target_id: string;
+    edge_type: string;
+  } => ({
+    source_id: note,
+    target_id: note,
+    edge_type: "references",
+  });
+  const edgeWrite = { kind: "edge_type", name: "references", level: "write" };
+
+  it("POST /edges/bulk, atomic", async () => {
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
       key: writer,
-      body: { properties: { a: 1 }, version: 1 },
+      body: { edges: [bulkEdge()], atomic: true },
     });
-    // A key with no read on the edge type is not told the edge is there.
-    expect([403, 404]).toContain(res.status);
-    if (res.status === 403) {
-      const { error } = (await res.json()) as {
-        error: { details?: { grant?: unknown } };
-      };
-      expect(error.details?.grant).toEqual({
-        kind: "edge_type",
-        name: "references",
-        level: "write",
-      });
-    }
+    expect(res.status).toBe(403);
+    const { error } = (await res.json()) as {
+      error: { code: string; details?: { details?: { grant?: unknown } } };
+    };
+    expect(error.code).toBe("bulk_atomic_rollback");
+    expect(error.details?.details?.grant).toEqual(edgeWrite);
+  });
+
+  it("POST /edges/bulk, best effort", async () => {
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: writer,
+      body: { edges: [bulkEdge()], atomic: false },
+    });
+    expect(res.status).toBe(200);
+    const { results } = (await res.json()) as {
+      results: { error?: { details?: { grant?: unknown } } }[];
+    };
+    expect(results[0]?.error?.details?.grant).toEqual(edgeWrite);
+  });
+
+  it("POST /items/bulk, atomic and best effort", async () => {
+    const entry = { type: "core.note", properties: { body: "x" } };
+    const atomic = await request(ctx.app, "POST", "/items/bulk", {
+      key: reader,
+      body: { items: [entry] },
+    });
+    expect(atomic.status).toBe(403);
+    const rolled = (await atomic.json()) as {
+      error: { details?: { details?: { grant?: unknown } } };
+    };
+    expect(rolled.error.details?.details?.grant).toEqual(typeWrite);
+    const loose = await request(ctx.app, "POST", "/items/bulk", {
+      key: reader,
+      body: { items: [entry], atomic: false },
+    });
+    expect(loose.status).toBe(200);
+    const { results } = (await loose.json()) as {
+      results: { error?: { details?: { grant?: unknown } } }[];
+    };
+    expect(results[0]?.error?.details?.grant).toEqual(typeWrite);
   });
 });

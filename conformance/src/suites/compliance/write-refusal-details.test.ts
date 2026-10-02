@@ -125,22 +125,6 @@ describe("a refusal caused by a missing grant names it", () => {
       level: "write",
     });
 
-    // On the bulk door the grant rides with the entry's refusal.
-    const entry = { type: "core.note", properties: { body: "refused" } };
-    const atomic = await reader.bulkItems({ atomic: true, items: [entry] });
-    expect(atomic.status).toBe(403);
-    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
-    expect(
-      (atomic.error?.error.details?.details as { grant?: unknown }).grant,
-    ).toEqual({ kind: "type", name: "core.note", level: "write" });
-    const loose = await reader.bulkItems({ atomic: false, items: [entry] });
-    expect(loose.status).toBe(200);
-    expect(loose.data.results[0]?.error?.details?.grant).toEqual({
-      kind: "type",
-      name: "core.note",
-      level: "write",
-    });
-
     const folder = await writer.createFolder({ title: "refused" });
     expect(folder.status).toBe(403);
     expect(folder.error?.error.details?.grant).toEqual({
@@ -148,6 +132,50 @@ describe("a refusal caused by a missing grant names it", () => {
       name: "system.folder",
       level: "write",
     });
+  });
+
+  it("names the grant on a bulk page, inside the rollback or on the entry", async () => {
+    const reader = await keyWith("bulk-reader", {
+      type_permissions: { "core.note": "read" },
+    });
+    const writer = await keyWith("bulk-writer", {
+      type_permissions: { "core.note": "write" },
+    });
+    const target = await note("bulk grant target");
+    const typeWrite = { kind: "type", name: "core.note", level: "write" };
+    const edgeWrite = {
+      kind: "edge_type",
+      name: "references",
+      level: "write",
+    };
+
+    const entry = { type: "core.note", properties: { body: "refused" } };
+    const atomic = await reader.bulkItems({ atomic: true, items: [entry] });
+    expect(atomic.status).toBe(403);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(
+      (atomic.error?.error.details?.details as { grant?: unknown }).grant,
+    ).toEqual(typeWrite);
+    const loose = await reader.bulkItems({ atomic: false, items: [entry] });
+    expect(loose.status).toBe(200);
+    expect(loose.data.results[0]?.error?.details?.grant).toEqual(typeWrite);
+
+    const edge = {
+      source_id: target.id,
+      target_id: target.id,
+      edge_type: "references",
+    };
+    const edgesAtomic = await writer.bulkEdges({ atomic: true, edges: [edge] });
+    expect(edgesAtomic.status).toBe(403);
+    expect(edgesAtomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(
+      (edgesAtomic.error?.error.details?.details as { grant?: unknown }).grant,
+    ).toEqual(edgeWrite);
+    const edgesLoose = await writer.bulkEdges({ atomic: false, edges: [edge] });
+    expect(edgesLoose.status).toBe(200);
+    expect(edgesLoose.data.results[0]?.error?.details?.grant).toEqual(
+      edgeWrite,
+    );
   });
 
   it("names no grant where no grant would open the door", async () => {
