@@ -761,6 +761,70 @@ describe("POST /admin/restore-archive refused after its blobs are stored", () =>
   });
 });
 
+describe("POST /admin/restore-archive refused over bytes a purge left", () => {
+  it("leaves a row naming the bytes it found on disk, for the sweep to judge", async () => {
+    // A purge cut short: the row is gone, the bytes are still on disk and
+    // the purge record waits. The restore registers the bytes it found,
+    // which clears the record, and is then refused.
+    const blob = makeBlobData(
+      `left by a purge cut short ${String(Date.now())}`,
+    );
+    const uploaded = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: blob.data,
+    });
+    expect(uploaded.status).toBe(201);
+    await ctx.storage.runInTransaction(() =>
+      ctx.storage.blobs.retainOrphans([blob.hash], "2026-01-01T00:00:00.000Z"),
+    );
+    const disk = ctx.blobs.disk;
+    const remove = disk.delete.bind(disk);
+    disk.delete = () => Promise.reject(new Error("store unavailable"));
+    try {
+      await expect(
+        purgeBlob(ctx.storage, ctx.blobs, blob.hash, {
+          before: "2026-01-02T00:00:00.000Z",
+          runStartedAt: "2026-01-02T00:00:00.000Z",
+        }),
+      ).rejects.toThrow("store unavailable");
+    } finally {
+      disk.delete = remove;
+    }
+    expect(await ctx.storage.blobs.get(blob.hash)).toBeNull();
+    expect(await disk.has(blob.hash)).not.toBeNull();
+    expect(await ctx.storage.blobs.purgePending(blob.hash)).toBe(true);
+
+    const storage = ctx.storage;
+    const runInTransaction = storage.runInTransaction.bind(storage);
+    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
+      if ((await storage.blobs.get(blob.hash)) !== null) {
+        throw new Error("rows refused");
+      }
+      return runInTransaction(fn);
+    };
+    let res: Response;
+    try {
+      res = await postArchive(
+        await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
+      );
+    } finally {
+      storage.runInTransaction = runInTransaction;
+    }
+    expect(res.status).toBe(500);
+    // The bytes stay named: a row the sweep can report and purge, never
+    // bytes with neither a row nor a purge record.
+    expect(await disk.has(blob.hash)).not.toBeNull();
+    const named = await storage.blobs.get(blob.hash);
+    const pending = await storage.blobs.purgePending(blob.hash);
+    expect(named !== null || pending).toBe(true);
+    expect(named).not.toBeNull();
+  });
+});
+
 describe("POST /admin/restore-archive — the edges it writes", () => {
   /**
    * A restore is a write like any other from a subscriber's side. A client

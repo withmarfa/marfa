@@ -334,7 +334,12 @@ async function restoreArchiveBlobs(
 
   return {
     undo: async () => {
-      for (const hash of wroteRows) {
+      // Only a row naming bytes this request wrote. A row registered over
+      // bytes already on disk, such as a purge cut short left, stays: it
+      // names bytes that exist, and the sweep reports and purges it as any
+      // other, where removing it would leave bytes nothing names.
+      const wrote = new Set(wroteBytes);
+      for (const hash of wroteRows.filter((h) => wrote.has(h))) {
         try {
           await storage.blobs.removeUnclaimed(hash, uploader);
         } catch (err) {
