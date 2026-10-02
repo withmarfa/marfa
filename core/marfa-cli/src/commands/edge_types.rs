@@ -10,9 +10,9 @@ use crate::remote::request::Request;
 pub enum EdgeTypesCommand {
     /// Every edge type the instance holds.
     List,
-    /// Register an edge type from its definition. Needs `metadata.edge_types:write`.
+    /// Register an edge type from its definition. Needs `metadata.edge_types:write` and write on its id and any reverse name in the key's edge map.
     Register(BodySource),
-    /// Remove a registered edge type.
+    /// Remove a registered edge type. Needs `schema.write` and write on its id and any reverse name in the key's edge map.
     Delete {
         /// The edge type id.
         id: String,
