@@ -61,6 +61,28 @@ const PROCESS_MEMBERS = new Set([
 
 const PROCESS_MODULE = /^(node:)?process$/;
 
+/** The names the global object goes by; a bare one is fine, its `process` is not. */
+const GLOBAL_OBJECTS = new Set(["globalThis", "global"]);
+
+/** Allowed only as a plain statement: each returns `process` itself. */
+const LISTENER_MEMBERS = new Set(["on", "once", "off"]);
+
+/** The member a property or string-keyed element access reads, and off what. */
+function memberRead(
+  node: ts.Node,
+): { object: ts.Expression; member: string } | undefined {
+  if (ts.isPropertyAccessExpression(node)) {
+    return { object: node.expression, member: node.name.text };
+  }
+  if (
+    ts.isElementAccessExpression(node) &&
+    ts.isStringLiteralLike(node.argumentExpression)
+  ) {
+    return { object: node.expression, member: node.argumentExpression.text };
+  }
+  return undefined;
+}
+
 /** A wrapper that changes nothing about the value: parentheses, a cast, a `!`. */
 function isOuterExpression(node: ts.Node): boolean {
   return (
@@ -154,38 +176,106 @@ function isGlobalProcess(node: ts.Node): boolean {
       if (ts.isSourceFile(scope)) return true;
     }
   }
-  const owner = ts.isPropertyAccessExpression(node)
-    ? { object: node.expression, member: node.name.text }
-    : ts.isElementAccessExpression(node) &&
-        ts.isStringLiteralLike(node.argumentExpression)
-      ? { object: node.expression, member: node.argumentExpression.text }
-      : undefined;
-  if (owner?.member !== "process") return false;
-  const object = unwrap(owner.object);
-  return ts.isIdentifier(object) && object.text === "globalThis";
+  const read = memberRead(node);
+  if (read?.member !== "process") return false;
+  const object = unwrap(read.object);
+  return ts.isIdentifier(object) && GLOBAL_OBJECTS.has(object.text);
+}
+
+/** The member read straight off a reference, if one is. */
+function memberAfter(reference: ts.Node): ts.Node | undefined {
+  let outer = reference;
+  while (isOuterExpression(outer.parent)) outer = outer.parent;
+  const read = memberRead(outer.parent);
+  return read?.object === outer ? outer.parent : undefined;
 }
 
 /** Whether a use of `process` is one of the allowed members, and only that. */
 function isAllowedUse(reference: ts.Node): boolean {
-  let outer = reference;
-  while (isOuterExpression(outer.parent)) outer = outer.parent;
-  const parent = outer.parent;
-  if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
-    return PROCESS_MEMBERS.has(parent.name.text);
+  const access = memberAfter(reference);
+  const member = access === undefined ? undefined : memberRead(access)?.member;
+  if (access === undefined || member === undefined) return false;
+  if (!PROCESS_MEMBERS.has(member)) return false;
+  if (!LISTENER_MEMBERS.has(member)) return true;
+  const call = access.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression === access &&
+    ts.isExpressionStatement(call.parent)
+  );
+}
+
+/**
+ * `process` taken out of the global object by destructuring, in a
+ * declaration or an assignment. Taking a `process` field out of anything
+ * else is ordinary: a connector's request body carries one.
+ */
+function destructuresProcess(node: ts.Node): boolean {
+  const named = (name: ts.Node | undefined) =>
+    name !== undefined &&
+    (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+    name.text === "process";
+  const isGlobalObject = (source: ts.Expression | undefined) => {
+    if (source === undefined) return false;
+    const inner = unwrap(source);
+    return ts.isIdentifier(inner) && GLOBAL_OBJECTS.has(inner.text);
+  };
+  if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+    const declaration = node.parent.parent;
+    return (
+      named(node.propertyName ?? node.name) &&
+      (ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) &&
+      isGlobalObject(declaration.initializer)
+    );
   }
   if (
-    ts.isElementAccessExpression(parent) &&
-    parent.expression === outer &&
-    ts.isStringLiteralLike(parent.argumentExpression)
+    (ts.isShorthandPropertyAssignment(node) || ts.isPropertyAssignment(node)) &&
+    named(node.name)
   ) {
-    return PROCESS_MEMBERS.has(parent.argumentExpression.text);
+    let pattern: ts.Node = node.parent;
+    while (isOuterExpression(pattern.parent)) pattern = pattern.parent;
+    const assignment = pattern.parent;
+    return (
+      ts.isBinaryExpression(assignment) &&
+      assignment.left === pattern &&
+      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isGlobalObject(assignment.right)
+    );
   }
   return false;
+}
+
+/** Names bound to `createRequire(...)`, whose calls load a module. */
+function requireAliases(file: ts.SourceFile): Set<string> {
+  const names = new Set(["require"]);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      isCreateRequire(node.initializer)
+    ) {
+      names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return names;
+}
+
+function isCreateRequire(node: ts.Expression): boolean {
+  const call = unwrap(node);
+  return (
+    ts.isCallExpression(call) &&
+    ts.isIdentifier(call.expression) &&
+    call.expression.text === "createRequire"
+  );
 }
 
 /** Whether the file, comments and strings aside, can reach the environment. */
 function readsEnvironment(text: string): boolean {
   const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
+  const loaders = requireAliases(file);
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -196,15 +286,25 @@ function readsEnvironment(text: string): boolean {
         ? node.moduleSpecifier.text
         : ts.isCallExpression(node) &&
             (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-              (ts.isIdentifier(node.expression) &&
-                node.expression.text === "require")) &&
+              isCreateRequire(node.expression) ||
+              (ts.isIdentifier(unwrap(node.expression)) &&
+                loaders.has(
+                  (unwrap(node.expression) as ts.Identifier).text,
+                ))) &&
             node.arguments[0] !== undefined &&
             ts.isStringLiteralLike(node.arguments[0])
           ? node.arguments[0].text
           : undefined;
     if (
       (moduleName !== undefined && PROCESS_MODULE.test(moduleName)) ||
-      (isGlobalProcess(node) && !isAllowedUse(node))
+      (isGlobalProcess(node) && !isAllowedUse(node)) ||
+      // A `.process` off any other object is judged only by what is read
+      // from it, since a connector's own `process` field is an ordinary
+      // string.
+      (memberRead(node)?.member === "process" &&
+        memberAfter(node) !== undefined &&
+        !isAllowedUse(node)) ||
+      destructuresProcess(node)
     ) {
       found = true;
       return;
@@ -244,6 +344,16 @@ describe("the settings census", () => {
       'const m = await import("node:process");',
       'const m = require("process");',
       'const a = Reflect.get(process, "env");',
+      "const a = global.process.env;",
+      "const a = foo.process.env;",
+      "const a = (window as any).process.env;",
+      "const { process } = globalThis;",
+      "const { process: p } = global;",
+      "let p; ({ process: p } = globalThis);",
+      'const a = process.on("x", f).env;',
+      'const e = process.once("x", f);',
+      'const m = createRequire(import.meta.url)("node:process");',
+      'const r = createRequire(import.meta.url);\nconst m = r("process");',
     ]) {
       expect(readsEnvironment(spelling), spelling).toBe(true);
     }
@@ -252,9 +362,13 @@ describe("the settings census", () => {
       'const a = "process.env";',
       "process.stdout.write('x');",
       "function hold(process: string) { return process.length; }",
-      "const { process } = body; use(process);",
       "const f = { process: 1 }.process;",
       "type T = typeof process;",
+      "const g = globalThis;",
+      'process.on("SIGTERM", stop);',
+      "const same = hold.process === fence.process;",
+      'const { process } = c.req.valid("json");',
+      'const r = createRequire(import.meta.url);\nconst m = r("node:fs");',
     ]) {
       expect(readsEnvironment(spelling), spelling).toBe(false);
     }

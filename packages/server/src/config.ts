@@ -903,8 +903,8 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
       );
     }
   }
-  // A version older than its window and inside no later one is deleted, so
-  // a window shorter than the one before it skips straight to deletion.
+  // Windows are tested in order, so one shorter than the window before it
+  // is swallowed by that window: the setting would silently do nothing.
   if (s.VERSION_DAILY_SNAPSHOT_DAYS < s.VERSION_RECENT_DAYS) {
     refuse(
       "VERSION_DAILY_SNAPSHOT_DAYS",
