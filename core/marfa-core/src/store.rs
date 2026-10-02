@@ -1588,6 +1588,779 @@ impl Tier {
     }
 }
 
+/// The ceiling (`queue-and-verdicts.md` 25).
+///
+/// Written in three places, and deliberately: this constant is what the drain
+/// counts against, `schema.sql`'s `CHECK` is what outlives the process, and
+/// the CLI prints it as the denominator. The safety the duplication buys is
+/// one-sided — a ceiling raised above the schema's is refused by SQLite, and
+/// one lowered below it saturates quietly and the `CHECK` never fires. The
+/// lowered case is caught by `device/classification.test.ts › reaches the
+/// ceiling on the fifth refusal`, which counts the attempts rather than
+/// trusting either number.
+pub const CEILING: i64 = 5;
+
+/// The body a queued write will send. Not on `QueuedWrite`, which is the
+/// shape a caller is shown: the payload is the wire's, and a queue report
+/// that carried it would put the fields of every outstanding write into
+/// every listing of them.
+pub fn payload_of(conn: &Connection, id: &str) -> Result<String, CoreError> {
+    conn.query_row("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
+        row.get(0)
+    })
+    .optional()?
+    .ok_or_else(|| CoreError::Store(format!("queued write {id} has no payload")))
+}
+
+/// What the server said, as the queue records it.
+pub struct Answered<'a> {
+    pub verdict: Verdict,
+    pub reason: Option<&'a str>,
+    pub answer: Option<&'a str>,
+    pub conflicted_copy_id: Option<&'a str>,
+}
+
+/// Records that a write has gone out on the wire.
+pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    conn.execute("UPDATE queue SET sent = 1 WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Writes a verdict onto a queued row.
+///
+/// The blocked reasons are checked here rather than by the schema, because
+/// `reason` also carries the server's own refusal codes under `refused`, and
+/// the schema cannot hold a copy of the server's error vocabulary without
+/// going stale.
+pub fn record_verdict(
+    conn: &Connection,
+    id: &str,
+    answered: &Answered<'_>,
+) -> Result<(), CoreError> {
+    let changed = conn.execute(
+        "UPDATE queue
+            SET verdict = ?2, reason = ?3, answer = ?4,
+                conflicted_copy_id = ?5, answered_at = ?6
+          WHERE id = ?1",
+        params![
+            id,
+            answered.verdict.as_str(),
+            answered.reason,
+            answered.answer,
+            answered.conflicted_copy_id,
+            now_iso(),
+        ],
+    )?;
+    if changed == 0 {
+        return Err(CoreError::Store(format!(
+            "no queued write {id} to answer; the row went while the drain was sending it"
+        )));
+    }
+    Ok(())
+}
+
+/// Counts one refusal against a row and answers with the new count.
+///
+/// Refusals, not attempts (`queue-and-verdicts.md` 25). The caller decides
+/// what the count means; this only records that the server refused.
+pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
+    conn.execute(
+        "UPDATE queue SET refusals = MIN(refusals + 1, ?2) WHERE id = ?1",
+        params![id, CEILING],
+    )?;
+    conn.query_row("SELECT refusals FROM queue WHERE id = ?1", [id], |row| {
+        row.get(0)
+    })
+    .optional()?
+    .ok_or_else(|| CoreError::Store(format!("no queued write {id} to count a refusal against")))
+}
+
+/// Parks every write the server has not answered, under one reason.
+///
+/// What a `401` does (`queue-and-verdicts.md` 20): every queued write carries
+/// the same credential, so a credential the server refused refuses all of
+/// them, and working through the rest of the queue would be spending requests
+/// to be told the same thing once per row.
+pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
+          WHERE verdict IS NULL",
+        params![Verdict::Blocked.as_str(), reason.as_str(), now_iso()],
+    )?)
+}
+
+/// Returns the rows blocked for a reason that clears on its own to unanswered.
+pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
+    let clearing: Vec<&str> = BlockedReason::ALL
+        .into_iter()
+        .filter(|reason| reason.clears_itself())
+        .map(BlockedReason::as_str)
+        .collect();
+    let places = vec!["?"; clearing.len()].join(", ");
+    Ok(conn.execute(
+        &format!(
+            "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
+              WHERE verdict = ? AND reason IN ({places})"
+        ),
+        params_from_iter(std::iter::once(Verdict::Blocked.as_str()).chain(clearing)),
+    )?)
+}
+
+/// Sends a blocked or dead row again, under a fresh key
+/// (`queue-and-verdicts.md` 27).
+///
+/// The spent key is kept rather than dropped: the server has answered under
+/// it, and a late answer arriving under a key nothing recognizes is
+/// indistinguishable from an answer to the new attempt.
+pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    let Some((verdict, key, spent, sent)) = conn
+        .query_row(
+            "SELECT verdict, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3)? != 0,
+                ))
+            },
+        )
+        .optional()?
+    else {
+        return Err(CoreError::NotFound {
+            code: "queued_write_not_found".into(),
+            message: format!("{id} is not a write this queue holds"),
+        });
+    };
+    // The two terminal-until-released verdicts, and the third case: a row
+    // the drain refused because something it waits for was refused. That row
+    // was never sent, so releasing it cannot write twice — which is what this
+    // guard is for. An `accepted`, `merged` or `conflicted` row has been
+    // written and is never released.
+    //
+    // **`sent` is the test, not `depends_on`.** A row the *server* refused
+    // can carry a dependency too — queue a create, edit before the drain
+    // runs, and the update names the create — so releasing on a dependency
+    // alone clears a terminal refusal and sends the write a second time. A
+    // refusal that later stops applying would then land content the caller
+    // had watched disappear from their copy.
+    let verdict = verdict.as_deref().map(str::parse::<Verdict>).transpose()?;
+    let refused_by_dependency = verdict == Some(Verdict::Refused) && !sent;
+    if !matches!(verdict, Some(Verdict::Blocked | Verdict::Dead)) && !refused_by_dependency {
+        return Ok(false);
+    }
+    // Released, a row whose dependency was withdrawn would wait for a write
+    // the queue no longer holds, which a drain holds forever.
+    if refused_by_dependency && waits_for_withdrawn(conn, id)? {
+        return Ok(false);
+    }
+    let mut keys: Vec<String> = match spent {
+        Some(json) => serde_json::from_str(&json)?,
+        None => Vec::new(),
+    };
+    keys.push(key);
+    conn.execute(
+        "UPDATE queue
+            SET verdict = NULL, reason = NULL, answer = NULL,
+                conflicted_copy_id = NULL, answered_at = NULL,
+                refusals = 0, spent_keys = ?2, idempotency_key = ?3
+          WHERE id = ?1",
+        params![
+            id,
+            serde_json::to_string(&keys)?,
+            Uuid::now_v7().to_string()
+        ],
+    )?;
+    // And the writes this one refused by being refused itself
+    // (`queue-and-verdicts.md` 16). They were never sent and were never
+    // wrong; they were told the row they name would not exist. Releasing
+    // only the row they wait for would leave them `refused` forever: this
+    // door takes such a row on its own, but nobody would know to ask for it,
+    // so the caller would have released the create, watched it succeed, and
+    // had no way to send the update that was waiting on it.
+    for dependant in dependants_refused_with(conn, id)? {
+        release(conn, &dependant)?;
+    }
+    Ok(true)
+}
+
+/// The rows a drain refused because this one was refused.
+///
+/// Read from `depends_on` rather than from the reason text: the reason is a
+/// sentence for a person, and a set this door acts on has to be decided by
+/// the same field the drain decided it by.
+fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
+    Ok(queued_writes(conn)?
+        .into_iter()
+        .filter(|row| {
+            row.verdict == Some(Verdict::Refused) && row.depends_on.iter().any(|held| held == id)
+        })
+        .map(|row| row.id)
+        .collect())
+}
+
+/// Whether a row waits, itself or through rows refused unsent before it, for
+/// one the queue no longer holds. Clearing keeps every row a row refused
+/// unsent waits for, so for such a row the one way to lose a dependency is a
+/// withdraw, and the chain matters because a row refused for a row refused
+/// for a withdrawn one can land no more than its neighbor can.
+fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn.query_row(
+        "WITH RECURSIVE chain(id) AS (
+           SELECT ?1
+           UNION
+           SELECT named.value FROM queue, chain, json_each(queue.depends_on) AS named
+            WHERE queue.id = chain.id AND queue.verdict = ?2 AND queue.sent = 0
+         )
+         SELECT EXISTS (SELECT 1 FROM chain WHERE id NOT IN (SELECT id FROM queue))",
+        [id, Verdict::Refused.as_str()],
+        |row| row.get(0),
+    )?)
+}
+
+/// The writes held for `id` that never went out, and those held for them in
+/// turn: each names one of them among the writes it cannot go without
+/// (`queue-and-verdicts.md` 4) and has had no answer, or is blocked. The
+/// whole chain, because a write two steps behind a withdrawn one could no
+/// more land than the one between, and left unanswered it would wait on a
+/// row that clearing is free to take.
+pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
+    read_writes(
+        conn,
+        "WHERE id IN (
+           WITH RECURSIVE held(id) AS (
+             SELECT ?1
+             UNION
+             SELECT waiting.id FROM queue AS waiting, held, json_each(waiting.depends_on) AS named
+              WHERE named.value = held.id
+                AND waiting.sent = 0 AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
+           )
+           SELECT id FROM held WHERE id <> ?1
+         )",
+        [id, Verdict::Blocked.as_str()],
+    )
+}
+
+/// Takes a write out of the queue for good, and refuses unsent each write
+/// held for it (`queue-and-verdicts.md` 46).
+pub fn withdraw(
+    conn: &Connection,
+    row: &QueuedWrite,
+    held: &[QueuedWrite],
+) -> Result<(), CoreError> {
+    let reason = format!("the {} it waits for was withdrawn", row.kind);
+    for dependant in held {
+        record_verdict(
+            conn,
+            &dependant.id,
+            &Answered {
+                verdict: Verdict::Refused,
+                reason: Some(&reason),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+    }
+    conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
+    Ok(())
+}
+
+/// Clears the rows the server has answered.
+///
+/// Without it the queue grows without bound: every write door reads the
+/// whole queue to find what a new write depends on, so a queue nobody clears
+/// makes every write slower forever. This is the caller `schema.sql` has in
+/// mind when it argues about what a foreign key would do to one clearing
+/// their own answered rows.
+///
+/// Only the four terminal verdicts. A `blocked` or `dead` row is one a
+/// caller may still release, and clearing it would take that away.
+///
+/// **Whether a caller can still act on the row is the test, on both sides of
+/// it.** A row is releasable when it is `blocked`, `dead`, or `refused`
+/// without having been sent — the three `release` takes — and a releasable
+/// row is never cleared. The dependency side is wider by one: a row is also
+/// kept while anything still unanswered names it, because an unanswered row
+/// has a verdict coming and may yet become one of those three.
+///
+/// Both halves go wrong the same way if the set is written as a list of
+/// verdicts instead: a refused-unsent row cleared although `release` accepts
+/// it, and a blocked row's create left unprotected, so that the release the
+/// caller is told to perform produces a row whose dependency cannot be
+/// found, which `readiness` reads as unanswered and holds forever against a
+/// write that no longer exists.
+///
+/// A row refused unsent because a write it waited for was withdrawn is
+/// cleared too, since it can never be released, and so is everything only it
+/// was keeping, a row refused unsent behind it included: each pass clears
+/// what the one before left nothing to keep.
+pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
+    let mut cleared = 0;
+    loop {
+        let pass = forget_answered_once(conn)?;
+        if pass == 0 {
+            return Ok(cleared);
+        }
+        cleared += pass;
+    }
+}
+
+fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
+    // Kept while a row with a verdict still to come, or one a caller may
+    // release, names it: clearing it would leave that row waiting on a write
+    // no drain can find.
+    let unreleasable = conn.execute(
+        "DELETE FROM queue
+          WHERE verdict = ?1 AND sent = 0
+            AND EXISTS (
+              SELECT 1 FROM json_each(queue.depends_on) AS named
+               WHERE named.value NOT IN (SELECT id FROM queue)
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
+               WHERE named.value = queue.id
+                 AND (waiting.verdict IS NULL OR waiting.verdict IN (?2, ?3))
+            )",
+        [
+            Verdict::Refused.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str(),
+        ],
+    )?;
+    Ok(unreleasable
+        + conn.execute(
+            "DELETE FROM queue
+          WHERE verdict IN (:accepted, :merged, :conflicted, :refused)
+            AND NOT (verdict = :refused AND sent = 0)
+            AND NOT EXISTS (
+              SELECT 1 FROM queue AS waiting
+               WHERE (waiting.verdict IS NULL
+                      OR waiting.verdict IN (:blocked, :dead)
+                      OR (waiting.verdict = :refused AND waiting.sent = 0))
+                 AND waiting.depends_on LIKE '%' || queue.id || '%'
+            )",
+            named_params! {
+                ":accepted": Verdict::Accepted.as_str(),
+                ":merged": Verdict::Merged.as_str(),
+                ":conflicted": Verdict::Conflicted.as_str(),
+                ":refused": Verdict::Refused.as_str(),
+                ":blocked": Verdict::Blocked.as_str(),
+                ":dead": Verdict::Dead.as_str(),
+            },
+        )?)
+}
+
+/// Takes back every write to an edge that has not landed, for a folder giving
+/// way to the placement the server holds (`folders.md` 19).
+pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        "DELETE FROM queue
+          WHERE edge_id = :edge
+            AND (verdict IS NULL OR verdict IN (:blocked, :refused, :dead))",
+        named_params! {
+            ":edge": edge_id,
+            ":blocked": Verdict::Blocked.as_str(),
+            ":refused": Verdict::Refused.as_str(),
+            ":dead": Verdict::Dead.as_str(),
+        },
+    )?)
+}
+
+/// Drops a row the server holds nothing for, with its pin.
+///
+/// What reconciling a refused create means (`queue-and-verdicts.md` 12): the
+/// working copy minted the row locally and the server declined it, so there
+/// is nothing to reconcile it to and leaving it would be the copy reporting
+/// an item that exists nowhere.
+pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    unpin(conn, id)?;
+    conn.execute(
+        "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
+        [id],
+    )?;
+    conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
+    conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
+    conn.execute(
+        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
+        [id],
+    )?;
+    Ok(())
+}
+
+/// Lays every write to an item that is still waiting back over the row as
+/// the server last sent it (`queue-and-verdicts.md` 35), whole fields in the
+/// order they were queued. Called after anything puts the server's row into
+/// the copy: an answer the drain adopts, a reconcile, an event, a hydration.
+/// The row is indexed as the type it is laid over as, since a waiting retype
+/// moves it to another.
+pub fn lay_waiting_writes_over(
+    conn: &Connection,
+    item_id: &str,
+    indexing: &dyn Fn(&str) -> Indexing,
+) -> Result<(), CoreError> {
+    let waiting = waiting_writes_for_item(conn, item_id)?;
+    if waiting.is_empty() {
+        return Ok(());
+    }
+    let Some(mut item) = items_by_ids(conn, std::slice::from_ref(&item_id.to_string()))?.pop()
+    else {
+        return Ok(());
+    };
+    let mut tags = item.tags.clone();
+    for row in waiting {
+        let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+        let named_tags = || -> Vec<String> {
+            payload
+                .get("tags")
+                .and_then(Value::as_array)
+                .map(|tags| {
+                    tags.iter()
+                        .filter_map(|tag| tag.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        match row.kind {
+            WriteKind::UpdateItem => {
+                if let Some(Value::Object(properties)) = payload.get("properties") {
+                    // Only an edit that read the copy knows which properties
+                    // it cleared; one said to be read earlier is laid over.
+                    let read = match read_of(conn, &row.id)? {
+                        Some(read) if replaces_properties(&payload) => {
+                            serde_json::from_str::<Value>(&read)?
+                                .get("properties")
+                                .and_then(Value::as_object)
+                                .cloned()
+                        }
+                        _ => None,
+                    };
+                    if let Some(read) = read {
+                        lay_changes(&mut item.properties, properties, &read);
+                    } else {
+                        for (key, value) in properties {
+                            item.properties.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+                if let Some(Value::String(key)) = payload.get("source_id") {
+                    item.source_id = Some(key.clone());
+                }
+                if payload.get("retype") == Some(&Value::Bool(true))
+                    && let Some(Value::String(r#type)) = payload.get("type")
+                {
+                    item.r#type = r#type.clone();
+                }
+                if let Some(tier) = payload.get("tier").and_then(Value::as_str) {
+                    item.tier = Tier::parse_wire(Some(tier))?;
+                }
+            }
+            WriteKind::TransitionItem => {
+                if let Some(state) = payload.get("state").and_then(Value::as_str) {
+                    item.state = state.parse()?;
+                }
+            }
+            WriteKind::DeleteItem => item.state = ItemState::Trashed,
+            WriteKind::RestoreItem => item.state = ItemState::Active,
+            WriteKind::AddTag | WriteKind::MergeMetadata => {
+                for tag in named_tags() {
+                    if !tags.contains(&tag) {
+                        tags.push(tag);
+                    }
+                }
+            }
+            WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
+            WriteKind::ReplaceMetadata => tags = named_tags(),
+            WriteKind::CreateItem
+            | WriteKind::CreateEdge
+            | WriteKind::UpdateEdge
+            | WriteKind::DeleteEdge
+            | WriteKind::WriteExtension
+            | WriteKind::DeleteExtension
+            | WriteKind::UploadBlob => {}
+        }
+    }
+    tags.sort();
+    upsert_item(conn, &item.as_wire(), Some(&tags), &indexing(&item.r#type))
+}
+
+/// The same for an edge: an edit still waiting is laid back over the
+/// server's properties and ends, and a delete still waiting takes the edge
+/// out again.
+pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
+    let waiting = waiting_writes_for_edge(conn, edge_id)?;
+    let Some(mut edge) = edge_by_id(conn, edge_id)? else {
+        return Ok(());
+    };
+    for row in waiting {
+        match row.kind {
+            WriteKind::UpdateEdge => {
+                let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
+                if let Some(Value::Object(properties)) = payload.get("properties") {
+                    for (key, value) in properties {
+                        edge.properties.insert(key.clone(), value.clone());
+                    }
+                }
+                if let Some(source) = payload.get("source_id").and_then(Value::as_str) {
+                    edge.source_id = source.to_string();
+                }
+                if let Some(target) = payload.get("target_id").and_then(Value::as_str) {
+                    edge.target_id = target.to_string();
+                }
+            }
+            WriteKind::DeleteEdge => {
+                delete_edge(conn, edge_id)?;
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+    upsert_edge(conn, &edge.as_wire())
+}
+
+/// Moves an edit behind an answer onto another version
+/// (`queue-and-verdicts.md` 36, 42), and drops from its body every property
+/// it carries at the value the copy held when it was made: no change of its
+/// own, and sent on another version it would assert a value this device
+/// read as newer than whatever another device wrote since. An edit whose
+/// reading was never recorded is moved as it stands.
+pub fn move_edit(
+    conn: &Connection,
+    id: &str,
+    version: i64,
+    onto: Option<&Map<String, Value>>,
+) -> Result<(), CoreError> {
+    if let Some(read) = read_of(conn, id)? {
+        let read: Value = serde_json::from_str(&read)?;
+        let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+        let whole = replaces_properties(&body);
+        if let (Some(Value::Object(read)), Some(Value::Object(properties))) =
+            (read.get("properties").cloned(), body.get_mut("properties"))
+        {
+            if !whole {
+                properties.retain(|key, value| read.get(key) != Some(value));
+            } else if let Some(onto) = onto {
+                // Dropping one would clear it, so whole properties move as the
+                // answer's with what the edit changed laid over.
+                let mut moved = onto.clone();
+                lay_changes(&mut moved, properties, &read);
+                *properties = moved;
+                // Made against the answer now, so a later move reads its
+                // changes from there, not from what it first read.
+                record_read(conn, id, &serde_json::json!({ "properties": onto }))?;
+            }
+        }
+        conn.execute(
+            "UPDATE queue SET payload = ?2 WHERE id = ?1",
+            params![id, body.to_string()],
+        )?;
+    }
+    rebase(conn, id, version)
+}
+
+/// Lays what a whole-properties edit changed from what it read over a row's
+/// properties: a value it changed, a property it left out cleared, and every
+/// other the row's own.
+fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &Map<String, Value>) {
+    for (key, was) in read {
+        match sent.get(key) {
+            Some(value) if value != was => {
+                row.insert(key.clone(), value.clone());
+            }
+            Some(_) => {}
+            None => {
+                row.shift_remove(key);
+            }
+        }
+    }
+    for (key, value) in sent {
+        if !read.contains_key(key) {
+            row.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+/// Whether a queued update's body sends its properties whole.
+pub fn replaces_properties(body: &Value) -> bool {
+    body.get("properties_mode").and_then(Value::as_str) == Some("replace")
+}
+
+/// Makes a queued whole-properties update merge its properties instead.
+pub fn merge_properties(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+    if let Some(body) = body.as_object_mut()
+        && body.shift_remove("properties_mode").is_some()
+    {
+        conn.execute(
+            "UPDATE queue SET payload = ?2 WHERE id = ?1",
+            params![id, Value::Object(body.clone()).to_string()],
+        )?;
+    }
+    Ok(())
+}
+
+/// Moves a queued write onto another version (`queue-and-verdicts.md` 36,
+/// 42). The payload and the column both move, so the queue reports what was
+/// sent.
+pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
+    let mut payload: Value = serde_json::from_str(&payload_of(conn, id)?)?;
+    if let Some(body) = payload.as_object_mut() {
+        body.insert("version".into(), Value::from(version));
+    }
+    conn.execute(
+        "UPDATE queue SET payload = ?2, base_version = ?3 WHERE id = ?1",
+        params![id, payload.to_string(), version],
+    )?;
+    Ok(())
+}
+
+/// The edits of `subject` waiting behind `answered`, a create or an edit of
+/// the same row or edge, with the version each is based on, in the order they
+/// were queued: the ones an answer to it can move (`queue-and-verdicts.md`
+/// 36, 42).
+///
+/// Only edits queued after it, because one queued before was made without
+/// what it carried. Only edits never sent, because a sent body is fixed by
+/// the key it went under (3) and a changed one is refused as that key reused.
+/// And only edits still waiting: one the drain refused with what it waited on
+/// (16, 39) goes nowhere unless a caller releases it (27).
+pub fn edits_behind(
+    conn: &Connection,
+    answered: &QueuedWrite,
+    subject: &str,
+) -> Result<Vec<(String, Option<i64>)>, CoreError> {
+    let Some((kind, column)) = answered
+        .kind
+        .edit()
+        .and_then(|kind| Some((kind, kind.subject()?.column())))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut statement = conn.prepare(&format!(
+        "SELECT id, base_version FROM queue
+          WHERE kind = ?1 AND {column} = ?2 AND sent = 0
+            AND (verdict IS NULL OR verdict = ?3)
+            AND seq > (SELECT seq FROM queue WHERE id = ?4)
+          ORDER BY seq"
+    ))?;
+    let behind = statement
+        .query_map(
+            params![
+                kind.as_str(),
+                subject,
+                Verdict::Blocked.as_str(),
+                answered.id
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?
+        .collect::<Result<_, _>>()?;
+    Ok(behind)
+}
+
+/// Records what the copy held, for each property an edit carries, when the
+/// edit was made: what the edit was made against (`queue-and-verdicts.md`
+/// 42).
+pub fn record_read(conn: &Connection, id: &str, read: &Value) -> Result<(), CoreError> {
+    conn.execute(
+        "UPDATE queue SET read = ?2 WHERE id = ?1",
+        params![id, read.to_string()],
+    )?;
+    Ok(())
+}
+
+/// What an edit was made against, where it was recorded.
+pub fn read_of(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+    Ok(conn
+        .query_row("SELECT read FROM queue WHERE id = ?1", [id], |row| {
+            row.get::<_, Option<String>>(0)
+        })
+        .optional()?
+        .flatten())
+}
+
+/// Adds tags to the row the copy holds.
+pub fn add_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(), CoreError> {
+    for tag in tags {
+        conn.execute(
+            "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)",
+            params![item_id, tag],
+        )?;
+    }
+    Ok(())
+}
+
+/// Removes one tag from the row the copy holds.
+pub fn remove_tag(conn: &Connection, item_id: &str, tag: &str) -> Result<(), CoreError> {
+    conn.execute(
+        "DELETE FROM tags WHERE item_id = ?1 AND tag = ?2",
+        params![item_id, tag],
+    )?;
+    Ok(())
+}
+
+/// Replaces the tags on the row the copy holds.
+pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(), CoreError> {
+    conn.execute("DELETE FROM tags WHERE item_id = ?1", [item_id])?;
+    add_tags(conn, item_id, tags)
+}
+
+/// Moves a row to another lifecycle state.
+///
+/// The version is deliberately untouched: the server bumps `items.version`
+/// on a write to an item's fields and on nothing else, and a state change is
+/// not one (`device.md` 20, and `catch_up`'s version rule rests on it).
+pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
+    let changed = conn.execute(
+        "UPDATE items SET state = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, state.as_str(), now_iso()],
+    )?;
+    if changed > 0 && state == ItemState::Trashed {
+        // The bin is out of the local index, exactly as it is when the row
+        // arrives trashed from the server (`device.md` 33).
+        conn.execute(
+            "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
+            [id],
+        )?;
+    }
+    Ok(changed > 0)
+}
+
+/// One edge by id, or nothing if the copy does not hold it.
+pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
+    Ok(conn
+        .query_row(
+            "SELECT id, source_id, target_id, edge_type, properties, version, created_at, updated_at
+               FROM edges WHERE id = ?1",
+            [id],
+            |row| {
+                Ok(Edge {
+                    id: row.get(0)?,
+                    source_id: row.get(1)?,
+                    target_id: row.get(2)?,
+                    edge_type: row.get(3)?,
+                    properties: serde_json::from_str(&row.get::<_, String>(4)?)
+                        .unwrap_or_default(),
+                    version: row.get(5)?,
+                    created_at: row.get(6)?,
+                    updated_at: row.get(7)?,
+                })
+            },
+        )
+        .optional()?)
+}
+
+/// The create of this edge while the server has not taken it: unanswered, or
+/// blocked, for the reason `untaken_creates_for_item` gives. The only write
+/// an edit or a delete of the edge cannot go without; the writes to it ahead
+/// of one order it and do not refuse it (`queue-and-verdicts.md` 42).
+pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
+    Ok(waiting_writes_for_edge(conn, edge_id)?
+        .into_iter()
+        .filter(|row| row.kind == WriteKind::CreateEdge)
+        .map(|row| row.id)
+        .collect())
+}
+
 #[cfg(test)]
 pub(crate) mod testing {
     use rusqlite::Connection;
@@ -2415,7 +3188,7 @@ mod tests {
         // build cannot read correctly. The schema cannot refuse it, because
         // the same column carries the server's codes under `refused`, so the
         // reader does.
-        verdict_row("stray", "blocked", Some("resolver_missing")).unwrap();
+        verdict_row("stray", "blocked", Some("no_such_reason")).unwrap();
         assert!(matches!(queued_writes(&conn), Err(CoreError::Store(_))));
     }
 
@@ -2887,777 +3660,4 @@ mod tests {
         let conn = open(&path).unwrap();
         assert!(item_held(&conn, "n1").unwrap());
     }
-}
-
-/// The ceiling (`queue-and-verdicts.md` 25).
-///
-/// Written in three places, and deliberately: this constant is what the drain
-/// counts against, `schema.sql`'s `CHECK` is what outlives the process, and
-/// the CLI prints it as the denominator. The safety the duplication buys is
-/// one-sided — a ceiling raised above the schema's is refused by SQLite, and
-/// one lowered below it saturates quietly and the `CHECK` never fires. The
-/// lowered case is caught by `device/classification.test.ts › reaches the
-/// ceiling on the fifth refusal`, which counts the attempts rather than
-/// trusting either number.
-pub const CEILING: i64 = 5;
-
-/// The body a queued write will send. Not on `QueuedWrite`, which is the
-/// shape a caller is shown: the payload is the wire's, and a queue report
-/// that carried it would put the fields of every outstanding write into
-/// every listing of them.
-pub fn payload_of(conn: &Connection, id: &str) -> Result<String, CoreError> {
-    conn.query_row("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })
-    .optional()?
-    .ok_or_else(|| CoreError::Store(format!("queued write {id} has no payload")))
-}
-
-/// What the server said, as the queue records it.
-pub struct Answered<'a> {
-    pub verdict: Verdict,
-    pub reason: Option<&'a str>,
-    pub answer: Option<&'a str>,
-    pub conflicted_copy_id: Option<&'a str>,
-}
-
-/// Records that a write has gone out on the wire.
-pub fn mark_sent(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    conn.execute("UPDATE queue SET sent = 1 WHERE id = ?1", [id])?;
-    Ok(())
-}
-
-/// Writes a verdict onto a queued row.
-///
-/// The blocked reasons are checked here rather than by the schema, because
-/// `reason` also carries the server's own refusal codes under `refused`, and
-/// the schema cannot hold a copy of the server's error vocabulary without
-/// going stale.
-pub fn record_verdict(
-    conn: &Connection,
-    id: &str,
-    answered: &Answered<'_>,
-) -> Result<(), CoreError> {
-    let changed = conn.execute(
-        "UPDATE queue
-            SET verdict = ?2, reason = ?3, answer = ?4,
-                conflicted_copy_id = ?5, answered_at = ?6
-          WHERE id = ?1",
-        params![
-            id,
-            answered.verdict.as_str(),
-            answered.reason,
-            answered.answer,
-            answered.conflicted_copy_id,
-            now_iso(),
-        ],
-    )?;
-    if changed == 0 {
-        return Err(CoreError::Store(format!(
-            "no queued write {id} to answer; the row went while the drain was sending it"
-        )));
-    }
-    Ok(())
-}
-
-/// Counts one refusal against a row and answers with the new count.
-///
-/// Refusals, not attempts (`queue-and-verdicts.md` 25). The caller decides
-/// what the count means; this only records that the server refused.
-pub fn count_refusal(conn: &Connection, id: &str) -> Result<i64, CoreError> {
-    conn.execute(
-        "UPDATE queue SET refusals = MIN(refusals + 1, ?2) WHERE id = ?1",
-        params![id, CEILING],
-    )?;
-    conn.query_row("SELECT refusals FROM queue WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })
-    .optional()?
-    .ok_or_else(|| CoreError::Store(format!("no queued write {id} to count a refusal against")))
-}
-
-/// Parks every write the server has not answered, under one reason.
-///
-/// What a `401` does (`queue-and-verdicts.md` 20): every queued write carries
-/// the same credential, so a credential the server refused refuses all of
-/// them, and working through the rest of the queue would be spending requests
-/// to be told the same thing once per row.
-pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usize, CoreError> {
-    Ok(conn.execute(
-        "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
-          WHERE verdict IS NULL",
-        params![Verdict::Blocked.as_str(), reason.as_str(), now_iso()],
-    )?)
-}
-
-/// Returns the rows blocked for a reason that clears on its own to unanswered.
-pub fn unblock_self_clearing(conn: &Connection) -> Result<usize, CoreError> {
-    let clearing: Vec<&str> = BlockedReason::ALL
-        .into_iter()
-        .filter(|reason| reason.clears_itself())
-        .map(BlockedReason::as_str)
-        .collect();
-    let places = vec!["?"; clearing.len()].join(", ");
-    Ok(conn.execute(
-        &format!(
-            "UPDATE queue SET verdict = NULL, reason = NULL, answered_at = NULL
-              WHERE verdict = ? AND reason IN ({places})"
-        ),
-        params_from_iter(std::iter::once(Verdict::Blocked.as_str()).chain(clearing)),
-    )?)
-}
-
-/// Sends a blocked or dead row again, under a fresh key
-/// (`queue-and-verdicts.md` 27).
-///
-/// The spent key is kept rather than dropped: the server has answered under
-/// it, and a late answer arriving under a key nothing recognizes is
-/// indistinguishable from an answer to the new attempt.
-pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some((verdict, key, spent, sent)) = conn
-        .query_row(
-            "SELECT verdict, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
-            [id],
-            |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, i64>(3)? != 0,
-                ))
-            },
-        )
-        .optional()?
-    else {
-        return Err(CoreError::NotFound {
-            code: "queued_write_not_found".into(),
-            message: format!("{id} is not a write this queue holds"),
-        });
-    };
-    // The two terminal-until-released verdicts, and the third case: a row
-    // the drain refused because something it waits for was refused. That row
-    // was never sent, so releasing it cannot write twice — which is what this
-    // guard is for. An `accepted`, `merged` or `conflicted` row has been
-    // written and is never released.
-    //
-    // **`sent` is the test, not `depends_on`.** A row the *server* refused
-    // can carry a dependency too — queue a create, edit before the drain
-    // runs, and the update names the create — so releasing on a dependency
-    // alone clears a terminal refusal and sends the write a second time. A
-    // refusal that later stops applying would then land content the caller
-    // had watched disappear from their copy.
-    let verdict = verdict.as_deref().map(str::parse::<Verdict>).transpose()?;
-    let refused_by_dependency = verdict == Some(Verdict::Refused) && !sent;
-    if !matches!(verdict, Some(Verdict::Blocked | Verdict::Dead)) && !refused_by_dependency {
-        return Ok(false);
-    }
-    // Released, a row whose dependency was withdrawn would wait for a write
-    // the queue no longer holds, which a drain holds forever.
-    if refused_by_dependency && waits_for_withdrawn(conn, id)? {
-        return Ok(false);
-    }
-    let mut keys: Vec<String> = match spent {
-        Some(json) => serde_json::from_str(&json)?,
-        None => Vec::new(),
-    };
-    keys.push(key);
-    conn.execute(
-        "UPDATE queue
-            SET verdict = NULL, reason = NULL, answer = NULL,
-                conflicted_copy_id = NULL, answered_at = NULL,
-                refusals = 0, spent_keys = ?2, idempotency_key = ?3
-          WHERE id = ?1",
-        params![
-            id,
-            serde_json::to_string(&keys)?,
-            Uuid::now_v7().to_string()
-        ],
-    )?;
-    // And the writes this one refused by being refused itself
-    // (`queue-and-verdicts.md` 16). They were never sent and were never
-    // wrong; they were told the row they name would not exist. Releasing
-    // only the row they wait for would leave them `refused` forever: this
-    // door takes such a row on its own, but nobody would know to ask for it,
-    // so the caller would have released the create, watched it succeed, and
-    // had no way to send the update that was waiting on it.
-    for dependant in dependants_refused_with(conn, id)? {
-        release(conn, &dependant)?;
-    }
-    Ok(true)
-}
-
-/// The rows a drain refused because this one was refused.
-///
-/// Read from `depends_on` rather than from the reason text: the reason is a
-/// sentence for a person, and a set this door acts on has to be decided by
-/// the same field the drain decided it by.
-fn dependants_refused_with(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
-    Ok(queued_writes(conn)?
-        .into_iter()
-        .filter(|row| {
-            row.verdict == Some(Verdict::Refused) && row.depends_on.iter().any(|held| held == id)
-        })
-        .map(|row| row.id)
-        .collect())
-}
-
-/// Whether a row waits, itself or through rows refused unsent before it, for
-/// one the queue no longer holds. Clearing keeps every row a row refused
-/// unsent waits for, so for such a row the one way to lose a dependency is a
-/// withdraw, and the chain matters because a row refused for a row refused
-/// for a withdrawn one can land no more than its neighbor can.
-fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    Ok(conn.query_row(
-        "WITH RECURSIVE chain(id) AS (
-           SELECT ?1
-           UNION
-           SELECT named.value FROM queue, chain, json_each(queue.depends_on) AS named
-            WHERE queue.id = chain.id AND queue.verdict = ?2 AND queue.sent = 0
-         )
-         SELECT EXISTS (SELECT 1 FROM chain WHERE id NOT IN (SELECT id FROM queue))",
-        [id, Verdict::Refused.as_str()],
-        |row| row.get(0),
-    )?)
-}
-
-/// The writes held for `id` that never went out, and those held for them in
-/// turn: each names one of them among the writes it cannot go without
-/// (`queue-and-verdicts.md` 4) and has had no answer, or is blocked. The
-/// whole chain, because a write two steps behind a withdrawn one could no
-/// more land than the one between, and left unanswered it would wait on a
-/// row that clearing is free to take.
-pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
-    read_writes(
-        conn,
-        "WHERE id IN (
-           WITH RECURSIVE held(id) AS (
-             SELECT ?1
-             UNION
-             SELECT waiting.id FROM queue AS waiting, held, json_each(waiting.depends_on) AS named
-              WHERE named.value = held.id
-                AND waiting.sent = 0 AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
-           )
-           SELECT id FROM held WHERE id <> ?1
-         )",
-        [id, Verdict::Blocked.as_str()],
-    )
-}
-
-/// Takes a write out of the queue for good, and refuses unsent each write
-/// held for it (`queue-and-verdicts.md` 46).
-pub fn withdraw(
-    conn: &Connection,
-    row: &QueuedWrite,
-    held: &[QueuedWrite],
-) -> Result<(), CoreError> {
-    let reason = format!("the {} it waits for was withdrawn", row.kind);
-    for dependant in held {
-        record_verdict(
-            conn,
-            &dependant.id,
-            &Answered {
-                verdict: Verdict::Refused,
-                reason: Some(&reason),
-                answer: None,
-                conflicted_copy_id: None,
-            },
-        )?;
-    }
-    conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
-    Ok(())
-}
-
-/// Clears the rows the server has answered.
-///
-/// Without it the queue grows without bound: every write door reads the
-/// whole queue to find what a new write depends on, so a queue nobody clears
-/// makes every write slower forever. This is the caller `schema.sql` has in
-/// mind when it argues about what a foreign key would do to one clearing
-/// their own answered rows.
-///
-/// Only the four terminal verdicts. A `blocked` or `dead` row is one a
-/// caller may still release, and clearing it would take that away.
-///
-/// **Whether a caller can still act on the row is the test, on both sides of
-/// it.** A row is releasable when it is `blocked`, `dead`, or `refused`
-/// without having been sent — the three `release` takes — and a releasable
-/// row is never cleared. The dependency side is wider by one: a row is also
-/// kept while anything still unanswered names it, because an unanswered row
-/// has a verdict coming and may yet become one of those three.
-///
-/// Both halves go wrong the same way if the set is written as a list of
-/// verdicts instead: a refused-unsent row cleared although `release` accepts
-/// it, and a blocked row's create left unprotected, so that the release the
-/// caller is told to perform produces a row whose dependency cannot be
-/// found, which `readiness` reads as unanswered and holds forever against a
-/// write that no longer exists.
-///
-/// A row refused unsent because a write it waited for was withdrawn is
-/// cleared too, since it can never be released, and so is everything only it
-/// was keeping, a row refused unsent behind it included: each pass clears
-/// what the one before left nothing to keep.
-pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
-    let mut cleared = 0;
-    loop {
-        let pass = forget_answered_once(conn)?;
-        if pass == 0 {
-            return Ok(cleared);
-        }
-        cleared += pass;
-    }
-}
-
-fn forget_answered_once(conn: &Connection) -> Result<usize, CoreError> {
-    // Kept while a row with a verdict still to come, or one a caller may
-    // release, names it: clearing it would leave that row waiting on a write
-    // no drain can find.
-    let unreleasable = conn.execute(
-        "DELETE FROM queue
-          WHERE verdict = ?1 AND sent = 0
-            AND EXISTS (
-              SELECT 1 FROM json_each(queue.depends_on) AS named
-               WHERE named.value NOT IN (SELECT id FROM queue)
-            )
-            AND NOT EXISTS (
-              SELECT 1 FROM queue AS waiting, json_each(waiting.depends_on) AS named
-               WHERE named.value = queue.id
-                 AND (waiting.verdict IS NULL OR waiting.verdict IN (?2, ?3))
-            )",
-        [
-            Verdict::Refused.as_str(),
-            Verdict::Blocked.as_str(),
-            Verdict::Dead.as_str(),
-        ],
-    )?;
-    Ok(unreleasable
-        + conn.execute(
-            "DELETE FROM queue
-          WHERE verdict IN (:accepted, :merged, :conflicted, :refused)
-            AND NOT (verdict = :refused AND sent = 0)
-            AND NOT EXISTS (
-              SELECT 1 FROM queue AS waiting
-               WHERE (waiting.verdict IS NULL
-                      OR waiting.verdict IN (:blocked, :dead)
-                      OR (waiting.verdict = :refused AND waiting.sent = 0))
-                 AND waiting.depends_on LIKE '%' || queue.id || '%'
-            )",
-            named_params! {
-                ":accepted": Verdict::Accepted.as_str(),
-                ":merged": Verdict::Merged.as_str(),
-                ":conflicted": Verdict::Conflicted.as_str(),
-                ":refused": Verdict::Refused.as_str(),
-                ":blocked": Verdict::Blocked.as_str(),
-                ":dead": Verdict::Dead.as_str(),
-            },
-        )?)
-}
-
-/// Takes back every write to an edge that has not landed, for a folder giving
-/// way to the placement the server holds (`folders.md` 19).
-pub fn withdraw_edge_writes(conn: &Connection, edge_id: &str) -> Result<usize, CoreError> {
-    Ok(conn.execute(
-        "DELETE FROM queue
-          WHERE edge_id = :edge
-            AND (verdict IS NULL OR verdict IN (:blocked, :refused, :dead))",
-        named_params! {
-            ":edge": edge_id,
-            ":blocked": Verdict::Blocked.as_str(),
-            ":refused": Verdict::Refused.as_str(),
-            ":dead": Verdict::Dead.as_str(),
-        },
-    )?)
-}
-
-/// Drops a row the server holds nothing for, with its pin.
-///
-/// What reconciling a refused create means (`queue-and-verdicts.md` 12): the
-/// working copy minted the row locally and the server declined it, so there
-/// is nothing to reconcile it to and leaving it would be the copy reporting
-/// an item that exists nowhere.
-pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    unpin(conn, id)?;
-    conn.execute(
-        "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
-        [id],
-    )?;
-    conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    conn.execute(
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        [id],
-    )?;
-    Ok(())
-}
-
-/// Lays every write to an item that is still waiting back over the row as
-/// the server last sent it (`queue-and-verdicts.md` 35), whole fields in the
-/// order they were queued. Called after anything puts the server's row into
-/// the copy: an answer the drain adopts, a reconcile, an event, a hydration.
-/// The row is indexed as the type it is laid over as, since a waiting retype
-/// moves it to another.
-pub fn lay_waiting_writes_over(
-    conn: &Connection,
-    item_id: &str,
-    indexing: &dyn Fn(&str) -> Indexing,
-) -> Result<(), CoreError> {
-    let waiting = waiting_writes_for_item(conn, item_id)?;
-    if waiting.is_empty() {
-        return Ok(());
-    }
-    let Some(mut item) = items_by_ids(conn, std::slice::from_ref(&item_id.to_string()))?.pop()
-    else {
-        return Ok(());
-    };
-    let mut tags = item.tags.clone();
-    for row in waiting {
-        let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
-        let named_tags = || -> Vec<String> {
-            payload
-                .get("tags")
-                .and_then(Value::as_array)
-                .map(|tags| {
-                    tags.iter()
-                        .filter_map(|tag| tag.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        match row.kind {
-            WriteKind::UpdateItem => {
-                if let Some(Value::Object(properties)) = payload.get("properties") {
-                    // Only an edit that read the copy knows which properties
-                    // it cleared; one said to be read earlier is laid over.
-                    let read = match read_of(conn, &row.id)? {
-                        Some(read) if replaces_properties(&payload) => {
-                            serde_json::from_str::<Value>(&read)?
-                                .get("properties")
-                                .and_then(Value::as_object)
-                                .cloned()
-                        }
-                        _ => None,
-                    };
-                    if let Some(read) = read {
-                        lay_changes(&mut item.properties, properties, &read);
-                    } else {
-                        for (key, value) in properties {
-                            item.properties.insert(key.clone(), value.clone());
-                        }
-                    }
-                }
-                if let Some(Value::String(key)) = payload.get("source_id") {
-                    item.source_id = Some(key.clone());
-                }
-                if payload.get("retype") == Some(&Value::Bool(true))
-                    && let Some(Value::String(r#type)) = payload.get("type")
-                {
-                    item.r#type = r#type.clone();
-                }
-                if let Some(tier) = payload.get("tier").and_then(Value::as_str) {
-                    item.tier = Tier::parse_wire(Some(tier))?;
-                }
-            }
-            WriteKind::TransitionItem => {
-                if let Some(state) = payload.get("state").and_then(Value::as_str) {
-                    item.state = state.parse()?;
-                }
-            }
-            WriteKind::DeleteItem => item.state = ItemState::Trashed,
-            WriteKind::RestoreItem => item.state = ItemState::Active,
-            WriteKind::AddTag | WriteKind::MergeMetadata => {
-                for tag in named_tags() {
-                    if !tags.contains(&tag) {
-                        tags.push(tag);
-                    }
-                }
-            }
-            WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
-            WriteKind::ReplaceMetadata => tags = named_tags(),
-            WriteKind::CreateItem
-            | WriteKind::CreateEdge
-            | WriteKind::UpdateEdge
-            | WriteKind::DeleteEdge
-            | WriteKind::WriteExtension
-            | WriteKind::DeleteExtension
-            | WriteKind::UploadBlob => {}
-        }
-    }
-    tags.sort();
-    upsert_item(conn, &item.as_wire(), Some(&tags), &indexing(&item.r#type))
-}
-
-/// The same for an edge: an edit still waiting is laid back over the
-/// server's properties and ends, and a delete still waiting takes the edge
-/// out again.
-pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<(), CoreError> {
-    let waiting = waiting_writes_for_edge(conn, edge_id)?;
-    let Some(mut edge) = edge_by_id(conn, edge_id)? else {
-        return Ok(());
-    };
-    for row in waiting {
-        match row.kind {
-            WriteKind::UpdateEdge => {
-                let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
-                if let Some(Value::Object(properties)) = payload.get("properties") {
-                    for (key, value) in properties {
-                        edge.properties.insert(key.clone(), value.clone());
-                    }
-                }
-                if let Some(source) = payload.get("source_id").and_then(Value::as_str) {
-                    edge.source_id = source.to_string();
-                }
-                if let Some(target) = payload.get("target_id").and_then(Value::as_str) {
-                    edge.target_id = target.to_string();
-                }
-            }
-            WriteKind::DeleteEdge => {
-                delete_edge(conn, edge_id)?;
-                return Ok(());
-            }
-            _ => {}
-        }
-    }
-    upsert_edge(conn, &edge.as_wire())
-}
-
-/// Moves an edit behind an answer onto another version
-/// (`queue-and-verdicts.md` 36, 42), and drops from its body every property
-/// it carries at the value the copy held when it was made: no change of its
-/// own, and sent on another version it would assert a value this device
-/// read as newer than whatever another device wrote since. An edit whose
-/// reading was never recorded is moved as it stands.
-pub fn move_edit(
-    conn: &Connection,
-    id: &str,
-    version: i64,
-    onto: Option<&Map<String, Value>>,
-) -> Result<(), CoreError> {
-    if let Some(read) = read_of(conn, id)? {
-        let read: Value = serde_json::from_str(&read)?;
-        let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
-        let whole = replaces_properties(&body);
-        if let (Some(Value::Object(read)), Some(Value::Object(properties))) =
-            (read.get("properties").cloned(), body.get_mut("properties"))
-        {
-            if !whole {
-                properties.retain(|key, value| read.get(key) != Some(value));
-            } else if let Some(onto) = onto {
-                // Dropping one would clear it, so whole properties move as the
-                // answer's with what the edit changed laid over.
-                let mut moved = onto.clone();
-                lay_changes(&mut moved, properties, &read);
-                *properties = moved;
-                // Made against the answer now, so a later move reads its
-                // changes from there, not from what it first read.
-                record_read(conn, id, &serde_json::json!({ "properties": onto }))?;
-            }
-        }
-        conn.execute(
-            "UPDATE queue SET payload = ?2 WHERE id = ?1",
-            params![id, body.to_string()],
-        )?;
-    }
-    rebase(conn, id, version)
-}
-
-/// Lays what a whole-properties edit changed from what it read over a row's
-/// properties: a value it changed, a property it left out cleared, and every
-/// other the row's own.
-fn lay_changes(row: &mut Map<String, Value>, sent: &Map<String, Value>, read: &Map<String, Value>) {
-    for (key, was) in read {
-        match sent.get(key) {
-            Some(value) if value != was => {
-                row.insert(key.clone(), value.clone());
-            }
-            Some(_) => {}
-            None => {
-                row.shift_remove(key);
-            }
-        }
-    }
-    for (key, value) in sent {
-        if !read.contains_key(key) {
-            row.insert(key.clone(), value.clone());
-        }
-    }
-}
-
-/// Whether a queued update's body sends its properties whole.
-pub fn replaces_properties(body: &Value) -> bool {
-    body.get("properties_mode").and_then(Value::as_str) == Some("replace")
-}
-
-/// Makes a queued whole-properties update merge its properties instead.
-pub fn merge_properties(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    let mut body: Value = serde_json::from_str(&payload_of(conn, id)?)?;
-    if let Some(body) = body.as_object_mut()
-        && body.shift_remove("properties_mode").is_some()
-    {
-        conn.execute(
-            "UPDATE queue SET payload = ?2 WHERE id = ?1",
-            params![id, Value::Object(body.clone()).to_string()],
-        )?;
-    }
-    Ok(())
-}
-
-/// Moves a queued write onto another version (`queue-and-verdicts.md` 36,
-/// 42). The payload and the column both move, so the queue reports what was
-/// sent.
-pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
-    let mut payload: Value = serde_json::from_str(&payload_of(conn, id)?)?;
-    if let Some(body) = payload.as_object_mut() {
-        body.insert("version".into(), Value::from(version));
-    }
-    conn.execute(
-        "UPDATE queue SET payload = ?2, base_version = ?3 WHERE id = ?1",
-        params![id, payload.to_string(), version],
-    )?;
-    Ok(())
-}
-
-/// The edits of `subject` waiting behind `answered`, a create or an edit of
-/// the same row or edge, with the version each is based on, in the order they
-/// were queued: the ones an answer to it can move (`queue-and-verdicts.md`
-/// 36, 42).
-///
-/// Only edits queued after it, because one queued before was made without
-/// what it carried. Only edits never sent, because a sent body is fixed by
-/// the key it went under (3) and a changed one is refused as that key reused.
-/// And only edits still waiting: one the drain refused with what it waited on
-/// (16, 39) goes nowhere unless a caller releases it (27).
-pub fn edits_behind(
-    conn: &Connection,
-    answered: &QueuedWrite,
-    subject: &str,
-) -> Result<Vec<(String, Option<i64>)>, CoreError> {
-    let Some((kind, column)) = answered
-        .kind
-        .edit()
-        .and_then(|kind| Some((kind, kind.subject()?.column())))
-    else {
-        return Ok(Vec::new());
-    };
-    let mut statement = conn.prepare(&format!(
-        "SELECT id, base_version FROM queue
-          WHERE kind = ?1 AND {column} = ?2 AND sent = 0
-            AND (verdict IS NULL OR verdict = ?3)
-            AND seq > (SELECT seq FROM queue WHERE id = ?4)
-          ORDER BY seq"
-    ))?;
-    let behind = statement
-        .query_map(
-            params![
-                kind.as_str(),
-                subject,
-                Verdict::Blocked.as_str(),
-                answered.id
-            ],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?
-        .collect::<Result<_, _>>()?;
-    Ok(behind)
-}
-
-/// Records what the copy held, for each property an edit carries, when the
-/// edit was made: what the edit was made against (`queue-and-verdicts.md`
-/// 42).
-pub fn record_read(conn: &Connection, id: &str, read: &Value) -> Result<(), CoreError> {
-    conn.execute(
-        "UPDATE queue SET read = ?2 WHERE id = ?1",
-        params![id, read.to_string()],
-    )?;
-    Ok(())
-}
-
-/// What an edit was made against, where it was recorded.
-pub fn read_of(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
-    Ok(conn
-        .query_row("SELECT read FROM queue WHERE id = ?1", [id], |row| {
-            row.get::<_, Option<String>>(0)
-        })
-        .optional()?
-        .flatten())
-}
-
-/// Adds tags to the row the copy holds.
-pub fn add_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(), CoreError> {
-    for tag in tags {
-        conn.execute(
-            "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)",
-            params![item_id, tag],
-        )?;
-    }
-    Ok(())
-}
-
-/// Removes one tag from the row the copy holds.
-pub fn remove_tag(conn: &Connection, item_id: &str, tag: &str) -> Result<(), CoreError> {
-    conn.execute(
-        "DELETE FROM tags WHERE item_id = ?1 AND tag = ?2",
-        params![item_id, tag],
-    )?;
-    Ok(())
-}
-
-/// Replaces the tags on the row the copy holds.
-pub fn replace_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(), CoreError> {
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [item_id])?;
-    add_tags(conn, item_id, tags)
-}
-
-/// Moves a row to another lifecycle state.
-///
-/// The version is deliberately untouched: the server bumps `items.version`
-/// on a write to an item's fields and on nothing else, and a state change is
-/// not one (`device.md` 20, and `catch_up`'s version rule rests on it).
-pub fn set_item_state(conn: &Connection, id: &str, state: ItemState) -> Result<bool, CoreError> {
-    let changed = conn.execute(
-        "UPDATE items SET state = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, state.as_str(), now_iso()],
-    )?;
-    if changed > 0 && state == ItemState::Trashed {
-        // The bin is out of the local index, exactly as it is when the row
-        // arrives trashed from the server (`device.md` 33).
-        conn.execute(
-            "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
-            [id],
-        )?;
-    }
-    Ok(changed > 0)
-}
-
-/// One edge by id, or nothing if the copy does not hold it.
-pub fn edge_by_id(conn: &Connection, id: &str) -> Result<Option<Edge>, CoreError> {
-    Ok(conn
-        .query_row(
-            "SELECT id, source_id, target_id, edge_type, properties, version, created_at, updated_at
-               FROM edges WHERE id = ?1",
-            [id],
-            |row| {
-                Ok(Edge {
-                    id: row.get(0)?,
-                    source_id: row.get(1)?,
-                    target_id: row.get(2)?,
-                    edge_type: row.get(3)?,
-                    properties: serde_json::from_str(&row.get::<_, String>(4)?)
-                        .unwrap_or_default(),
-                    version: row.get(5)?,
-                    created_at: row.get(6)?,
-                    updated_at: row.get(7)?,
-                })
-            },
-        )
-        .optional()?)
-}
-
-/// The create of this edge while the server has not taken it: unanswered, or
-/// blocked, for the reason `untaken_creates_for_item` gives. The only write
-/// an edit or a delete of the edge cannot go without; the writes to it ahead
-/// of one order it and do not refuse it (`queue-and-verdicts.md` 42).
-pub fn untaken_create_for_edge(conn: &Connection, edge_id: &str) -> Result<Vec<String>, CoreError> {
-    Ok(waiting_writes_for_edge(conn, edge_id)?
-        .into_iter()
-        .filter(|row| row.kind == WriteKind::CreateEdge)
-        .map(|row| row.id)
-        .collect())
 }
