@@ -17,18 +17,18 @@ import {
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requirePermission,
-  requireAuth,
-  requireEdgePermission,
-  requireMetadataPermission,
-} from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import {
+  requireEdgeTypeSchemaWrite,
+  requireSchemaChange,
+  requireSchemaRegistration,
+} from "./_schema-reach.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -340,7 +340,7 @@ const deleteEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Delete an edge type",
   description:
-    "Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds \u2014 it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
+    "Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds \u2014 it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Edge type id.") }),
@@ -369,10 +369,14 @@ const deleteEdgeTypeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "edge_permission_denied",
+          ]),
         },
       },
-      description: "The credential does not hold `schema.write`",
+      description:
+        "`forbidden`: the credential does not hold `schema.write`. `edge_permission_denied`: the credential's edge map does not grant write on the id or on the type's `reverse_name`, which `details.edge_type` names.",
     },
     404: {
       content: {
@@ -407,7 +411,7 @@ export function edgeTypeRoutes(storage: Storage) {
     // is requestable but not part of the default consent bundle, so an app
     // that registers edge types asks for it explicitly. Mirrors
     // `POST /types`.
-    requireMetadataPermission(c, "edge_types", "write");
+    requireSchemaRegistration(c, "edge_types");
     const body = c.req.valid("json");
     // Check core-type protection first — matches the client-facing
     // expectation that "can't redefine a core type" is a 409, not
@@ -428,12 +432,9 @@ export function edgeTypeRoutes(storage: Storage) {
         "Invalid edge-type identifier",
       );
     }
-    // The metadata permission says the key may register; its edge map says
-    // which names. A reverse name is claimed as an id is, so it is asked too:
-    // otherwise one key could take a name another key was minted for.
-    for (const name of [body.id, body.reverse_name]) {
-      if (name !== undefined) requireEdgePermission(c, name, "write");
-    }
+    // A reverse name is claimed as an id is, so it is asked too: otherwise
+    // one key could take a name another key was minted for.
+    requireEdgeTypeSchemaWrite(c, "register", [body.id, body.reverse_name]);
     // A registered edge type does not inherit: pull the raw body and reject
     // `extends` explicitly. Zod's default .strip() would silently drop it —
     // that's lenient but invites clients to believe it worked.
@@ -493,7 +494,7 @@ export function edgeTypeRoutes(storage: Storage) {
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "schema.write");
+    requireSchemaChange(c);
     const { id } = c.req.valid("param");
     if (isCoreEdgeType(id)) {
       throw new MarfaError(
@@ -514,6 +515,7 @@ export function edgeTypeRoutes(storage: Storage) {
           `Edge type ${id} not found`,
         );
       }
+      requireEdgeTypeSchemaWrite(c, "change", [id, existing.reverse_name]);
       // The sibling's shape, asked the same way: one row of the type is
       // enough to know, so the query is bounded rather than a count.
       if (force !== "true") {

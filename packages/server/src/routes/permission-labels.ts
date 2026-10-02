@@ -24,7 +24,7 @@ import { isPermission } from "@withmarfa/shared";
  */
 export const PERMISSION_LABELS: Record<Permission, string> = {
   "webhooks.manage": "Set up webhooks that send your data elsewhere",
-  "schema.write": "Change and remove your type definitions",
+  "schema.write": "Replace and remove definitions of the types it can write",
   "config.manage": "Read and change the server configuration",
   "audit.read": "Read your security history",
   "items.purge": "Permanently delete things, past the trash",
@@ -43,7 +43,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
  */
 export const PERMISSION_SHORT: Record<Permission, string> = {
   "webhooks.manage": "set up webhooks that send your data elsewhere",
-  "schema.write": "change your type definitions",
+  "schema.write": "replace and remove definitions of the types it can write",
   "config.manage": "read and change the server configuration",
   "audit.read": "read your security history",
   "items.purge": "permanently delete things past the trash",

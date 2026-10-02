@@ -69,6 +69,7 @@ const ROUTE_STARTS: readonly RegExp[] = [
  */
 const GATE_HELPERS: Readonly<Record<string, string>> = {
   requireKeysMintOrOperator: "keys.mint",
+  requireSchemaChange: "schema.write",
 };
 
 function routeStart(line: string): string | null {
@@ -216,6 +217,7 @@ describe("every administrative door consults a permission", () => {
       "audit.ts": { "audit.read": 1 },
       "auth-pages.ts": { "grants.manage": 2 },
       "bulk.ts": { "items.purge": 1 },
+      "_schema-reach.ts": { "schema.write": 1 },
       "config.ts": { "config.manage": 2 },
       "edge-types.ts": { "schema.write": 1 },
       "items.ts": { "items.purge": 1 },

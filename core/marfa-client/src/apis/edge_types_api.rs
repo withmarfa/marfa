@@ -72,7 +72,7 @@ pub enum CreateEdgeTypeError {
 pub enum DeleteEdgeTypeError {
     Status400(models::ValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenRefusal),
+    Status403(models::EdgePermissionDeniedOrForbiddenRefusal),
     Status404(models::EdgeTypeNotFoundRefusal),
     Status409(models::EdgeTypeInUseRefusal),
     Status413(models::RequestTooLargeRefusal),
@@ -133,7 +133,7 @@ pub fn create_edge_type(
     }
 }
 
-/// Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds — it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
+/// Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds — it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
 pub fn delete_edge_type(
     configuration: &configuration::Configuration,
     params: DeleteEdgeTypeParams,

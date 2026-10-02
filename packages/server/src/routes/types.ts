@@ -18,12 +18,7 @@ import {
 import type { SchemaValidationIssue } from "@withmarfa/shared";
 import type { Context, Next } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireAuth,
-  requirePermission,
-  requireMetadataPermission,
-  requireTypeAccess,
-} from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { resolveRoles, resolveTypeSchema } from "../storage/policy.js";
 import type { TypeResolver } from "../storage/policy.js";
@@ -34,6 +29,11 @@ import {
 } from "../openapi.js";
 import { assertParentChain } from "./_parent-chain.js";
 import { writeTypesInTransaction } from "./_type-write.js";
+import {
+  requireSchemaChange,
+  requireSchemaRegistration,
+  requireTypeSchemaWrite,
+} from "./_schema-reach.js";
 import { MergePolicySchema, pageOf } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -415,7 +415,7 @@ const registerTypeRoute = createRoute({
   path: "/",
   middleware: [
     (c: Context<AppEnv>, next: Next) => {
-      requireMetadataPermission(c, "types", "write");
+      requireSchemaRegistration(c, "types");
       return next();
     },
   ] as const,
@@ -505,7 +505,7 @@ const updateTypeRoute = createRoute({
   middleware: [
     (c: Context<AppEnv>, next: Next) => {
       requireAuth(c);
-      requirePermission(c, "schema.write");
+      requireSchemaChange(c);
       // The path parameter, before the route's own validator has run: the
       // router matched this route on it, so it is present.
       const id = c.req.param("id") ?? "";
@@ -524,13 +524,14 @@ const updateTypeRoute = createRoute({
           `Type "${id}" not found`,
         );
       }
+      requireTypeSchemaWrite(c, "change", id);
       return next();
     },
   ] as const,
   tags: ["Types"],
   summary: "Update a registered type",
   description:
-    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
+    "Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -578,11 +579,15 @@ const updateTypeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden", "core_type_immutable"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "core_type_immutable",
+            "type_not_permitted",
+          ]),
         },
       },
       description:
-        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace.",
+        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier.",
     },
     404: {
       content: {
@@ -620,7 +625,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a registered type",
   description:
-    "Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).\n\nThe tombstones purges left under the type go with it.",
+    "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).\n\nThe tombstones purges left under the type go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -655,11 +660,15 @@ const deleteTypeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden", "core_type_immutable"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "core_type_immutable",
+            "type_not_permitted",
+          ]),
         },
       },
       description:
-        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove.",
+        "`forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove. `type_not_permitted`: the credential's type map does not grant write on the identifier.",
     },
     404: {
       content: {
@@ -750,10 +759,9 @@ export function typeRoutes(storage: Storage) {
             { namespace: tier },
           );
         }
-        // `metadata.types:write` says the key may register; its type map
-        // says which ids. Without the second, one key could take an id first
-        // and leave the key it was meant for unable to register it.
-        requireTypeAccess(c, body.id, "write");
+        // Asked whether or not the id is held, so one key cannot take an id
+        // first and leave the key it was meant for unable to register it.
+        requireTypeSchemaWrite(c, "register", body.id);
       }
       // Validated in the transaction that writes the type: the schema is
       // judged against its parent's fields and its parent chain, and a
@@ -850,7 +858,7 @@ export function typeRoutes(storage: Storage) {
 
   router.openapi(deleteTypeRoute, async (c) => {
     requireAuth(c);
-    requirePermission(c, "schema.write");
+    requireSchemaChange(c);
     const { id } = c.req.valid("param");
 
     if (isLockedPlatformType(id)) {
@@ -874,6 +882,7 @@ export function typeRoutes(storage: Storage) {
           `Type "${id}" not found`,
         );
       }
+      requireTypeSchemaWrite(c, "change", id);
 
       // Checked before the items refusal, and outside `force`, because this
       // one cannot be forced past. Reporting the forcible obstruction first

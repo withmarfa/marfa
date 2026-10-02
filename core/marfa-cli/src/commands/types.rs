@@ -15,16 +15,16 @@ pub enum TypesCommand {
         /// The type id, such as `core.note` or `user.recipe`.
         id: String,
     },
-    /// Register a type from its definition. Needs `metadata.types:write`.
+    /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
     Register(BodySource),
-    /// Replace a registered type's definition. Needs `schema.write`.
+    /// Replace a registered type's definition. Needs `schema.write` and write on the type in the key's type map.
     Update {
         /// The type id.
         id: String,
         #[command(flatten)]
         body: BodySource,
     },
-    /// Remove a registered type. Needs `schema.write`.
+    /// Remove a registered type. Needs `schema.write` and write on the type in the key's type map.
     Delete {
         /// The type id.
         id: String,
