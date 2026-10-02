@@ -9,7 +9,8 @@ import {
   trackItem,
   trackKey,
 } from "../../utils/setup.js";
-import { readTarGzEntry } from "../../utils/archive.js";
+import { readTarGzEntry, tarGz } from "../../utils/archive.js";
+import { v7 as uuidv7 } from "uuid";
 
 let client: MarfaClient;
 let operator: MarfaClient;
@@ -283,6 +284,69 @@ describe("who may read and upload a blob", () => {
     expect(Object.keys(manifest.blobs)).not.toContain(inEdge);
     expect(readTarGzEntry(archive.data, `blobs/${inProperty}`)).not.toBeNull();
     expect(readTarGzEntry(archive.data, `blobs/${inEdge}`)).toBeNull();
+  });
+
+  it("restores a row's reach only for the digests its archive line says lent", async () => {
+    const lent = new TextEncoder().encode(`restored and lent ${ctx.runId}`);
+    const unlent = new TextEncoder().encode(
+      `restored, lent nothing ${ctx.runId}`,
+    );
+    const lines = [
+      { id: uuidv7(), lends: true, data: lent },
+      { id: uuidv7(), lends: false, data: unlent },
+    ];
+    const archive = tarGz([
+      {
+        name: "manifest.json",
+        body: JSON.stringify({
+          version: 0,
+          format: "marfa-archive-v0",
+          created_at: new Date().toISOString(),
+          item_count: 2,
+          edge_count: 0,
+          blob_count: 2,
+          type_count: 0,
+          edge_type_count: 0,
+          blobs: Object.fromEntries(
+            lines.map((line) => [
+              sha256(line.data),
+              { mime_type: "text/plain", size_bytes: line.data.length },
+            ]),
+          ),
+        }),
+      },
+      {
+        name: "items.ndjson",
+        body: lines
+          .map((line) =>
+            JSON.stringify({
+              item: {
+                id: line.id,
+                type: "core.note",
+                source: ctx.source,
+                properties: { body: `![it](${sha256(line.data)})` },
+              },
+              metadata: { tags: [], extensions: {} },
+              ...(line.lends && { lending_blobs: [sha256(line.data)] }),
+            }),
+          )
+          .join("\n")
+          .concat("\n"),
+      },
+      ...lines.map((line) => ({
+        name: `blobs/${sha256(line.data)}`,
+        body: line.data,
+      })),
+      { name: "edges.ndjson", body: "" },
+      { name: "types.ndjson", body: "" },
+    ]);
+    const restored = await operator.restoreArchive(archive);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    for (const line of lines) trackItem(ctx, line.id);
+
+    expect(await readingDoors(client, sha256(lent))).toEqual(SERVED);
+    expect(await readingDoors(client, sha256(unlent))).toEqual(UNKNOWN);
+    expect((await operator.downloadBlob(sha256(unlent))).status).toBe(200);
   });
 
   it("refuses an upload to a key that may write no type, and takes one from a key that writes any", async () => {
