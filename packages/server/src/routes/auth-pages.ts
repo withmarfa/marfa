@@ -7,6 +7,7 @@ import { requirePermission, requireAuth } from "../middleware/auth.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
+import { writeItem } from "../storage/item-write.js";
 import type {
   DeviceCodeRefusal,
   MarfaAuth,
@@ -142,20 +143,26 @@ async function createUserAppGrant(
           ? (existing.properties.scopes as string[])
           : [];
       const mergedScopes = [...new Set([...standingScopes, ...scopes])];
-      const updated = await storage.items.update(existingItemId, {
-        properties: {
-          scopes: mergedScopes,
-          status: "active",
-          granted_at: now,
-          revoked_at: undefined,
+      const written = await writeItem(
+        storage,
+        { kind: "platform" },
+        {
+          op: "update",
+          id: existingItemId,
+          properties: {
+            scopes: mergedScopes,
+            status: "active",
+            granted_at: now,
+            revoked_at: undefined,
+          },
         },
-      });
-      if (!("error" in updated)) {
-        const metadata = await storage.metadata.get(updated.id);
+      );
+      if (written.outcome === "updated") {
+        const updated = written.item;
         await publish({
           type: "updated",
           item: updated,
-          metadata,
+          metadata: written.metadata,
         });
         return {
           id: updated.id,
@@ -169,22 +176,26 @@ async function createUserAppGrant(
   // First-time consent: insert a fresh row. No tier named: `tier` is a
   // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
   // writer of one leaves it to the store the way `POST /items` does.
-  const item = await storage.items.create({
-    type: "system.connection",
-    state: "active",
-    properties: {
-      kind: "app",
-      client_id: clientId,
-      // Store the consenting auth_user id so the revoke cascade
-      // (`revokeTokensForGrant(clientId, userId)`) can find the user.
-      user_id: consentingUser.id,
-      scopes,
-      status: "active",
-      granted_at: now,
+  const { item, metadata } = await writeItem(
+    storage,
+    { kind: "platform" },
+    {
+      op: "create",
+      type: "system.connection",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: clientId,
+        // Store the consenting auth_user id so the revoke cascade
+        // (`revokeTokensForGrant(clientId, userId)`) can find the user.
+        user_id: consentingUser.id,
+        scopes,
+        status: "active",
+        granted_at: now,
+      },
+      source,
     },
-    source,
-  });
-  const metadata = await storage.metadata.get(item.id);
+  );
   await publish({ type: "created", item, metadata });
   return { id: item.id, created: true, scopes };
 }

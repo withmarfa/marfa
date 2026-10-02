@@ -36,27 +36,16 @@ import {
   generateId,
   isValidTimestamp,
   isValidTypeIdentifier,
-  validateProperties,
-  getTypeSchema,
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type { EnforcementSettings, Item, Metadata } from "@withmarfa/shared";
-import {
-  mergeUpdateProperties,
-  resolveIncomingProperties,
-} from "../storage/merge-properties.js";
+import type { ApiKey, Item, Metadata } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
   requireAuth,
-  requireTypeAccess,
-  requireResolvedRowWrite,
-  mayReadRow,
-  typeReader,
-  requireEdgePermission,
+  checkTypeAccess,
   mayWriteReserved,
-  requireDeclaredTypeMatches,
   itemProvenanceSource,
   getTypeFilter,
   computeTypeFilter,
@@ -66,16 +55,15 @@ import {
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
-import { baseVersion } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { sourceAllowlistRefusal } from "./_source-allowlist.js";
-import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
+import { refusedRowId, writeItem } from "../storage/item-write.js";
+import type { ItemWriteResult } from "../storage/item-write.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { publish } from "../pubsub.js";
-import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
+import { announceInlineEdges } from "./_edges-inline.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
-import { assertTierApplicable } from "./_tier-rules.js";
 import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
@@ -427,8 +415,6 @@ const bulkActionCancelRoute = createRoute({
 // Helpers
 // ---------------------------------------------------------------------------
 
-type CreateInput = Parameters<Storage["items"]["create"]>[0];
-
 /** One entry of the response array. This is the wire shape — it is handed
  *  to `c.json` as-is, and a response is documented rather than validated,
  *  so anything added here ships. */
@@ -458,720 +444,128 @@ interface BulkItemResult {
 interface ProcessedBulkItem {
   result: BulkItemResult;
   item?: Item;
+  /** The entry's inline-edge changes, announced once its write commits. */
+  edges?: InlineEdgeChanges;
+}
+
+function erroredEntry(
+  index: number,
+  err: MarfaError,
+  id: string | undefined,
+): ProcessedBulkItem {
+  return {
+    result: {
+      index,
+      outcome: "errored",
+      ...(id !== undefined && { id }),
+      error: {
+        code: err.code,
+        message: err.message,
+        ...(err.details && { details: err.details }),
+      },
+    },
+  };
 }
 
 /**
- * Apply inline edges replace-all-for-specified-types style. Any edge_type
- * in the map wipes existing outbound edges of that type from `itemId`,
- * then creates edges to each listed target. Empty arrays delete all edges
- * of that type. Unmentioned types are untouched. Matches PATCH /items/{id}
- * edge semantics.
- */
-// applyInlineEdges lives in _edges-inline.ts (shared with the natural-key
-// upsert short-circuit on POST /items).
-
-/**
- * Process a single bulk-upsert input. Caller decides the transaction
- * envelope (one-big-tx for atomic mode, per-call for best-effort mode).
+ * One bulk entry, through the item write that resolves, gates and writes it
+ * in one transaction: nested in the page's in atomic mode, its own in
+ * best-effort mode, so an entry reported `errored` has written nothing.
  */
 async function processBulkItem(
   storage: Storage,
   raw: z.infer<typeof BulkInputItemSchema>,
   index: number,
   options: {
+    key: ApiKey;
     mode: "upsert" | "create_only";
-    /**
-     * The source an entry's row is keyed by and stamped with, given the one
-     * it names and the entry's type: `itemProvenanceSource` over the
-     * caller's credential, then the type's source allow-list. Throws the
-     * entry's refusal for a source the credential does not claim or the
-     * list excludes.
-     */
-    resolveSource: (
-      named: string | undefined,
-      type: string,
-    ) => string | undefined;
-    /** The caller's proof of holding the bytes a digest names, which a
-     *  digest its entries carry needs to lend (`blobProof`). */
     blobProof: (hash: string) => Promise<boolean>;
     /**
-     * Whether the caller has already opened the batch transaction (atomic
-     * mode) or runs each item bare (best-effort mode). `applyInlineEdges`
-     * deletes then validates then recreates and relies on a transaction to
-     * roll the deletes back when validation rejects the set. In atomic mode
-     * the outer `runInTransaction` covers that; in best-effort mode this
-     * function opens a per-item transaction around the edge reconciliation so
-     * a rejected set doesn't strand the deletes. The transaction wrapper is
-     * NOT reentrant on SQLite, so it must only ever be opened on the
-     * best-effort path — never nested inside the atomic outer transaction.
-     */
-    atomic: boolean;
-    /**
-     * Opt-in re-typing on the update half of an upsert.
-     *
-     * Off by default, and deliberately not inferred from a differing
-     * type: the fleet declares a type on nearly every write, so inferring
-     * would move a corpus on somebody's ordinary sync bug. When on, an
-     * entry that resolves a row of another type moves that row instead of
-     * being refused — the operation `requireDeclaredTypeMatches` says a
-     * caller meaning to move a corpus has.
-     *
-     * Per batch rather than per entry, because the caller asking for it
-     * is answering one question about one corpus rather than making a
-     * judgment per record.
+     * Opt-in re-typing on the update half of an upsert, per batch. Never
+     * inferred from a differing type: the fleet declares one on nearly
+     * every write, so inferring would move a corpus on an ordinary sync bug.
      */
     retype: boolean;
-    /**
-     * Per-item write authorization. Mirrors the single-item `POST /items`
-     * gate (`requireTypeAccess(c, type, "write")`): the credential must hold
-     * write on the item's type, and nothing bypasses that. Throws
-     * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
-     * outcome in best-effort mode and aborts the batch in atomic mode.
-     *
-     * Takes the whole item rather than its type so both call sites stay
-     * covered by construction rather than by remembering.
-     *
-     * Authorizes the *claim*, which is the whole story only on the
-     * create path, where the row that lands is the one the entry
-     * describes. An update is authorized by `checkUpdate` instead.
-     */
-    checkWrite: (raw: { type: string; properties?: unknown }) => void;
-    /**
-     * Authorization for the update half of an upsert, against the row
-     * being overwritten rather than the entry describing it.
-     *
-     * An entry that carries an `id` addresses a row directly, and so
-     * does one that carries a natural key: neither resolution consults
-     * the entry's `type`, so the write lands on whatever type that row
-     * already is. Authorizing the claim therefore checks a type nothing
-     * is about to be written to: naming a type the credential does hold
-     * write on admits an update to a row of any other type, and skips
-     * every gate keyed on the real one. `PATCH /items/{id}` accepts a
-     * `type` too, but never authorizes against it — there it is checked
-     * for agreement with the row and otherwise ignored, which is what
-     * makes the doors agree.
-     *
-     * Authorizing against the row closes the escalation. It does not make
-     * the entry's `type` meaningful, and on its own it would let a claim
-     * that disagrees with the row be merged in regardless — so the caller
-     * is separately held to the type it named, by
-     * `requireDeclaredTypeMatches` at the call site below.
-     */
-    checkUpdate: (
-      existing: Item,
-      raw: { properties?: Record<string, unknown> },
-    ) => void;
-    /**
-     * Whether the credential may read a row an entry resolved.
-     *
-     * A key learns nothing about a row it may not read: an entry whose
-     * natural key a row of such a type holds is told the key is taken, and
-     * not the row's id. `checkUpdate` refuses such a row without naming it;
-     * this is for the answers that are not refusals.
-     */
-    mayRead: (existing: Item) => boolean;
-    /**
-     * The edge half of the dual gate, mirroring `requireEdgePermission` on
-     * `POST /edges` and on `POST /items` with an inline `edges` payload.
-     * Edge writes need write on the source item's type AND on the edge
-     * type; `checkWrite` above is only the first of those, so without this
-     * a credential refused an edge on the direct routes could create the
-     * same edge here — and clear existing ones, since an empty target list
-     * is a delete instruction.
-     */
-    checkEdgeWrite: (edgeType: string) => void;
-    /** Whether the credential may read a type: an inline edge's target's,
-     *  or the one the snapshot a stale entry names was written under. */
-    mayReadType: (type: string) => boolean;
-    /**
-     * Where this item's inline-edge changes go, for the caller to
-     * announce once its transaction has committed. A callback rather
-     * than a return value because the edges are written several layers
-     * below the result this function reports.
-     */
-    recordEdgeChanges: (changes: InlineEdgeChanges) => void;
-    /**
-     * The instance's enforcement levers, resolved once for the batch.
-     *
-     * Read by the caller rather than per entry: the configuration is one
-     * row, a page carries up to five thousand entries, and the answer
-     * cannot change inside a batch.
-     */
-    enforcement: EnforcementSettings;
   },
 ): Promise<ProcessedBulkItem> {
   if (!isValidTypeIdentifier(raw.type)) {
-    return {
-      result: {
-        index,
-        outcome: "errored",
-        error: {
-          code: ErrorCode.VALIDATION_ERROR,
-          message: `Invalid type identifier: ${raw.type}`,
-        },
-      },
-    };
-  }
-
-  const {
-    mode,
-    resolveSource,
-    blobProof,
-    atomic,
-    retype,
-    checkWrite,
-    checkUpdate,
-    mayRead,
-    checkEdgeWrite,
-    mayReadType,
-    recordEdgeChanges,
-  } = options;
-
-  // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
-  // recreates and needs a transaction so a validation failure rolls the
-  // deletes back. Atomic mode already runs inside the outer batch
-  // transaction; best-effort mode runs each item bare, so wrap the edge step
-  // here. The SQLite transaction wrapper is not reentrant — only open one on
-  // the best-effort path.
-  const reconcileEdges = async (
-    id: string,
-    edgeSet: Record<string, string[]>,
-  ): Promise<void> => {
-    // Handed to the caller rather than announced here. In atomic mode
-    // this runs inside the batch transaction, so a publish from here
-    // would describe edges a later item's failure then rolls back.
-    recordEdgeChanges(
-      atomic
-        ? await applyInlineEdges(
-            storage,
-            id,
-            edgeSet,
-            checkEdgeWrite,
-            mayReadType,
-          )
-        : await storage.runInTransaction(() =>
-            applyInlineEdges(storage, id, edgeSet, checkEdgeWrite, mayReadType),
-          ),
+    return erroredEntry(
+      index,
+      new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Invalid type identifier: ${raw.type}`,
+      ),
+      undefined,
     );
-  };
-
-  // Resolved before the natural-key lookup below, which runs under it, and
-  // beside the write gate, because both are verdicts on what the entry asks
-  // for rather than on the row it lands on.
-  let stampedSource: string | undefined;
+  }
+  let result: ItemWriteResult;
   try {
-    checkWrite(raw);
-    stampedSource = resolveSource(raw.source, raw.type);
-  } catch (err) {
-    if (isEntryVerdict(err)) {
-      return {
-        result: {
-          index,
-          outcome: "errored",
-          error: {
-            code: err.code,
-            message: err.message,
-            ...(err.details && { details: err.details }),
-          },
-        },
-      };
-    }
-    throw err;
-  }
-
-  // What a caller may *send*, which is this door's question rather than the
-  // store's: a hundred and one copies of one tag projects to a single tag, so
-  // the store would accept it and should. The same check the single-item
-  // create runs, and it has to be here because the create arm below writes
-  // tags through `storage.items.create` — the archive restore's writer, left
-  // unbounded on purpose so an archive of rows written before this rule
-  // existed stays restorable.
-  if (raw.tags && raw.tags.length > MAX_TAGS_PER_ITEM) {
-    return {
-      result: {
+    result = await writeItem(
+      storage,
+      { kind: "credential", key: options.key },
+      {
+        op: "put",
+        door: options.mode === "upsert" ? "bulk_upsert" : "bulk_create_only",
         index,
-        outcome: "errored",
-        ...(raw.id !== undefined && { id: raw.id }),
-        error: {
-          code: ErrorCode.VALIDATION_ERROR,
-          message: `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
-        },
-      },
-    };
-  }
-
-  const sourceId = raw.source_id;
-
-  let existing: Item | null = null;
-  let matchedBy: "source_id" | "id" | null = null;
-  if (stampedSource && sourceId) {
-    // Trashed rows included, as `POST /items` looks the key up. Hiding them
-    // sends an entry naming a trashed row's key to the create below, which
-    // the store refuses as a duplicate, and under the default `atomic` one
-    // deleted row rolls back every page that re-syncs it.
-    existing = await storage.items.findBySourceIdIncludingTrashed(
-      stampedSource,
-      sourceId,
-    );
-    if (existing) matchedBy = "source_id";
-  }
-  // Fall back to primary-id lookup when no (source, source_id) match was
-  // found AND the caller supplied an id. This is the path offline-first
-  // clients take: they assign UUIDs locally and expect
-  // `mode: upsert` to update by id when the row already exists
-  // server-side (e.g. migrating a local-mode Notes store that was
-  // partially synced earlier). Without this fallback the code below
-  // would fall through to `storage.items.create(...)`, which trips a
-  // unique-constraint violation and surfaces as an opaque 500.
-  if (!existing && raw.id !== undefined) {
-    // `create_only` decides on presence, not on state. A repeat landing
-    // on a row the user has since trashed is still a repeat, and hiding
-    // the row here sends it to `create`, which trips the primary key and
-    // — since `atomic` defaults to true — rolls the whole batch back for
-    // a write the server already performed. `upsert` keeps the narrower
-    // lookup: there the match is an instruction to write, and a trashed
-    // row is not something a re-sync silently edits.
-    existing =
-      mode === "create_only"
-        ? await storage.items.getIncludingTrashed(raw.id)
-        : await storage.items.get(raw.id);
-    // Under `upsert`, a row the key may not read goes on to the create's
-    // `conflict`, as `POST /items` answers it, whatever state the row is in.
-    if (mode === "upsert" && existing && !mayRead(existing)) existing = null;
-    if (existing) matchedBy = "id";
-  }
-
-  // create_only: existing match → skipped. No writes. The id is named
-  // where the entry named it, or where its key may read the row; otherwise
-  // the entry learns only that its key is taken.
-  if (existing && mode === "create_only") {
-    return {
-      result: {
-        index,
-        outcome: "skipped",
-        ...((matchedBy === "id" || mayRead(existing)) && { id: existing.id }),
-        reason: matchedBy === "id" ? "duplicate_id" : "duplicate_source",
-      },
-    };
-  }
-
-  // **A natural key resolving a trashed row is acknowledged, not written**,
-  // as `POST /items` acknowledges it: the person deleted the row, and a
-  // re-sync reviving it would overturn that silently. The id fallback above
-  // reads live rows only in this mode, so only the natural key lands here.
-  // Gated as the single door gates it, on the row's type, before the entry
-  // discloses the row's id.
-  if (existing?.state === "trashed") {
-    try {
-      checkUpdate(existing, { properties: raw.properties });
-      if (!retype) requireDeclaredTypeMatches(raw.type, existing);
-    } catch (err) {
-      if (isEntryVerdict(err)) {
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            error: {
-              code: err.code,
-              message: err.message,
-              ...(err.details && { details: err.details }),
-            },
-          },
-        };
-      }
-      throw err;
-    }
-    return {
-      result: { index, outcome: "skipped", id: existing.id, reason: "trashed" },
-    };
-  }
-
-  // upsert + existing: update properties/tier/occurred_at in place,
-  // optionally reconciling edges.
-  if (existing) {
-    // Authorize against the row about to be overwritten. The entry's own
-    // `type` is not what is being written — it describes a create that is
-    // no longer happening — so it is checked for agreement rather than
-    // used. Refused apart from the checks after it, and without the row's
-    // id: a key that may not write the row learns only that its key is
-    // taken.
-    try {
-      checkUpdate(existing, { properties: raw.properties });
-    } catch (err) {
-      if (isEntryVerdict(err)) {
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            error: {
-              code: err.code,
-              message: err.message,
-              ...(err.details && { details: err.details }),
-            },
-          },
-        };
-      }
-      throw err;
-    }
-    try {
-      // Both resolutions above land here, and neither used the entry's
-      // `type` to get here: the natural key ignores it, and the id
-      // fallback ignores it too. Without this, declaring one type and
-      // resolving another would merge silently, per entry, inside a page
-      // of thousands. Same guard the single-item door runs.
-      //
-      // Blast radius differs from the single-item doors and it is worth
-      // knowing which mode you are in. `atomic` defaults to true, so one
-      // refused entry rolls the page back as `bulk_atomic_rollback`
-      // carrying this refusal in `details.code`, at its `409`.
-      //
-      // **Which code depends on which resolution got here.** An entry the
-      // natural key resolved named no id, so the declaration is the
-      // mistake and the code is `type_mismatch`. One the id fallback
-      // resolved minted that id, and the id is taken by a row it is not
-      // describing — the same mistake `POST /items` and `POST /edges`
-      // answer `id_reused` for, so this door answers it too rather than
-      // making the code depend on how many entries the caller batched.
-      if (!(retype && raw.type !== existing.type)) {
-        if (matchedBy === "id" && raw.type !== existing.type) {
-          throw new MarfaError(
-            ErrorCode.ID_REUSED,
-            `Item id ${existing.id} already names an item of type "${existing.type}", not "${raw.type}"`,
-            {
-              existing_id: existing.id,
-              differs: ["type"],
-              declared_type: raw.type,
-              actual_type: existing.type,
-            },
-          );
-        }
-        requireDeclaredTypeMatches(raw.type, existing);
-      }
-      // A re-type needs write on the type being entered as well as the
-      // one being left, and both are already held: `checkUpdate` above
-      // covers the row's own type, and every entry's declared type is
-      // authorized by the `checkWrite` at the top of this function,
-      // before resolution, so asking again here could refuse nothing. The
-      // test pins the outcome rather than a call site, so the guarantee
-      // survives that gate moving.
-    } catch (err) {
-      if (isEntryVerdict(err)) {
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            id: existing.id,
-            error: {
-              code: err.code,
-              message: err.message,
-              ...(err.details && { details: err.details }),
-            },
-          },
-        };
-      }
-      throw err;
-    }
-
-    // The type the row ends up as. Without a re-type that is the
-    // resolved row's own, never the entry's claim; with one it is the
-    // entry's, and everything judged below has to be judged against the
-    // destination rather than the origin — validating a move against the
-    // type being left would admit one whose result the destination calls
-    // invalid, which is the whole hazard of moving a corpus.
-    const resultingType =
-      retype && raw.type !== existing.type ? raw.type : existing.type;
-    const isMove = resultingType !== existing.type;
-    // Refused as `PATCH /items/{id}` and a create refuse it, before the
-    // properties are judged against a schema the destination does not have.
-    if (isMove && getTypeSchema(resultingType) === undefined) {
-      return {
-        result: {
-          index,
-          outcome: "errored",
-          id: existing.id,
-          error: {
-            code: ErrorCode.UNKNOWN_TYPE,
-            message: `Unknown type: ${resultingType}. Register it via POST /types before moving items into it.`,
-            details: { type: resultingType },
-          },
-        },
-      };
-    }
-    if (raw.properties !== undefined) {
-      // The same lever the create branch asks a few lines down, asked of
-      // the update half for the same reason: this is one door, and a
-      // door that refused an undeclared property on the rows it creates
-      // and accepted it on the rows it updates would be the defect
-      // restated rather than closed. `PATCH /items/{id}`, which is this
-      // branch reached singly, asks it of the same input.
-      const undeclaredOnUpdate = undeclaredPropertyRefusal(
-        options.enforcement,
-        resultingType,
-        raw.properties,
-        { index, item_id: existing.id },
-      );
-      if (undeclaredOnUpdate) {
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            id: existing.id,
-            error: {
-              code: undeclaredOnUpdate.code,
-              message: undeclaredOnUpdate.message,
-              ...(undeclaredOnUpdate.details && {
-                details: undeclaredOnUpdate.details,
-              }),
-            },
-          },
-        };
-      }
-    }
-    // Both arms, not only the move. Without it on a same-type update this
-    // door stores the number 12345 into `core.note.body`, a required
-    // string, and reports the entry as `updated`, while
-    // `PATCH /items/{id}` refuses the identical payload. The row is then
-    // invalid against its own type for every reader that trusts the
-    // declared shape because the server enforced it, and this is the door
-    // built for volume.
-    //
-    // A move cannot go without it either, for its own reason: the
-    // destination may require fields the row has never carried, and its
-    // field types may not accept what the old properties hold.
-    //
-    // Judged on the properties the store is about to write, through the
-    // same helper it merges with, so this predicts the write rather than
-    // approximating it — and against the type the row ends up as, because
-    // judging a move against the type being left would admit one whose
-    // result the destination calls invalid.
-    //
-    // At the current version only, as `PATCH /items/{id}` judges it. A stale
-    // entry is merged against its ancestor, and the store judges that
-    // result: laid over the current row instead, a `replace` leaving out a
-    // field the other writer changed since reads as a dropped field, and the
-    // collision the store would answer is refused as invalid properties.
-    const stale = raw.version !== undefined && raw.version !== existing.version;
-    if (!stale && (isMove || raw.properties !== undefined)) {
-      const merged = mergeUpdateProperties(
-        existing.properties,
-        // Through `resolveIncomingProperties` rather than the raw payload,
-        // because that is the first thing the store does with it: it drops a
-        // `null` on any field the type does not require, so a body clearing an
-        // optional field writes nothing for it. Judging the raw payload
-        // would validate a row carrying that `null` while the store keeps
-        // the stored value — which is exactly the shape a connector's
-        // re-sync sends, and it is the difference between predicting the
-        // write and approximating it. `existing.type` rather than the destination for
-        // the same reason: the store resolves against the row's own type.
-        resolveIncomingProperties(existing.type, raw.properties) ?? {},
-        raw.properties_mode ?? "merge",
-      );
-      // A move reaching here has a registered destination. A same-type
-      // update cannot refuse the row's own type for being unregistered
-      // without refusing every write to a type whose schema this request's
-      // registry does not carry, so it asks first, the same guard the
-      // single-item door runs.
-      if (isMove || getTypeSchema(resultingType) !== undefined) {
-        const validation = validateProperties(resultingType, merged);
-        if (!validation.success) {
-          // Named, not counted, and not a reason to abandon the rest — the
-          // point of moving a corpus per item is that some of it cannot go,
-          // and the point of validating an ordinary update is that the one
-          // bad record is identifiable.
-          const detail = validation.errors
-            .map((e) => `${e.field}: ${e.message}`)
-            .join("; ");
-          return {
-            result: {
-              index,
-              outcome: "errored",
-              id: existing.id,
-              error: {
-                code: ErrorCode.INVALID_PROPERTIES,
-                message: isMove
-                  ? `Cannot move item to "${resultingType}": ${detail}`
-                  : `Invalid properties: ${detail}`,
-              },
-            },
-          };
-        }
-      }
-    }
-    assertTierApplicable(resultingType, raw.tier);
-    let updated: Awaited<ReturnType<typeof storage.items.update>>;
-    try {
-      updated = await storage.items.update(existing.id, {
-        blob_proof: blobProof,
-        properties: raw.properties,
+        type: raw.type,
+        ...(raw.properties !== undefined && { properties: raw.properties }),
         ...(raw.properties_mode !== undefined && {
           properties_mode: raw.properties_mode,
         }),
-        ...(resultingType === existing.type ? {} : { type: resultingType }),
-        tier: raw.tier,
-        occurred_at: raw.occurred_at,
-        ...baseVersion(raw.version, mayReadType),
-      });
-    } catch (err) {
-      if (isEntryVerdict(err)) {
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            id: existing.id,
-            error: {
-              code: err.code,
-              message: err.message,
-              ...(err.details && { details: err.details }),
-            },
-          },
-        };
-      }
-      throw err;
-    }
-    if ("error" in updated) {
-      // Reachable only for an entry that named a version. The message comes
-      // off the store's own refusal rather than being written here, because
-      // the two codes it can carry say different things: one is a stale
-      // version, the other a base version no snapshot still covers.
-      return {
-        result: {
-          index,
-          outcome: "errored",
-          id: existing.id,
-          error: {
-            code: updated.error.code,
-            message: updated.error.message,
-          },
-        },
-      };
-    }
-
-    if (raw.tags) {
-      await storage.metadata.set(existing.id, raw.tags);
-    }
-    if (raw.edges) {
-      // Inline-edge reconciliation can reject the proposed set (cardinality,
-      // type constraint, cycle). Surface it as a per-item `errored` outcome
-      // so best-effort mode reports it per item and atomic mode rolls the
-      // whole batch back via `bulk_atomic_rollback` — matching the create
-      // branch below.
-      try {
-        await reconcileEdges(existing.id, raw.edges);
-      } catch (err) {
-        if (isEntryVerdict(err)) {
-          return {
-            result: {
-              index,
-              outcome: "errored",
-              id: existing.id,
-              error: {
-                code: err.code,
-                message: err.message,
-                ...(err.details && { details: err.details }),
-              },
-            },
-          };
-        }
-        throw err;
-      }
-    }
-
-    return {
-      result: { index, outcome: "updated", id: updated.id },
-      item: updated,
-    };
-  }
-
-  // No match → create, under the source resolved above.
-  try {
-    assertTierApplicable(raw.type, raw.tier);
-    // The same question `POST /items` asks, and it has to be asked here for
-    // the same reason: a create is not a transition, so it reaches none of
-    // the graph, and a membership test against the universal state list is
-    // weaker than the one that matters. `trashed` is a valid state and is
-    // not in the `system.*` lifecycle at all, so a create naming it would put
-    // a `system.connection` in a state no transition can produce and none can
-    // leave, through this door, while the single-item door beside it refused.
-    //
-    // No credential reaches that today — the fence admits the operator key
-    // alone and an operator key holds no type permissions — so nothing
-    // exercises this branch, which is exactly the condition under which a
-    // guard rots. It is here because the door must refuse what the graph
-    // would have, not because a caller is currently able to ask.
-    //
-    // In the route rather than in `storage.items.create`, matching the
-    // sibling: the store's `create` is also the archive restore's writer, and
-    // an archive is a faithful record of rows written before this rule
-    // existed. Tightening the store would make those unrestorable.
-    if (raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
-      const stateError = validateTransition(
-        raw.type,
-        SYSTEM_DEFAULT_STATE,
-        raw.state,
-      );
-      if (stateError) {
-        throw new MarfaError(ErrorCode.VALIDATION_ERROR, stateError);
-      }
-    }
-    // The strict-mode lever, which this door went past on its way to the
-    // store. `storage.items.create` validates loosely whatever the
-    // configuration says, so a door writing through it asks above the
-    // store or not at all — and this is the door built for volume,
-    // reachable by any working key, where `POST /items` beside it refuses
-    // the identical body. A property that lands reads back ever after
-    // undeclared and unmarked under the type's current version.
-    //
-    // The same function the create and restore doors call, given the
-    // entry's index so a caller reading a refused batch can tell which
-    // row it came from — the details bag that helper carries exists for
-    // exactly this.
-    //
-    // Thrown rather than returned, inside the `try` that turns an entry
-    // verdict into this row's `errored` outcome: in best-effort mode the
-    // page reports it beside the entry, and in atomic mode it rolls the
-    // batch back with the refusal's own status.
-    const undeclaredOnCreate = undeclaredPropertyRefusal(
-      options.enforcement,
-      raw.type,
-      raw.properties ?? {},
-      { index },
+        ...(raw.id !== undefined && { id: raw.id }),
+        ...(raw.state !== undefined && { state: raw.state }),
+        ...(raw.tier !== undefined && { tier: raw.tier }),
+        ...(raw.occurred_at !== undefined && { occurred_at: raw.occurred_at }),
+        ...(raw.source !== undefined && { source: raw.source }),
+        ...(raw.source_id !== undefined && { source_id: raw.source_id }),
+        ...(raw.version !== undefined && { version: raw.version }),
+        ...(raw.tags !== undefined && { tags: raw.tags }),
+        ...(raw.edges !== undefined && { edges: raw.edges }),
+        retype: options.retype,
+        blob_proof: options.blobProof,
+      },
     );
-    if (undeclaredOnCreate) throw undeclaredOnCreate;
-    const createInput: CreateInput = {
-      type: raw.type,
-      properties: raw.properties ?? {},
-      blob_proof: blobProof,
-      ...(raw.id !== undefined && { id: raw.id }),
-      ...(raw.state !== undefined && { state: raw.state }),
-      ...(raw.tier !== undefined && { tier: raw.tier }),
-      ...(raw.occurred_at !== undefined && { occurred_at: raw.occurred_at }),
-      ...(stampedSource !== undefined && { source: stampedSource }),
-      ...(sourceId !== undefined && { source_id: sourceId }),
-      ...(raw.tags !== undefined && { tags: raw.tags }),
-    };
-    const created = await storage.items.create(createInput);
-    if (raw.edges) {
-      await reconcileEdges(created.id, raw.edges);
-    }
-    return {
-      result: { index, outcome: "created", id: created.id },
-      item: created,
-    };
   } catch (err) {
     if (isEntryVerdict(err)) {
+      // The row's id only where its own gates passed: a key that may not
+      // write the row learns only that its key is taken.
+      return erroredEntry(index, err, refusedRowId(err));
+    }
+    throw err;
+  }
+  switch (result.outcome) {
+    case "created":
+    case "updated":
+      return {
+        result: { index, outcome: result.outcome, id: result.item.id },
+        item: result.item,
+        ...(result.edges !== undefined && { edges: result.edges }),
+      };
+    case "unchanged":
+      return {
+        result: {
+          index,
+          outcome: "skipped",
+          ...(result.disclosed && { id: result.item.id }),
+          reason: result.reason,
+        },
+      };
+    case "stale":
+    case "conflict":
+      // Reachable only for an entry that named a version. The message is
+      // the store's own, because the codes it can carry say different
+      // things: a stale version, or a base version no snapshot covers.
       return {
         result: {
           index,
           outcome: "errored",
+          id: result.id,
           error: {
-            code: err.code,
-            message: err.message,
-            ...(err.details && { details: err.details }),
+            code: result.conflict.error.code,
+            message: result.conflict.error.message,
           },
         },
       };
-    }
-    throw err;
   }
 }
 
@@ -1184,40 +578,14 @@ export function bulkRoutes(storage: Storage) {
 
   // POST /items/bulk — list-in
   router.openapi(bulkRoute, async (c) => {
-    // Authenticated + per-item type-write authorization, mirroring the
-    // single-item `POST /items` gate: the credential must hold write on each
-    // item's type, and nothing bypasses that.
-    requireAuth(c);
-    const checkWrite = (raw: { type: string; properties?: unknown }): void => {
-      requireTypeAccess(c, raw.type, "write");
-    };
-    // The update half of an upsert, judged on the target row. Mirrors
-    // `PATCH /items/{id}` gate for gate, because the two are the same
-    // operation reached through different doors: the row's real type
-    // decides the type gate.
-    const checkUpdate = (existing: Item): void => {
-      requireResolvedRowWrite(c, existing);
-    };
-    // The edge half of the dual gate. Same call the direct routes make,
-    // so the three doors that accept an inline `edges` payload agree.
-    const checkEdgeWrite = (edgeType: string): void => {
-      requireEdgePermission(c, edgeType, "write");
-    };
+    const key = requireAuth(c);
 
     const body = c.req.valid("json");
     const items = body.items;
     const mode = body.mode ?? "upsert";
     const atomic = body.atomic ?? true;
-    // Off unless asked for. Never inferred from a differing type: the
-    // fleet declares one on nearly every write, so inference would move a
-    // corpus on an ordinary sync bug.
     const retype = body.retype === true;
     const enableFanout = body.enable_fanout ?? false;
-    // Filled by each item's edge reconciliation and drained after the
-    // batch commits, so an inline edge and the item that owns it reach
-    // the log together. Declared here so an atomic rollback discards it
-    // along with the writes it describes.
-    const inlineEdgeChanges: InlineEdgeChanges[] = [];
 
     if (items.length > MAX_BULK_ITEMS) {
       throw new MarfaError(
@@ -1226,22 +594,6 @@ export function bulkRoutes(storage: Storage) {
         { cap: MAX_BULK_ITEMS, provided: items.length },
       );
     }
-
-    // The instance's enforcement levers, read once for the page: the read
-    // is one row and the answer cannot change inside a batch.
-    const enforcement = resolveEnforcement(
-      await readInstanceConfig(storage.settings),
-      c.get("apiKey"),
-    );
-    const resolveSource = (
-      named: string | undefined,
-      type: string,
-    ): string | undefined => {
-      const source = itemProvenanceSource(c.get("apiKey"), named);
-      const notAllowed = sourceAllowlistRefusal(enforcement, type, source);
-      if (notAllowed) throw notAllowed;
-      return source;
-    };
 
     if (items.length === 0) {
       return c.json(
@@ -1253,102 +605,90 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    // In atomic mode, judge what every entry names before any entry is
-    // looked up. The transaction below is what undoes a refused page; this
-    // pass decides which refusal the page answers with. Nothing here reads
-    // an item row, so a page carrying an entry its key may not write, or
-    // naming a source its key does not claim, is refused for that entry
-    // whatever rows the store holds. Left to the per-entry pass, a stale
-    // entry ahead of it would answer first, as a `409`, and the caller would
-    // re-read the row over a refusal whose cause is a permission it lacks
-    // (`items.md` 31).
-    if (atomic) {
-      for (const [i, raw] of items.entries()) {
-        if (!isValidTypeIdentifier(raw.type)) {
-          throw bulkAtomicRollback(i, {
-            code: ErrorCode.VALIDATION_ERROR,
-            message: `Invalid type identifier: ${raw.type}`,
-          });
-        }
-        if (
-          raw.occurred_at !== undefined &&
-          !isValidTimestamp(raw.occurred_at)
-        ) {
-          throw bulkAtomicRollback(i, {
-            code: ErrorCode.VALIDATION_ERROR,
-            message: "occurred_at must be an ISO 8601 string",
-          });
-        }
-        // **Before the write gate, because the single door asks it
-        // first.** The two are parameterized over one table in
-        // `item-state-doors.test.ts` precisely so they cannot answer one
-        // request differently. A rolled-back permission refusal carries the
-        // permission's status, so an entry naming a state its type's
-        // lifecycle cannot reach, of a type the caller may not write, would
-        // otherwise answer `403` on this door and `400` on the other, which
-        // is the caller-facing disagreement the table exists to stop.
-        //
-        // **Only for an entry that can be nothing but a create**, which is
-        // one naming neither an `id` nor a `source_id`. An entry carrying
-        // either may resolve a row, and the update path does not read
-        // `state` at all: refusing it here would roll a page back over a
-        // field the write it describes was going to ignore. Where the
-        // entry does create, the per-entry path asks the same question of
-        // the same function, so nothing is checked in one place only.
-        const mustCreate = raw.id === undefined && raw.source_id === undefined;
-        if (mustCreate && raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
-          const stateError = validateTransition(
-            raw.type,
-            SYSTEM_DEFAULT_STATE,
-            raw.state,
-          );
-          if (stateError) {
+    const run = async (): Promise<ProcessedBulkItem[]> => {
+      // In atomic mode, judge what every entry names before any entry is
+      // looked up. The transaction is what undoes a refused page; this pass
+      // decides which refusal the page answers with. Nothing here reads an
+      // item row, so a page carrying an entry its key may not write, or
+      // naming a source its key does not claim, is refused for that entry
+      // whatever rows the store holds. Left to the per-entry pass, a stale
+      // entry ahead of it would answer first, as a `409`, and the caller
+      // would re-read the row over a refusal whose cause is a permission it
+      // lacks (`items.md` 31).
+      if (atomic) {
+        const enforcement = resolveEnforcement(
+          await readInstanceConfig(storage.settings),
+          key,
+        );
+        for (const [i, raw] of items.entries()) {
+          if (!isValidTypeIdentifier(raw.type)) {
             throw bulkAtomicRollback(i, {
               code: ErrorCode.VALIDATION_ERROR,
-              message: stateError,
+              message: `Invalid type identifier: ${raw.type}`,
             });
           }
-        }
-        // Authorize the write, and the source it names, before any entry
-        // is looked up: the same two verdicts the per-entry path reaches,
-        // asked here so they answer ahead of any refusal a row decides.
-        try {
-          checkWrite(raw);
-          resolveSource(raw.source, raw.type);
-        } catch (err) {
-          if (isEntryVerdict(err)) {
+          if (
+            raw.occurred_at !== undefined &&
+            !isValidTimestamp(raw.occurred_at)
+          ) {
             throw bulkAtomicRollback(i, {
-              code: err.code,
-              message: err.message,
-              details: err.details,
+              code: ErrorCode.VALIDATION_ERROR,
+              message: "occurred_at must be an ISO 8601 string",
             });
           }
-          throw err;
+          // Before the write gate, because the single door asks it first
+          // (`item-state-doors.test.ts`). Only for an entry that can be
+          // nothing but a create, one naming neither an `id` nor a
+          // `source_id`: the update path does not read `state`, and refusing
+          // it here would roll a page back over a field the write it
+          // describes was going to ignore.
+          const mustCreate =
+            raw.id === undefined && raw.source_id === undefined;
+          if (mustCreate && raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
+            const stateError = validateTransition(
+              raw.type,
+              SYSTEM_DEFAULT_STATE,
+              raw.state,
+            );
+            if (stateError) {
+              throw bulkAtomicRollback(i, {
+                code: ErrorCode.VALIDATION_ERROR,
+                message: stateError,
+              });
+            }
+          }
+          try {
+            checkTypeAccess(key, raw.type, "write");
+            const notAllowed = sourceAllowlistRefusal(
+              enforcement,
+              raw.type,
+              itemProvenanceSource(key, raw.source),
+            );
+            if (notAllowed) throw notAllowed;
+          } catch (err) {
+            if (isEntryVerdict(err)) {
+              throw bulkAtomicRollback(i, {
+                code: err.code,
+                message: err.message,
+                details: err.details,
+              });
+            }
+            throw err;
+          }
         }
       }
-    }
 
-    const run = async (): Promise<ProcessedBulkItem[]> => {
       const out: ProcessedBulkItem[] = [];
       for (const [i, raw] of items.entries()) {
         const processed = await processBulkItem(storage, raw, i, {
+          key,
           mode,
-          resolveSource,
           blobProof: requestBlobProof(c, storage),
-          atomic,
           retype,
-          checkWrite,
-          checkUpdate,
-          mayRead: (existing) => mayReadRow(c, existing),
-          checkEdgeWrite,
-          mayReadType: typeReader(c),
-          recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
-          enforcement,
         });
         if (atomic && processed.result.outcome === "errored") {
-          // In atomic mode a single failure aborts the whole batch. Throw
-          // so runInTransaction rolls back; carry the failure context out
-          // via the error details.
+          // One failure aborts the whole batch: thrown so the transaction
+          // rolls back, carrying the entry's refusal out.
           throw bulkAtomicRollback(i, {
             code: processed.result.error?.code,
             message: processed.result.error?.message,
@@ -1360,9 +700,8 @@ export function bulkRoutes(storage: Storage) {
       return out;
     };
 
-    // atomic=true → one transaction wraps every item write. atomic=false
-    // → each item gets its own transaction (composed inside storage.items
-    // methods); route iterates without an outer wrapper.
+    // Atomic: one transaction around the page, each entry a savepoint of
+    // it. Best-effort: each entry its own transaction, opened by the write.
     const processed = atomic
       ? await storage.runInTransaction(run)
       : await run();
@@ -1407,13 +746,13 @@ export function bulkRoutes(storage: Storage) {
     }
     // Edges after the items, so a subscriber sees the endpoints before the
     // relationship naming them.
-    for (const changes of inlineEdgeChanges) {
-      await announceInlineEdges(storage, changes, enableFanout);
+    for (const p of processed) {
+      if (p.edges) await announceInlineEdges(storage, p.edges, enableFanout);
     }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "items.bulk",
       resource_type: "items.bulk",
       details: {

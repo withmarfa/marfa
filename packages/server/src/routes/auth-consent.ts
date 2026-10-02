@@ -92,6 +92,7 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { writeItem } from "../storage/item-write.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { getPermissionBundles } from "../config.js";
 import { renderConsentScreen } from "./consent.js";
@@ -1280,40 +1281,50 @@ async function projectGrantOnConsent(
     // rather than reactivating something nobody can see. A soft-deleted
     // grant does not resolve at all and the branch below inserts a fresh
     // row instead.
-    const updated = await storage.items.update(grantItemId, {
-      properties: {
-        scopes: opts.scopes,
-        status: "active",
-        granted_at: now,
-        revoked_at: undefined,
+    const written = await writeItem(
+      storage,
+      { kind: "platform" },
+      {
+        op: "update",
+        id: grantItemId,
+        properties: {
+          scopes: opts.scopes,
+          status: "active",
+          granted_at: now,
+          revoked_at: undefined,
+        },
       },
-    });
-    if ("error" in updated) {
-      // Unreachable: we don't pass `version`, so the merge path bypasses
-      // conflict detection. Defensive.
+    );
+    if (written.outcome !== "updated") {
+      // Unreachable: no `version` is sent, so nothing can conflict.
       throw new Error(
-        "projectGrantOnConsent: unexpected version conflict on re-consent",
+        `projectGrantOnConsent: re-consent answered ${written.outcome}`,
       );
     }
-    projectedItem = updated;
+    projectedItem = written.item;
     eventType = "updated";
   } else {
     // First-time consent: insert a fresh row. No tier named: `tier` is a
     // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
     // writer of one leaves it to the store the way `POST /items` does.
-    const item = await storage.items.create({
-      type: "system.connection",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: opts.clientId,
-        user_id: opts.authUserId,
-        scopes: opts.scopes,
-        status: "active",
-        granted_at: now,
+    const { item } = await writeItem(
+      storage,
+      { kind: "platform" },
+      {
+        op: "create",
+        type: "system.connection",
+        state: "active",
+        properties: {
+          kind: "app",
+          client_id: opts.clientId,
+          user_id: opts.authUserId,
+          scopes: opts.scopes,
+          status: "active",
+          granted_at: now,
+        },
+        source: "marfa/oauth2/consent",
       },
-      source: "marfa/oauth2/consent",
-    });
+    );
     grantItemId = item.id;
     projectedItem = item;
     eventType = "created";

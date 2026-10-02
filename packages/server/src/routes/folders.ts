@@ -15,20 +15,17 @@ import {
   parseFilter,
   resolveTypePermission,
 } from "@withmarfa/shared";
-import type {
-  AncestorUnavailableResponse,
-  ConflictResponse,
-  Item,
-} from "@withmarfa/shared";
+import type { Item, Metadata } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   itemProvenanceSource,
   requireAuth,
-  typeReader,
   standingRule,
 } from "../middleware/auth.js";
-import type { ResolvedItem, Storage } from "../storage/interface.js";
+import type { Storage } from "../storage/interface.js";
+import { writeItem } from "../storage/item-write.js";
+import type { ItemWriteResult } from "../storage/item-write.js";
 import { depthInsideFolder } from "../folder-path.js";
 import { publish } from "../pubsub.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
@@ -468,8 +465,13 @@ const revokeFolderRoute = createRoute({
   },
 });
 
-type FolderWrite =
-  ResolvedItem | ConflictResponse | AncestorUnavailableResponse;
+/** The row a folder write left, which every folder write leaves. */
+function written(result: ItemWriteResult): { item: Item; metadata: Metadata } {
+  if (result.outcome === "created" || result.outcome === "updated") {
+    return { item: result.item, metadata: result.metadata };
+  }
+  throw new Error(`A folder write answered ${result.outcome}`);
+}
 
 export function folderRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
@@ -478,13 +480,17 @@ export function folderRoutes(storage: Storage) {
     const body = c.req.valid("json");
     assertSettings(body);
     const credential = c.get("apiKey");
-    const item = await storage.items.create({
-      type: FOLDER_TYPE,
-      properties: body,
-      source: itemProvenanceSource(credential),
-      blob_proof: requestBlobProof(c, storage),
-    });
-    const metadata = await storage.metadata.get(item.id);
+    const { item, metadata } = await writeItem(
+      storage,
+      { kind: "platform" },
+      {
+        op: "create",
+        type: FOLDER_TYPE,
+        properties: body,
+        source: itemProvenanceSource(credential),
+        blob_proof: requestBlobProof(c, storage),
+      },
+    );
     await publish({ type: "created", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -509,20 +515,28 @@ export function folderRoutes(storage: Storage) {
       );
     }
     assertSettings(settings);
-    const item: FolderWrite = await storage.runInTransaction(async () => {
+    const result = await storage.runInTransaction(async () => {
       refuseRevoked(await requireFolder(storage, id));
-      return await storage.items.update(id, {
-        properties: settings,
-        version,
-        may_read_type: typeReader(c),
-        blob_proof: requestBlobProof(c, storage),
-      });
+      return await writeItem(
+        storage,
+        { kind: "platform" },
+        {
+          op: "update",
+          id,
+          properties: settings,
+          version,
+          blob_proof: requestBlobProof(c, storage),
+        },
+      );
     });
-    if ("error" in item) {
-      c.header("X-Error-Code", item.error.code);
-      return c.json(item, 409);
+    if (result.outcome === "conflict") {
+      c.header("X-Error-Code", result.conflict.error.code);
+      return c.json(result.conflict, 409);
     }
-    const metadata = await storage.metadata.get(id);
+    if (result.outcome === "stale") {
+      throw new Error("A folder update always carries settings to merge");
+    }
+    const { item, metadata } = written(result);
     await publish({ type: "updated", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -541,10 +555,16 @@ export function folderRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const item = await storage.runInTransaction(async () => {
       refuseRevoked(await requireFolder(storage, id));
-      await storage.items.update(id, {
-        properties: { revoked_at: new Date().toISOString() },
-        blob_proof: requestBlobProof(c, storage),
-      });
+      await writeItem(
+        storage,
+        { kind: "platform" },
+        {
+          op: "update",
+          id,
+          properties: { revoked_at: new Date().toISOString() },
+          blob_proof: requestBlobProof(c, storage),
+        },
+      );
       return await storage.items.transition(id, "revoked");
     });
     const metadata = await storage.metadata.get(id);
