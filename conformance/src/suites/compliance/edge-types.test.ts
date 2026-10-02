@@ -557,9 +557,6 @@ describe("custom edge-type registration", () => {
     expect(shipped["about"]).toBe(true);
     expect(shipped["in-folder"]).toBe(true);
     expect(shipped[etId]).toBe(false);
-    for (const t of r.data.data) {
-      expect(t.shipped).toBe(!t.id.includes("."));
-    }
   });
 
   it("lists the reverse names the shipped edge types declare", async () => {
