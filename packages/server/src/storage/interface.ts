@@ -1251,6 +1251,13 @@ export interface BlobRegistry {
   } | null>;
   /** Every registered hash. */
   listAll(): Promise<string[]>;
+  /**
+   * The types of the items, in every lifecycle state, whose properties
+   * reference `hash` by the digest rule `collectBlobHashes` applies: the
+   * items a blob door asks the caller's reach of. Read through an index
+   * keyed by hash, so the cost is the references to this one blob.
+   */
+  referencingTypes(hash: string): Promise<string[]>;
   remove(hash: string): Promise<void>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 

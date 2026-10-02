@@ -108,6 +108,7 @@ import {
   settleNaturalKeyTombstones,
   syncLink,
 } from "./item-links.js";
+import { syncBlobReferences } from "./blob-references.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
@@ -268,6 +269,7 @@ async function insertConflictedSibling(
   // indexing and the announcing, and doing either again would report a
   // create that did not happen.
   if (inserted.length === 0) return null;
+  await syncBlobReferences(tx, { id: siblingId, properties });
 
   const [held] = await tx
     .select({ tags: metadata.tags })
@@ -664,6 +666,7 @@ export class SqliteItemStore implements ItemStore {
         .run();
 
       await syncLink(tx, { id, type: input.type, properties });
+      await syncBlobReferences(tx, { id, properties });
       if (input.source && input.source_id) {
         await forgetNaturalKey(tx, input.source, input.source_id);
       }
@@ -825,6 +828,7 @@ export class SqliteItemStore implements ItemStore {
     sourceId: string | undefined,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
+    await syncBlobReferences(tx, after);
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }

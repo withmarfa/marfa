@@ -19,7 +19,14 @@ import type {
   BlobStoreKind,
   BlobStoreRow,
 } from "../interface.js";
-import { blobLocations, blobOrphans, blobStores, blobs } from "./schema.js";
+import {
+  blobLocations,
+  blobOrphans,
+  blobStores,
+  blobs,
+  item_blob_references,
+  items,
+} from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
 export class SqliteBlobRegistry implements BlobRegistry {
@@ -57,6 +64,16 @@ export class SqliteBlobRegistry implements BlobRegistry {
   async listAll(): Promise<string[]> {
     const rows = await this.db.select({ hash: blobs.hash }).from(blobs).all();
     return rows.map((r) => r.hash);
+  }
+
+  async referencingTypes(hash: string): Promise<string[]> {
+    const rows = await this.db
+      .selectDistinct({ type: items.type })
+      .from(item_blob_references)
+      .innerJoin(items, eq(items.id, item_blob_references.item_id))
+      .where(eq(item_blob_references.hash, hash))
+      .all();
+    return rows.map((r) => r.type);
   }
 
   async remove(hash: string): Promise<void> {

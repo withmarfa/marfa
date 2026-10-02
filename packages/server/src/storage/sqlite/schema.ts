@@ -137,6 +137,23 @@ export const item_links = sqliteTable(
   ],
 );
 
+// The blobs an item's properties name, by the digest rule `collectBlobHashes`
+// applies, so a blob door finds the items that lend it their reach without
+// reading every row. Kept in step by every write of an item's properties.
+export const item_blob_references = sqliteTable(
+  "item_blob_references",
+  {
+    hash: text("hash").notNull(),
+    item_id: text("item_id")
+      .notNull()
+      .references(() => items.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.hash, table.item_id] }),
+    index("idx_item_blob_references_item").on(table.item_id),
+  ],
+);
+
 // What a purge leaves of a row's link, until re-claimed or the type's link
 // changes or is dropped. Never swept: a vendor may still hold the item.
 export const link_tombstones = sqliteTable(
