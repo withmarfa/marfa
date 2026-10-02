@@ -256,4 +256,69 @@ describe("a write raced against a retype is refused on every door", () => {
     ]);
     expect(await bodyOf(id)).toBe(`before-${marker}`);
   });
+
+  for (const [door, method, path, body] of [
+    ["POST /items/{id}/tags", "POST", "tags", { tags: ["after"] }],
+    ["PUT /items/{id}/metadata", "PUT", "metadata", { tags: ["after"] }],
+    ["PATCH /items/{id}/metadata", "PATCH", "metadata", { tags: ["after"] }],
+    ["DELETE /items/{id}/tags/{tag}", "DELETE", "tags/before", undefined],
+    [
+      "PUT /items/{id}/extensions/{namespace}",
+      "PUT",
+      "extensions/race",
+      { a: 1 },
+    ],
+    [
+      "DELETE /items/{id}/extensions/{namespace}",
+      "DELETE",
+      "extensions/race",
+      undefined,
+    ],
+  ] as const) {
+    it(door, async () => {
+      const { id } = await seedNote("before");
+      const race = raceTheNextTransaction(retype(id));
+      let res: Response;
+      try {
+        res = await request(ctx.app, method, `/items/${id}/${path}`, {
+          key: narrowKey,
+          ...(body !== undefined && { body }),
+        });
+        expect(race.fired()).toBe(true);
+      } finally {
+        race.restore();
+      }
+      expect(res.status).toBe(403);
+      expect((await ctx.storage.metadata.get(id)).tags).toEqual(["before"]);
+    });
+  }
+
+  it("POST /items/bulk-actions update_tags", async () => {
+    const marker = "race-tags";
+    const { id } = await seedNote(marker);
+    const queued = await request(ctx.app, "POST", "/items/bulk-actions", {
+      key: narrowKey,
+      body: {
+        action: "update_tags",
+        add: ["after"],
+        filter: { tags: [marker] },
+      },
+    });
+    expect(queued.status).toBe(202);
+    const race = raceTheNextTransaction(retype(id));
+    try {
+      const worker = new BulkActionWorker({
+        storage: ctx.storage,
+        chunkSize: 100,
+        pollIntervalMs: 1,
+      });
+      while (await worker.runOnce()) {
+        /* drain */
+      }
+      expect(race.fired()).toBe(true);
+    } finally {
+      race.restore();
+    }
+    expect((await ctx.storage.metadata.get(id)).tags).toEqual([marker]);
+  });
 });

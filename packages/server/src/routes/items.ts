@@ -2235,26 +2235,30 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-
     const body = c.req.valid("json");
     const tags = body.tags;
-
-    if (tags.length > MAX_TAGS_PER_ITEM) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
-    }
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
 
-    const metadata = await storage.metadata.set(id, tags);
+      if (tags.length > MAX_TAGS_PER_ITEM) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+        );
+      }
+
+      const written = await storage.metadata.set(id, tags);
+      return { item, metadata: written };
+    });
     await publish({
       type: "metadata_changed",
       item: await itemAfterMetadataWrite(storage, item),
@@ -2272,44 +2276,48 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-
     const body = c.req.valid("json");
     const tags = body.tags;
-
-    // Not subsumed by the projection below, though it reads as though it
-    // should be: the projection counts a deduplicated set, so a body of 101
-    // copies of one tag projects to one and passes it. This bounds what a
-    // caller may send, that one bounds what the item may hold, and they are
-    // different questions with different messages.
-    if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
-    }
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
 
-    // No projection here. Reading the metadata row, unioning the incoming
-    // tags into it and refusing over the bound would read in one
-    // transaction and write in another, so it would bound nothing under
-    // concurrency, and it would cost an unconditional read on every
-    // successful request to duplicate a refusal the store makes inside
-    // the transaction that computes the set, with the same status, code
-    // and message, so nothing on the wire could tell the two apart.
-    //
-    // What is still checked above is what a caller may *send*, which is a
-    // different question and one the store cannot answer: a body of a
-    // hundred and one copies of one tag projects to one and is inside the
-    // bound.
+      // Not subsumed by the projection below, though it reads as though it
+      // should be: the projection counts a deduplicated set, so a body of 101
+      // copies of one tag projects to one and passes it. This bounds what a
+      // caller may send, that one bounds what the item may hold, and they are
+      // different questions with different messages.
+      if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+        );
+      }
 
-    const metadata = await storage.metadata.merge(id, tags);
+      // No projection here. Reading the metadata row, unioning the incoming
+      // tags into it and refusing over the bound would read in one
+      // transaction and write in another, so it would bound nothing under
+      // concurrency, and it would cost an unconditional read on every
+      // successful request to duplicate a refusal the store makes inside
+      // the transaction that computes the set, with the same status, code
+      // and message, so nothing on the wire could tell the two apart.
+      //
+      // What is still checked above is what a caller may *send*, which is a
+      // different question and one the store cannot answer: a body of a
+      // hundred and one copies of one tag projects to one and is inside the
+      // bound.
+
+      const written = await storage.metadata.merge(id, tags);
+      return { item, metadata: written };
+    });
 
     await publish({
       type: "metadata_changed",
@@ -2328,22 +2336,26 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-
     const body = c.req.valid("json");
     const tags = body.tags;
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+      );
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
 
-    // The resulting set is bounded by the store, inside the transaction that
-    // computes it. See the sibling door above for why there is no
-    // projection here.
-    const metadata = await storage.metadata.addTags(id, tags);
+      // The resulting set is bounded by the store, inside the transaction that
+      // computes it. See the sibling door above for why there is no
+      // projection here.
+      const written = await storage.metadata.addTags(id, tags);
+      return { item, metadata: written };
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -2511,15 +2523,20 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    const item = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // The metadata layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-    const metadata = await storage.metadata.removeTag(id, tag);
+    // The row is read, gated and written in one transaction, so a
+    // change to it landing in between cannot slip past the gate.
+    const { item, metadata } = await storage.runInTransaction(async () => {
+      const item = requireReadableRow(
+        c,
+        await storage.items.get(id),
+        () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+      );
+      requireTypeAccess(c, item.type, "write");
+      // The metadata layer reaches the same row the properties doors
+      // guard, so it answers to the same row-level rule.
+      const written = await storage.metadata.removeTag(id, tag);
+      return { item, metadata: written };
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

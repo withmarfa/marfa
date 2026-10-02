@@ -167,9 +167,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     inbound: new SqliteInboundStore(db),
     /**
      * Through the wrapped handle, so a call made inside an open transaction
-     * becomes a savepoint of it, as the stores' own transactions do. Opened
-     * on the unwrapped one, a nested call waited for the writer its own
-     * caller held.
+     * becomes a savepoint of it, as the stores' own transactions do.
      */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
       return await db.transaction(async () => await fn());
