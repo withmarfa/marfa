@@ -43,8 +43,9 @@ pub(crate) fn write(
     land(target, |file, _| file.write_all(bytes), still)
 }
 
-/// Fills a new file beside `target`, syncs it and renames it over, so a write
-/// that fails at any point leaves the old file whole. `fill` may also set the
+/// Fills a new file beside `target`, in a directory that must exist, syncs it
+/// and renames it over, so a write that fails at any point leaves the old
+/// file whole. `fill` may also set the
 /// new file's permissions and attributes by its path, before it lands.
 ///
 /// `still` is asked, just before the rename, whether the target's bytes, or
@@ -60,7 +61,6 @@ pub(crate) fn land(
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(dir)?;
     let (mut file, beside) = beside(dir)?;
     let landed = (|| {
         // A file written anew keeps the permission the one it replaces had,
@@ -75,10 +75,12 @@ pub(crate) fn land(
                 )));
             }
             std::fs::set_permissions(&beside, metadata.permissions())?;
+            keep_attributes(target, &beside);
         }
         fill(&mut file, &beside)?;
         file.sync_all()?;
         drop(file);
+        save_meanwhile(target);
         let found = match std::fs::read(target) {
             Ok(found) => Some(found),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -86,6 +88,17 @@ pub(crate) fn land(
         };
         if !still(found.as_deref()) {
             return Err(Unlanded::Changed);
+        }
+        if super::fault::named("crash-before-rename").is_some_and(|name| {
+            target
+                .file_name()
+                .is_some_and(|file| file.to_string_lossy() == name)
+        }) {
+            eprintln!(
+                "crashing before {} lands, as MARFA_TEST_FAULT asks",
+                target.display()
+            );
+            std::process::abort();
         }
         std::fs::rename(&beside, target)?;
         Ok(())
@@ -103,6 +116,7 @@ pub(crate) fn land(
 /// Removes `target` where `still` says its bytes are what the caller decided
 /// to remove. Answers whether it did; a target already gone answers `false`.
 pub(crate) fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Result<bool> {
+    save_meanwhile(target);
     let found = match std::fs::read(target) {
         Ok(found) => found,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
@@ -115,6 +129,70 @@ pub(crate) fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Re
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
+    }
+}
+
+/// A Finder tag, say, which a file written anew would otherwise lose.
+#[cfg(target_os = "macos")]
+fn keep_attributes(from: &Path, to: &Path) {
+    let Ok(names) = xattr::list(from) else {
+        return;
+    };
+    for name in names {
+        if let Ok(Some(value)) = xattr::get(from, &name) {
+            let _ = xattr::set(to, &name, &value);
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn keep_attributes(_from: &Path, _to: &Path) {}
+
+/// A file a write left beside its target, named for a process no longer
+/// running: what a crash before the rename leaves.
+pub(crate) fn left_behind(path: &Path) -> bool {
+    let Some(pid) = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix(".marfa-"))
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .and_then(|rest| rest.split_once('-'))
+        .filter(|(_, count)| count.parse::<u64>().is_ok())
+        .and_then(|(pid, _)| pid.parse::<i32>().ok())
+    else {
+        return false;
+    };
+    pid != std::process::id().cast_signed() && !running(pid)
+}
+
+#[cfg(unix)]
+fn running(pid: i32) -> bool {
+    match rustix::process::Pid::from_raw(pid) {
+        Some(pid) => !matches!(
+            rustix::process::test_kill_process(pid),
+            Err(rustix::io::Errno::SRCH)
+        ),
+        None => true,
+    }
+}
+
+#[cfg(not(unix))]
+fn running(_pid: i32) -> bool {
+    true
+}
+
+/// A person's save made between the folder's decision and its last look.
+fn save_meanwhile(target: &Path) {
+    if super::fault::named("save-before-last-look").is_some()
+        && target
+            .extension()
+            .is_some_and(|extension| extension == "md")
+        && target.is_file()
+    {
+        let _ = std::fs::OpenOptions::new()
+            .append(true)
+            .open(target)
+            .and_then(|mut file| file.write_all(b"saved meanwhile\n"));
     }
 }
 
@@ -207,6 +285,37 @@ mod tests {
         let after = std::fs::metadata(&target).unwrap();
         assert_ne!(after.ino(), before, "the file was written in place");
         assert_eq!(after.permissions().mode() & 0o777, 0o750);
+    }
+
+    #[test]
+    fn a_file_left_by_a_process_no_longer_running_is_named_left_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ended = std::process::Command::new("true").spawn().unwrap();
+        let gone = ended.id();
+        ended.wait().unwrap();
+        let left = dir.path().join(format!(".marfa-{gone}-0.tmp"));
+        assert!(left_behind(&left));
+        // The witness: this process's own is not, nor a name it never writes.
+        let own = dir
+            .path()
+            .join(format!(".marfa-{}-0.tmp", std::process::id()));
+        assert!(!left_behind(&own));
+        assert!(!left_behind(&dir.path().join(format!(".marfa-{gone}.tmp"))));
+        assert!(!left_behind(&dir.path().join("notes.tmp")));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_file_written_anew_keeps_its_other_attributes() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("note.md");
+        std::fs::write(&target, b"old").unwrap();
+        xattr::set(&target, "com.example.kept", b"yes").unwrap();
+        write(&target, b"new", |_| true).unwrap();
+        assert_eq!(
+            xattr::get(&target, "com.example.kept").unwrap().as_deref(),
+            Some(b"yes".as_slice())
+        );
     }
 
     #[test]

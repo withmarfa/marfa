@@ -897,6 +897,8 @@ export interface SettingsFileReport {
   written: boolean;
   /** Why the file's edit is not in force, where it is not. */
   flagged: string | null;
+  /** Why the file could not be written, where it could not (`folders.md` 20). */
+  unwritten: string | null;
 }
 
 export interface PushReport {

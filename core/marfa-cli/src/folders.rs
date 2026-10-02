@@ -378,6 +378,11 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
 }
 
 pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
+    if let Some(reason) = &report.unwritten {
+        return Some(format!(
+            "the settings file was not written, and the next pass writes it: {reason}"
+        ));
+    }
     match (&report.flagged, report.sent) {
         (Some(reason), _) => Some(format!(
             "the settings file is not in force, and the settings before it are: {reason}"

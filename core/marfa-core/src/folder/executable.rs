@@ -77,8 +77,8 @@ pub fn set(_path: &Path, _executable: bool) -> std::io::Result<()> {
 pub const QUARANTINE: &str = "com.apple.quarantine";
 
 /// Marks a file as one that arrived from elsewhere, as a browser marks a
-/// download, so Gatekeeper asks before it runs. Flags `0081` are a download's
-/// as browsers write them; the empty last field names no download event.
+/// download. Flags `0081` are a download's as browsers write them; the empty
+/// last field names no download event.
 #[cfg(target_os = "macos")]
 pub fn quarantine(path: &Path) -> std::io::Result<()> {
     let now = std::time::SystemTime::now()
@@ -94,6 +94,17 @@ pub fn quarantine(path: &Path) -> std::io::Result<()> {
 #[cfg(not(target_os = "macos"))]
 pub fn quarantine(_path: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+/// Answers `true` where the mark is there, or where nothing keeps one.
+#[cfg(target_os = "macos")]
+pub fn quarantined(path: &Path) -> bool {
+    xattr::get(path, QUARANTINE).is_ok_and(|found| found.is_some())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn quarantined(_path: &Path) -> bool {
+    true
 }
 
 #[cfg(all(test, unix))]

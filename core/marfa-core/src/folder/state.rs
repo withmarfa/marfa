@@ -7,7 +7,7 @@ use crate::error::CoreError;
 use crate::model::ItemState;
 use crate::store::now_iso;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bound {
     pub path: String,
     pub item_id: String,
@@ -41,6 +41,48 @@ pub struct Writes {
     pub save: i64,
     pub queued: Vec<Queued>,
     pub refused: Vec<Refused>,
+    /// Set while a pull's write is bound and its bytes have not landed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<Landing>,
+}
+
+/// A write bound before its bytes land: what the path was bound as before,
+/// `None` where nothing was, so a write a crash cut off can be undone.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Landing {
+    pub before: Option<Box<Bound>>,
+}
+
+/// Settles every write a crash cut off between its binding and its landing:
+/// one whose bytes are on the disk is bound as written, and one whose bytes
+/// are not leaves the path bound as it was before, or bound to nothing, so
+/// the file there is never read as the person's edit nor as deleted.
+pub fn settle_landings(conn: &Connection, root: &std::path::Path) -> Result<(), CoreError> {
+    for row in every_bound(conn)? {
+        let Some(landing) = row.writes.landing.clone() else {
+            continue;
+        };
+        let found = match std::fs::read(root.join(&row.path)) {
+            Ok(found) => Some(hash(&found)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            // Asked again at the next pass that can read it.
+            Err(_) => continue,
+        };
+        if found.as_deref() == Some(row.content_hash.as_str()) {
+            let mut landed = row;
+            landed.writes.landing = None;
+            bind(conn, &landed)?;
+            continue;
+        }
+        match landing.before {
+            Some(before) => bind(conn, &before)?,
+            None => {
+                unbind(conn, &row.path)?;
+                journal_clear(conn, &row.path)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

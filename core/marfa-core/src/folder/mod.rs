@@ -3,6 +3,7 @@ pub mod edge_types;
 mod elsewhere;
 mod embeds;
 mod executable;
+mod fault;
 pub mod fields;
 pub mod identity;
 mod landing;
@@ -60,6 +61,14 @@ pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
 
 /// Held as `encoding`, by the same binding an `unreadable` file is.
 const NOT_UTF8: &str = "it is not UTF-8 text; saved as UTF-8, it is sent";
+
+/// UTF-8 holding no NUL: UTF-16 with no byte-order mark decodes as UTF-8
+/// where its letters are ASCII, each beside a NUL, and is no text.
+fn text_of(bytes: &[u8]) -> Option<&str> {
+    std::str::from_utf8(bytes)
+        .ok()
+        .filter(|text| !text.contains('\0'))
+}
 
 /// Measured as the JSON string the text is sent in; a file item's bytes go up
 /// outside the request.
@@ -223,7 +232,11 @@ impl Folder {
             });
         }
         settings_file::bind(&added.core, folder)?;
-        added.write_settings_file(&row.item.properties, row.item.version, None)?;
+        if let settings_file::Wrote::Failed(reason) =
+            added.write_settings_file(&row.item.properties, row.item.version, None)?
+        {
+            return Err(CoreError::Store(reason));
+        }
         // Unlisted, its moves would read as deletes to the others.
         if let Some(registry) = Registry::located() {
             let store = elsewhere::store_id(&added.core)?;
@@ -493,12 +506,56 @@ fn in_nested_folder(root: &Path, relative: &str) -> bool {
     false
 }
 
+impl Folder {
+    /// Every write into the folder goes through here: refused where the
+    /// folder's directory is gone, so a pull never makes it anew, with the
+    /// directories on the way made only inside it.
+    fn land(
+        &self,
+        path: &Path,
+        fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
+        still: impl FnOnce(Option<&[u8]>) -> bool,
+    ) -> std::result::Result<(), landing::Unlanded> {
+        self.inside(path.parent())?;
+        landing::land(path, fill, still)
+    }
+
+    /// Makes the directories from the folder's root down to `dir`, never the
+    /// root itself, and fails where the folder's directory is gone.
+    fn inside(&self, dir: Option<&Path>) -> std::io::Result<()> {
+        if let Some(gone) = self.root_gone() {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone));
+        }
+        let Some(below) = dir.and_then(|dir| dir.strip_prefix(&self.root).ok()) else {
+            return Ok(());
+        };
+        let mut here = self.root.clone();
+        for part in below.components() {
+            here.push(part);
+            match std::fs::create_dir(&here) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The store's inode and birth time, and not its device: a volume mounted
+/// again can come back under another device number, while the two its
+/// filesystem keeps for the file stay.
+#[cfg(unix)]
 fn store_mark(state: &Path) -> Option<String> {
-    std::fs::metadata(state.join("core.sqlite"))
-        .ok()
-        .as_ref()
-        .and_then(identity::of)
-        .map(|found| found.key())
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(state.join("core.sqlite")).ok()?;
+    let born = identity::born(&metadata)?;
+    Some(format!("{}:{born}", metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn store_mark(_state: &Path) -> Option<String> {
+    None
 }
 
 impl Folder {
@@ -518,6 +575,14 @@ impl Folder {
                 "{} cannot be found: moved, renamed or on a volume no longer mounted, so nothing is read, written or deleted until it is back",
                 self.root.display()
             )),
+        }
+    }
+
+    /// For a command that has nothing to report a gone directory in.
+    fn refuse_if_gone(&self) -> Result<()> {
+        match self.root_gone() {
+            Some(gone) => Err(CoreError::Invalid(gone)),
+            None => Ok(()),
         }
     }
 }
@@ -548,6 +613,8 @@ struct Walked {
     files: Vec<PathBuf>,
     directories: Vec<Flagged>,
     secrets: Vec<String>,
+    /// Files a crashed write left beside their target.
+    left: Vec<PathBuf>,
 }
 
 impl Walked {
@@ -588,6 +655,11 @@ impl Walked {
 /// A directory it cannot read is reported and passed over, so one does not
 /// stop the scan of every other.
 fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
+    if let Some(gone) = fault::named("vanish-while-walking")
+        && identity::relative(root, dir).is_ok_and(|relative| relative == gone)
+    {
+        let _ = std::fs::rename(dir, root.join(format!("{gone}.vanished")));
+    }
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) => return walked.unreadable(root, dir, &error),
@@ -637,7 +709,9 @@ fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
                 walk(root, &path, lists, walked);
             }
         } else if metadata.is_file() {
-            if lists.takes(&relative) {
+            if landing::left_behind(&path) {
+                walked.left.push(path);
+            } else if lists.takes(&relative) {
                 walked.files.push(path);
             } else if lists.secret(&relative) {
                 walked.secrets.push(relative);
@@ -742,6 +816,7 @@ impl Folder {
                 ..ScanReport::default()
             });
         }
+        state::settle_landings(&*self.core.conn()?, &self.root)?;
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
@@ -756,6 +831,16 @@ impl Folder {
         };
         let lists = settings.lists()?;
         let walked = self.walked(&lists);
+        // And under `.marfa/`, which no walk enters, the settings file's.
+        let state_dir = std::fs::read_dir(self.root.join(STATE_DIR))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| landing::left_behind(path));
+        for left in walked.left.iter().cloned().chain(state_dir) {
+            let _ = std::fs::remove_file(left);
+        }
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
         let snapshot = {
@@ -821,7 +906,7 @@ impl Folder {
                     stats.push((key.clone(), stat));
                 }
                 // Held below; its id line, which is ASCII, still names its item.
-                let Ok(text) = std::str::from_utf8(&bytes) else {
+                let Some(text) = text_of(&bytes) else {
                     named.extend(document::id_line(&String::from_utf8_lossy(&bytes)));
                     early.insert(path.clone(), bytes);
                     continue;
@@ -921,10 +1006,10 @@ impl Folder {
             // A document whose bytes are not UTF-8 is held as one whose
             // frontmatter does not parse is: decoded, it would be sent and
             // written back with every byte that is not replaced.
-            let (text, decodes) = match String::from_utf8(bytes.clone()) {
-                Ok(text) => (text, true),
-                Err(error) => (
-                    String::from_utf8_lossy(error.as_bytes()).into_owned(),
+            let (text, decodes) = match text_of(&bytes) {
+                Some(text) => (text.to_string(), true),
+                None => (
+                    String::from_utf8_lossy(&bytes).into_owned(),
                     !is_document(&path),
                 ),
             };
@@ -2447,6 +2532,7 @@ impl Folder {
                 ..PullReport::default()
             });
         }
+        state::settle_landings(&*self.core.conn()?, &self.root)?;
         let mut report = PullReport::default();
         let settings = self.settings()?;
         let lists = settings.lists()?;
@@ -2720,17 +2806,24 @@ impl Folder {
 
     /// Leaves a file changed since the scan read it alone: the permission is
     /// then the person's.
-    fn keep_executable(&self, item: &Item, want: &str) -> Result<()> {
+    /// `wrote` says the bytes there are ones a pull wrote, which carry the
+    /// quarantine mark as every file a pull writes does, one written before
+    /// the mark was included.
+    fn keep_executable(&self, item: &Item, want: &str, wrote: bool) -> Result<()> {
         let path = self.root.join(want);
         let wanted = executable::held(item);
-        if !self.keeps_permissions()
-            || std::fs::symlink_metadata(&path).is_ok_and(|found| executable::of(&found) == wanted)
-        {
+        if !self.keeps_permissions() {
+            return Ok(());
+        }
+        if std::fs::symlink_metadata(&path).is_ok_and(|found| executable::of(&found) == wanted) {
+            if wanted && wrote && !executable::quarantined(&path) {
+                let _ = executable::quarantine(&path);
+            }
             return Ok(());
         }
         let read = state::stat_of(&*self.core.conn()?, want)?;
-        // Made runnable by the server's word, it is marked as a file the pull
-        // wrote is, and left as it is where it cannot be.
+        // Made runnable by the server's word, it is marked first, and left as
+        // it is where it cannot be.
         if read.is_some()
             && read == stat_of(&path)
             && (!wanted || executable::quarantine(&path).is_ok())
@@ -2893,7 +2986,10 @@ impl Folder {
         }
         if in_place {
             if bytes_of(item, catalog).is_some() {
-                self.keep_executable(item, &want)?;
+                let wrote = bound
+                    .as_ref()
+                    .is_some_and(|bound| bound.written_hash.as_deref() == Some(hash.as_str()));
+                self.keep_executable(item, &want, wrote)?;
             }
             report.placed += usize::from(self.place(&item.id, &want, withheld)?);
             report.unchanged += 1;
@@ -2940,8 +3036,15 @@ impl Folder {
             edit_line,
             held: None,
             own: own.clone(),
-            writes: writes.clone(),
+            writes: state::Writes {
+                landing: None,
+                ..writes.clone()
+            },
         };
+        // What the path was bound as before, put back where the bytes do not
+        // land, and kept beside the new binding until they do, so a crash in
+        // between leaves the old file the folder's own.
+        let before = state::bound_at(&*self.core.conn()?, &want)?;
         // What the file at the path was when this pull chose to write it: its
         // own file as the scan last read it, or none.
         let over = bound
@@ -2952,14 +3055,32 @@ impl Folder {
         // Bound before the write, so the scan never reads it back; a path the
         // filesystem refuses, or a write that fails part way, leaves the old
         // file, and every other, as it was.
-        state::bind(&*self.core.conn()?, &binding(None))?;
-        let written = landing::land(
+        state::bind(
+            &*self.core.conn()?,
+            &state::Bound {
+                writes: state::Writes {
+                    landing: Some(state::Landing {
+                        before: before.clone().map(Box::new),
+                    }),
+                    ..writes.clone()
+                },
+                ..binding(None)
+            },
+        )?;
+        if fault::named("move-folder-before-write").is_some() {
+            let _ = std::fs::rename(
+                &self.root,
+                self.root.with_file_name(format!(
+                    "{}-away",
+                    self.root.file_name().unwrap_or_default().to_string_lossy()
+                )),
+            );
+        }
+        let written = self.land(
             &path,
             |file, beside| {
                 std::io::Write::write_all(file, &bytes)?;
                 if file_item {
-                    // Unmarked, a file the server says runs would run with no
-                    // question asked.
                     executable::quarantine(beside)?;
                     if self.keeps_permissions() {
                         // The bytes are written whatever the permission does.
@@ -2971,16 +3092,18 @@ impl Folder {
             |found| found.map(state::hash) == over,
         );
         if written.is_err() {
-            // A file of its own here keeps the binding it had, or a scan that
-            // can reach it again would make it a new item.
+            // The path keeps the binding it had, or a scan that can reach the
+            // file again would make it a new item.
             let conn = self.core.conn()?;
-            match bound.as_ref().filter(|bound| bound.path == want) {
-                Some(bound) => state::bind(&conn, bound)?,
+            match &before {
+                Some(before) => state::bind(&conn, before)?,
                 None => state::unbind(&conn, &want)?,
             }
             report.unwritten += 1;
             return Ok(false);
         }
+        // Landed: the old bytes are no longer the folder's own.
+        state::bind(&*self.core.conn()?, &binding(None))?;
         if let Some(blob) = bytes_of(item, catalog) {
             self.core.let_go_blob(blob);
         }
@@ -3059,27 +3182,23 @@ impl Folder {
             writes: state::Writes::default(),
         };
         state::bind(&*self.core.conn()?, &binding(None))?;
-        let moved = path
-            .parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| {
-                // Copied where a rename cannot cross volumes, landing whole or
-                // not at all; a source left behind is still its folder's,
-                // which lets it go later.
-                std::fs::rename(from, &path).or_else(|_| {
-                    landing::land(
-                        &path,
-                        |_, beside| std::fs::copy(from, beside).map(drop),
-                        |found| found.is_none(),
-                    )
-                    .map_err(std::io::Error::from)
-                    .map(|()| {
-                        let _ = landing::remove(from, |found| {
-                            state::hash(found) == theirs.content_hash
-                        });
-                    })
+        let moved = self.inside(path.parent()).and_then(|()| {
+            // Copied where a rename cannot cross volumes, landing whole or
+            // not at all; a source left behind is still its folder's,
+            // which lets it go later.
+            std::fs::rename(from, &path).or_else(|_| {
+                self.land(
+                    &path,
+                    |_, beside| std::fs::copy(from, beside).map(drop),
+                    |found| found.is_none(),
+                )
+                .map_err(std::io::Error::from)
+                .map(|()| {
+                    let _ =
+                        landing::remove(from, |found| state::hash(found) == theirs.content_hash);
                 })
-            });
+            })
+        });
         if moved.is_err() {
             state::unbind(&*self.core.conn()?, want)?;
             return Ok(false);

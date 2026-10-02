@@ -75,6 +75,7 @@ impl FileStatus {
 impl Folder {
     /// Writes nothing, so a reading handle beside a running watch answers it.
     pub fn status(&self) -> Result<StatusReport> {
+        self.refuse_if_gone()?;
         let settings = self.settings()?;
         let (catalog, edge_types) = {
             let conn = self.core.conn()?;
@@ -278,10 +279,10 @@ impl Folder {
         }
         // Held by the scan before anything binds it, so read as the scan reads.
         if is_document(path)
-            && let Some(reason) = bytes.and_then(|bytes| match std::str::from_utf8(bytes) {
-                Err(_) => Some(super::NOT_UTF8.to_string()),
-                Ok(_) if !super::carries_frontmatter(path) => None,
-                Ok(text) => {
+            && let Some(reason) = bytes.and_then(|bytes| match super::text_of(bytes) {
+                None => Some(super::NOT_UTF8.to_string()),
+                Some(_) if !super::carries_frontmatter(path) => None,
+                Some(text) => {
                     let read = super::document::read(text);
                     read.unreadable
                         .or_else(|| super::fields::read(&read.front, edge_types).err())

@@ -28,6 +28,7 @@ pub struct Restored {
 impl Folder {
     pub fn confirm(&self) -> Result<Confirmed> {
         self.core.lock.refuse_unless_writer()?;
+        self.refuse_if_gone()?;
         let settings = self.settings()?;
         let lists = settings.lists()?;
         let (disk, pull, journaled) = {
@@ -79,6 +80,7 @@ impl Folder {
 
     pub fn restore(&self) -> Result<Restored> {
         self.core.lock.refuse_unless_writer()?;
+        self.refuse_if_gone()?;
         let settings = self.settings()?;
         let (disk, pull) = {
             let conn = self.core.conn()?;

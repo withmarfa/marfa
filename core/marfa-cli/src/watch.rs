@@ -308,7 +308,12 @@ fn step(
         absent: pulled.absent,
         kept: pulled.kept,
         unmatched: pulled.unmatched,
-        settings: settings.flagged.clone().or(pulled.settings.flagged.clone()),
+        settings: settings
+            .flagged
+            .clone()
+            .or(pulled.settings.flagged.clone())
+            .or(settings.unwritten.clone())
+            .or(pulled.settings.unwritten.clone()),
         flagged: {
             let mut flagged = scanned.flagged.clone();
             for file in &pulled.flagged {
