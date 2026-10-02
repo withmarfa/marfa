@@ -373,6 +373,21 @@ describe("edges.bulk", () => {
     expect(entry.error?.code).toBe("id_reused");
     expect(entry.error?.details?.differs).toEqual(["source_id", "target_id"]);
 
+    // Under the default `atomic` the page rolls back at the refusal's 409.
+    const rolledBack = await client.bulkEdges({
+      edges: [
+        {
+          id,
+          source_id: second.sourceId,
+          target_id: second.targetId,
+          edge_type: "about",
+        },
+      ],
+    });
+    expect(rolledBack.status).toBe(409);
+    expect(rolledBack.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(rolledBack.error?.error.details?.code).toBe("id_reused");
+
     // The witness: the same entry under an id nothing holds lands, so the
     // refusal is the id rather than the triple or the door.
     const accepted = await client.bulkEdges({
