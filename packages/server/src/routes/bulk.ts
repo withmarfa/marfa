@@ -197,14 +197,10 @@ const bulkRoute = createRoute({
       description:
         "Validation error, or an atomic rollback. `atomic` defaults to " +
         "true, so a single refused entry aborts the whole page and the " +
-        "per-entry reason travels in `details.code`. Two of them turn on " +
-        "an entry declaring a `type` that is not the type of the row " +
-        "it resolved: `type_mismatch` where the natural key resolved " +
-        "it, because the entry named no id and the declaration is the " +
-        "mistake, and `id_reused` where the entry's own `id` did, " +
-        "because the id is taken by a row the entry is not describing " +
-        "— the same code the single-item doors answer. Send " +
-        "`atomic: false` to have each entry reported on its own instead.",
+        "per-entry reason travels in `details.code`, at the status that " +
+        "refusal carries on its own: `400` here, `403`, `404` or `409` " +
+        "below. Send `atomic: false` to have each entry reported on its " +
+        "own instead.",
     },
     401: {
       content: {
@@ -226,6 +222,24 @@ const bulkRoute = createRoute({
       },
       description:
         "Write access denied for one of the item types, or for the type of a row an entry's natural key resolves, refused without naming that row where the credential may not read its type. Under the default `atomic` the page rolls back and the code is `bulk_atomic_rollback` with `type_not_permitted` in `details.code`; the status is the inner refusal's, because a caller sorts by status before it reads a code and a permission failure filed under 400 reads as a body it can fix.",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an entry naming a row that is not there, such as an inline edge's target, with `item_not_found` in `details.code`.",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["bulk_atomic_rollback"]),
+        },
+      },
+      description:
+        "An atomic rollback for an entry whose row moved or is taken, with `version_conflict`, `link_taken`, `type_mismatch` or `id_reused` in `details.code`. The last two turn on an entry declaring a `type` that is not the type of the row it resolved: `type_mismatch` where the natural key resolved it, because the entry named no id and the declaration is the mistake, and `id_reused` where the entry's own `id` did, because the id is taken by a row the entry is not describing, the same code the single-item doors answer.",
     },
   },
 });
@@ -797,9 +811,7 @@ async function processBulkItem(
       // Blast radius differs from the single-item doors and it is worth
       // knowing which mode you are in. `atomic` defaults to true, so one
       // refused entry rolls the page back as `bulk_atomic_rollback`
-      // carrying this refusal in `details.code`, at `400` rather than the
-      // `409` the other doors answer with: a rollback takes `403` for a
-      // permission the caller lacks and `400` for everything else.
+      // carrying this refusal in `details.code`, at its `409`.
       //
       // **Which code depends on which resolution got here.** An entry the
       // natural key resolved named no id, so the declaration is the
@@ -1223,8 +1235,8 @@ export function bulkRoutes(storage: Storage) {
     // an item row, so a page carrying an entry its key may not write, or
     // naming a source its key does not claim, is refused for that entry
     // whatever rows the store holds. Left to the per-entry pass, a stale
-    // entry ahead of it would answer first, as a `400`, and the caller would
-    // re-read its body over a refusal whose cause is a permission it lacks
+    // entry ahead of it would answer first, as a `409`, and the caller would
+    // re-read the row over a refusal whose cause is a permission it lacks
     // (`items.md` 31).
     if (atomic) {
       for (const [i, raw] of items.entries()) {

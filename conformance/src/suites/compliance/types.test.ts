@@ -158,6 +158,53 @@ describe("type registration and listing", () => {
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("property_shadows_field");
   });
+
+  it("writes and reads items of a type whose fields share a name with an object's built-in members", async () => {
+    const names = ["toString", "valueOf", "constructor", "hasOwnProperty"];
+    const id = `user.builtin-names-${ctx.runId}`;
+    const registered = await client.registerType({
+      id,
+      fields: Object.fromEntries(
+        names.map((name) => [name, { type: "string" as const }]),
+      ),
+    });
+    expect(registered.status).toBe(201);
+    expect(Object.keys(registered.data.type.fields).sort()).toEqual(
+      [...names].sort(),
+    );
+
+    const bare = await client.createItem({
+      type: id,
+      properties: {},
+      source: ctx.source,
+    });
+    expect(bare.status).toBe(201);
+    trackItem(ctx, bare.data.item.id);
+    expect(bare.data.item.properties).toEqual({});
+
+    const values = Object.fromEntries(names.map((name) => [name, `${name}!`]));
+    const full = await client.createItem({
+      type: id,
+      properties: values,
+      source: ctx.source,
+    });
+    expect(full.status).toBe(201);
+    trackItem(ctx, full.data.item.id);
+
+    const read = await client.getItem(full.data.item.id);
+    expect(read.status).toBe(200);
+    expect(read.data.item.properties).toEqual(values);
+
+    const patched = await client.updateItem(full.data.item.id, {
+      properties: { valueOf: "changed" },
+      version: full.data.item.version,
+    });
+    expect(patched.status).toBe(200);
+    expect(patched.data.item.properties).toEqual({
+      ...values,
+      valueOf: "changed",
+    });
+  });
 });
 
 // Per-type merge policy drives client-side conflict resolution.

@@ -166,6 +166,8 @@ pub enum BulkUpsertEdgesError {
     Status400(models::BulkAtomicRollbackOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::BulkAtomicRollbackOrEdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal),
+    Status404(models::BulkAtomicRollbackRefusal),
+    Status409(models::BulkAtomicRollbackRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
