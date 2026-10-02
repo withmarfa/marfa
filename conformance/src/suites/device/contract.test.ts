@@ -24,6 +24,7 @@ import {
   KEY,
   acceptUploads,
   fileOf,
+  hashOf,
   hydratedHarness,
   requireBinary,
   scriptBlob,
@@ -1222,6 +1223,98 @@ describe("the contract the working copy was built for", () => {
     expect(own.ok && own.value.verdicts[0]?.verdict).toBe("refused");
   });
 
+  it("takes a refusal naming no contract on any read as the network's, never as the server's word", async () => {
+    harness = await hydratedHarness("contract-unnamed-reads");
+    const { server: scripted, device } = harness;
+    const unnamed = (status: number, code: string): Answer => ({
+      kind: "json",
+      status,
+      body: { error: { code, message: "answered at the edge" } },
+      contract: null,
+    });
+
+    // The stream a catch-up reads. The hydration's head read answers once
+    // more first.
+    scripted.answer("GET", "/events", unnamed(401, "access_denied"));
+    expect((await device.catchUp()).ok).toBe(true);
+    const stream = await device.catchUp();
+    expect(stream.ok).toBe(false);
+    if (!stream.ok) {
+      expect(
+        [
+          stream.refusal.code === "unauthorized",
+          stream.refusal.raw.includes('"exit":3'),
+        ],
+        "a gateway's 401 on the stream was read as the credential refused",
+      ).toEqual([false, true]);
+    }
+    // The catalog it reads before the stream: the scripted catalog answers
+    // once more, then the proxy does.
+    scripted.answer("GET", "/types", unnamed(404, "not_found"));
+    expect((await device.catchUp()).ok).toBe(false);
+    const streamsBefore = scripted.requests.filter(
+      (request) => request.pathname === "/events",
+    ).length;
+    const catalog = await device.catchUp();
+    expect(catalog.ok).toBe(false);
+    if (!catalog.ok) expect(catalog.refusal.code).toBe("unnamed_answer");
+    expect(
+      scripted.requests.filter((request) => request.pathname === "/events")
+        .length,
+      "the catch-up went past a catalog read refused naming no contract",
+    ).toBe(streamsBefore);
+
+    // A blob's link.
+    const hash = hashOf(Buffer.from("bytes behind a gateway\n"));
+    scripted.answer("GET", `/blobs/${hash}/url`, unnamed(401, "access_denied"));
+    const blob = await device.blob(hash);
+    expect(blob.ok).toBe(false);
+    if (!blob.ok) {
+      expect(
+        blob.refusal.code,
+        "a gateway's 401 on a blob's link was read as the credential refused",
+      ).toBe("unnamed_answer");
+    }
+
+    // The read of the row a create landed on.
+    const THEIRS = "01a00000-0000-7000-8000-0000000000ca";
+    const current = {
+      id: THEIRS,
+      version: 1,
+      properties: { title: "theirs", body: "theirs" },
+      tier: "library" as const,
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      source_id: "gated.md",
+      type: "core.note",
+    };
+    expect(
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "mine" },
+          source: "notes",
+          sourceId: "gated.md",
+          version: 0,
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(scripted, {
+      create: [answers.ancestorUnavailable(current, 0)],
+      read: [unnamed(403, "forbidden")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.unavailable).toMatch(/naming no contract/);
+    expect(
+      drained.value.verdicts.map((verdict) => [
+        verdict.verdict,
+        verdict.refusals,
+      ]),
+      "a proxy's 403 on the landed row was taken as the server's, and the create stopped for good",
+    ).toEqual([[null, 0]]);
+  });
+
   it("ends the pass when the read of the row a create landed on answers on another contract", async () => {
     const THEIRS = "01a00000-0000-7000-8000-0000000000c9";
     const current = {
@@ -1294,8 +1387,11 @@ describe("the contract the working copy was built for", () => {
     const refused = await device.hydrate(["core.note"], "library");
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
-      expect(refused.refusal.code).toBe("server");
-      expect(refused.refusal.raw).toContain("bad_gateway");
+      // Taken as from something in front of the server, whatever its
+      // status, and named by it (`device.md` 42).
+      expect(refused.refusal.code).toBe("unnamed_answer");
+      expect(refused.refusal.raw).toContain("502");
+      expect(refused.refusal.raw).toContain('"exit":3');
     }
   });
 

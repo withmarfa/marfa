@@ -17310,6 +17310,46 @@ describe("a folder that cannot reach the server", () => {
     ).toBe(true);
   });
 
+  it("waits out a gateway refusing its key, naming no contract, without stopping", async () => {
+    const unnamed: Answer = {
+      kind: "json",
+      status: 401,
+      body: { error: { code: "access_denied", message: "at the edge" } },
+      contract: null,
+    };
+    // The stream and the first create both meet the gateway, then the server.
+    harness = await folderHarness("folder-watch-gateway", {
+      events: [unnamed, unnamed, headRead("1")],
+    });
+    harness.server.answer("POST", "/items", unnamed);
+    scriptFolderWrites(harness);
+    put(harness, "gated.md", "---\ntitle: Gated\n---\nbehind a gateway\n");
+    const watching = harness.folder.watchText();
+    const said = (text: string) => watching.stdout.split(text).length - 1;
+    try {
+      await vi.waitFor(
+        () => {
+          expect(said("cannot reach the server")).toBe(1);
+          expect(said("answers again")).toBe(1);
+          expect(
+            harness!.server.requests.filter(
+              (request) =>
+                request.method === "POST" && request.pathname === "/items",
+            ).length,
+          ).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 40_000, interval: 100 },
+      );
+      expect(
+        watching.running(),
+        `a watch stopped on a gateway's 401 as though its key were refused: ${watching.stderr}`,
+      ).toBe(true);
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.stdout).toMatch(/naming no contract/);
+  });
+
   it("stops a watch whose credential is refused, with the credential's exit", async () => {
     harness = await folderHarness("folder-watch-refused");
     // Before the folder's own doors, so the first create meets it.
