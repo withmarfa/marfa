@@ -32,8 +32,10 @@ import {
   setBulkJobEnqueueListener,
 } from "./bulk-actions/index.js";
 import { shutdownInOrder } from "./shutdown.js";
+import { installUnhandledRejectionReporter } from "./process-faults.js";
 
 async function main() {
+  installUnhandledRejectionReporter();
   const config = bootConfig();
   setLogStacks(!config.isProduction);
   for (const warning of config.settingWarnings ?? []) log("warn", warning);

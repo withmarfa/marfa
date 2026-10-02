@@ -351,6 +351,18 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     return updated.length > 0;
   }
 
+  async setRegisteredScopes(
+    clientId: string,
+    scopes: readonly string[],
+  ): Promise<boolean> {
+    const updated = await this.db
+      .update(auth_oauth_client)
+      .set({ scopes: JSON.stringify([...scopes]), updatedAt: new Date() })
+      .where(eq(auth_oauth_client.clientId, clientId))
+      .returning({ id: auth_oauth_client.id });
+    return updated.length > 0;
+  }
+
   async revokeTokensForGrant(
     clientId: string,
     authUserId: string,

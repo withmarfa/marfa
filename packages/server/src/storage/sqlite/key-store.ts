@@ -20,6 +20,7 @@ import type {
 import type { KeyRevokeOutcome, KeyStore, StoredApiKey } from "../interface.js";
 import { apiKeys, outboundWebhooks } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { isUniqueViolation } from "./pk-violation.js";
 
 /**
  * Window within which repeated `last_used_at` writes for the same key
@@ -103,19 +104,6 @@ export class SqliteKeyStore implements KeyStore {
     input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
   ): Promise<StoredApiKey> {
-    const collision = await this.db
-      .select({ id: apiKeys.id })
-      .from(apiKeys)
-      .where(and(eq(apiKeys.source, input.source), isNull(apiKeys.revoked_at)))
-      .get();
-    if (collision) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `Source "${input.source}" is already another key's own`,
-        { source: input.source },
-      );
-    }
-
     const now = new Date().toISOString();
     const row = {
       id: generateId(),
@@ -138,7 +126,20 @@ export class SqliteKeyStore implements KeyStore {
           : JSON.stringify(input.enforcement_override),
       created_at: now,
     };
-    await this.db.insert(apiKeys).values(row).run();
+    try {
+      await this.db.insert(apiKeys).values(row).run();
+    } catch (err) {
+      // The partial unique index on an unrevoked key's own `source` is the
+      // check, so two mints racing for one source cannot both pass it.
+      if (isUniqueViolation(err, "api_keys.source")) {
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `Source "${input.source}" is already another key's own`,
+          { source: input.source },
+        );
+      }
+      throw err;
+    }
     return {
       id: row.id,
       label: row.label,

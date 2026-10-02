@@ -1,45 +1,37 @@
 /**
- * The authorize surface's stale-ceiling catch-up runs behind the request
- * shapes the plugin is certain to refuse, and behind a redirect URI the
- * client actually registered.
- *
- * **That is a higher bar, not proof of control, and the difference is the
- * point of these tests.** A caller who knows the registered callback still
- * drives the widening, unauthenticated — the loopback case below asserts
- * exactly that, because it has to keep working for native clients. What the
- * gate changes is the precondition: one public identifier becomes two, and
- * no endpoint discloses the second, so it has to be observed rather than
- * looked up. An attacker who has watched one browser sign-in has both.
+ * The authorize surface's stale-ceiling catch-up writes only for a signed-in
+ * person, behind the request shapes the plugin is certain to refuse, and
+ * behind a redirect URI the client actually registered.
  *
  * `narrowAuthorizeScopes` is a `hooks.before` matcher, so it runs ahead of the
- * endpoint handler body — ahead of the plugin resolving a session, and ahead
- * of the plugin validating `redirect_uri`. The catch-up inside it persists an
- * append-only `UPDATE` on `auth_oauth_client.scopes`. Measured before this
- * change: an unauthenticated `GET /auth/oauth2/authorize` carrying a known
- * `client_id`, an unregistered `redirect_uri` and a `scope` naming the bundle
- * union returned 302 and took the client's stored ceiling from one scope to
- * the whole union.
+ * plugin resolving a session and ahead of the plugin validating
+ * `redirect_uri`. The catch-up inside it persists an `UPDATE` on
+ * `auth_oauth_client.scopes`, the row a client is given when it omits
+ * `scope`. Measured before the session gate: an unauthenticated
+ * `GET /auth/oauth2/authorize` naming a client's registered callback and the
+ * bundle union returned 302 and took the client's stored ceiling from one
+ * scope to the whole union, so the next genuine sign-in met a consent screen
+ * asking for the union.
  *
  * **The response is a 302 either way, so every assertion here reads the
- * stored row.** The original measurement was a 302 with a widened row behind
- * it; a test asserting on the redirect would have passed against the defect.
- * `storedCeiling` goes back through `oauth.getClient`, which is the same read
- * the hook and the plugin both make.
- *
- * The harm is consent-screen inflation rather than a silent grant: the
- * ceiling is what a client is handed when it omits `scope`, so a user signing
- * in to an inflated client meets a screen pre-ticked with the union instead of
- * the narrow set the client registered for.
+ * stored row.** `storedCeiling` goes back through `oauth.getClient`, which is
+ * the same read the hook and the plugin both make.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { expandBundlesToScopes, isValidScope } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
-import { createTestContext, request, waitForAudit } from "../test-utils.js";
+import {
+  createTestAccount,
+  createTestContext,
+  request,
+  waitForAudit,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import { buildAllowedScopes } from "./oauth-provider.js";
 import { bundlePublishedScopes } from "./ceiling-catchup.js";
+import { SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import {
   isLoopbackIpLiteral,
   matchesRegisteredRedirectUri,
@@ -132,9 +124,7 @@ function authorizeUrl(opts: {
   return `/auth/oauth2/authorize?${params.toString()}`;
 }
 
-/** Unauthenticated on purpose: no cookie, which is the caller the gate is
- *  about. The catch-up ran above session resolution, so a session was never
- *  what stopped it. */
+/** Unauthenticated on purpose: no cookie. */
 async function authorizeAnonymously(
   c: TestContext,
   opts: { clientId: string; scope: string; redirectUri: string },
@@ -142,9 +132,139 @@ async function authorizeAnonymously(
   return request(c.app, "GET", authorizeUrl(opts));
 }
 
+/** A signed-in person's session cookie. */
+async function signIn(c: TestContext, email: string): Promise<string> {
+  const password = "correct horse battery";
+  await createTestAccount(c, email, password, "Test User");
+  const res = await request(c.app, "POST", "/auth/sign-in/email", {
+    body: { email, password },
+    headers: { origin: ORIGIN },
+  });
+  if (res.status !== 200) throw new Error(`sign-in ${String(res.status)}`);
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  for (const part of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
+    const head = part.split(";")[0];
+    if (head?.includes("session_token")) return head;
+  }
+  throw new Error("session_token cookie not found");
+}
+
+/** The same request, from a signed-in person. */
+async function authorizeSignedIn(
+  c: TestContext,
+  cookie: string,
+  opts: { clientId: string; scope: string; redirectUri: string },
+  extra = "",
+): Promise<Response> {
+  return request(c.app, "GET", `${authorizeUrl(opts)}${extra}`, {
+    headers: { cookie },
+  });
+}
+
+describe("the authorize ceiling catch-up writes only for a signed-in person", () => {
+  it("leaves the ceiling alone for a request nobody signed in made, and sends them to sign in first", async () => {
+    ctx = await createTestContext({});
+    const union = bundleUnion();
+    const clientId = await seedClient(ctx, {
+      scopes: [SEEDED_SCOPE],
+      redirectUris: [CALLBACK],
+    });
+    const asked = authorizeUrl({
+      clientId,
+      scope: union.join(" "),
+      redirectUri: CALLBACK,
+    });
+
+    const res = await request(ctx.app, "GET", asked);
+    expect(res.status).toBe(302);
+    expect(await storedCeiling(ctx, clientId)).toEqual([SEEDED_SCOPE]);
+    // To sign in, carrying the request unchanged, every scope it named
+    // included, rather than a request already narrowed to the old ceiling.
+    const location = new URL(res.headers.get("location") ?? "", ORIGIN);
+    expect(location.pathname).toBe("/auth/sign-in");
+    const back = location.searchParams.get("return_to") ?? "";
+    const carried = new URL(back, ORIGIN);
+    expect(carried.pathname).toBe("/auth/oauth2/authorize");
+    expect(carried.searchParams.get("scope")).toBe(union.join(" "));
+
+    // Signed in, the same request heals the ceiling on the way to consent.
+    const cookie = await signIn(ctx, "heals@example.com");
+    const healed = await request(ctx.app, "GET", back, { headers: { cookie } });
+    expect(healed.status).toBe(302);
+    expect(healed.headers.get("location")).toContain("/auth/authorize?");
+    expect((await storedCeiling(ctx, clientId))?.length).toBe(union.length);
+  });
+
+  it("answers a script that fetched the request with where to sign in", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx, {
+      scopes: [SEEDED_SCOPE],
+      redirectUris: [CALLBACK],
+    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      authorizeUrl({
+        clientId,
+        scope: bundleUnion().join(" "),
+        redirectUri: CALLBACK,
+      }),
+      { headers: { accept: "application/json" } },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { redirect?: boolean; url?: string };
+    expect(body.redirect).toBe(true);
+    expect(body.url).toMatch(/^\/auth\/sign-in\?return_to=/);
+    expect(await storedCeiling(ctx, clientId)).toEqual([SEEDED_SCOPE]);
+  });
+
+  it("leaves the ceiling alone for prompt=none from nobody, which the plugin answers login_required", async () => {
+    // Nobody can be sent anywhere under `prompt=none`, so the request is
+    // narrowed to the ceiling as it stands and the plugin judges it. The
+    // session scopes are left out of the request because a session scope
+    // the ceiling lacks is refused rather than narrowed away.
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx, {
+      scopes: [SEEDED_SCOPE],
+      redirectUris: [CALLBACK],
+    });
+    const scope = bundleUnion()
+      .filter((s) => !SESSION_CRITICAL_SCOPES.includes(s))
+      .join(" ");
+    const res = await request(
+      ctx.app,
+      "GET",
+      `${authorizeUrl({ clientId, scope, redirectUri: CALLBACK })}&prompt=none`,
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toContain("error=login_required");
+    expect(await storedCeiling(ctx, clientId)).toEqual([SEEDED_SCOPE]);
+  });
+
+  it("does not send anybody to sign in when nothing needs catching up", async () => {
+    ctx = await createTestContext({});
+    const clientId = await seedClient(ctx, {
+      scopes: [SEEDED_SCOPE],
+      redirectUris: [CALLBACK],
+    });
+    const res = await authorizeAnonymously(ctx, {
+      clientId,
+      scope: SEEDED_SCOPE,
+      redirectUri: CALLBACK,
+    });
+    expect(res.status).toBe(302);
+    // The plugin's own sign-in redirect, which signs the request.
+    const location = new URL(res.headers.get("location") ?? "", ORIGIN);
+    expect(location.pathname).toBe("/auth/sign-in");
+    expect(location.searchParams.has("sig")).toBe(true);
+    expect(location.searchParams.has("return_to")).toBe(false);
+  });
+});
+
 describe("the authorize ceiling catch-up writes only behind a registered redirect URI", () => {
   it("does not widen the stored ceiling for a request naming an unregistered redirect URI", async () => {
     ctx = await createTestContext({});
+    const cookie = await signIn(ctx, "gate-1@example.com");
     const union = bundleUnion();
     // The fixture has to be one the catch-up would otherwise act on, or the
     // test passes for the wrong reason. Both halves are asserted rather than
@@ -169,7 +289,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
       redirectUris: [CALLBACK],
     });
 
-    const attack = await authorizeAnonymously(ctx, {
+    const attack = await authorizeSignedIn(ctx, cookie, {
       clientId: victim,
       scope: union.join(" "),
       redirectUri: UNREGISTERED,
@@ -179,7 +299,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     expect(attack.status).toBe(302);
     expect(await storedCeiling(ctx, victim)).toEqual([SEEDED_SCOPE]);
 
-    const permitted = await authorizeAnonymously(ctx, {
+    const permitted = await authorizeSignedIn(ctx, cookie, {
       clientId: control,
       scope: union.join(" "),
       redirectUri: CALLBACK,
@@ -210,13 +330,14 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // the registry still self-heals, and the audit trail still says which
     // surface moved the row.
     ctx = await createTestContext({});
+    const cookie = await signIn(ctx, "gate-2@example.com");
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
       redirectUris: [CALLBACK],
     });
 
-    const res = await authorizeAnonymously(ctx, {
+    const res = await authorizeSignedIn(ctx, cookie, {
       clientId,
       scope: union.join(" "),
       redirectUri: CALLBACK,
@@ -246,13 +367,14 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // port, so the port it registered is almost never the port it listens on
     // — and those are precisely the clients whose registrations go stale.
     ctx = await createTestContext({});
+    const cookie = await signIn(ctx, "gate-3@example.com");
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
       redirectUris: ["http://127.0.0.1:8123/cb"],
     });
 
-    const res = await authorizeAnonymously(ctx, {
+    const res = await authorizeSignedIn(ctx, cookie, {
       clientId,
       scope: union.join(" "),
       // Same scheme, host, path and query. Only the port moved.
@@ -274,6 +396,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // literals are what a catch-up widens by, and the unknown one is on no
     // allowlist, so it is the thing that must not appear.
     ctx = await createTestContext({});
+    const cookie = await signIn(ctx, "gate-4@example.com");
     const union = bundleUnion();
     const unknown = "core.nonexistent.type:read";
     expect(buildAllowedScopes()).not.toContain(unknown);
@@ -284,7 +407,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
       redirectUris: [CALLBACK],
     });
 
-    const res = await authorizeAnonymously(ctx, {
+    const res = await authorizeSignedIn(ctx, cookie, {
       clientId,
       scope: [...union, unknown].join(" "),
       redirectUri: CALLBACK,
@@ -331,6 +454,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
   for (const [name, extra] of refusedAboveRedirectCheck) {
     it(`does not widen the stored ceiling for ${name}`, async () => {
       ctx = await createTestContext({});
+      const cookie = await signIn(ctx, "gate-5@example.com");
       const union = bundleUnion();
       const clientId = await seedClient(ctx, {
         scopes: [SEEDED_SCOPE],
@@ -348,6 +472,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
           scope: union.join(" "),
           redirectUri: CALLBACK,
         })}&${new URLSearchParams(extra).toString()}`,
+        { headers: { cookie } },
       );
       expect(res.status).toBe(302);
       expect(await storedCeiling(ctx, clientId)).toEqual([SEEDED_SCOPE]);
@@ -359,6 +484,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // `unsupported_response_type` there, and there is no grant in it worth
     // moving a registration row for.
     ctx = await createTestContext({});
+    const cookie = await signIn(ctx, "gate-6@example.com");
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
@@ -374,6 +500,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
         redirectUri: CALLBACK,
         responseType: "token",
       }),
+      { headers: { cookie } },
     );
     expect(res.status).toBe(302);
     expect(await storedCeiling(ctx, clientId)).toEqual([SEEDED_SCOPE]);

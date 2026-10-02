@@ -1713,6 +1713,17 @@ export interface OauthProviderStore {
     expectedScopes: readonly string[],
     scopes: readonly string[],
   ): Promise<boolean>;
+  /**
+   * Record the scope a client asked for at registration as its ceiling.
+   * The provider plugin stores its whole registration allowlist on every
+   * dynamically registered client whatever the request named, so the
+   * registration door puts the requested set in its place before the
+   * answer leaves. Returns false when there is no such client.
+   */
+  setRegisteredScopes(
+    clientId: string,
+    scopes: readonly string[],
+  ): Promise<boolean>;
   /** Look up the user's most recent prior consent scopes for
    *  (clientId, authUserId). Returns the scope literals from the
    *  `auth_oauth_consent` row, or `undefined` if no prior grant. */

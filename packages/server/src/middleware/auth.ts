@@ -266,8 +266,9 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
  *
  * An OAuth principal's `id` is the access-token row, and every refresh
  * replaces it, so anything that has to hold across a refresh keys on this:
- * an idempotent retry the app makes after refreshing, and the bulk-action
- * job it comes back to read.
+ * an idempotent retry the app makes after refreshing, the bulk-action job
+ * it comes back to read, and the rate limit, which it could otherwise reset
+ * by refreshing.
  *
  * **A revoke followed by a fresh consent from the same app and person lands
  * on the same handle**, and an idempotent replay is served before the door's

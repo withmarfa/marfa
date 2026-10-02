@@ -44,3 +44,28 @@ export function isPrimaryKeyViolation(
   }
   return false;
 }
+
+/**
+ * Detect a unique-constraint collision on one column, named as SQLite names
+ * it in the message (`table.column`). Read on both layers for the reason
+ * {@link isPrimaryKeyViolation} gives.
+ */
+export function isUniqueViolation(err: unknown, column: string): boolean {
+  const cause =
+    err != null && typeof err === "object"
+      ? (err as { cause?: unknown }).cause
+      : undefined;
+  for (const layer of [err, cause]) {
+    if (layer == null || typeof layer !== "object") continue;
+    const e = layer as { code?: unknown; message?: unknown };
+    const code = typeof e.code === "string" ? e.code : "";
+    const message = typeof e.message === "string" ? e.message : "";
+    if (
+      code.includes("SQLITE_CONSTRAINT") &&
+      message.includes(`UNIQUE constraint failed: ${column}`)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}

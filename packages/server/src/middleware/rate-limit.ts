@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
+import { credentialHandle } from "./auth.js";
 import type { Storage } from "../storage/interface.js";
 
 export interface RateLimitConfig {
@@ -63,10 +64,8 @@ export function rateLimitMiddleware(
     aggregateMultiplier > 0 ? config.defaultLimit * aggregateMultiplier : 0;
 
   return async (c, next) => {
-    const apiKey = c.get("apiKey");
     // The address `clientIpMiddleware` resolved, which has to run first.
-    const clientIp = c.var.clientIp;
-    const identifier = apiKey?.id ?? clientIp ?? "anon";
+    const identifier = credentialHandle(c) || (c.var.clientIp ?? "anon");
     const path = c.req.path;
 
     let limit = config.defaultLimit;

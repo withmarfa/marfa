@@ -25,7 +25,11 @@ import {
   DEVICE_CODE_GRANT_TYPE,
   oauthProvider,
 } from "@better-auth/oauth-provider";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import {
   decodeBasicCredentials,
   stripAccessTokenAuthorizationScheme,
@@ -56,6 +60,7 @@ import { log } from "../middleware/logger.js";
 import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
+  scopesAwaitingCatchUp,
 } from "./ceiling-catchup.js";
 import {
   isWithheldFromAllowlist,
@@ -94,6 +99,9 @@ interface HookCtxLite {
    *  the context merge Better Auth performs on a before-hook's returned
    *  `context`. See {@link resolveClientRevoke}. */
   revokeResolution?: RevokeResolution;
+  /** Set by the same before-hook when the presented token was already
+   *  nothing this server would accept before the plugin ran. */
+  revokedTokenWasDead?: boolean;
   context?: {
     session?: { user?: { id?: string } } | null;
     /** What the endpoint produced. On a redirect this is the thrown
@@ -380,6 +388,12 @@ function makeTokenHasher(salt: string) {
     createHmac("sha256", salt).update(token).digest("hex");
 }
 
+/** Where the provider sends a person who is not signed in. */
+const SIGN_IN_PAGE = "/auth/sign-in";
+
+/** The provider's authorize endpoint as a browser addresses it. */
+const AUTHORIZE_PATH = "/auth/oauth2/authorize";
+
 /**
  * Construct the @better-auth/oauth-provider plugin with Marfa-specific
  * configuration. Used as one entry in the better-auth `plugins: [...]`
@@ -393,7 +407,7 @@ export function buildOauthProviderPlugin(
 
   return oauthProvider({
     // ----- Page wiring (Marfa-owned routes for both) -----
-    loginPage: "/auth/sign-in",
+    loginPage: SIGN_IN_PAGE,
     consentPage: "/auth/authorize",
 
     // ----- Dynamic client registration (RFC 7591) -----
@@ -405,12 +419,12 @@ export function buildOauthProviderPlugin(
     allowUnauthenticatedClientRegistration: true,
 
     // ----- Scope grammar -----
-    // The allowlist, which is also every registered client's scope ceiling:
-    // the plugin's registration validates a requested `scope` against
-    // `clientRegistrationAllowedScopes` and then stores that whole set on
-    // the row, whatever the request named or omitted, so the consent screen
-    // is the only narrowing. Custom types registered at runtime require a
-    // server restart to surface here.
+    // The allowlist, which is also the ceiling of a client that registers
+    // naming no scope: the plugin's registration validates a requested
+    // `scope` against `clientRegistrationAllowedScopes` and stores this whole
+    // set on the row whatever the request named, and the registration
+    // after-hook puts a named scope back in its place. Custom types
+    // registered at runtime require a server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above carries the runtime namespace roots, but the
@@ -452,7 +466,7 @@ export function buildOauthProviderPlugin(
     // distinguish OAuth tokens from API keys (`marfa_k1_*`). The middleware
     // ignores anything not matching one of these prefixes.
     prefix: {
-      opaqueAccessToken: "marfa_at_",
+      opaqueAccessToken: ACCESS_TOKEN_PREFIX,
       refreshToken: REFRESH_TOKEN_PREFIX,
     },
 
@@ -617,6 +631,14 @@ export function buildOauthProjectionPlugin(opts: {
     hooks: {
       after: [
         {
+          // Registration answers and stores the scope the client asked
+          // for. See `keepRequestedRegistrationScope`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/register",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            keepRequestedRegistrationScope(ctx, storage),
+          ),
+        },
+        {
           // Gives the authorize endpoint's failures a signal, and its own
           // consent skip an audit row. See `logAuthorizeOutcome` and
           // `auditProviderConsentSkip`.
@@ -638,6 +660,13 @@ export function buildOauthProjectionPlugin(opts: {
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
                 handler: createAuthMiddleware((ctx: HookCtxLite) =>
                   cascadeClientRevoke(ctx, storage),
+                ),
+              },
+              {
+                // After the cascade, which reads the plugin's own answer.
+                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
+                handler: createAuthMiddleware((ctx: HookCtxLite) =>
+                  Promise.resolve(answerDeadTokenRevoked(ctx)),
                 ),
               },
             ]
@@ -754,6 +783,46 @@ export function buildOauthProjectionPlugin(opts: {
       ],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Dynamic registration (after-hook)
+// ---------------------------------------------------------------------------
+
+/**
+ * After-hook for `/oauth2/register`: the client is registered for the scope
+ * it asked for, in its stored row and in the answer.
+ *
+ * The plugin validates a requested `scope` against the registration
+ * allowlist and then stores, and answers, the whole allowlist whatever the
+ * request named, so a client asking for one type's read was recorded as
+ * one that may ask for anything, `keys.mint` and `grants.manage` included.
+ * The row is put right before the answer leaves, which is the first moment
+ * anybody learns the client's id, so no request ever meets the wider row.
+ * A registration naming no scope keeps the plugin's default, which is the
+ * allowlist. A failed write fails the registration: the answer would
+ * otherwise describe a row that says something else.
+ */
+async function keepRequestedRegistrationScope(
+  ctx: HookCtxLite,
+  storage: Storage,
+): Promise<Record<string, unknown> | undefined> {
+  const answer = ctx.context?.returned;
+  if (answer === null || typeof answer !== "object") return undefined;
+  if ("statusCode" in answer) return undefined;
+  const registered = answer as Record<string, unknown>;
+  const clientId = registered.client_id;
+  if (typeof clientId !== "string") return undefined;
+  const asked = ctx.body?.scope;
+  if (typeof asked !== "string") return undefined;
+  const requested = [...new Set(asked.split(" ").filter((s) => s.length > 0))];
+  if (requested.length === 0) return undefined;
+  const oauth = storage.oauthProvider;
+  if (!oauth) return undefined;
+  if (!(await oauth.setRegisteredScopes(clientId, requested))) {
+    throw new Error(`the client just registered is gone: ${clientId}`);
+  }
+  return { ...registered, scope: requested.join(" ") };
 }
 
 // ---------------------------------------------------------------------------
@@ -891,6 +960,10 @@ function auditProviderConsentSkip(
  *  pair and the device token step all have to agree on it. */
 export const REFRESH_TOKEN_PREFIX = "marfa_rt_";
 
+/** The prefix the plugin puts on an opaque access token, which the bearer
+ *  middleware reads to tell one from a key. */
+export const ACCESS_TOKEN_PREFIX = "marfa_at_";
+
 /** What the revoke before-hook establishes, for the after-hook to act on. */
 interface RevokeResolution {
   /** The refresh row the presented token resolved to, as it stood before
@@ -960,8 +1033,8 @@ export function resolveRevokeClientId(input: {
 }
 
 /**
- * Before-hook for `/oauth2/revoke`: resolve the presented refresh token to
- * its row while the row is still as the client left it.
+ * Before-hook for `/oauth2/revoke`: resolve the presented token while its
+ * row is still as the client left it.
  *
  * The plugin's own handling of a refresh token stops at the token. It marks
  * the presented row revoked and deletes the access tokens under it, and
@@ -977,39 +1050,63 @@ export function resolveRevokeClientId(input: {
  *
  * **Why a before-hook exists at all.** The after-hook cannot learn from the
  * response what happened: the plugin answers a success and the cross-client
- * no-op both with an empty 200, and answers an unknown token and a replayed
- * one with a 400 rather than the 200 RFC 7009 §2.2 asks for (its
- * `error.name === "BAD_REQUEST"` branch never matches, since `APIError.name`
- * is `"APIError"`), and on the replay path the row is deleted before any
- * after-hook can read it. So the row is read here, before the plugin runs,
- * together with the client the request authenticates as, and the pair is
- * handed forward through the context merge Better Auth performs on a
- * before-hook's returned `context`. Nothing is written here; a before-hook
- * runs ahead of the plugin authenticating the client, and a write above
- * that line would be one an unauthenticated caller could drive. The one
- * read it does perform, an indexed lookup on a hash the caller chose, is
- * bounded by the endpoint's own per-IP cap and discloses nothing to the
- * caller.
+ * no-op both with an empty 200, and an unknown token and a replayed one
+ * alike with a 400 (its `error.name === "BAD_REQUEST"` branch, meant to
+ * answer those 200 as RFC 7009 section 2.2 asks, never matches, since
+ * `APIError.name` is `"APIError"`), and on the replay path the row is
+ * deleted before any after-hook can read it. So the row is read here, before
+ * the plugin runs, together with the client the request authenticates as,
+ * and so is whether the token was alive at all, which is what
+ * {@link answerDeadTokenRevoked} decides by. Both are handed forward through
+ * the context merge Better Auth performs on a before-hook's returned
+ * `context`. Nothing is written here; a before-hook runs ahead of the plugin
+ * authenticating the client, and a write above that line would be one an
+ * unauthenticated caller could drive. The reads it does perform, indexed
+ * lookups on a hash the caller chose, are bounded by the endpoint's own
+ * per-IP cap and disclose nothing to the caller.
  */
 async function resolveClientRevoke(
   ctx: HookCtxLite,
   storage: Storage,
   hasher: (token: string) => string,
-): Promise<{ context: { revokeResolution: RevokeResolution } } | undefined> {
+): Promise<
+  | {
+      context: {
+        revokeResolution?: RevokeResolution;
+        revokedTokenWasDead: boolean;
+      };
+    }
+  | undefined
+> {
   try {
     const body = ctx.body;
     if (!body || typeof body !== "object") return undefined;
-    if (body.token_type_hint === "access_token") return undefined;
     const token = normalizeRevokeToken(body.token);
-    if (!token?.startsWith(REFRESH_TOKEN_PREFIX)) return undefined;
+    if (token === undefined) return undefined;
     const provider = storage.oauthProvider;
-    if (typeof provider?.findRefreshTokenGrantKey !== "function")
+    if (
+      typeof provider?.findRefreshTokenGrantKey !== "function" ||
+      typeof provider.validateAccessToken !== "function"
+    )
       return undefined;
+    if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
+      const live = await provider.validateAccessToken(
+        hasher(token.slice(ACCESS_TOKEN_PREFIX.length)),
+      );
+      return { context: { revokedTokenWasDead: live === null } };
+    }
+    if (!token.startsWith(REFRESH_TOKEN_PREFIX)) {
+      return { context: { revokedTokenWasDead: true } };
+    }
     const tokenHash = hasher(token.slice(REFRESH_TOKEN_PREFIX.length));
     const row = await provider.findRefreshTokenGrantKey(tokenHash);
-    if (!row) return undefined;
+    const revokedTokenWasDead = row === null || row.revoked;
+    if (!row || body.token_type_hint === "access_token") {
+      return { context: { revokedTokenWasDead } };
+    }
     return {
       context: {
+        revokedTokenWasDead,
         revokeResolution: {
           row,
           tokenHash,
@@ -1027,6 +1124,36 @@ async function resolveClientRevoke(
     });
     return undefined;
   }
+}
+
+/**
+ * After-hook for `/oauth2/revoke`: answer `200` for a token that was already
+ * dead, as RFC 7009 section 2.2 asks, where the plugin answers `400
+ * invalid_request` ("token not found", "refresh token revoked") or, for a
+ * token not shaped as the kind its `token_type_hint` names, `400
+ * invalid_token`.
+ *
+ * Decided from what the before-hook found before the plugin ran, never from
+ * the refusal's wording: only a token that matched no live access token and
+ * no unrevoked refresh token is answered this way, so a live token the
+ * plugin refused for another reason (a `token_type_hint` naming the other
+ * kind) keeps its refusal rather than being told it was revoked. A refusal
+ * of the client itself is a `401` and is never touched.
+ */
+function answerDeadTokenRevoked(ctx: HookCtxLite): Response | undefined {
+  if (ctx.revokedTokenWasDead !== true) return undefined;
+  const returned = ctx.context?.returned as
+    { statusCode?: unknown; body?: { error?: unknown } } | null | undefined;
+  if (returned?.statusCode !== 400) return undefined;
+  const error = returned.body?.error;
+  if (error !== "invalid_request" && error !== "invalid_token") {
+    return undefined;
+  }
+  // The plugin's own success: a JSON `null`.
+  return new Response("null", {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 /**
@@ -1065,8 +1192,8 @@ async function resolveClientRevoke(
  * still the plugin's 200, because the tokens under the presented token are
  * already gone and refusing would tell the client to retry a revocation
  * that cannot be retried (the plugin has forgotten the token). The failure
- * is logged at error naming the grant, and the person's Disconnect puts the
- * records right. The person's own
+ * is logged at error naming the grant, and the person's Disconnect
+ * (`DELETE /auth/grants/{id}`) puts the record right. The person's own
  * Disconnect makes the opposite call and fails loud, because there the
  * cascade is the whole of the work.
  */
@@ -1135,8 +1262,9 @@ async function cascadeClientRevoke(
       client_id: row.clientId,
       user_id: row.userId,
       grant_item_id: grantItemId,
-      repair:
-        "the grant's records may disagree; Disconnect on the security page or POST /admin/oauth-clients/{client_id}/delete repairs them",
+      ...(grantItemId !== null && {
+        repair: `the grant's record may still read active; DELETE /auth/grants/${grantItemId} ends it`,
+      }),
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -1312,7 +1440,7 @@ async function narrowAuthorizeScopes(
   storage: Storage,
   liveScopes: Set<string>,
   bundleScopes: Set<string>,
-): Promise<void> {
+): Promise<{ redirect: true; url: string } | undefined> {
   const request = findAuthorizeRequest(ctx);
   if (!request) return;
   const { params, clientId } = request;
@@ -1373,65 +1501,40 @@ async function narrowAuthorizeScopes(
   }
 
   // ---------------------------------------------------------------------
-  // What the caller has to already know, before anything writes.
+  // Who and what has to be in place before anything writes.
   //
   // Everything above this point is a pure read; the catch-up below is a
-  // persistent `UPDATE` on `auth_oauth_client.scopes`. This hook is a
-  // `hooks.before` matcher, so it runs ahead of the endpoint handler body:
-  // ahead of the plugin resolving a session, and ahead of the plugin
-  // validating `redirect_uri`. Without these gates, an unauthenticated caller
-  // who knows a public `client_id` could name the whole bundle union and move
-  // that client's stored row — and the row is what the client is given when
-  // it omits `scope`, so the next genuine sign-in would meet a consent screen
-  // pre-ticked with the union rather than the narrow set the client
-  // registered for. Phishing-shaped against the user.
+  // persistent `UPDATE` on `auth_oauth_client.scopes`, and the row it moves
+  // is what the client is given when it omits `scope`. This hook is a
+  // `hooks.before` matcher, so it runs ahead of the plugin resolving a
+  // session and ahead of the plugin validating `redirect_uri`, which is why
+  // both are established here rather than assumed.
   //
-  // **Call this what it is: a second thing the caller has to know, not proof
-  // that it controls the client.** Nothing here demonstrates control. A
-  // request naming a registered callback still drives the widening, and it
-  // still does so unauthenticated. What changes is the precondition: one
-  // public identifier becomes two, and the second is not one this server
-  // will hand out. There is no endpoint that discloses a client's registered
-  // redirect URIs, so an attacker has to have observed one — from a browser
-  // client's address bar during a sign-in, most easily — rather than looked
-  // one up. That is why the bar rises at all, and it is the whole of what
-  // rises. An attacker who has watched one sign-in has both halves.
+  // **A signed-in person, first of all.** The widening is done only for a
+  // request that carries a session; one that does not is sent to sign in
+  // first, and its own authorize request runs again once it does. Without
+  // that, anybody holding a client's public `client_id` and one of its
+  // registered callbacks, both of which any sign-in shows in the address
+  // bar, could move that client's stored row while signed in as nobody,
+  // and the next genuine sign-in would meet a consent screen asking for the
+  // union rather than the narrow set the client registered for.
   //
-  // The gates below reproduce four of the plugin's own refusals, in its
-  // order, and stop there. **They do not establish that the plugin will
-  // accept the request**, however much a list of four refusals in the
-  // plugin's own order reads like it. The plugin runs a whole query
-  // schema between them — a
-  // malformed `max_age` is `invalid_request` and nothing here notices —
-  // so what this can honestly say is narrower: it declines to write on the
-  // request shapes it can recognize cheaply and unambiguously as refused,
-  // and a shape it cannot recognize still reaches the catch-up. Reproducing
-  // the schema is not worth it; that is a whole validator to keep in step
-  // with a pinned dependency, and every shape it would add is one the caller
-  // already needed the registered redirect URI to reach.
+  // **Then a request the plugin can accept.** The gates below reproduce four
+  // of the plugin's own refusals, in its order, and stop there, so a signed-in
+  // request the plugin is certain to refuse does not move the row either.
+  // **They do not establish that the plugin will accept the request**: the
+  // plugin runs a whole query schema between them (a malformed `max_age` is
+  // `invalid_request` and nothing here notices), so what this can honestly
+  // say is that it declines to write on the request shapes it can recognize
+  // cheaply and unambiguously as refused. The plugin's `disabled` and
+  // `clientAllowsGrant` gates sit below the redirect-URI check in its order
+  // and are not reproduced: both refuse a caller who has already cleared
+  // every bar here.
   //
-  // `catchUpDeviceCeiling` is the device twin: it moves nothing but the
-  // ceiling, and the plugin's own validation still decides the request.
-  //
-  // The plugin's `disabled` and `clientAllowsGrant` gates sit BELOW the
-  // redirect-URI check in its order and are deliberately not reproduced.
-  // Both refuse a caller who has already cleared the bar this hook sets, so
-  // what they would additionally stop is somebody widening the ceiling of a
-  // client they can already reach. The four gates below are different: every
-  // one of them sits ABOVE the redirect-URI check, so leaving them out let a
-  // request through that the plugin was certain to refuse.
-  //
-  // **What this closes and what it does not.** It stops an attacker who
-  // knows only a public `client_id` from widening a THIRD-PARTY client's
-  // ceiling, which is the phishing-shaped harm: the victim is a user who
-  // trusts an app that registered narrowly. It does not stop an attacker who
-  // has also observed that client's callback. And it does not stop somebody
-  // self-registering a client through public dynamic registration and
-  // widening their own — but a ceiling on a client only they control grants
-  // nothing, because a ceiling is permission to ask and a person still
-  // approves the screen. Both distinctions matter, because "unauthenticated
-  // callers cannot write here" is what this will be mistaken for, and it is
-  // not true.
+  // A ceiling is permission to ask, and the person still approves the
+  // screen, so a signed-in person widening a ceiling widens nothing anybody
+  // holds. `catchUpDeviceCeiling` is the device twin and has no session to
+  // ask for: a device asks before anybody has signed in, by design.
 
   // The plugin refuses a JAR request object outright, and refuses a
   // `request_uri` because `requestUriResolver` is unconfigured. Matched on
@@ -1509,14 +1612,26 @@ async function narrowAuthorizeScopes(
   // narrowed against it. Device initiation performs the same catch-up before
   // its own comparison; the helper carries the three bounds and why each one
   // is there.
-  ceiling = await catchUpClientScopeCeiling({
-    storage,
-    clientId,
-    requested,
-    ceiling,
-    bundleScopes,
-    surface: "authorize",
-  });
+  if (scopesAwaitingCatchUp(ceiling, requested, bundleScopes).length > 0) {
+    if (await signedIn(ctx)) {
+      ceiling = await catchUpClientScopeCeiling({
+        storage,
+        clientId,
+        requested,
+        ceiling,
+        bundleScopes,
+        surface: "authorize",
+      });
+    } else if (!asksForNoPrompt(rawPrompt)) {
+      // Narrowing now would drop the very scopes the catch-up exists to
+      // keep, and the plugin carries the narrowed request through sign-in, so
+      // the person would approve less than the app asked for. Sending them
+      // to sign in with the request as it stands means it runs again here,
+      // signed in, and is caught up then. `prompt=none` cannot be sent
+      // anywhere, so it is narrowed and the plugin answers `login_required`.
+      return signInFirst(ctx, params);
+    }
+  }
 
   // Both tests below are exact membership, and both stay that way even
   // though the consent comparisons one file over now understand breadth.
@@ -1631,6 +1746,53 @@ async function narrowAuthorizeScopes(
       dropped_outside_client_ceiling: outsideClientCeiling,
     },
   });
+}
+
+/** Whether the request carries a live session, resolved the way the plugin
+ *  resolves it a moment later. */
+async function signedIn(ctx: HookCtxLite): Promise<boolean> {
+  const session = await getSessionFromCtx(
+    ctx as unknown as Parameters<typeof getSessionFromCtx>[0],
+  );
+  return session !== null;
+}
+
+/** `prompt=none` asks for no interaction at all, so nobody can be sent to
+ *  sign in. Split the way the plugin's `parsePrompt` splits. */
+function asksForNoPrompt(raw: unknown): boolean {
+  return (
+    typeof raw === "string" &&
+    raw.split(" ").some((prompt) => prompt.trim() === "none")
+  );
+}
+
+/**
+ * Send the browser to sign in, carrying this authorize request unchanged as
+ * where to go back to, so it runs again with a session. Answered the way the
+ * plugin answers its own redirects: JSON for a script that fetched it, a
+ * `302` for a browser that navigated.
+ */
+function signInFirst(
+  ctx: HookCtxLite,
+  params: Record<string, unknown>,
+): { redirect: true; url: string } {
+  const query = new URLSearchParams();
+  for (const [name, value] of Object.entries(params)) {
+    if (typeof value === "string") query.append(name, value);
+  }
+  const url = `${SIGN_IN_PAGE}?${new URLSearchParams({
+    return_to: `${AUTHORIZE_PATH}?${query.toString()}`,
+  }).toString()}`;
+  const headers = ctx.headers;
+  if (
+    headers?.get("sec-fetch-mode") === "cors" ||
+    headers?.get("accept")?.includes("application/json") === true
+  ) {
+    return { redirect: true, url };
+  }
+  throw (ctx as unknown as { redirect: (to: string) => APIError }).redirect(
+    url,
+  );
 }
 
 /**
