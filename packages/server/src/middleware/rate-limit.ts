@@ -1,8 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
-import { getClientIp } from "./client-ip.js";
-import type { CidrRange } from "./client-ip.js";
 import type { Storage } from "../storage/interface.js";
 
 export interface RateLimitConfig {
@@ -12,14 +10,6 @@ export interface RateLimitConfig {
   windowMs: number;
   /** Stricter limits by path prefix */
   pathLimits: Record<string, number>;
-  /** Trusted reverse-proxy CIDRs for safe x-forwarded-for handling. */
-  trustedProxyCidrs: CidrRange[];
-  /** Platform edge header carrying the client address, or null. Must be
-   *  threaded through here as well as onto `clientIpMiddleware`: the
-   *  limiter resolves the IP itself rather than reading `c.var.clientIp`,
-   *  so a deployment that set only the middleware would keep limiting
-   *  every client as one. */
-  trustedProxyHeader?: string | null;
   /**
    * Required storage handle. The rate-limit counter lives in the shared
    * store (`storage.rateLimits`).
@@ -74,10 +64,9 @@ export function rateLimitMiddleware(
 
   return async (c, next) => {
     const apiKey = c.get("apiKey");
-    const identifier =
-      apiKey?.id ??
-      getClientIp(c, config.trustedProxyCidrs, config.trustedProxyHeader) ??
-      "anon";
+    // The address `clientIpMiddleware` resolved, which has to run first.
+    const clientIp = c.var.clientIp;
+    const identifier = apiKey?.id ?? clientIp ?? "anon";
     const path = c.req.path;
 
     let limit = config.defaultLimit;

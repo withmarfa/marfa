@@ -59,6 +59,11 @@ import { configRoutes } from "./routes/config.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
+import {
+  BROWSER_FORM_DOORS,
+  buildAllowedOrigins,
+  crossOriginGuard,
+} from "./routes/_cross-origin.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
@@ -378,8 +383,6 @@ export function createApp(
           "/auth/authorize/decision": 30,
           "/auth/authorize": 60,
         },
-        trustedProxyCidrs: config.trustedProxyCidrs,
-        trustedProxyHeader: config.trustedProxyHeader ?? null,
         storage,
         // Aggregate per-identifier cap (defaultLimit × multiplier),
         // keyed on the identifier with no path split, so a key's budget
@@ -410,6 +413,19 @@ export function createApp(
     app.on(method, path, idempotency);
   }
 
+  // Every browser door Marfa serves under `/auth` refuses a post from an
+  // origin it does not trust, registered per door like the idempotency
+  // middleware above so the census in `auth-origin-guard.test.ts` can hold
+  // the list to `app.routes`.
+  const originGuard = crossOriginGuard(
+    buildAllowedOrigins(config.corsOrigins, config.authBaseUrl),
+  );
+  for (const door of BROWSER_FORM_DOORS) {
+    const [method, path] = door.split(" ");
+    if (method === undefined || path === undefined) continue;
+    app.on(method, path, originGuard);
+  }
+
   // Better Auth setup. Instance is created up front so it can be passed
   // into authRoutes (the OAuth consent screen consumes its cookie-based
   // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
@@ -429,10 +445,6 @@ export function createApp(
       baseURL: config.authBaseUrl,
       secret: config.authSecret || undefined,
       trustedOrigins,
-      // The same header `clientIpMiddleware` and `rateLimitMiddleware`
-      // read. Better Auth runs a rate limiter of its own and cannot be
-      // told by either of them.
-      trustedProxyHeader: config.trustedProxyHeader ?? null,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
       // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
       // grants into system.connection).
@@ -568,15 +580,7 @@ export function createApp(
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under
   // /auth/oauth2/*.
-  app.route(
-    "/auth",
-    authConsentRoutes({
-      storage,
-      auth,
-      corsOrigins: config.corsOrigins,
-      authBaseUrl: config.authBaseUrl,
-    }),
-  );
+  app.route("/auth", authConsentRoutes({ storage, auth }));
   // The plugin's management endpoints — consent rows, clients, the resource
   // registry — answer 404 here before the catch-all can serve them. Marfa's
   // own routes are the only writers of a grant's two records; the reasoning
@@ -596,7 +600,9 @@ export function createApp(
   // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
-    app.on(["POST", "GET"], "/auth/*", (c) => authInstance.handler(c.req.raw));
+    app.on(["POST", "GET"], "/auth/*", (c) =>
+      authInstance.handler(c.req.raw, c.var.clientIp ?? null),
+    );
   }
 
   app.route(

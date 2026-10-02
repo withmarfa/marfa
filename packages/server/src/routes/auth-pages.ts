@@ -19,7 +19,8 @@ import {
   validateReturnTo,
 } from "./sign-in-page.js";
 import { renderSignedOutPage } from "./signed-out-page.js";
-import { PerEmailThrottle } from "../auth/per-email-throttle.js";
+import { KeyedThrottle } from "../auth/keyed-throttle.js";
+import { addressBucket } from "../middleware/client-ip.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import {
   auditGrantRevoked,
@@ -196,25 +197,36 @@ async function createUserAppGrant(
 export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  // Per-`user_code` failed-attempt throttle on the device-flow
-  // verification form (`POST /auth/device` user-code submission). The
-  // per-IP cap in `middleware/rate-limit.ts` bounds a single client
-  // guessing codes, but a distributed guesser spreading attempts across
-  // many IPs would slip under it. This counter is keyed on the submitted
-  // `user_code` itself (independent of IP) and denies once a code has
-  // accumulated too many failed lookups — so a brute-force sweep against
-  // the short user-code range is capped per code across every process
-  // pointed at the database. Only
-  // failed submissions increment; a valid code that advances to consent
-  // never touches the counter, so the legitimate flow is unaffected.
-  // `PerEmailThrottle` is a generic keyed-counter over
-  // `storage.rateLimits`; reused here with a device-code key prefix.
-  const deviceUserCodeThrottle = new PerEmailThrottle(storage, {
-    family: "device-user-code",
-    keyPrefix: "device-user-code:",
-    limit: DEVICE_USER_CODE_MAX_ATTEMPTS,
-    windowMs: 60 * 60 * 1000,
+  // Every door that looks a device code up counts the lookup here first:
+  // the entry form, and the consent screen and its decision, which take a
+  // code from the URL or the form as readily. A lookup is counted against
+  // the caller's address and the instance, before it is made: a sweep tries
+  // each code once, so a count per code never fires, and a count of
+  // failures alone would still let the sweep find the live code it was
+  // looking for. A person approving one device makes three lookups.
+  const deviceCodePerAddress = new KeyedThrottle(storage, {
+    family: "device-user-code-address",
+    limit: DEVICE_CODE_ADDRESS_LIMIT,
+    windowMs: DEVICE_CODE_WINDOW_MS,
   });
+  const deviceCodePerInstance = new KeyedThrottle(storage, {
+    family: "device-user-code-instance",
+    limit: DEVICE_CODE_INSTANCE_LIMIT,
+    windowMs: DEVICE_CODE_WINDOW_MS,
+  });
+
+  /** Count a device code lookup and say whether it may be made. One the
+   *  address window refuses is not counted against the instance's, so one
+   *  caller alone cannot close device sign-in for everyone. */
+  const admitCodeLookup = async (c: Context<AppEnv>): Promise<boolean> => {
+    const ip = c.var.clientIp;
+    const local = await deviceCodePerAddress.attempt(
+      ip ? addressBucket(ip) : "unknown",
+    );
+    return (
+      local.allowed && (await deviceCodePerInstance.attempt("all")).allowed
+    );
+  };
 
   /**
    * Gate `/auth/authorize` on a Better Auth cookie session. Every caller must
@@ -381,7 +393,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     //     the user lands on `/` after the credential check.
     //     Detect that shape and synthesize `return_to=/auth/authorize?<full original query>`
     //     so the existing form-round-trip path takes over.
-    let returnTo = validateReturnTo(url.searchParams.get("return_to"));
+    let returnTo = validateReturnTo(
+      url.searchParams.get("return_to"),
+      c.var.config.authBaseUrl,
+    );
     if (returnTo === "/" && url.searchParams.has("response_type")) {
       returnTo = synthesizeOauthReturnTo(url.searchParams);
     }
@@ -400,7 +415,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     }
 
     const formData = await c.req.formData();
-    const returnTo = validateReturnTo(formData.get("return_to"));
+    const returnTo = validateReturnTo(
+      formData.get("return_to"),
+      c.var.config.authBaseUrl,
+    );
     const email = formData.get("email");
     const emailStr = typeof email === "string" ? email.trim() : "";
 
@@ -426,7 +444,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       ),
       body: JSON.stringify({ email: emailStr, password: passwordStr }),
     });
-    const response = await auth.handler(upstream);
+    const response = await auth.handler(upstream, c.var.clientIp ?? null);
 
     if (response.ok) {
       // Forward every Set-Cookie header from Better Auth onto the redirect
@@ -465,6 +483,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       return new Response(null, { status: 302, headers: redirectHeaders });
     }
 
+    // A 429 is a limit, Better Auth's per-address one or the per-account
+    // one in `auth/sign-in-throttle.ts`, and the password was never judged.
+    const reason =
+      response.status === 429 ? "too_many_attempts" : "invalid_credentials";
     void storage.audit.log({
       action: "auth.sign_in.failed",
       resource_type: "auth_user",
@@ -473,10 +495,10 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       details: {
         email: emailStr,
         method: "password",
-        reason: "invalid_credentials",
+        reason,
       },
     });
-    return errorRedirect("invalid_credentials");
+    return errorRedirect(reason);
   });
 
   // Browser logout. The plugin owns the whole of it — validating the id token,
@@ -497,7 +519,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       method: "GET",
       headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
     });
-    const response = await auth.handler(upstream);
+    const response = await auth.handler(upstream, c.var.clientIp ?? null);
 
     const body = response.status === 200 ? await response.clone().text() : null;
     if (body !== null && body.trim().length === 0) {
@@ -572,27 +594,17 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       return c.redirect(`/auth/device?error=missing_code`, 302);
     }
 
-    // Per-`user_code` failed-attempt throttle (independent of IP).
-    // Register every failed submission against the submitted code and
-    // refuse once the code crosses the cap, so a distributed guesser
-    // can't sweep the user-code range by rotating IPs under the per-IP
-    // limit. A failure that crosses the cap — and any later attempt on
-    // an already-poisoned code — surfaces `too_many_attempts`. A valid
-    // code advances to consent below WITHOUT incrementing, so the
-    // legitimate one-shot flow never trips the throttle.
-    const failAttempt = async (errorCode: string): Promise<Response> => {
-      const throttle = await deviceUserCodeThrottle.attempt(submitted);
-      if (!throttle.allowed) {
-        return c.redirect(
-          `/auth/device?error=too_many_attempts&user_code=${encodeURIComponent(submitted)}`,
-          302,
-        );
-      }
+    if (!(await admitCodeLookup(c))) {
       return c.redirect(
+        `/auth/device?error=too_many_attempts&user_code=${encodeURIComponent(submitted)}`,
+        302,
+      );
+    }
+    const refuseCode = (errorCode: string): Response =>
+      c.redirect(
         `/auth/device?error=${errorCode}&user_code=${encodeURIComponent(submitted)}`,
         302,
       );
-    };
 
     // Asked without the request's cookies, so a code is neither claimed nor
     // moved by the check: the claim happens on the consent screen, once the
@@ -601,8 +613,8 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       submitted,
       new Headers(),
     );
-    if (!verdict.ok) return failAttempt(pageErrorFor(verdict.reason));
-    if (verdict.status !== "pending") return failAttempt("already_resolved");
+    if (!verdict.ok) return refuseCode(pageErrorFor(verdict.reason));
+    if (verdict.status !== "pending") return refuseCode("already_resolved");
     return c.redirect(
       `/auth/device/consent?user_code=${encodeURIComponent(submitted)}`,
       302,
@@ -640,6 +652,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const userCode = normalizeUserCode(url.searchParams.get("user_code") ?? "");
     if (!userCode) {
       return c.redirect("/auth/device?error=missing_code", 302);
+    }
+    if (!(await admitCodeLookup(c))) {
+      return c.redirect("/auth/device?error=too_many_attempts", 302);
     }
     // Verified with the session's cookies, which is what claims a pending
     // code for this person: the plugin approves only a code its owner has
@@ -723,6 +738,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         ErrorCode.VALIDATION_ERROR,
         "user_code and decision are required",
       );
+    }
+    if (!(await admitCodeLookup(c))) {
+      return c.redirect("/auth/device?error=too_many_attempts", 302);
     }
     const verdict = await deviceAuth.deviceVerify(userCode, c.req.raw.headers);
     if (!verdict.ok) {
@@ -895,11 +913,13 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
 // Device Authorization Grant — local helpers
 // ---------------------------------------------------------------------------
 
-/** Failed `user_code` submissions allowed per code before the device
- *  verification form refuses further attempts. Defends the short
- *  user-code range against a distributed brute force that would slip
- *  under the per-IP rate limit. */
-const DEVICE_USER_CODE_MAX_ATTEMPTS = 5;
+/** Device code submissions one address may make per window. */
+export const DEVICE_CODE_ADDRESS_LIMIT = 10;
+
+/** Device code submissions the whole instance takes per window. */
+export const DEVICE_CODE_INSTANCE_LIMIT = 100;
+
+const DEVICE_CODE_WINDOW_MS = 15 * 60 * 1000;
 
 /** Normalize a user-submitted code the way the plugin does before it looks
  *  one up: every non-alphanumeric stripped, upper-cased. Accepts the person

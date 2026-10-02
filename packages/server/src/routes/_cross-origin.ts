@@ -1,15 +1,38 @@
 /**
- * The cross-origin guard the session-gated form posts share.
+ * The cross-origin guard on the browser doors Marfa serves under `/auth`.
  *
- * A browser navigation carries no bearer, so a page a person is meant to open
- * is gated on a session cookie instead, and a form post under a cookie has to
- * prove it came from this origin before the cookie is honored.
+ * A browser navigation carries no bearer, so a page a person is meant to
+ * open is gated on a session cookie instead, and a form post under a cookie
+ * has to prove it came from this origin before the cookie is honored. Better
+ * Auth's own origin check covers only what reaches its handler. The device
+ * consent screen calls its verify, approve and deny endpoints in-process,
+ * where the check does not run, and every Marfa door does work of its own
+ * before it dispatches anything, so the guard sits in front of each.
  */
-// ---------------------------------------------------------------------------
-// Cross-origin guard for session-gated form posts
-// ---------------------------------------------------------------------------
+import { createMiddleware } from "hono/factory";
+import type { MiddlewareHandler } from "hono";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
+import type { AppEnv } from "../middleware/auth.js";
 
-export function originOf(value: string): string | undefined {
+/**
+ * Every state-changing door Marfa serves under `/auth` that a browser
+ * reaches, spelled as Hono registers them. `app.ts` puts the guard in front
+ * of each, and `auth-origin-guard.test.ts` holds this list to the app's own
+ * route table.
+ *
+ * The sign-in form and the device code form are here though they are not
+ * gated on a session cookie: the first sets one, so a foreign page posting
+ * to it could sign a visitor into another account, and the second is the
+ * start of an approval.
+ */
+export const BROWSER_FORM_DOORS: readonly string[] = [
+  "POST /auth/sign-in",
+  "POST /auth/device",
+  "POST /auth/device/consent",
+  "POST /auth/authorize/decision",
+];
+
+function originOf(value: string): string | undefined {
   try {
     return new URL(value).origin;
   } catch {
@@ -22,7 +45,7 @@ export function originOf(value: string): string | undefined {
  * origin of `Referer`. Undefined when neither is present, which a same-origin
  * form POST may legitimately be.
  */
-export function requestOrigin(headers: Headers): string | undefined {
+function requestOrigin(headers: Headers): string | undefined {
   const origin = headers.get("origin");
   if (origin) return origin;
   const referer = headers.get("referer");
@@ -50,10 +73,22 @@ export function buildAllowedOrigins(
  * neither header, and rejecting those would break the ordinary case to
  * defend against one the browser's own `SameSite=Lax` already covers.
  */
-export function isCrossOriginPost(
+function isCrossOriginPost(
   headers: Headers,
   allowedOrigins: ReadonlySet<string>,
 ): boolean {
   const origin = requestOrigin(headers);
   return origin !== undefined && !allowedOrigins.has(origin);
+}
+
+/** Refuses a request from a present, non-allowlisted origin with `403`. */
+export function crossOriginGuard(
+  allowedOrigins: ReadonlySet<string>,
+): MiddlewareHandler<AppEnv> {
+  return createMiddleware<AppEnv>(async (c, next) => {
+    if (isCrossOriginPost(c.req.raw.headers, allowedOrigins)) {
+      throw new MarfaError(ErrorCode.FORBIDDEN, "Cross-origin request refused");
+    }
+    await next();
+  });
 }

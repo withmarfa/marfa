@@ -34,6 +34,7 @@
 import ipaddr from "ipaddr.js";
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv } from "./auth.js";
+import { log } from "./logger.js";
 
 type CidrRange = [ipaddr.IPv4 | ipaddr.IPv6, number];
 
@@ -180,20 +181,65 @@ export function getClientIp(
 export type { CidrRange };
 
 /**
+ * The header Better Auth reads the client address from. Better Auth resolves
+ * an address for its own limiter and its session rows, and left to itself it
+ * trusts whatever `X-Forwarded-For` a client sends. So it is told to read this
+ * header instead, and `MarfaAuth.handler` writes it on every request it hands
+ * over, with the address this middleware resolved, replacing anything the
+ * client sent under the name.
+ */
+export const CLIENT_ADDRESS_HEADER = "x-marfa-client-address";
+
+/**
+ * The key a per-address limit counts under. An IPv6 host is normally handed a
+ * whole /64 and can rotate through it at will, so an IPv6 address counts as
+ * its /64; an IPv4 address counts as itself.
+ */
+export function addressBucket(ip: string): string {
+  const parsed = normalize(ip);
+  if (!parsed) return ip;
+  if (parsed.kind() === "ipv4") return parsed.toString();
+  const parts = (parsed as ipaddr.IPv6).parts.slice(0, 4);
+  return `${parts.map((p) => p.toString(16)).join(":")}::/64`;
+}
+
+/** Headers a proxy adds to say who its client was. */
+const FORWARDING_HEADERS = ["x-forwarded-for", "x-real-ip", "forwarded"];
+
+/**
  * Resolve the client IP once per request and stash it on
- * `c.var.clientIp` for downstream consumers.
+ * `c.var.clientIp` for downstream consumers: the audit rows, the rate
+ * limiter, the sign-in and device code limits, and Better Auth, which is
+ * handed it with every request (`MarfaAuth.handler`). Run this BEFORE auth
+ * so the resolved IP is available to every later middleware and handler.
  *
- * Centralizing the resolution means routes don't have to thread the
- * `trustedProxyCidrs` config or call `getClientIp(c, ...)` themselves
- * every time they want to record an audit row. Run this BEFORE auth
- * so the resolved IP is available in any downstream middleware
- * (auth itself, rate limiting, route handlers).
+ * Also drops any {@link CLIENT_ADDRESS_HEADER} the client sent, so nothing
+ * downstream can read one, and warns once when a request arrives carrying a
+ * forwarding header on an instance that trusts no proxy: behind a proxy,
+ * that instance sees every client as the proxy's address, and every limit
+ * counts them all as one.
  */
 export function clientIpMiddleware(
   trustedCidrs: CidrRange[],
   trustedHeader: string | null = null,
 ): MiddlewareHandler<AppEnv> {
+  const trustsNoProxy = trustedCidrs.length === 0 && trustedHeader === null;
+  let warned = false;
   return async (c, next) => {
+    if (c.req.header(CLIENT_ADDRESS_HEADER) !== undefined) {
+      c.req.raw.headers.delete(CLIENT_ADDRESS_HEADER);
+    }
+    if (
+      trustsNoProxy &&
+      !warned &&
+      FORWARDING_HEADERS.some((name) => c.req.header(name) !== undefined)
+    ) {
+      warned = true;
+      log(
+        "warn",
+        "A request carried a forwarding header, but no proxy is trusted, so every client behind a proxy counts as one address. Set TRUSTED_PROXY_CIDRS or TRUSTED_PROXY_HEADER if this instance runs behind one.",
+      );
+    }
     c.set("clientIp", getClientIp(c, trustedCidrs, trustedHeader));
     await next();
   };

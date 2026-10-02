@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { Hono } from "hono";
+import * as logger from "./logger.js";
+import type { AppEnv } from "./auth.js";
 import type { Context } from "hono";
 import {
+  CLIENT_ADDRESS_HEADER,
+  addressBucket,
+  clientIpMiddleware,
   getClientIp,
   parseTrustedProxyCidrs,
   parseTrustedProxyHeader,
@@ -224,5 +230,79 @@ describe("getClientIp with trustedHeader", () => {
       headers: { "x-real-ip": "::ffff:203.0.113.9" },
     });
     expect(getClientIp(c, [], header)).toBe("203.0.113.9");
+  });
+});
+
+describe("addressBucket", () => {
+  it("counts an IPv4 address as itself", () => {
+    expect(addressBucket("203.0.113.7")).toBe("203.0.113.7");
+    expect(addressBucket("::ffff:203.0.113.7")).toBe("203.0.113.7");
+  });
+
+  it("counts an IPv6 address as its /64", () => {
+    expect(addressBucket("2001:db8:1:2::1")).toBe("2001:db8:1:2::/64");
+    expect(addressBucket("2001:DB8:1:2:ffff:ffff:ffff:ffff")).toBe(
+      "2001:db8:1:2::/64",
+    );
+    expect(addressBucket("2001:db8:1:3::1")).not.toBe(
+      addressBucket("2001:db8:1:2::1"),
+    );
+  });
+});
+
+describe("clientIpMiddleware", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function appWith(trustedHeader: string | null = null): Hono<AppEnv> {
+    const app = new Hono<AppEnv>();
+    app.use("*", clientIpMiddleware([], trustedHeader));
+    app.get("/", (c) =>
+      c.text(c.req.raw.headers.get(CLIENT_ADDRESS_HEADER) ?? "none"),
+    );
+    return app;
+  }
+
+  it("drops a client address header the client sent", async () => {
+    // The witness: without the middleware, the header reaches the route.
+    const bare = new Hono<AppEnv>();
+    bare.get("/", (c) =>
+      c.text(c.req.raw.headers.get(CLIENT_ADDRESS_HEADER) ?? "none"),
+    );
+    const through = await bare.request("/", {
+      headers: { [CLIENT_ADDRESS_HEADER]: "198.51.100.1" },
+    });
+    expect(await through.text()).toBe("198.51.100.1");
+
+    const res = await appWith().request("/", {
+      headers: { [CLIENT_ADDRESS_HEADER]: "198.51.100.1" },
+    });
+    expect(await res.text()).toBe("none");
+  });
+
+  it("warns once when forwarding headers arrive and no proxy is trusted", async () => {
+    const warnings: string[] = [];
+    vi.spyOn(logger, "log").mockImplementation((level, message) => {
+      if (level === "warn") warnings.push(message);
+    });
+    const app = appWith();
+    await app.request("/", { headers: { "x-forwarded-for": "198.51.100.1" } });
+    await app.request("/", { headers: { "x-real-ip": "198.51.100.2" } });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("TRUSTED_PROXY_CIDRS");
+    expect(warnings[0]).toContain("TRUSTED_PROXY_HEADER");
+  });
+
+  it("does not warn when a proxy is trusted, or when nothing was forwarded", async () => {
+    const warnings: string[] = [];
+    vi.spyOn(logger, "log").mockImplementation((level, message) => {
+      if (level === "warn") warnings.push(message);
+    });
+    await appWith("x-real-ip").request("/", {
+      headers: { "x-real-ip": "198.51.100.2" },
+    });
+    await appWith().request("/");
+    expect(warnings).toHaveLength(0);
   });
 });
