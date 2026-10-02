@@ -1,9 +1,3 @@
-//! A directory on a machine that holds, as files, what its search matches.
-//!
-//! A folder is a device like any other (`device.md`, `queue-and-verdicts.md`)
-//! with a filesystem as its face. What is here is the translation between a
-//! file and an item, and the state that translation keeps across a restart.
-
 pub mod document;
 pub mod edge_types;
 mod elsewhere;
@@ -50,27 +44,21 @@ pub use registry::{REGISTRY_ENV, Registered, Registry};
 pub use settings::{FOLDER_TYPE, Settings};
 pub use settings_file::SettingsFileReport;
 
-/// Where a folder keeps what is its own (`folders.md` 28).
 pub const STATE_DIR: &str = ".marfa";
 
-/// How long a missing file is journaled before it becomes a delete
-/// (`folders.md` 21): the window in which the other half of a rename can
-/// arrive.
+/// The window in which the other half of a rename can arrive.
 pub const RENAME_GRACE: Duration = Duration::from_secs(5);
 
-/// The folder's settings written out, the one file under `.marfa/` a folder
-/// reads and watches (`folders.md` 1, 28).
 pub const SETTINGS_FILE: &str = "folder.yaml";
 
 /// The server's cap on a request's body unless its instance names another,
-/// past which it answers `413 request_too_large` (`folders.md` 47).
+/// past which it answers `413 request_too_large`.
 pub const REQUEST_LIMIT: usize = 1_048_576;
 
-/// How near the cap a text is warned of: nine tenths of it.
 pub const NEAR_LIMIT: usize = REQUEST_LIMIT * 9 / 10;
 
-/// A document's text as the JSON string it is sent in, where that comes near
-/// the cap; a file item's bytes go up outside it.
+/// Measured as the JSON string the text is sent in; a file item's bytes go up
+/// outside the request.
 fn near_limit(key: &str, text: &str) -> Option<Flagged> {
     if !is_document(Path::new(key)) || text.len().saturating_mul(6) < NEAR_LIMIT {
         return None;
@@ -86,93 +74,48 @@ fn near_limit(key: &str, text: &str) -> Option<Flagged> {
     })
 }
 
-/// A directory, the `system.folder` it is bound to, and the device
-/// underneath it.
 pub struct Folder {
     root: PathBuf,
     folder: String,
     core: Core,
-    /// The key the credential is, as last asked.
     key: std::sync::Mutex<Option<placement::KeyRead>>,
-    /// Whether the folder's volume keeps a file's permission, once asked.
     permissions: std::sync::OnceLock<bool>,
 }
 
-/// What a scan did.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ScanReport {
-    /// Files that became new items, copies among them.
     pub created: usize,
-    /// Files whose changes were queued against the item they are.
     pub updated: usize,
-    /// Files that moved and kept their item.
     pub renamed: usize,
-    /// Files the folder already agreed with, so nothing was queued.
     pub unchanged: usize,
-    /// Bound files that were not there, now journaled.
     pub missing: usize,
-    /// Journaled files whose grace ran out, now queued as deletes.
     pub deleted: usize,
-    /// The paths of those, each found in no folder on this machine
-    /// (`folders.md` 43).
     pub trashed: Vec<String>,
-    /// Journaled files found in another folder here, so not trashed
-    /// (`folders.md` 43).
     pub moved_away: usize,
-    /// Journaled files held, since the other folders could not all be read
-    /// (`folders.md` 43).
     pub unsure: Vec<Unsure>,
-    /// Why the registry could not be read, where it could not
-    /// (`folders.md` 41).
     pub registry: Option<String>,
-    /// Files of a type the search does not hold, left alone.
     pub skipped: usize,
-    /// Files bound to a row the copy lost, queued again as new items because
-    /// they changed or moved (`folders.md` 38); counted in `created` too.
+    /// Counted in `created` too.
     pub requeued: usize,
-    /// Files bound to a row the copy no longer holds and unchanged since, so
-    /// nothing is sent for them (`folders.md` 38).
     pub lost: usize,
-    /// Files this scan read and holds rather than sends (`folders.md` 9, 10).
     pub flagged: Vec<Flagged>,
-    /// Embeds in the files this scan read that name no file it sends
-    /// (`folders.md` 12).
     pub embeds: Vec<Flagged>,
-    /// Bound files the walk did not reach, because the lists no longer take
-    /// them, a package holds them or their directory could not be read:
-    /// held, and never journaled (`folders.md` 25, 26).
     pub unreached: usize,
-    /// Directories the walk did not enter, `package` or `unreadable`
-    /// (`folders.md` 26).
     pub directories: Vec<Flagged>,
-    /// Files the built-in secrets list refuses, named so a refused file is
-    /// never a silent one (`folders.md` 25).
     pub secrets: Vec<String>,
-    /// Files gone from the disk whose deletes wait to be confirmed, because
-    /// together they pass the removal threshold (`folders.md` 46).
     pub paused: usize,
-    /// Texts this scan queued that come near the server's limit, flagged
-    /// `size` (`folders.md` 47).
     pub warnings: Vec<Flagged>,
 }
 
-/// A missing file not trashed yet, and why.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Unsure {
     pub path: String,
     pub reason: String,
 }
 
-/// A file the folder holds rather than sends, and why.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Flagged {
     pub path: String,
-    /// `unreadable`, `refused`, or `edges` for lines that change nothing
-    /// (`folders.md` 9, 10, 11); `embed` for an embed read as nothing (12);
-    /// `waiting` for a moved file whose item cannot be read yet (42); `name`
-    /// for a name another file here holds in another case or form (27);
-    /// `removal` for a removal waiting to be confirmed (46); `size` for a
-    /// text near the server's limit (47).
     pub flag: &'static str,
     pub reason: String,
 }
@@ -198,9 +141,7 @@ impl Flagged {
 }
 
 impl Folder {
-    /// Binds a directory to the `system.folder` whose settings it follows,
-    /// read from the server now. The directory need not exist
-    /// (`folders.md` 5).
+    /// The directory need not exist.
     pub fn add(root: impl AsRef<Path>, folder: &str, server: Option<Server>) -> Result<Folder> {
         let server = server.ok_or(CoreError::NoServer)?;
         let root = root.as_ref().to_path_buf();
@@ -268,7 +209,7 @@ impl Folder {
         }
         settings_file::bind(&added.core, folder)?;
         added.write_settings_file(&row.item.properties, row.item.version)?;
-        // Unlisted, its moves would read as deletes to the others (`folders.md` 41).
+        // Unlisted, its moves would read as deletes to the others.
         if let Some(registry) = Registry::located() {
             let store = elsewhere::store_id(&added.core)?;
             registry.add(&added.root, folder, Some(&store))?;
@@ -277,7 +218,6 @@ impl Folder {
         Ok(added)
     }
 
-    /// Opens a directory somebody has already made a folder.
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
@@ -308,8 +248,7 @@ impl Folder {
         Ok(opened)
     }
 
-    /// Takes a folder whose directory is gone off this machine's registry,
-    /// answering whether it was listed (`folders.md` 41).
+    /// Answers whether the directory was listed.
     pub fn forget(dir: impl AsRef<Path>) -> Result<bool> {
         match Registry::located() {
             Some(registry) => registry.unregister(dir.as_ref()),
@@ -317,9 +256,8 @@ impl Folder {
         }
     }
 
-    /// Lists the folder again where the registry lost it or the directory
-    /// moved. Answers what to report, and whether the registry it listed
-    /// itself in is gone, which leaves this pass unable to tell a move.
+    /// Answers what to report, and whether the registry was lost, which leaves
+    /// this pass unable to tell a move.
     fn register(&self) -> (Option<String>, bool) {
         let Some(registry) = Registry::located() else {
             return (None, false);
@@ -341,8 +279,7 @@ impl Folder {
         }
     }
 
-    /// Unregisters the folder and removes `.marfa/`, leaving its files
-    /// (`folders.md` 41); refused while it is held or writes wait.
+    /// Leaves the folder's files; refused while it is held or writes wait.
     pub fn remove(self) -> Result<()> {
         if self.core.handle() != crate::Handle::Writer {
             return Err(CoreError::Invalid(format!(
@@ -373,7 +310,6 @@ impl Folder {
         })
     }
 
-    /// The id of the `system.folder` this directory follows.
     pub fn folder_id(&self) -> &str {
         &self.folder
     }
@@ -386,8 +322,7 @@ impl Folder {
         &self.root
     }
 
-    /// The settings every pass reads: the folder's row in the copy, pinned
-    /// so catch-up keeps it current (`folders.md` 1).
+    /// Read from the copy, not the server.
     pub fn settings(&self) -> Result<Settings> {
         match self.core.get(&self.folder)? {
             Some(item) => {
@@ -402,8 +337,6 @@ impl Folder {
         }
     }
 
-    /// The folder's row as the server holds it now, refused where its
-    /// settings are not ones this folder can follow.
     fn row_on_server(&self) -> Result<crate::wire::WireItemWithMetadata> {
         let cannot_read = || CoreError::Forbidden {
             code: "type_not_permitted".into(),
@@ -446,8 +379,6 @@ impl Folder {
         Ok(row)
     }
 
-    /// Hydrates the slice the folder's search needs, with its settings
-    /// pinned so every hydration and catch-up keeps them.
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
@@ -460,9 +391,7 @@ impl Folder {
             .hydrate_every_type_or(settings.types(), settings.tier(), &whole)
     }
 
-    /// Hydrates where the copy cannot answer: never hydrated, cut short, or
-    /// its cursor aged out (`device.md` 4); or where the settings now ask
-    /// for another slice. `None` where it can.
+    /// `None` where the copy already answers for the slice the settings ask.
     pub fn resume(&self) -> Result<Option<crate::model::HydrateReport>> {
         if crate::store::hydrated(&*self.core.conn()?)? && !self.slice_moved()? {
             return Ok(None);
@@ -470,9 +399,8 @@ impl Folder {
         self.hydrate().map(Some)
     }
 
-    /// Whether the settings ask for a slice other than the one the copy
-    /// holds. Settings the copy cannot read count as moved, so the
-    /// hydration that follows says why.
+    /// Settings the copy cannot read count as moved, so the hydration that
+    /// follows says why.
     fn slice_moved(&self) -> Result<bool> {
         let Ok(settings) = self.settings() else {
             return Ok(true);
@@ -498,8 +426,6 @@ impl Folder {
         Ok(held != asked || tier != settings.tier() || whole != wanted)
     }
 
-    /// Takes in what the server has recorded since the copy's cursor, or
-    /// hydrates again where the log has aged past it (`device.md` 16).
     pub fn catch_up(&self) -> Result<CaughtUp> {
         // An edge type registered since is read with the rest.
         let caught = self.core.catch_up().and_then(|report| {
@@ -524,8 +450,6 @@ impl Folder {
         }
     }
 
-    /// Every file the folder takes, in a stable order, and the directories
-    /// it did not enter (`folders.md` 25, 26).
     fn walked(&self, lists: &Lists) -> Walked {
         let mut walked = Walked::default();
         walk(&self.root, &self.root, lists, &mut walked);
@@ -533,8 +457,6 @@ impl Folder {
         walked
     }
 
-    /// Whether a pull writes a file at `path`: plainly inside the folder,
-    /// where the lists take it and no package or folder inside it holds it.
     fn writes_at(&self, lists: &Lists, path: &str) -> bool {
         plainly_inside(&self.root, path)
             && lists.takes(path)
@@ -543,8 +465,6 @@ impl Folder {
     }
 }
 
-/// Whether a directory on the way to `relative` holds another folder's
-/// `.marfa/`, whose files the walk passes over (`folders.md` 41).
 fn in_nested_folder(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();
     let mut names = relative.split('/').peekable();
@@ -560,8 +480,7 @@ fn in_nested_folder(root: &Path, relative: &str) -> bool {
     false
 }
 
-/// The edge types a folder's copy holds whole, since their other ends may lie
-/// outside the slice: its search's, `child-of`'s and attachments' (`folders.md` 11, 12).
+/// Held whole, since their other ends may lie outside the slice.
 fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catalog) -> Vec<String> {
     let mut whole = edge_types.written_at_targets();
     // `beneath` walks `parent-of` from rows the slice may not hold.
@@ -582,19 +501,14 @@ fn whole_edge_types(settings: &Settings, edge_types: &EdgeTypes, catalog: &Catal
     whole
 }
 
-/// What a walk found.
 #[derive(Default)]
 struct Walked {
     files: Vec<PathBuf>,
-    /// Packages, and directories it could not read.
     directories: Vec<Flagged>,
-    /// Files the secrets list refuses.
     secrets: Vec<String>,
 }
 
 impl Walked {
-    /// Whether a path inside the folder lies in a directory the walk did not
-    /// enter.
     fn passed_over(&self, relative: &str) -> bool {
         self.directories.iter().any(|dir| {
             dir.path.is_empty()
@@ -613,9 +527,8 @@ impl Walked {
     }
 }
 
-/// Walks a directory, entering only what the lists let it (`folders.md` 25)
-/// and no package (26). A directory it cannot read is reported and passed
-/// over, so one does not stop the scan of every other.
+/// A directory it cannot read is reported and passed over, so one does not
+/// stop the scan of every other.
 fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -661,9 +574,6 @@ fn walk(root: &Path, dir: &Path, lists: &Lists, walked: &mut Walked) {
     }
 }
 
-/// The files a scan reads, one for each name: of files whose names differ
-/// only in case or Unicode form, the one bound at its path, else the
-/// first in path order; every other is held and flagged (`folders.md` 27).
 fn one_per_name(
     paths: &[PathBuf],
     keys: Vec<String>,
@@ -692,25 +602,21 @@ fn one_per_name(
     kept
 }
 
-/// A file the scan read.
 struct Scanned {
-    /// The path inside the folder, which the binding is keyed by.
     key: String,
     path: PathBuf,
     text: String,
     hash: String,
     /// Device, inode and birth time, where the filesystem gave a usable
-    /// three (`folders.md` 17).
+    /// three.
     mark: Option<String>,
     born: Option<u128>,
-    /// The `marfa_id` a Markdown file's frontmatter carries.
     id: Option<String>,
     /// The version its `marfa_version` line names, where that is one the
     /// server could have minted.
     line: Option<i64>,
-    /// Why its frontmatter cannot be read as an item's, where it cannot.
     unreadable: Option<String>,
-    /// `None` on a volume that keeps no permission (`folders.md` 50).
+    /// `None` on a volume that keeps no permission.
     executable: Option<bool>,
 }
 
@@ -724,47 +630,35 @@ impl Scanned {
     }
 }
 
-/// The item a file is, and the binding it had, if any.
 #[derive(Debug, Clone)]
 struct Claim {
     item_id: String,
     bound: Option<state::Bound>,
 }
 
-/// The files a scan leaves waiting, by their place in it, with why.
+/// Keyed by the file's place in the scan.
 type Waiting = HashMap<usize, String>;
 
-/// Copy or move, across the folders on this machine (`folders.md` 42).
 enum Arrival {
-    /// The item its id names, where the copy holds it.
     Here,
-    /// A copy into this folder, which becomes a new item.
     Copy,
-    /// A move whose item cannot be read yet, and why.
     Waits(String),
 }
 
-/// What became of a missing file let go.
 enum Missing {
-    /// Found in another folder on the machine, so its item stays.
     Moved,
-    /// Not told yet, and looked for again at the next pass.
     Unsure(String),
-    /// Found nowhere, and its item's delete queued.
     Deleted,
-    /// Its row was already gone from the copy.
     Gone,
 }
 
 impl Folder {
-    /// Reads the folder and queues what has changed. The watcher's full pass
-    /// is this scan too, so one rule decides identity (`folders.md` 18).
     pub fn scan(&self) -> Result<ScanReport> {
         self.scan_as(true)
     }
 
-    /// A pass that skips a file whose size, time and identity are as the last
-    /// read left them; a full pass catches what that misses (`folders.md` 49).
+    /// Skips a file whose size, time and identity are as the last read left
+    /// them; a full pass catches what that misses.
     pub fn scan_quick(&self) -> Result<ScanReport> {
         self.scan_as(false)
     }
@@ -804,7 +698,7 @@ impl Folder {
             .map(|bound| (bound.path.as_str(), bound))
             .collect();
         // Each file's size and time, taken before its read, so a change made
-        // during the read differs from what is recorded (`folders.md` 49).
+        // during the read differs from what is recorded.
         let mut stats: Vec<(String, String)> = Vec::new();
         let mut unchanged: HashSet<String> = HashSet::new();
         if !full {
@@ -815,7 +709,7 @@ impl Folder {
                 if let Some(bound) = by_path.get(key.as_str())
                     && bound.held.is_none()
                     && bound.writes.refused.is_empty()
-                    // A save set aside is sent again by the next scan (39).
+                    // A save set aside is sent again by the next scan.
                     && state::untaken_read_version(&bound.content_hash).is_none()
                     && bound.identity.is_some()
                     && marks.get(path).map(|found| found.key()) == bound.identity
@@ -828,8 +722,7 @@ impl Folder {
                 }
             }
         }
-        // Markdown files first, so a file only an embed names is sent too
-        // (`folders.md` 12).
+        // Markdown files first, so a file only an embed names is sent too.
         let mut early: HashMap<PathBuf, Vec<u8>> = HashMap::new();
         let mut shown: HashMap<String, Vec<(String, embeds::Target)>> = HashMap::new();
         let mut embedded: HashSet<String> = HashSet::new();
@@ -873,7 +766,7 @@ impl Folder {
                 early.insert(path.clone(), bytes);
             }
             // A file carrying the id of a skipped file's item may be its copy,
-            // and which keeps the id is decided with both read (`folders.md` 15).
+            // and which keeps the id is decided with both read.
             reading = (0..paths.len())
                 .filter(|at| {
                     unchanged.contains(&keys[*at])
@@ -937,7 +830,7 @@ impl Folder {
                     bytes
                 }
             };
-            // No blob the server holds is empty (`folders.md` 36).
+            // No blob the server holds is empty.
             if bytes.is_empty() && !is_document(&path) {
                 report.skipped += 1;
                 continue;
@@ -1014,8 +907,7 @@ impl Folder {
                 ));
                 continue;
             }
-            // A binding to a row the copy no longer holds binds nothing
-            // (`folders.md` 38).
+            // A binding to a row the copy no longer holds binds nothing.
             let claim = match claim {
                 Some(Claim {
                     item_id,
@@ -1075,7 +967,7 @@ impl Folder {
                 }) if bound.path == file.key => {
                     if bound.content_hash == file.hash {
                         // A permission changed alone leaves the bytes as they
-                        // were (`folders.md` 50).
+                        // were.
                         if let Some(runs) = file.executable
                             && let Some(held) = self.core.get(&item_id)?
                             && bytes_of(&held, &catalog).is_some()
@@ -1147,7 +1039,7 @@ impl Folder {
         }
 
         // Every file is bound now, so a link or a line naming one that
-        // arrived in the same scan resolves (`folders.md` 33).
+        // arrived in the same scan resolves.
         let mut resolver = Resolver::new(self, &catalog);
         for pending in &mut work {
             pending.embeds = shown.remove(&pending.path).unwrap_or_default();
@@ -1208,7 +1100,7 @@ impl Folder {
         }
 
         // Journaled rather than deleted: the first half of a rename looks
-        // exactly like a delete (`folders.md` 21, 22).
+        // exactly like a delete.
         let bound = {
             let conn = self.core.conn()?;
             state::every_bound(&conn)?
@@ -1252,10 +1144,9 @@ impl Folder {
         Ok(report)
     }
 
-    /// Which item each file is, or `None` for a new one (`folders.md` 13 to
-    /// 17). Held ids decide first; then the binding by identity across every
-    /// file before any by path, so a path never takes an item another file is
-    /// by identity.
+    /// Held ids decide first; then the binding by identity across every file
+    /// before any by path, so a path never takes an item another file is by
+    /// identity.
     fn claim(
         &self,
         files: &[Scanned],
@@ -1291,7 +1182,7 @@ impl Folder {
                 continue;
             };
             // A copy bound to its own item before its id line was rewritten
-            // stays that item's file (`folders.md` 15).
+            // stays that item's file.
             if by_path
                 .get(file.key.as_str())
                 .is_some_and(|bound| bound.identity == file.mark && bound.item_id != id)
@@ -1384,7 +1275,7 @@ impl Folder {
             }
         }
         // A file that cannot carry an id, moved here from another folder on
-        // this machine, is the item that folder bound it to (`folders.md` 43).
+        // this machine, is the item that folder bound it to.
         for (at, file) in files.iter().enumerate() {
             if claims[at].is_some()
                 || waiting.contains_key(&at)
@@ -1423,8 +1314,6 @@ impl Folder {
         Ok((claims, waiting))
     }
 
-    /// Copy or move, for a file carrying an id this folder has no file of
-    /// (`folders.md` 42).
     fn arrival(
         &self,
         id: &str,
@@ -1448,15 +1337,14 @@ impl Folder {
         Ok(Arrival::Here)
     }
 
-    /// Whether this folder's search holds the item, answered once a pass.
     fn holds(&self, id: &str, settings: &Settings, members: &OnceCell<HashSet<String>>) -> bool {
         members
             .get_or_init(|| self.members(settings).unwrap_or_default())
             .contains(id)
     }
 
-    /// Reads a moved file's item in, pinned; `Some` with why where it cannot
-    /// be asked now. An item the server will not show leaves a new item.
+    /// `Some` with why where the item cannot be asked now. An item the server
+    /// will not show leaves a new item.
     fn read_moved(&self, id: &str) -> Result<Option<String>> {
         if self.core.get(id)?.is_some() {
             return Ok(None);
@@ -1469,8 +1357,8 @@ impl Folder {
         }
     }
 
-    /// Keeps an unreadable file bound where it now is, sending only a move's
-    /// placement, so a pull leaves it and a move keeps its item (`folders.md` 10).
+    /// Sends only a move's placement, so a pull leaves the file and a move
+    /// keeps its item.
     fn hold_unreadable(
         &self,
         file: &Scanned,
@@ -1503,8 +1391,7 @@ impl Folder {
         state::journal_clear(&conn, &file.key)
     }
 
-    /// Takes a binding's old path away, unless another file has been bound
-    /// there earlier in this scan.
+    /// Leaves the old path to another file bound there earlier in this scan.
     fn unbind_if_still(&self, bound: &state::Bound) -> Result<()> {
         let conn = self.core.conn()?;
         if state::bound_at(&conn, &bound.path)?.is_some_and(|row| row.item_id == bound.item_id) {
@@ -1514,8 +1401,6 @@ impl Folder {
         Ok(())
     }
 
-    /// Sends the deletes past their grace, save a file found in another folder
-    /// (`folders.md` 43), and none while a large removal waits (46).
     fn sweep_journal(
         &self,
         settings: &Settings,
@@ -1554,8 +1439,6 @@ impl Folder {
         Ok(())
     }
 
-    /// Lets one missing file go: looked for in the other folders first, and
-    /// trashed only where it is in none (`folders.md` 43).
     fn let_go_missing(
         &self,
         path: &str,
@@ -1598,21 +1481,15 @@ impl Folder {
         Ok(missing)
     }
 
-    /// The other folders a missing file is looked for in, doubted where the
-    /// registry this folder listed itself in was gone.
     fn peers(&self) -> Peers<'_> {
         let (registry, lost) = self.register();
         Peers::of(self, registry.filter(|_| lost))
     }
 
-    /// Whether this path is one the folder pushes (`folders.md` 29, 36): a
-    /// document, or a file whose type the search holds.
     fn pushes(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> bool {
         is_document(path) || self.file_type_of(path, settings, catalog).is_some()
     }
 
-    /// The type a file that is not a document becomes, where the search
-    /// holds it (`folders.md` 36).
     fn file_type_of(&self, path: &Path, settings: &Settings, catalog: &Catalog) -> Option<String> {
         let file_type = bytes_type(path, catalog)?;
         let types = settings.types();
@@ -1623,8 +1500,7 @@ impl Folder {
         .then_some(file_type)
     }
 
-    /// Queues a file as a new item under an id the device mints (`folders.md`
-    /// 13); one naming a type no document can be is flagged instead.
+    /// A file naming a type no document can be is flagged instead.
     fn queue_create(
         &self,
         file: &Scanned,
@@ -1721,9 +1597,8 @@ impl Folder {
         }
     }
 
-    /// A file that is not a document, as a file item: its bytes' upload, and
-    /// the create waiting on it (`folders.md` 36). Its type is its bytes', so
-    /// of the defaults it takes the tier, the tags and the edges.
+    /// Its type is its bytes', so of the defaults it takes only the tier, the
+    /// tags and the edges.
     fn queue_create_file(
         &self,
         file: &Scanned,
@@ -1791,8 +1666,7 @@ impl Folder {
         Ok(())
     }
 
-    /// Queues what a file holds as an edit of its item, whole only where its
-    /// version line is the copy's (`folders.md` 7); `bound` is `None` if unbound.
+    /// Whole only where the file's version line is the copy's.
     #[allow(clippy::too_many_arguments)]
     fn queue_update(
         &self,
@@ -1822,7 +1696,7 @@ impl Folder {
         let read = fields::read(&document.front, edge_types).unwrap_or_default();
         let spent = bound.and_then(state::Bound::spent);
         // Bytes set aside in a conflicted copy against this device's own
-        // earlier save go on the version they were read at (`folders.md` 39).
+        // earlier save go on the version they were read at.
         let untaken = bound.and_then(|bound| state::untaken_read_version(&bound.content_hash));
         // The file's last bytes showed the item as the server last answered
         // it, but for their line: a version step no file shows, or its own edit.
@@ -1847,7 +1721,7 @@ impl Folder {
         let standing = match file.line {
             _ if untaken.is_some() => Standing::Spent,
             Some(line) if line == held.version || current_but_line => Standing::Current,
-            // Behind only by the file's own edit, which it holds (`folders.md` 23).
+            // Behind only by the file's own edit, which it holds.
             Some(line) if line < held.version && spent.is_some_and(|spent| line <= spent) => {
                 Standing::Spent
             }
@@ -1983,7 +1857,6 @@ impl Folder {
         Ok(!in_step)
     }
 
-    /// Binds a file whose bytes are held rather than sent, where it sits.
     fn bind_held(
         &self,
         file: &Scanned,
@@ -2002,8 +1875,7 @@ impl Folder {
         self.bind_scanned(file, item_id, links, lines, kept)
     }
 
-    /// New bytes are an upload and an update naming them; a move carries the
-    /// new name as the title where the old name was it (`folders.md` 36).
+    /// A move carries the new name as the title where the old name was it.
     fn queue_update_file(
         &self,
         bound: &state::Bound,
@@ -2057,7 +1929,6 @@ impl Folder {
         Ok(queued)
     }
 
-    /// Binds a file as the scan read it.
     fn bind_scanned(
         &self,
         file: &Scanned,
@@ -2085,8 +1956,8 @@ impl Folder {
         )
     }
 
-    /// The item a link names: an id the copy holds, or a file in this
-    /// folder, its path compared as names are (`folders.md` 27).
+    /// An id the copy holds, or a file in this folder, its path compared as
+    /// names are.
     fn resolve_link(&self, target: &str) -> Result<Option<String>> {
         if self.core.get(target)?.is_some() {
             return Ok(Some(target.to_string()));
@@ -2106,7 +1977,6 @@ impl Folder {
     }
 }
 
-/// Whether the journal holds a delete of this item at this path.
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
     Ok(state::journaled(conn)?
         .iter()
@@ -2120,8 +1990,8 @@ fn gone_before_its_move(row: &crate::model::QueuedWrite) -> bool {
         && row.reason.as_deref() == Some("edge_not_found")
 }
 
-/// A line a move changed, kept with the end it named before so a refusal can
-/// point the record back there.
+/// Kept with the end it named before, so a refusal can point the record back
+/// there.
 struct MovedLine {
     from: String,
     to: state::Line,
@@ -2165,7 +2035,6 @@ fn moved_line(
     }))
 }
 
-/// The line an edge write of a file's lines stands for, read from its row.
 fn edge_change(
     conn: &rusqlite::Connection,
     row: &crate::model::QueuedWrite,
@@ -2193,19 +2062,16 @@ fn edge_change(
     }))
 }
 
-/// The item a queued create made.
 fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
     queued
         .item_id
         .ok_or_else(|| CoreError::Invalid(format!("the create queued for {key} names no item")))
 }
 
-/// The last component of a path inside the folder.
 fn name_of(key: &str) -> &str {
     key.rsplit('/').next().unwrap_or(key)
 }
 
-/// A file's name, without its extension, as the title a new item gets.
 fn title_of(key: &str) -> String {
     let name = name_of(key);
     match name.rsplit_once('.') {
@@ -2214,8 +2080,8 @@ fn title_of(key: &str) -> String {
     }
 }
 
-/// Whether `grace` has passed between two instants in the wire's shape. A
-/// pair this cannot read has not, since a delete cannot be taken back.
+/// A pair this cannot read has not passed, since a delete cannot be taken
+/// back.
 fn elapsed_past(since: &str, now: &str, grace: Duration) -> bool {
     let (Some(since), Some(now)) = (millis_of(since), millis_of(now)) else {
         return false;
@@ -2233,7 +2099,7 @@ fn millis_of(stamp: &str) -> Option<i64> {
     let (year, month, day) = (number(0, 4)?, number(5, 7)?, number(8, 10)?);
     let (hour, minute, second) = (number(11, 13)?, number(14, 16)?, number(17, 19)?);
     let millis = number(20, 23)?;
-    // Days since the epoch, by Howard Hinnant's algorithm run backwards.
+    // Days since the epoch, by the days-from-civil algorithm run backwards.
     let year = if month <= 2 { year - 1 } else { year };
     let era = if year >= 0 { year } else { year - 399 } / 400;
     let year_of_era = year - era * 400;
@@ -2243,22 +2109,15 @@ fn millis_of(stamp: &str) -> Option<i64> {
     Some(((days * 86_400 + hour * 3_600 + minute * 60 + second) * 1_000) + millis)
 }
 
-/// What a folder's drain did.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Drained {
     #[serde(flatten)]
     pub report: crate::DrainReport,
-    /// Edits the server refused `ancestor_unavailable`, sent again on the
-    /// version the copy holds (`folders.md` 23).
     pub rebased: usize,
-    /// Placements another machine made first, withdrawn for the server's
-    /// (`folders.md` 19).
     pub gave_way: usize,
 }
 
 impl Folder {
-    /// Sends what the queue holds, and each edit whose base the server no
-    /// longer holds again on the version the copy holds (`folders.md` 23).
     pub fn drain(&self) -> Result<Drained> {
         let mut report = self.core.drain()?;
         let mut rebased = 0;
@@ -2292,7 +2151,7 @@ impl Folder {
     }
 
     /// Read from the queue rather than this drain's report, so a refusal a plain
-    /// device drain was answered holds its file too (`folders.md` 9, 11).
+    /// device drain was answered holds its file too.
     fn hold_refused(&self) -> Result<()> {
         let queue = self.core.queue()?;
         let conn = self.core.conn()?;
@@ -2387,7 +2246,7 @@ impl Folder {
                     // Answered, its own value set aside in a copy beside the row.
                     Some(crate::model::Verdict::Conflicted) => {}
                     // Kept with its line spent, since it may have landed;
-                    // released, it is answered here again (`folders.md` 23).
+                    // released, it is answered here again.
                     Some(crate::model::Verdict::Dead) => continue,
                     _ => continue,
                 }
@@ -2451,8 +2310,8 @@ impl Folder {
         Ok(made)
     }
 
-    /// Moves the first such edit of each row: the next was made against it,
-    /// so it goes on its answer, a pass later.
+    /// Only the first `ancestor_unavailable` edit of each item: the next was
+    /// made against it, so it goes on its answer, a pass later.
     fn rebase_thinned(&self) -> Result<usize> {
         let queue = self.core.queue()?;
         let mut first: HashSet<&str> = HashSet::new();
@@ -2476,9 +2335,8 @@ impl Folder {
 }
 
 impl Folder {
-    /// Writes what the search matches out as files (`folders.md` 2 and 6),
-    /// each where its placement says (`folders.md` 19) and bound before its
-    /// bytes land so the scan never reads it back (`folders.md` 20).
+    /// Each file is bound before its bytes land, so the scan never reads it
+    /// back.
     pub fn pull(&self) -> Result<PullReport> {
         let mut report = PullReport::default();
         let settings = self.settings()?;
@@ -2514,7 +2372,7 @@ impl Folder {
         }
         // A bound file whose item left the search, but not by state or the
         // bin, is kept current as a member's is and flagged; it never gets a
-        // new file (`folders.md` 35).
+        // new file.
         let outside: Vec<String> = bound_items
             .into_iter()
             .filter(|id| !members.contains(id))
@@ -2592,7 +2450,7 @@ impl Folder {
         state::set_unmatched(&*self.core.conn()?, &unmatched_ids)?;
         for (item, unmatched) in &work {
             // This device's own create, not yet landed: the id goes back
-            // only once it has (`folders.md` 13).
+            // only once it has.
             if item.version == 0 {
                 continue;
             }
@@ -2601,7 +2459,7 @@ impl Folder {
                 state::bound_to_item(&conn, &item.id)?
             };
             // Bytes the server or this copy did not take are the person's to
-            // mend, so the file stays as they wrote it (`folders.md` 9, 10).
+            // mend, so the file stays as they wrote it.
             if bound
                 .as_ref()
                 .is_some_and(|bound| bound.held.is_some() || !bound.writes.refused.is_empty())
@@ -2609,7 +2467,7 @@ impl Folder {
                 continue;
             }
             // Gone from the disk it is the scan's to journal; written back,
-            // a file another folder took in would return (`folders.md` 44).
+            // a file another folder took in would return.
             if *unmatched
                 && bound
                     .as_ref()
@@ -2618,7 +2476,7 @@ impl Folder {
                 continue;
             }
             // Moved to another folder here and not yet taken there, written
-            // anew it would make the moved file read as a copy (`folders.md` 42).
+            // anew it would make the moved file read as a copy.
             if bound.is_none() && peers.arriving(&item.id) {
                 report.elsewhere += 1;
                 continue;
@@ -2629,7 +2487,7 @@ impl Folder {
             };
             let placed = self.placement(&item.id)?;
             // An embedded file goes where its link says, and its placement
-            // follows (`folders.md` 12).
+            // follows.
             let Some(want) = embedded
                 .at
                 .get(&item.id)
@@ -2645,7 +2503,7 @@ impl Folder {
                     )
                 })
                 // A name its file already has in another case or form is that
-                // file's, which keeps its own name (`folders.md` 27).
+                // file's, which keeps its own name.
                 .map(|want| match &bound {
                     Some(bound) if names::same(&bound.path, &want) => bound.path.clone(),
                     _ => want,
@@ -2677,7 +2535,7 @@ impl Folder {
         // path to the same item; stable, so the listing orders the rest.
         placing.sort_by(|a, b| a.rank.cmp(&b.rank));
         // Compared as a folder compares names, so two items never get paths
-        // one disk holds as one file (`folders.md` 27).
+        // one disk holds as one file.
         let wanted: HashSet<String> = placing
             .iter()
             .map(|entry| names::folded(&entry.want))
@@ -2751,8 +2609,8 @@ impl Folder {
         Ok(report)
     }
 
-    /// Gives a file in place the permission its item holds, unless the file
-    /// changed since the scan read it, which makes the permission the person's.
+    /// Leaves a file changed since the scan read it alone: the permission is
+    /// then the person's.
     fn keep_executable(&self, item: &Item, want: &str) -> Result<()> {
         let path = self.root.join(want);
         let wanted = executable::held(item);
@@ -2775,8 +2633,7 @@ impl Folder {
             .get_or_init(|| executable::kept(&self.root.join(STATE_DIR)))
     }
 
-    /// Writes one item's file where its pull placed it, and answers whether
-    /// it waits for the file at that path to move away first.
+    /// Answers whether it waits for the file at that path to move away first.
     fn write_placed(
         &self,
         entry: &Placing<'_>,
@@ -2854,7 +2711,7 @@ impl Folder {
         let hash = state::hash(&bytes);
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
         // A file the person deleted whose item moved on in nothing it shows is
-        // the scan's, and its journaled delete stands (`folders.md` 21).
+        // the scan's, and its journaled delete stands.
         if let Some(bound) = &bound
             && bytes_of(item, catalog).is_none()
             && self.deleted_as_agreed(item, bound, rendering)?
@@ -2863,7 +2720,7 @@ impl Folder {
         }
 
         // The bytes on the disk, not the mapping's memory of them: a file
-        // changed since the scan read it is the person's (`folders.md` 32).
+        // changed since the scan read it is the person's.
         let changed = |bound: &state::Bound| {
             std::fs::read(self.root.join(&bound.path))
                 .is_ok_and(|found| state::hash(&found) != bound.content_hash)
@@ -2886,8 +2743,8 @@ impl Folder {
             Some(bound) if ours => self.behind_by_its_line_alone(item, bound, rendering)?,
             _ => false,
         };
-        // Something at the destination that is not this item's own file
-        // (`folders.md` 32), unless it is byte for byte this item's render.
+        // Something at the destination that is not this item's own file,
+        // unless it is byte for byte this item's render.
         let occupied = !in_place && !ours && path.exists();
         let rebound =
             occupied && bound.is_none() && std::fs::read(&path).is_ok_and(|found| found == bytes);
@@ -2930,7 +2787,7 @@ impl Folder {
         }
 
         // Written over an edit still waiting, the line it writes is spent
-        // too, since the file holds that edit (`folders.md` 23, 24).
+        // too, since the file holds that edit.
         let mut writes = bound
             .as_ref()
             .map(|bound| bound.writes.clone())
@@ -2979,8 +2836,7 @@ impl Folder {
             .map_or(Ok(()), std::fs::create_dir_all)
             .and_then(|()| std::fs::write(&path, &bytes));
         if written.is_ok() && bytes_of(item, catalog).is_some() && self.keeps_permissions() {
-            // The bytes are written and bound whatever the permission does: a
-            // volume that keeps none is the stated limit (`folders.md` 50).
+            // The bytes are written and bound whatever the permission does.
             let _ = executable::set(&path, executable::held(item));
         }
         if written.is_err() {
@@ -3036,8 +2892,7 @@ impl Folder {
         Ok(false)
     }
 
-    /// Moves in a file another folder let go of, bound before it lands
-    /// (`folders.md` 20, 44). Answers whether it did.
+    /// Bound before it lands. Answers whether it did.
     fn take_in(
         &self,
         item: &Item,
@@ -3097,8 +2952,7 @@ impl Folder {
         Ok(true)
     }
 
-    /// Removes this folder's own bytes of an item another folder holds with
-    /// a file, trashing nothing (`folders.md` 44). Answers whether it did.
+    /// Trashes nothing. Answers whether it did.
     fn let_go(&self, item_id: &str, peers: &Peers<'_>, report: &mut PullReport) -> Result<bool> {
         let Some(bound) = state::bound_to_item(&*self.core.conn()?, item_id)? else {
             return Ok(false);
@@ -3119,8 +2973,8 @@ impl Folder {
         Ok(true)
     }
 
-    /// The ids the search matches in the copy (`folders.md` 2), answered by
-    /// the local list so the folder and a list read one grammar alike.
+    /// Answered by the local list so the folder and a list read one grammar
+    /// alike.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
         let types: Vec<Option<String>> = if settings.types().is_empty() {
             vec![None]
@@ -3152,10 +3006,6 @@ impl Folder {
         Ok(members)
     }
 
-    /// A file whose item the search no longer matches (`folders.md` 35). One
-    /// that left by state or was trashed is taken away where its bytes are the
-    /// folder's own, and nothing is journaled; any other stays, flagged
-    /// `unmatched`.
     fn remove_departed(
         &self,
         members: &HashSet<String>,
@@ -3177,7 +3027,7 @@ impl Folder {
             }
         }
         // Many files taken away at once is more often a mistake made elsewhere
-        // than a wish, so they stay until confirmed (`folders.md` 46).
+        // than a wish, so they stay until confirmed.
         let paths: Vec<String> = going.iter().map(|row| row.path.clone()).collect();
         if settings.removal_threshold.exceeded(going.len(), of) {
             state::set_paused(&*self.core.conn()?, state::Removal::Pull, &paths)?;
@@ -3192,8 +3042,6 @@ impl Folder {
         Ok(())
     }
 
-    /// Whether a file goes as its item left by state or was trashed (`folders.md`
-    /// 35): kept if changed, the scan's if gone, and unread if unreadable.
     fn departing(
         &self,
         row: &state::Bound,
@@ -3209,7 +3057,7 @@ impl Folder {
             let conn = self.core.conn()?;
             crate::store::items_by_ids(&conn, std::slice::from_ref(&row.item_id))?.pop()
         };
-        // A row the copy lost is the scan's to report (`folders.md` 38).
+        // A row the copy lost is the scan's to report.
         let Some(item) = held else {
             return Ok(Departing::No);
         };
@@ -3222,15 +3070,15 @@ impl Folder {
             }
             Ok(_) => Departing::Yes,
             // The person's delete is newer than the departure: the scan journals
-            // it, and sends it unless the item is in the bin (`folders.md` 21).
+            // it, and sends it unless the item is in the bin.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Departing::No,
             // Bytes it cannot read are not shown to be the folder's own.
             Err(_) => Departing::Unread,
         })
     }
 
-    /// Takes a departed item's file away with its binding. A journal row here
-    /// is a file put back since its scan, so it asks for nothing now.
+    /// A journal row here is a file put back since its scan, so it asks for
+    /// nothing now.
     fn take_away(&self, row: &state::Bound) -> Result<()> {
         let path = self.root.join(&row.path);
         if path.exists() && plainly_inside(&self.root, &row.path) {
@@ -3243,8 +3091,6 @@ impl Folder {
         state::journal_clear(&conn, &row.path)
     }
 
-    /// Whether a journaled file gone from the disk would show its item as last
-    /// agreed, rendered at the line it was agreed at.
     fn deleted_as_agreed(
         &self,
         item: &Item,
@@ -3271,7 +3117,7 @@ impl Folder {
     }
 
     /// Whether a file differs from its item's render in its version line
-    /// alone, with no edit of its own landed since (`folders.md` 24).
+    /// alone, with no edit of its own landed since.
     fn behind_by_its_line_alone(
         &self,
         item: &Item,
@@ -3306,9 +3152,6 @@ impl Folder {
         Ok(state::hash(rendered.text.as_bytes()) == bound.content_hash)
     }
 
-    /// Where an item's file goes (`folders.md` 19): where its placement says,
-    /// or else the file it has, or else by its title under its type's first
-    /// placement. `None` for a path the folder does not write.
     fn path_for(
         &self,
         item: &Item,
@@ -3348,7 +3191,6 @@ impl Folder {
         }
     }
 
-    /// An item as its file at `path` (`folders.md` 7, 11, 12, 13, 23).
     fn render(
         &self,
         item: &Item,
@@ -3415,7 +3257,7 @@ impl Folder {
 
     /// Pins the other end of every edge a file here writes, so its line has a
     /// title to show, and every attachment of a document, so an embed can name
-    /// it; the record of them holds each such pin (`folders.md` 11, 12).
+    /// it; the record of them holds each such pin.
     fn hold_edge_ends(
         &self,
         work: &[(Item, bool)],
@@ -3485,22 +3327,18 @@ impl Folder {
 /// and the edges its record says it carried.
 type LinesBy<'a> = (&'a Names, Option<&'a Map<String, Value>>, &'a [state::Line]);
 
-/// What a pull renders by, read once for every file it writes.
 struct Rendering<'a> {
     catalog: &'a Catalog,
     edge_types: &'a EdgeTypes,
     names: &'a Names,
 }
 
-/// An item rendered as a file: its bytes as text, the items its body links,
-/// and the edges its lines name.
 struct Rendered {
     text: String,
     links: Vec<String>,
     lines: Vec<state::Line>,
 }
 
-/// What a scan keeps on a file's binding beside its bytes.
 #[derive(Default)]
 struct Kept {
     edit_line: Option<i64>,
@@ -3509,8 +3347,6 @@ struct Kept {
     writes: state::Writes,
 }
 
-/// What a file's own-field lines ask of its item, each already told apart
-/// from what the copy holds.
 #[derive(Debug, Default)]
 struct OwnChanges {
     r#type: Option<String>,
@@ -3530,7 +3366,6 @@ impl OwnChanges {
     }
 }
 
-/// How a file's version line stands against the copy's (`folders.md` 7, 23).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Standing {
     /// The version the copy holds: sent whole, own lines and all.
@@ -3543,19 +3378,15 @@ enum Standing {
     Lineless,
 }
 
-/// A file's own-field changes, what the folder then holds as the file's own
-/// fields, and why a change went unsent, where one did.
 struct OwnRead {
     changes: OwnChanges,
     base: Option<fields::OwnBase>,
     flag: Option<String>,
-    /// The tags and state the file shows, where it shows any.
     tags: Option<Vec<String>>,
     state: Option<ItemState>,
 }
 
-/// Reads a file's own-field lines three-way against the folder's own last
-/// write of the file (`folders.md` 7).
+/// Three-way against the folder's own last write of the file.
 fn own_changes(
     lines: &fields::Lines,
     standing: Standing,
@@ -3669,7 +3500,6 @@ fn own_changes(
     }
 }
 
-/// The own fields whose lines a file shows other than `shown`.
 fn differing(lines: &fields::Lines, shown: &fields::Own) -> Vec<String> {
     let mut differ = Vec::new();
     if lines
@@ -3695,13 +3525,10 @@ fn differing(lines: &fields::Lines, shown: &fields::Own) -> Vec<String> {
     differ
 }
 
-/// Whether a frontmatter value holds nothing.
 fn blank(value: &Value) -> bool {
     value.is_null() || value.as_str().is_some_and(|text| text.trim().is_empty())
 }
 
-/// Why a document cannot be of a type, where it cannot: one the copy does
-/// not hold, or a file type, whose items are bytes.
 fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
     if !catalog.known(r#type) {
         return Some(format!("{type} is not a type this copy holds"));
@@ -3711,7 +3538,6 @@ fn unsuited_type(r#type: &str, catalog: &Catalog) -> Option<String> {
         .then(|| format!("{type} is a file type, whose items are bytes rather than documents"))
 }
 
-/// What a pull does with a bound file whose item may have left.
 enum Departing {
     No,
     Kept,
@@ -3719,32 +3545,25 @@ enum Departing {
     Yes,
 }
 
-/// An item a pull writes, with the path it settled on.
 struct Placing<'a> {
     item: &'a Item,
     bound: Option<state::Bound>,
     want: String,
     rank: placement::Rank,
-    /// A file another folder on this machine let go of, to take in rather
-    /// than write anew (`folders.md` 44).
     taken: Option<(PathBuf, state::Bound)>,
 }
 
-/// The extension of a path, lowercased.
 fn extension_of(path: &Path) -> Option<String> {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_lowercase)
 }
 
-/// Whether a file carries frontmatter, and with it a `marfa_id`: a Markdown
-/// file (`folders.md` 13).
 fn carries_frontmatter(path: &Path) -> bool {
     matches!(extension_of(path).as_deref(), Some("md" | "markdown"))
 }
 
-/// A file's size, modification time and executable permission, which a
-/// quick pass compares with those its last read recorded (`folders.md` 49).
+/// What a quick pass compares with what its last read recorded.
 fn stat_of(path: &Path) -> Option<String> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
     let modified = metadata
@@ -3760,14 +3579,10 @@ fn stat_of(path: &Path) -> Option<String> {
     ))
 }
 
-/// Whether a file is a document, which a folder reads as an item's fields
-/// rather than sending as bytes (`folders.md` 29).
 fn is_document(path: &Path) -> bool {
     carries_frontmatter(path) || extension_of(path).as_deref() == Some("txt")
 }
 
-/// The hash a file item names its bytes by: an item of a file type carrying
-/// a `blob_ref`, whose file is those bytes rather than a document.
 fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
     if !catalog.matches(FILE_TYPE, &item.r#type) {
         return None;
@@ -3775,8 +3590,6 @@ fn bytes_of<'a>(item: &'a Item, catalog: &Catalog) -> Option<&'a str> {
     item.properties.get("blob_ref").and_then(Value::as_str)
 }
 
-/// The type a file that is not a document becomes: its MIME type's, where
-/// the copy knows it, and `core.file` otherwise.
 fn bytes_type(path: &Path, catalog: &Catalog) -> Option<String> {
     if is_document(path) {
         return None;
@@ -3789,19 +3602,15 @@ fn bytes_type(path: &Path, catalog: &Catalog) -> Option<String> {
     })
 }
 
-/// The type every file item is, with its subtree.
 const FILE_TYPE: &str = "core.file";
 
-/// The kind of edge a link becomes, and the only kind a folder removes.
 pub const LINK_EDGE: &str = "references";
 
-/// The version a file's line names, where it is one the server could have
-/// minted (`versions.md` 18).
+/// Only a version the server could have minted.
 fn line_of(front: &Map<String, Value>) -> Option<i64> {
     version_named(front.get(VERSION_FIELD)?)
 }
 
-/// The version a version line's value names, the settings file's included.
 fn version_named(line: &Value) -> Option<i64> {
     // An editor typing the line as text writes it quoted.
     let number = match line {
@@ -3812,15 +3621,14 @@ fn version_named(line: &Value) -> Option<i64> {
     (number.fract() == 0.0 && number >= 1.0 && number <= i64::MAX as f64).then_some(number as i64)
 }
 
-/// What a folder's catch-up did: a catch-up from the cursor or, where the
-/// log had aged past it, a fresh hydration.
+/// `hydrated` where the log had aged past the cursor or the settings ask for
+/// another slice.
 #[derive(Debug, Clone, Serialize)]
 pub struct CaughtUp {
     pub caught_up: Option<crate::model::CatchUpReport>,
     pub hydrated: Option<crate::model::HydrateReport>,
 }
 
-/// What a pull did.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct PullReport {
     pub written: usize,
@@ -3828,65 +3636,28 @@ pub struct PullReport {
     pub moved: usize,
     pub unchanged: usize,
     pub skipped: usize,
-    /// File items whose bytes could not be had (`folders.md` 37).
     pub absent: usize,
-    /// Files the pull would not write over: one the person changed since
-    /// the folder last wrote it, and one at a path the mapping does not hold.
     pub unwritten: usize,
-    /// Journal rows cleared by writing the file back, a person's own delete
-    /// inside its grace among them.
     pub revived: usize,
-    /// Items whose file would land outside the folder, where its lists do
-    /// not take it or in a package (`folders.md` 25, 26, 30).
     pub outside: usize,
-    /// Items whose placement another item holds, written at a free path
-    /// beside it, which becomes their placement (`folders.md` 19).
     pub beside: usize,
-    /// Items whose placement would make them another kind of file, left
-    /// unwritten (`folders.md` 19).
     pub unsuited: usize,
-    /// Placements the server refused, not sent again until the key or the
-    /// settings change, or the item's placement moves on (`folders.md` 19).
     pub unplaced: usize,
-    /// Placements written: an `in-folder` edge made, or its `path` moved to
-    /// where the file is (`folders.md` 19).
     pub placed: usize,
-    /// Files of items that left by state or were trashed, taken away
-    /// (`folders.md` 35).
     pub removed: usize,
-    /// The same, kept because the person changed them.
     pub kept: usize,
-    /// The same, left in place until confirmed, because together they pass
-    /// the removal threshold (`folders.md` 46).
     pub paused: usize,
-    /// Files whose item the search no longer matches for any other reason,
-    /// left where they are (`folders.md` 35).
     pub unmatched: usize,
-    /// Files taken in from another folder (`folders.md` 44).
     pub taken: usize,
-    /// Items not written because their file sits unbound in another folder
-    /// (`folders.md` 43).
     pub elsewhere: usize,
-    /// Files removed because another folder holds their item with a file
-    /// (`folders.md` 44).
     pub let_go: usize,
-    /// The settings file, rewritten where the settings moved on (`folders.md`
-    /// 1).
     pub settings: SettingsFileReport,
-    /// Files the pull left as the person wrote them, because their bytes
-    /// were not taken (`folders.md` 9, 10).
     pub flagged: Vec<Flagged>,
-    /// Properties the types this folder holds declare under a name a file
-    /// reads as something else, so no file carries them (`folders.md` 7).
     pub uncarried: Vec<Uncarried>,
-    /// Embeds whose file this pull did not write where they say (`folders.md`
-    /// 12).
     pub embeds: Vec<Flagged>,
 }
 
-/// Whether every component of a path is a plain name inside the folder, with
-/// no symlink on the way (`folders.md` 30). A guard, not a boundary: the write
-/// resolves the path again.
+/// A guard, not a boundary: the write resolves the path again.
 fn plainly_inside(root: &Path, relative: &str) -> bool {
     let mut here = root.to_path_buf();
     for part in relative.split('/') {
@@ -3901,7 +3672,6 @@ fn plainly_inside(root: &Path, relative: &str) -> bool {
     true
 }
 
-/// A title as a file name, with the separators and the dot-lead taken out.
 fn safe_name(title: &str) -> String {
     let cleaned: String = title
         .chars()

@@ -35,9 +35,7 @@ pub(crate) fn list(
         values.push(Value::String(tier.as_str().into()));
     }
     narrow_by_tags(&filters.tags, &mut clauses, &mut values);
-    // Both ends exclusive, matching the server: a device answering a
-    // bounded list differently from the server it copied is a divergence a
-    // caller cannot see.
+    // Both ends exclusive, as on the server.
     if let Some(after) = &filters.occurred_after {
         clauses.push("occurred_at > ?".into());
         values.push(Value::String(after.clone()));
@@ -104,7 +102,6 @@ pub(crate) fn narrow_by_type(
     clauses.push(format!("({})", alternatives.join(" OR ")));
 }
 
-/// Every tag given, each one required.
 pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values: &mut Vec<Value>) {
     for tag in tags {
         clauses.push(
@@ -232,10 +229,6 @@ mod tests {
             ids(&conn, ListFilters::default(), Sort::default()),
             vec!["f", "d", "c", "a"]
         );
-        // Both of the states a row can be put away in, each named and each
-        // answered. A default that answered one and hid the other would
-        // give two answers to one question, and a case that named only the
-        // bin would not see it.
         let named = ListFilters {
             state: Some(ItemState::Archived),
             ..Default::default()
@@ -271,8 +264,6 @@ mod tests {
             occurred_before: Some("2026-01-04T00:00:00Z".into()),
             ..Default::default()
         };
-        // Exclusive at both ends, so the rows sitting exactly on the bounds
-        // are out and only the one between them comes back.
         assert_eq!(ids(&conn, filters, Sort::default()), vec!["c"]);
     }
 

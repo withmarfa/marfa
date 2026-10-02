@@ -1,6 +1,3 @@
-//! A file's executable permission, kept as `executable` on its file item
-//! (`folders.md` 50).
-
 use std::fs::Metadata;
 use std::path::Path;
 
@@ -10,7 +7,6 @@ use crate::model::Item;
 
 pub const FIELD: &str = "executable";
 
-/// Whether the file's owner may run it.
 #[cfg(unix)]
 pub fn of(metadata: &Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -22,7 +18,6 @@ pub fn of(_metadata: &Metadata) -> bool {
     false
 }
 
-/// Whether the item says its file may be run.
 pub fn held(item: &Item) -> bool {
     item.properties
         .get(FIELD)
@@ -30,8 +25,8 @@ pub fn held(item: &Item) -> bool {
         .unwrap_or(false)
 }
 
-/// Whether the volume `dir` is on keeps a file's permission: one that keeps
-/// none, such as exFAT, shows every file as one its owner may run.
+/// A volume that keeps no permissions, such as exFAT, shows every file as
+/// one its owner may run.
 #[cfg(unix)]
 pub fn kept(dir: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
@@ -52,8 +47,6 @@ pub fn kept(_dir: &Path) -> bool {
     false
 }
 
-/// Gives the file the permission, adding execute where each read bit is set,
-/// or taking all three away.
 #[cfg(unix)]
 pub fn set(path: &Path, executable: bool) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;

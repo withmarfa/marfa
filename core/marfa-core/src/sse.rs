@@ -1,7 +1,5 @@
 use std::io::{self, BufRead};
 
-/// One block of a `text/event-stream`: a named event with its data, or a
-/// comment such as the server's `:ping`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
     Comment(String),

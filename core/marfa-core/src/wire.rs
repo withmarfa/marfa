@@ -69,13 +69,9 @@ pub struct WireItemWithMetadata {
     pub metadata: WireMetadata,
 }
 
-/// One page of a list: `next_cursor` continues it and is `None` on the last.
 /// A page can be short or empty with a cursor still to follow, so a walk
-/// stops on `None` and never on a short page.
-///
-/// The key is required, `null` included: serde would otherwise read a page
-/// that dropped it as the last one, and a walk would stop after its first
-/// page without a word.
+/// stops on `None`, never on a short page. The key is required, `null`
+/// included: serde would otherwise read a page that dropped it as the last.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WirePage<T> {
     pub data: Vec<T>,
@@ -116,7 +112,6 @@ pub struct WireErrorEnvelope {
     pub error: WireErrorBody,
 }
 
-/// One `data:` payload from `GET /events`, whatever frame it belongs to.
 #[derive(Debug, Clone, Deserialize)]
 pub struct EventPayload {
     pub r#type: String,
@@ -134,11 +129,6 @@ pub struct EventPayload {
     pub reason: Option<String>,
 }
 
-/// What the server resolved on a write that collided.
-///
-/// Present only where it resolved one, which is what tells `merged` from
-/// `accepted`; `conflicted_copy_id` present is what tells `conflicted` from
-/// `merged` (`queue-and-verdicts.md` 8).
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireConflictResolution {
     #[serde(default)]
@@ -147,7 +137,6 @@ pub struct WireConflictResolution {
     pub conflicted_copy_id: Option<String>,
 }
 
-/// The body a successful write answers with.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireWriteAnswer {
     pub item: WireItem,
@@ -155,20 +144,13 @@ pub struct WireWriteAnswer {
     pub metadata: Option<WireMetadata>,
     #[serde(default)]
     pub conflict_resolution: Option<WireConflictResolution>,
-    /// The server recognized the write as one it had already taken. It does
-    /// not change the verdict — the row the server returned is the truth
-    /// either way (`queue-and-verdicts.md` 9) — and it is read so that a
-    /// device is not left comparing rows to find out.
     #[serde(default)]
     pub acknowledged: bool,
 }
 
-/// The body an edge write answers with.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WireEdgeAnswer {
     pub edge: WireEdge,
-    /// The server recognized the create as a repeat of one it had already
-    /// taken, and answered the edge as it stands.
     #[serde(default)]
     pub acknowledged: bool,
 }

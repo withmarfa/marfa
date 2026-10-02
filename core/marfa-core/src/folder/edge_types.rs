@@ -1,6 +1,3 @@
-//! The edge types a folder reads frontmatter lines by, as the server lists
-//! them (`edges.md` 2, 18), so a registered type is read like a shipped one.
-
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -8,10 +5,8 @@ use serde_json::Value;
 use crate::error::CoreError;
 use crate::http::Http;
 
-/// Where the folder keeps the list between runs.
 const META_EDGE_TYPES: &str = "folder_edge_types";
 
-/// One end of an edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum End {
@@ -63,7 +58,6 @@ impl EdgeType {
     }
 }
 
-/// Every edge type the folder knows, in the server's order.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeTypes {
     types: Vec<EdgeType>,
@@ -125,7 +119,7 @@ impl EdgeTypes {
     }
 
     /// The types written at their target: a copy holds such an edge from
-    /// the target's side only when it holds the type whole (`device.md` 1).
+    /// the target's side only when it holds the type whole.
     pub fn written_at_targets(&self) -> Vec<String> {
         let mut found: Vec<String> = self
             .types

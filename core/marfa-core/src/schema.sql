@@ -1,21 +1,13 @@
--- The local store, written to the contract in `conformance/spec/device.md`
--- and `queue-and-verdicts.md`. One file and no migrations: a store of another
--- schema version is refused by name, for a person to discard and hydrate
--- again. What that buys is this file readable as a description of
--- what a device holds rather than the end of a chain of alterations.
-
--- `meta` is not declared here. `store::prepare` creates it on its own before
--- this file runs, because it reads the schema version out of it in order to
--- decide whether to run this file at all. A second declaration here would
--- never execute, and would fail silently the day the two disagreed.
+-- `meta` is not declared here: `store::prepare` creates it before this file
+-- runs, because it reads the schema version from it to decide whether to run
+-- this file at all. A declaration here would never execute.
 
 CREATE TABLE IF NOT EXISTS types (
   id TEXT PRIMARY KEY,
   parent TEXT,
   label TEXT,
   title_field TEXT,
-  -- The field the type declares as its thumbnail, read out of `json` once
-  -- when the catalog is written rather than on every read that loads it.
+  -- Copied out of `json` when the catalog is written, so a read need not parse it.
   thumbnail_field TEXT,
   json TEXT NOT NULL
 );
@@ -61,15 +53,13 @@ CREATE TABLE IF NOT EXISTS tags (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);
 
--- Rows held whatever the slice says of them (`device.md` 1). Not a child of
--- `items`: a hydration clears the copy and keeps the pins.
+-- Not a child of `items`: a hydration clears the copy and keeps the pins.
 CREATE TABLE IF NOT EXISTS pins (
   item_id TEXT PRIMARY KEY
 ) WITHOUT ROWID;
 
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
--- What goes in and what does not is `store::index_row`'s, and stated there.
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
   title,
   body,
@@ -77,21 +67,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5 (
   tokenize = 'unicode61 remove_diacritics 2'
 );
 
--- The queue. One row per write a caller made and the server has not yet
--- answered, and it outlives the process that made it (`queue-and-verdicts.md`
--- 1). Deliberately not a child of `items`: a re-hydration clears the working
--- copy (`device.md` 16) and the queue survives it intact
--- (`queue-and-verdicts.md` 30), so a foreign key here would delete the rows a
--- caller was told were queued.
+-- Not a child of `items`: a hydration clears the copy and the queue survives
+-- it, so a foreign key here would delete rows a caller was told were queued.
 CREATE TABLE IF NOT EXISTS queue (
-  -- Insertion order is send order, and the drain reads it. A timestamp would
-  -- tie under a fast caller and leave the order to the planner.
+  -- Send order. A timestamp would tie under a fast caller.
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  -- One of the closed set in `queue-and-verdicts.md` 32. The `CHECK` is here
-  -- for the reason `verdict`'s is, below: this file outlives every process
-  -- that writes it, and a kind outside the set is a row no build can ever
-  -- send. There is no refusal upstream of this to rely on.
+  -- The `CHECK`s on this table are here because the file outlives every
+  -- process that writes it, so two builds cannot disagree about a store.
   kind TEXT NOT NULL CHECK (
     kind IN (
       'create_item',
@@ -111,206 +94,85 @@ CREATE TABLE IF NOT EXISTS queue (
       'upload_blob'
     )
   ),
-  -- What the write is about. An item write names an item; an edge write names
-  -- the edge and both of its endpoints, because an edge create can depend on
-  -- two local creates that have not been answered (`queue-and-verdicts.md` 4
-  -- and 33) and a single subject cannot say which.
+  -- An edge write names both endpoints too: an edge create can wait on two
+  -- unanswered local creates, which a single subject cannot say.
   item_id TEXT,
   target_id TEXT,
   edge_id TEXT,
-  -- The namespace an extension write is about, the tag a tag write is about,
-  -- and the blob an upload is about (`queue-and-verdicts.md` 32). Each also
-  -- rides in `payload`; they are columns because a caller asking what is
-  -- outstanding for one namespace, one tag or one blob is asking a question
-  -- the payload cannot be searched for.
+  -- Also in `payload`; columns so outstanding writes can be looked up by them.
   namespace TEXT,
   tag TEXT,
   blob TEXT,
-  -- The version the write was based on (`queue-and-verdicts.md` 2). Required
-  -- on an update and refused without one; optional on a create, which is
-  -- conditional on it where it carries one.
   base_version INTEGER,
-  -- Minted when the row is queued and never changed, so a write whose answer
-  -- the device never saw is answered from the server's record rather than
-  -- written twice (`queue-and-verdicts.md` 3).
-  --
-  -- `UNIQUE` because two rows sharing a key is the one thing the key exists
-  -- to prevent: the server answers the second from the first's record, so a
-  -- device that minted a duplicate would have one of its writes silently
-  -- discarded and be told it succeeded.
+  -- `UNIQUE` because the server answers a reused key from the first write's
+  -- record: a duplicate would be silently discarded and reported as accepted.
   idempotency_key TEXT NOT NULL UNIQUE,
-  -- The key this row was sent under before a caller released it
-  -- (`queue-and-verdicts.md` 27). A released row goes out under a fresh key,
-  -- because re-sending under the spent one is answered from the record and
-  -- is the same refusal that blocked it; the spent key is kept so a late
-  -- answer under it can still be recognized rather than read as an answer
-  -- to the new attempt.
+  -- Kept so a late answer under a spent key is recognized rather than read as
+  -- an answer to the attempt under the fresh one.
   spent_keys TEXT,
-  -- The body, as the device will send it.
   payload TEXT NOT NULL,
-  -- Whether this row has ever gone out on the wire.
-  --
-  -- A release has to tell two refusals apart: one the server gave, which is
-  -- terminal (`queue-and-verdicts.md` 12), and one the drain gave because
-  -- something this row waits for was refused, which is a row that was never
-  -- sent and so can be released without writing twice. `depends_on` cannot
-  -- answer that — a server-refused row may carry one too — and the reason
-  -- text is prose. This is the fact itself.
+  -- Tells a refusal the server gave (terminal) from one the drain gave a row
+  -- that never went out (releasable without writing twice). `depends_on`
+  -- cannot: a server-refused row may carry one too.
   sent INTEGER NOT NULL DEFAULT 0,
-  -- The queue rows this one waits for (`queue-and-verdicts.md` 4), as a JSON
-  -- array of queue ids. A write naming a row whose create has not been
-  -- answered is held rather than sent, because the server has no such row and
-  -- would refuse it — and an edge can be waiting on two of them at once.
-  --
-  -- An array rather than a foreign key, deliberately. A key with `ON DELETE
-  -- SET NULL` would make clearing an answered create silently release every
-  -- write that was waiting on it, which is the same row state as a genuine
-  -- release and tells nobody which it was; `RESTRICT` would refuse a caller
-  -- clearing their own answered rows. Statement 24 says a held write is
-  -- released by its dependency being answered, so the release is a decision
-  -- the drain makes from the verdicts, not something a delete may make on
-  -- its behalf.
+  -- A JSON array of queue ids, not a foreign key: `ON DELETE SET NULL` would
+  -- let clearing an answered create silently release its waiters, and
+  -- `RESTRICT` would refuse a caller clearing their own answered rows. Release
+  -- is the drain's decision from the verdicts.
   depends_on TEXT,
-  -- The write ahead of this one to the same row or edge, by queue id, where
-  -- one was still to be written when this one was queued
-  -- (`queue-and-verdicts.md` 42). Ordering and nothing else: this one waits
-  -- while that one has gone out without an answer or is itself held, any
-  -- answer releases it, and a refusal of that one is not a refusal of this
-  -- one, which is what `depends_on` means and why the two are kept apart.
+  -- Ordering only, apart from `depends_on` because a refusal of the write
+  -- ahead is not a refusal of this one.
   follows TEXT,
-  -- For an item's update based on the version the copy held, what the copy
-  -- held for each property it carries when it was made: what the edit was
-  -- made against (`queue-and-verdicts.md` 42), as `{"properties": {...}}`.
-  -- An answer to an edit ahead of it moves this one onto that answer only
-  -- where the answer holds these for every property this edit changed, and
-  -- a move drops the properties it carries at these values. The copy cannot
-  -- say afterwards, because it lays this edit over the row. Null for any
-  -- other write, and for an edit based on a version the copy has moved
-  -- past, which was made against that version and not the copy's row.
+  -- `{"properties": {...}}`: the copy's values this edit was made against.
+  -- The copy cannot say afterwards, because it lays this edit over the row.
   read TEXT,
-  -- One of the six (`queue-and-verdicts.md` 7), or null while unanswered.
-  -- Null is the absence of an answer rather than a seventh verdict.
-  --
-  -- The `CHECK` is here rather than left to the code because this file
-  -- outlives every process that writes it: a store carrying a verdict
-  -- outside the set would be a store no later build could read correctly,
-  -- and the closed set is the contract's rather than a convention.
   verdict TEXT CHECK (
     verdict IS NULL
     OR verdict IN ('accepted', 'merged', 'conflicted', 'refused', 'blocked', 'dead')
   ),
-  -- Why a row is not going anywhere, in whichever vocabulary its verdict
-  -- speaks: one of the five blocked reasons (`queue-and-verdicts.md` 26)
-  -- under `blocked`, and the server's refusal code verbatim (12) under
-  -- `refused`. A reader consults `verdict` to know which it is holding.
-  --
-  -- Not constrained, because half of its values are the server's and this
-  -- file cannot hold a copy of the server's error vocabulary without going
-  -- stale the first time the server adds one. The blocked set is checked
-  -- where it is written.
+  -- A blocked reason under `blocked`, the server's refusal code verbatim under
+  -- `refused`. Not constrained, because the server's codes are an open set;
+  -- the blocked reasons are checked when the row is read.
   reason TEXT,
-  -- The server's envelope, kept whole: a device reports a verdict and never
-  -- acts on one (15), so what it reports has to be what it was told.
   answer TEXT,
-  -- The sibling a `conflicted` verdict names (11).
   conflicted_copy_id TEXT,
-  -- Refusals, not attempts (`queue-and-verdicts.md` 25). A device that could
-  -- not ask has not been refused, so a week offline does not spend the
-  -- ceiling.
-  --
-  -- The ceiling is five, and the `CHECK` is what fixes it in the one artifact
-  -- that outlives the process. The contract says it is a number the contract
-  -- fixes rather than configuration, and a constant in the binary alone would
-  -- let two builds disagree about a store they both write.
-  --
-  -- **A release resets this to zero**, and the constraint is what requires
-  -- it: a released row that is refused a sixth time would increment past the
-  -- ceiling and abort its transaction rather than going `dead` a second time
-  -- (`queue-and-verdicts.md` 27). The requirement lives here because this is
-  -- where it is enforced, not in the code that has to satisfy it.
+  -- A release must reset this to zero: a released row refused again would
+  -- break the `CHECK` and abort its transaction rather than go `dead`.
   refusals INTEGER NOT NULL DEFAULT 0 CHECK (refusals BETWEEN 0 AND 5),
   queued_at TEXT NOT NULL,
   answered_at TEXT
 );
--- The drain reads unanswered rows in order.
 CREATE INDEX IF NOT EXISTS queue_verdict_seq ON queue (verdict, seq);
--- A local read shows a row the device wrote and has not had answered
--- (`queue-and-verdicts.md` 31), which is a lookup by item.
 CREATE INDEX IF NOT EXISTS queue_item ON queue (item_id);
--- An edge's waiting writes are laid back over it after every answer and
--- event that touches it (`queue-and-verdicts.md` 35), a lookup by edge.
 CREATE INDEX IF NOT EXISTS queue_edge ON queue (edge_id);
--- No index on `depends_on`. It holds a JSON array, and releasing a held write
--- means finding every row whose array *contains* an answered id — which an
--- index on the serialized text cannot answer: `EXPLAIN QUERY PLAN` on a
--- containment query reports a scan, and the only shape that could ever search
--- is equality on the whole string, which misses every row waiting on two
--- creates. An index here would say the lookup was cheap without making it so.
+-- No index on `depends_on`: finding rows whose JSON array contains an id is a
+-- scan whatever is indexed, and an index would only make it look cheap.
 
--- A folder's own state (`folders.md` 28). In this file rather than beside it
--- because the mapping, the journal and the queue have to move together: a
--- file bound to an item whose create did not queue is a file the folder
--- thinks it has pushed, and one transaction is what stops that.
---
--- A device that is not a folder simply has no rows here.
+-- Here rather than beside the folder because the mapping, the journal and the
+-- queue must change in one transaction.
 CREATE TABLE IF NOT EXISTS folder_files (
-  -- The path inside the folder, separators normalized.
   path TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
-  -- Device, inode and birth time, joined. Null where the filesystem gave no
-  -- usable identity, which is not the same as a file nobody has seen: a null
-  -- here means a rename within the folder cannot be followed, rather than
-  -- guessed (`folders.md` 17).
   identity TEXT,
-  -- The bytes the folder last agreed with, hashed. What makes echo
-  -- suppression have no gap (`folders.md` 20): a change whose content the
-  -- folder already holds is a change the folder made.
   content_hash TEXT NOT NULL,
-  -- The bytes the folder itself last wrote at this path, hashed; null where
-  -- the last agreement was a scan's read of the person's bytes. A pull takes
-  -- away the file of an item that left the slice only when the file still
-  -- holds these bytes (`folders.md` 35): a file the folder never wrote, or
-  -- the person changed since, is theirs and stays.
   written_hash TEXT,
-  -- The item ids the links in those bytes named, as a JSON array. What tells
-  -- a link the person removed from an edge that has not been rendered yet
-  -- (`folders.md` 31): both are an edge the copy holds that the body does not
-  -- name, and only this says which of them the file used to carry.
   links TEXT NOT NULL,
-  -- The edges the file's lines last named, as JSON: what tells a line taken
-  -- out from an edge no pull has written yet (`folders.md` 11).
   edge_lines TEXT NOT NULL,
-  -- The newest version line an edit of this device's has spent, 0 where its
-  -- file carried none; null where no edit went (`folders.md` 23, 24).
   edit_line INTEGER,
-  -- Why the bytes at content_hash went unsent or were refused, so a pull
-  -- leaves the file as the person wrote it (`folders.md` 9, 10).
   held TEXT,
-  -- The own fields the folder last wrote or read in the file, as JSON, and
-  -- what another machine moved at that version line without a version step.
   own TEXT,
-  -- The file's unanswered writes and refused changes, by save, as JSON.
   writes TEXT NOT NULL DEFAULT '{}',
   seen_at TEXT NOT NULL
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS folder_files_item ON folder_files (item_id);
 
--- Each file's size and modification time as the scan last read it, taken
--- before the read: a quick pass skips a file they still match (`folders.md` 49).
 CREATE TABLE IF NOT EXISTS folder_stats (
   path TEXT PRIMARY KEY,
   stat TEXT NOT NULL
 ) WITHOUT ROWID;
 
--- Deletes, journaled and deferred (`folders.md` 21, 22). A file that
--- disappears is recorded here rather than sent, because the first half of a
--- rename looks exactly like a delete; the grace is what tells them apart.
--- A row that survives the grace becomes a delete.
 CREATE TABLE IF NOT EXISTS folder_journal (
   path TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
-  -- When the file was first found missing. The grace runs from here, so a
-  -- folder that was not running while a file was deleted starts the grace at
-  -- the scan that noticed rather than at a moment it cannot know.
   missing_since TEXT NOT NULL
 ) WITHOUT ROWID;

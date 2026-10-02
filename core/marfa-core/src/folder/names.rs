@@ -1,24 +1,22 @@
-//! How a folder compares names (`folders.md` 27): in NFC and without regard
-//! to case, as macOS and Obsidian compare them.
+//! Names compare in NFC and without regard to case, as macOS and Obsidian
+//! compare them.
 
 use std::collections::HashMap;
 
 use unicode_normalization::UnicodeNormalization;
 
-/// A name, a path or a title as a folder compares it.
 pub(crate) fn folded(name: &str) -> String {
     // Normalized again after lowercasing, since a lowercase mapping can
     // leave a sequence that composes differently.
     name.nfc().flat_map(char::to_lowercase).nfc().collect()
 }
 
-/// Whether two names are one name to a folder.
 pub(crate) fn same(one: &str, other: &str) -> bool {
     folded(one) == folded(other)
 }
 
-/// Each Unicode form a typed name can be held in on the server, which
-/// compares the text it is sent as it is.
+/// The server compares text as it is sent, so a typed name may be held there
+/// in either form.
 pub(crate) fn forms(name: &str) -> Vec<String> {
     let mut forms = vec![name.nfc().collect::<String>(), name.nfd().collect()];
     forms.dedup();
@@ -53,7 +51,6 @@ mod tests {
         assert!(same(composed, decomposed));
         assert!(same("PLAN.md", "plan.md"));
         assert!(same("\u{c9}t\u{e9}", "e\u{301}te\u{301}"));
-        // The control: a different letter is a different name.
         assert!(!same("plan.md", "plans.md"));
         assert_eq!(forms(composed), forms(decomposed));
         assert_eq!(forms("plain").len(), 1);

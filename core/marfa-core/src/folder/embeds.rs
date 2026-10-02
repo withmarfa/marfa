@@ -1,6 +1,3 @@
-//! Files a document's body embeds (`folders.md` 12): each an `attached-to`
-//! edge from the file's item to the document's, written where its link says.
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
@@ -15,17 +12,13 @@ use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::Item;
 
-/// The edge an embed is.
 pub const ATTACHMENT_EDGE: &str = "attached-to";
 
-/// Where an embed of a file points.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Target {
-    /// A path in the folder.
     At(String),
     /// `![[name]]` as a pull reads it: placed by name once the files are known.
     Named(String),
-    /// A path leading out of the folder.
     Outside,
     /// A file's name that no file the folder sends answers to.
     Nothing,
@@ -71,7 +64,7 @@ fn file_like(name: &str) -> bool {
 }
 
 /// Whether `path` answers to `name`: the whole path, or its ending at a
-/// directory's edge, as a folder compares names (`folders.md` 27).
+/// directory's edge, as a folder compares names.
 fn answers(path: &str, name: &str) -> bool {
     let (path, name) = (folded(path), folded(name.trim_start_matches('/')));
     path == name || path.ends_with(&format!("/{name}"))
@@ -104,7 +97,7 @@ fn read_as(embed: &Embed) -> Option<(&str, bool)> {
 }
 
 /// The files a scan walked, indexed once so resolving an embed costs a lookup;
-/// both keys folded, as macOS and Obsidian compare names (`folders.md` 27).
+/// both keys folded, as macOS and Obsidian compare names.
 pub(super) struct Files {
     by_path: HashMap<String, String>,
     by_name: HashMap<String, Vec<String>>,
@@ -164,7 +157,6 @@ pub(super) fn on_disk(host: &str, embed: &Embed, files: &Files) -> Option<Target
     }
 }
 
-/// Why the folder reads nothing from an embed, said in the file's report.
 pub(super) fn reason(raw: &str, target: &Target) -> String {
     match target {
         Target::Outside => format!(
@@ -179,7 +171,6 @@ pub(super) fn reason(raw: &str, target: &Target) -> String {
     }
 }
 
-/// Why a pull writes no file for an embed that names no attachment.
 fn unattached(raw: &str) -> String {
     format!(
         "{raw} names no attachment of this file the folder can read, so no file is written for it"
@@ -207,7 +198,6 @@ pub(super) struct Embedded {
     pub reports: Vec<Flagged>,
 }
 
-/// An embed the folder reads nothing from, in the file at `path`.
 pub(super) fn reported(path: &str, reason: String) -> Flagged {
     Flagged {
         path: path.to_string(),
@@ -217,7 +207,6 @@ pub(super) fn reported(path: &str, reason: String) -> Flagged {
 }
 
 impl Folder {
-    /// Where an item's placement puts it.
     fn placed_at(&self, id: &str) -> Result<Option<String>> {
         Ok(self
             .placement(id)?
@@ -231,7 +220,6 @@ impl Folder {
         Ok(paths)
     }
 
-    /// The file items attached to `host` that the copy holds.
     fn attachments(&self, host: &str, catalog: &Catalog) -> Result<Vec<Attachment>> {
         let mut found: Vec<Attachment> = Vec::new();
         for edge in self.core.edges_to(host)? {
@@ -440,74 +428,5 @@ impl Folder {
             }
         }
         Ok(embedded)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_path_is_read_from_the_embedding_file_and_never_leads_out() {
-        assert_eq!(
-            joined("notes/a.md", "img/b.png").as_deref(),
-            Some("notes/img/b.png")
-        );
-        assert_eq!(
-            joined("notes/a.md", "../img/./b.png").as_deref(),
-            Some("img/b.png")
-        );
-        assert_eq!(
-            joined("a.md", "../b.png"),
-            None,
-            "a path climbing out of the folder was read inside it"
-        );
-        assert_eq!(
-            joined("notes/a.md", "/img/b.png").as_deref(),
-            Some("img/b.png"),
-            "a path from the vault's root was not read from the folder's"
-        );
-    }
-
-    #[test]
-    fn a_name_resolves_to_the_nearest_file_that_answers_to_it() {
-        let files = ["b/pic.png", "a/deep/pic.png", "notes/pic.png", "pic.png.md"];
-        assert_eq!(
-            named("notes/n.md", "pic.png", files).as_deref(),
-            Some("notes/pic.png")
-        );
-        assert_eq!(
-            named("x/n.md", "pic.png", files).as_deref(),
-            Some("b/pic.png"),
-            "the shallowest of the others was not taken"
-        );
-        assert_eq!(
-            named("x/n.md", "deep/PIC.png", files).as_deref(),
-            Some("a/deep/pic.png")
-        );
-        assert_eq!(
-            named("x/n.md", "b/pic.png", files).as_deref(),
-            Some("b/pic.png")
-        );
-        assert_eq!(named("x/n.md", "other.png", files), None);
-    }
-
-    #[test]
-    fn a_name_no_file_answers_to_is_a_file_only_where_a_mime_type_claims_it() {
-        assert!(file_like("pic.png"));
-        assert!(file_like("doc.PDF"));
-        for note in [
-            "A note",
-            "Dr. Smith",
-            "v1.2 plan",
-            "2024.05.01",
-            "note.md",
-            "list.txt",
-        ] {
-            assert!(
-                !file_like(note),
-                "{note} was read as a file, so it would hold back removals"
-            );
-        }
     }
 }

@@ -106,12 +106,9 @@ impl Catalog {
         ids
     }
 
-    /// Whether the copy holds this type.
-    ///
-    /// A local create names a type, and a device that queued one the catalog
-    /// does not know would send a write the server refuses `400 unknown_type`
-    /// — after the caller had been told it was queued, and after the row had
-    /// been written into the working copy.
+    /// A create of a type the catalog does not know is refused `400 unknown_type`
+    /// by the server, after the caller was told it was queued, so it is checked
+    /// here first.
     pub fn known(&self, type_id: &str) -> bool {
         self.entries.contains_key(type_id)
     }

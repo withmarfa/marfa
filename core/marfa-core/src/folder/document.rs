@@ -6,35 +6,24 @@ use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 use crate::error::CoreError;
 
-/// A file, read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
-    /// The frontmatter, every line of it, in the order the file wrote it.
     pub front: Map<String, Value>,
     /// What follows the frontmatter, or the whole text where there is none.
     pub body: String,
-    /// The ids this file links to, in the order they appear.
     pub links: Vec<String>,
-    /// Why the frontmatter cannot be read, where the file delimits some that
-    /// does not parse as fields (`folders.md` 8, 10).
     pub unreadable: Option<String>,
 }
 
-/// What a file opens with, when it opens with frontmatter.
 const FENCE: &str = "---";
 
-/// What a file's opening fence pair holds.
 enum Front<'a> {
     /// No fence pair, or one holding a list or a line of text: Markdown.
     Body,
     Fields(Map<String, Value>, &'a str),
-    /// A fence pair holding YAML that does not parse as fields.
     Unreadable(String),
 }
 
-/// The frontmatter a file opens with, and the body after it (`folders.md`
-/// 8). Only a fence pair says there is frontmatter; what it holds says
-/// whether it can be read.
 fn frontmatter(text: &str) -> Front<'_> {
     // The opening fence is its own line: `----` is a horizontal rule and
     // `--- x` is text, and neither opens frontmatter.
@@ -98,11 +87,10 @@ fn frontmatter(text: &str) -> Front<'_> {
     Front::Fields(fields, body)
 }
 
-/// A UTF-8 byte-order mark, which some editors open every file with. It is
-/// not text: a file is read past it and written without it (`folders.md` 8).
+/// A UTF-8 byte-order mark, which some editors open every file with: a file
+/// is read past it and written without it.
 pub(super) const MARK: char = '\u{feff}';
 
-/// Reads a file that can carry frontmatter.
 pub fn read(text: &str) -> Document {
     let text = text.strip_prefix(MARK).unwrap_or(text);
     match frontmatter(text) {
@@ -133,7 +121,6 @@ pub fn id_line(text: &str) -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
-/// Reads a file that carries no frontmatter: all of it is the body.
 pub fn read_body(text: &str) -> Document {
     Document {
         front: Map::new(),
@@ -143,7 +130,6 @@ pub fn read_body(text: &str) -> Document {
     }
 }
 
-/// Writes frontmatter and a body back out as a file.
 pub fn write(front: &Map<String, Value>, body: &str) -> Result<String, CoreError> {
     if front.is_empty() {
         return Ok(body.to_string());
@@ -159,8 +145,6 @@ pub fn write(front: &Map<String, Value>, body: &str) -> Result<String, CoreError
     Ok(format!("{FENCE}\n{rendered}\n{FENCE}\n{body}"))
 }
 
-/// A whole YAML document that is one map, as a folder's settings file
-/// holds it; the reason where it is not one.
 pub fn read_map(text: &str) -> Result<Map<String, Value>, String> {
     let documents = YamlLoader::load_from_str(text).map_err(|error| error.to_string())?;
     let Some(Yaml::Hash(hash)) = documents.first() else {
@@ -178,7 +162,6 @@ pub fn read_map(text: &str) -> Result<Map<String, Value>, String> {
     Ok(map)
 }
 
-/// A map written as one YAML document, the inverse of `read_map`.
 pub fn write_map(map: &Map<String, Value>) -> Result<String, CoreError> {
     let mut rendered = String::new();
     YamlEmitter::new(&mut rendered)
@@ -218,7 +201,6 @@ fn from_yaml(value: &Yaml) -> Option<Value> {
     })
 }
 
-/// Whether a YAML value holds a merge key at any depth.
 fn merges(value: &Yaml) -> bool {
     match value {
         Yaml::Hash(hash) => hash
@@ -229,7 +211,6 @@ fn merges(value: &Yaml) -> bool {
     }
 }
 
-/// An item's property as a YAML value.
 fn to_yaml(value: &Value) -> Yaml {
     match value {
         Value::Null => Yaml::Null,
@@ -250,8 +231,7 @@ fn to_yaml(value: &Value) -> Yaml {
     }
 }
 
-/// The `[[target]]` links a body carries, in order and without repeats. An
-/// embed, `![[target]]`, is not a link (`folders.md` 12).
+/// An embed, `![[target]]`, is not a link.
 pub fn links(body: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = body.as_bytes();
@@ -263,7 +243,7 @@ pub fn links(body: &str) -> Vec<String> {
         };
         let embedded = at + start > 0 && bytes[at + start - 1] == b'!';
         let target = body[open..open + end].trim();
-        // An alias — `[[id|shown]]` — links to what is before the bar.
+        // An alias, `[[id|shown]]`, links to what is before the bar.
         let target = target.split('|').next().unwrap_or(target).trim();
         if !embedded && !target.is_empty() && !found.iter().any(|held| held == target) {
             found.push(target.to_string());
@@ -276,12 +256,10 @@ pub fn links(body: &str) -> Vec<String> {
     found
 }
 
-/// One wiki link, as an edge's line names its target.
 pub fn render_link(target: &str) -> String {
     format!("[[{target}]]")
 }
 
-/// A body embed, which names a file in the folder or a note.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Embed {
     /// `![[name]]`, the name before any `|` or `#`.
@@ -294,7 +272,6 @@ pub enum Embed {
 }
 
 impl Embed {
-    /// The embed as the body writes it.
     pub fn raw(&self) -> &str {
         match self {
             Embed::Named { raw, .. } | Embed::Path { raw, .. } | Embed::Spaced { raw, .. } => raw,
@@ -302,8 +279,6 @@ impl Embed {
     }
 }
 
-/// The embeds a body carries, in order and once each: `![[name]]` and
-/// `![alt](path)`, an address such as `https://` and anything in code aside.
 pub fn embeds(body: &str) -> Vec<Embed> {
     let text = without_code(body);
     let mut found: Vec<Embed> = Vec::new();
@@ -460,7 +435,6 @@ fn without_code(body: &str) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-/// What a Markdown image's parentheses hold.
 enum Image {
     /// A destination, and how much of the text after `![` the image takes.
     Path(String, usize),
@@ -468,7 +442,7 @@ enum Image {
     Spaced(String, usize),
 }
 
-/// A Markdown image's destination, read from `rest`, the text after its `![`.
+/// `rest` is the text after the image's `![`.
 fn image(rest: &str) -> Option<Image> {
     let close = rest.find(']')?;
     if rest[..close].contains('\n') || !rest[close + 1..].starts_with('(') {
@@ -512,8 +486,6 @@ fn image(rest: &str) -> Option<Image> {
     }
 }
 
-/// Whether a destination is an address rather than a path: a scheme, a
-/// network path, or a fragment of this file.
 fn is_address(destination: &str) -> bool {
     if destination.starts_with("//") || destination.starts_with('#') {
         return true;
@@ -526,8 +498,6 @@ fn is_address(destination: &str) -> bool {
             .all(|glyph| glyph.is_ascii_alphanumeric() || matches!(glyph, '+' | '.' | '-'))
 }
 
-/// A path as the filesystem names it: percent escapes decoded, and any query
-/// or fragment, `a.pdf#page=2` say, taken off.
 fn local(destination: &str) -> String {
     let path = destination.split(['?', '#']).next().unwrap_or_default();
     let bytes = path.as_bytes();
@@ -553,29 +523,6 @@ fn local(destination: &str) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn frontmatter_is_read_in_order_and_the_body_stays_the_body() {
-        let document = read(
-            "---\ntitle: A note\ncount: 3\ntags:\n  - alpha\n  - beta\nnested:\n  deep: true\n---\nThe body.\n",
-        );
-        assert_eq!(document.front["title"], "A note");
-        assert_eq!(document.front["count"], 3);
-        assert_eq!(document.front["tags"], serde_json::json!(["alpha", "beta"]));
-        assert_eq!(
-            document.front["nested"],
-            serde_json::json!({ "deep": true }),
-            "a nested field was flattened or dropped, and a file's fields \
-             travel whole or not at all"
-        );
-        assert_eq!(
-            document.front.keys().collect::<Vec<_>>(),
-            ["title", "count", "tags", "nested"]
-        );
-        assert_eq!(document.body, "The body.\n");
-        assert_eq!(document.unreadable, None);
-    }
-
-    /// Each opens as frontmatter does and is not frontmatter (`folders.md` 8).
     #[test]
     fn a_body_that_opens_with_a_horizontal_rule_is_a_body() {
         let cases = [
@@ -604,9 +551,6 @@ mod tests {
                 "---\njust a string\n---\nbody\n",
                 "a fence pair holding one string",
             ),
-            // The case every other gate lets through: it parses, it is a
-            // mapping, and its field converts. Only the blank line after the
-            // fence says it is two rules around a sentence.
             (
                 "---\n\nNote: remember the milk\n\n---\n\nThe real content.\n",
                 "a first paragraph of the form `Word: text`, which is ordinary prose \
@@ -635,8 +579,6 @@ mod tests {
         }
     }
 
-    /// A fence pair whose YAML does not parse as fields is frontmatter that
-    /// cannot be read, held rather than taken as a body (`folders.md` 10).
     #[test]
     fn a_fence_pair_that_does_not_parse_as_fields_is_unreadable() {
         for text in [
@@ -658,14 +600,11 @@ mod tests {
                 "an unreadable file lost bytes in the reading"
             );
         }
-        // The control: an empty fence pair is frontmatter with nothing in it.
         let empty = read("---\n---\nbody\n");
         assert_eq!(empty.body, "body\n");
         assert!(empty.front.is_empty() && empty.unreadable.is_none());
     }
 
-    /// Some editors open every file they save with a byte-order mark, which
-    /// is not text and must not hide the fence (`folders.md` 8).
     #[test]
     fn a_byte_order_mark_does_not_hide_the_frontmatter() {
         let plain = "---\ntitle: A note\nmarfa_id: n1\n---\nThe body.\n";

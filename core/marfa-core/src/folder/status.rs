@@ -1,6 +1,3 @@
-//! Every file's status, read from the folder's store and its disk with no
-//! request to the server (`folders.md` 48).
-
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -12,7 +9,6 @@ use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
 
-/// One file and where it stands.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FileStatus {
     pub path: String,
@@ -20,37 +16,28 @@ pub struct FileStatus {
     pub item_id: Option<String>,
     /// `in_step`, `waiting`, `held`, `unmatched`, `unreached` or `outside`.
     pub status: &'static str,
-    /// What a waiting file waits for, in the order the list names them.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub waits: Vec<&'static str>,
-    /// Why a held, unreached or outside file stands where it does.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flag: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// A text near the server's limit (`folders.md` 47).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
 }
 
-/// Every file the folder reads or holds a binding for, in path order.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct StatusReport {
     pub files: Vec<FileStatus>,
-    /// Removals waiting to be confirmed, by where they came from.
     pub paused: Paused,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Paused {
-    /// Files gone from the disk whose deletes wait.
     pub disk: usize,
-    /// Files whose items left elsewhere, which a pull leaves in place.
     pub pull: usize,
 }
 
-/// The words a waiting file's writes are named by, in the order a status
-/// lists them.
 const WAITS: [&str; 11] = [
     "scan",
     "upload",
@@ -86,8 +73,7 @@ impl FileStatus {
 }
 
 impl Folder {
-    /// Where every file stands. Nothing is written, so a reading handle beside
-    /// a running watch answers it.
+    /// Writes nothing, so a reading handle beside a running watch answers it.
     pub fn status(&self) -> Result<StatusReport> {
         let settings = self.settings()?;
         let (catalog, edge_types) = {
@@ -332,7 +318,6 @@ impl Folder {
     }
 }
 
-/// A waiting entry, its waits each named once in the list's order.
 fn waits(entry: FileStatus, named: Vec<&'static str>) -> FileStatus {
     FileStatus {
         status: "waiting",

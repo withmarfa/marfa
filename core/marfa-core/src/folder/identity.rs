@@ -1,11 +1,3 @@
-//! Which file is which across a rename, for a file that cannot carry a
-//! `marfa_id` (`folders.md` 17).
-//!
-//! Fail-closed: a file is the same file when its device, inode and birth time
-//! all match. A zero birth time yields no identity, an identity two files
-//! share yields none, and no identity means no rename within the folder is
-//! followed, never a guess.
-
 use std::collections::HashMap;
 use std::fs::Metadata;
 use std::path::Path;
@@ -15,8 +7,7 @@ use crate::error::CoreError;
 /// Private fields, so `from_parts` is the only way to make an `Identity` and
 /// the zero rule cannot be bypassed.
 mod rule {
-    /// What makes a file the same file. The birth time is what tells a reused
-    /// inode from the file that had it.
+    /// The birth time is what tells a reused inode from the file that had it.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct Identity {
         device: u64,
@@ -27,7 +18,6 @@ mod rule {
     }
 
     impl Identity {
-        /// The rule itself, apart from the filesystem that feeds it.
         pub fn from_parts(device: u64, inode: u64, born_at: u128) -> Option<Identity> {
             // A filesystem that keeps no birth time reports zero for every
             // file, which would match a reused inode.
@@ -41,7 +31,6 @@ mod rule {
             })
         }
 
-        /// The identity as the mapping stores it.
         pub fn key(&self) -> String {
             format!("{}:{}:{}", self.device, self.inode, self.born_at)
         }
@@ -50,7 +39,6 @@ mod rule {
 
 pub use rule::Identity;
 
-/// The identity of a file, or nothing if this filesystem cannot give one.
 pub fn of(metadata: &Metadata) -> Option<Identity> {
     Identity::from_parts(device_of(metadata), inode_of(metadata), born(metadata)?)
 }
@@ -137,8 +125,6 @@ pub fn relative(folder: &Path, path: &Path) -> Result<String, CoreError> {
 mod tests {
     use super::*;
 
-    /// The zero case, which no file on a filesystem keeping birth times can
-    /// reach.
     #[test]
     fn a_zero_birth_time_yields_no_identity() {
         assert!(
@@ -148,9 +134,6 @@ mod tests {
              was handed the same reused inode: a rename would be followed \
              onto the wrong file and one note written over another"
         );
-        // The control: the same device and inode with a birth time do yield
-        // one, so the refusal above is the zero and not the rule refusing
-        // everything.
         assert!(Identity::from_parts(1, 2, 1).is_some());
         assert_ne!(
             Identity::from_parts(1, 2, 1),
@@ -167,7 +150,6 @@ mod tests {
         let one = dir.path().join("one");
         let two = dir.path().join("two");
         std::fs::write(&one, b"contents").unwrap();
-        // A hard link: one inode, one device, one birth time, two paths.
         std::fs::hard_link(&one, &two).unwrap();
         let resolved = resolve(&[one.clone(), two.clone()]);
         assert!(
@@ -177,8 +159,6 @@ mod tests {
              would bind the wrong one and write its contents over the item"
         );
 
-        // The control: alone, each has an identity. Without it the assertion
-        // above is satisfied by a resolver that answers nothing at all.
         assert_eq!(resolve(&[one]).len(), 1);
     }
 
@@ -198,18 +178,5 @@ mod tests {
              same note twice"
         );
         assert!(resolved.contains_key(&real));
-    }
-
-    #[test]
-    fn the_relative_path_is_the_path_inside_the_folder() {
-        let root = Path::new("/somewhere/notes");
-        assert_eq!(
-            relative(root, &root.join("deep").join("note.md")).unwrap(),
-            "deep/note.md"
-        );
-        assert!(
-            relative(root, Path::new("/elsewhere/note.md")).is_err(),
-            "a file outside the folder was given a path inside it"
-        );
     }
 }

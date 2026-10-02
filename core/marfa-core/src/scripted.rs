@@ -1,11 +1,9 @@
-//! A server the tests write the answers for, in process and over real
-//! sockets, so the transport, the stream reader and the follow's own
-//! threads run exactly as they do against a real one.
+//! Over real sockets, so the transport, the stream reader and the follow's
+//! threads run as they do against a real server.
 //!
 //! Each path answers from its own list in order, and the last answer
-//! repeats. A request is recorded before it is answered. Every answer names
-//! the core's contract, as a real server's does, unless a JSON answer names
-//! its own.
+//! repeats. Every answer names the core's contract unless a JSON answer
+//! names its own.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -25,29 +23,23 @@ pub enum Answer {
         body: String,
         headers: Vec<(String, String)>,
     },
-    /// An event stream: its frames, already rendered, and then how it goes.
-    Stream { frames: Vec<String>, then: Then },
-    /// Read and never answered.
+    Stream {
+        frames: Vec<String>,
+        then: Then,
+    },
     Stall,
 }
 
 #[derive(Debug, Clone)]
 pub enum Then {
-    /// The connection closes: a stream that ended.
     End,
-    /// The connection stays open, saying `: keepalive` every `keepalive`
-    /// where one is given and nothing where not, for `lasting` or until the
-    /// server stops.
+    /// With no `lasting`, held until the server stops.
     Hold {
         keepalive: Option<Duration>,
         lasting: Option<Duration>,
     },
-    /// The body is cut off inside a chunk, which the reading end sees as an
-    /// error and not as the end of the stream.
+    /// Cut off inside a chunk, which the reader sees as an error, not an end.
     Break,
-    /// Says `: keepalive` every `keepalive` until `after`, then writes
-    /// `frames` and holds the connection open: a replay that reads for a
-    /// while before its marker.
     Later {
         keepalive: Duration,
         after: Duration,
@@ -134,12 +126,10 @@ impl Scripted {
             .collect()
     }
 
-    /// Every request made of this server so far, whatever its path.
     pub fn asked(&self) -> usize {
         self.script.lock().unwrap().seen.len()
     }
 
-    /// Waits until `path` has been asked for `count` times.
     pub fn wait_for(&self, path: &str, count: usize, within: Duration) {
         let until = Instant::now() + within;
         while self.seen(path).len() < count {
@@ -316,7 +306,6 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// The comment a real server opens every stream with.
 fn read_chunked(reader: &mut impl BufRead) -> Vec<u8> {
     let mut body = Vec::new();
     loop {
@@ -345,21 +334,16 @@ pub fn connected() -> String {
     ": connected\n\n".into()
 }
 
-/// One event frame, its payload given as JSON text.
 pub fn event(id: &str, name: &str, payload: &str) -> String {
     format!("id: {id}\nevent: {name}\ndata: {payload}\n\n")
 }
 
-/// The frame a real server opens every stream's prologue with, naming the
-/// log's head.
 pub fn stream_cursor(cursor: &str) -> String {
     format!(
         "event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"{cursor}\"}}\n\n"
     )
 }
 
-/// The frame a real server ends every stream's replay with, naming how far
-/// the replay reached, frames withheld from this reader included.
 pub fn stream_live(cursor: Option<&str>) -> String {
     let cursor = cursor.map_or("null".to_string(), |cursor| format!("\"{cursor}\""));
     format!("event: stream_live\ndata: {{\"type\":\"stream_live\",\"cursor\":{cursor}}}\n\n")

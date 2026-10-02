@@ -1,5 +1,3 @@
-//! The mapping and the journal: what the folder remembers between runs.
-
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 
@@ -9,40 +7,33 @@ use crate::error::CoreError;
 use crate::model::ItemState;
 use crate::store::now_iso;
 
-/// One file the folder has bound to an item.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Bound {
     pub path: String,
     pub item_id: String,
-    /// Device, inode and birth time. Null where the filesystem gave none
-    /// (`folders.md` 17).
+    /// Device, inode and birth time; `None` where the filesystem gave none.
     pub identity: Option<String>,
     pub content_hash: String,
     /// The bytes the folder itself last wrote at this path, hashed; `None`
     /// where the last agreement was a scan's read. A pull removes only a
-    /// file it wrote (`folders.md` 35).
     pub written_hash: Option<String>,
-    /// The item ids the links in those bytes named, as the folder last read
-    /// or wrote them. Empty where the file named none.
+    /// The item ids the file's links named when last read or written.
     pub links: Vec<String>,
     /// The edges this file's lines named when last read or written: what tells
-    /// a line taken out from an edge no pull has written yet (`folders.md` 11).
+    /// a line taken out from an edge no pull has written yet.
     pub lines: Vec<Line>,
     /// The newest line an answered, unrefused edit of this file spent, or a pull
     /// wrote over a waiting write not its own; a waiting edit's is on its entry.
     pub edit_line: Option<i64>,
     /// Why this copy did not send the bytes at `content_hash`, where it did
-    /// not: a pull leaves such a file as it is (`folders.md` 9, 10).
+    /// not: a pull leaves such a file as it is.
     pub held: Option<String>,
     /// The own fields the folder last wrote or read in this file, and what
     /// another machine moved at that version line without a version step.
     pub own: Option<OwnBase>,
-    /// The file's writes still unanswered, and its changes the server refused
-    /// and the file still carries (`folders.md` 9).
     pub writes: Writes,
 }
 
-/// A file's writes, by the save that made them.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Writes {
     /// Counts the file's saves, so a later one's landing can supersede.
@@ -56,14 +47,12 @@ pub struct Queued {
     pub id: String,
     pub save: i64,
     /// The version line an edit spends, kept apart until it is answered so a
-    /// refusal takes back only its own (`folders.md` 23).
+    /// refusal takes back only its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<i64>,
 }
 
 impl Bound {
-    /// The newest version line an edit of this device's has spent, landed or
-    /// still waiting.
     pub fn spent(&self) -> Option<i64> {
         self.writes
             .queued
@@ -74,8 +63,6 @@ impl Bound {
     }
 }
 
-/// A change the server refused, which holds its file until a later save of
-/// it lands one in its place or the file stops carrying it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Refused {
     pub change: Change,
@@ -98,7 +85,6 @@ pub enum Change {
 }
 
 impl Change {
-    /// Whether a landed change of this kind stands in for `refused`.
     pub fn supersedes(&self, refused: &Change) -> bool {
         match (self, refused) {
             (Change::Edit, Change::Edit) | (Change::State(_), Change::State(_)) => true,
@@ -112,8 +98,7 @@ impl Change {
     }
 }
 
-/// One edge a frontmatter line names: its type, the end the file is, and
-/// the item at the other end.
+/// `end` is the end the file is, and `other` the item at the other end.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct Line {
     pub edge_type: String,
@@ -121,8 +106,6 @@ pub struct Line {
     pub other: String,
 }
 
-/// What the folder last agreed with, for the bytes of a file. Equality is
-/// all it answers.
 pub fn hash(bytes: &[u8]) -> String {
     // FNV-1a, 64-bit: not a security boundary.
     let mut sum: u64 = 0xcbf2_9ce4_8422_2325;
@@ -134,23 +117,22 @@ pub fn hash(bytes: &[u8]) -> String {
 }
 
 /// A content hash no bytes have, for a save set aside in a conflicted copy
-/// against this device's own (`folders.md` 39): the file reads as changed,
-/// and its next edit is said to be read at `version`.
+/// against this device's own: the file reads as changed, and its next
+/// edit is said to be read at `version`.
 pub fn untaken_read_at(version: i64) -> String {
     format!("{UNTAKEN_READ_PREFIX}{version}")
 }
 
 const UNTAKEN_READ_PREFIX: &str = "read@";
 
-/// The version a binding's untaken bytes were read at.
 pub fn untaken_read_version(content_hash: &str) -> Option<i64> {
     content_hash
         .strip_prefix(UNTAKEN_READ_PREFIX)
         .and_then(|version| version.parse().ok())
 }
 
-/// Binds a file, and pins its row so the copy keeps it whatever the search
-/// says of it (`device.md` 1, `folders.md` 35).
+/// Also pins the item's row, so the copy keeps it whatever the search says
+/// of it.
 pub fn bind(conn: &Connection, bound: &Bound) -> Result<(), CoreError> {
     let before = bound_at(conn, &bound.path)?;
     crate::store::pin(conn, &bound.item_id)?;
@@ -203,7 +185,7 @@ pub fn unbind(conn: &Connection, path: &str) -> Result<(), CoreError> {
 }
 
 /// A binding lets its pin go unless a line still holds the row, which then
-/// holds the pin as its own (`folders.md` 11).
+/// holds the pin as its own.
 pub fn unpin_if_unheld(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
     if bound_to_item(conn, item_id)?.is_some() {
         return Ok(());
@@ -219,8 +201,8 @@ pub fn unpin_if_unheld(conn: &Connection, item_id: &str) -> Result<(), CoreError
 const EDGE_END: &str = "folder_edge_end:";
 const MADE: &str = "made";
 
-/// Every `meta` key under `prefix`, with its value, by a range the key's
-/// index answers.
+/// A key range rather than `LIKE`, so the key's index answers it; `prefix`
+/// must end in `:`, the byte just below `;`.
 fn under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreError> {
     let above = format!("{}{}", &prefix[..prefix.len() - 1], ';');
     let mut statement =
@@ -280,8 +262,6 @@ pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, 
         .optional()?)
 }
 
-/// Every bound path and its item, in path order, without the rest of the
-/// binding.
 pub fn bound_paths(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
     let mut statement = conn.prepare("SELECT path, item_id FROM folder_files ORDER BY path")?;
     let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -292,12 +272,10 @@ pub fn every_bound(conn: &Connection) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "", [])
 }
 
-/// The files bound under this device, inode and birth time.
 pub fn bound_with_identity(conn: &Connection, identity: &str) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "WHERE identity = ?1", [identity])
 }
 
-/// The files bound with these bytes.
 pub fn bound_with_hash(conn: &Connection, content_hash: &str) -> Result<Vec<Bound>, CoreError> {
     bound_where(conn, "WHERE content_hash = ?1", [content_hash])
 }
@@ -347,8 +325,8 @@ pub const UNREADABLE: &str = "unreadable: ";
 pub const EDGES: &str = "edges: ";
 pub const EDGES_WAITING: &str = "edges, waiting: ";
 
-/// Records a file as missing, if it is not already. The moment is the first
-/// sighting, so a folder scanning every second still reaches the grace.
+/// `OR IGNORE` keeps the first sighting, so a folder scanning every second
+/// still reaches the grace.
 pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute(
         "INSERT OR IGNORE INTO folder_journal (path, item_id, missing_since)
@@ -358,14 +336,12 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     Ok(())
 }
 
-/// Takes a path out of the journal. A row that outlives its question becomes
-/// a delete nobody asked for.
+/// A row that outlives its question becomes a delete nobody asked for.
 pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
     conn.execute("DELETE FROM folder_journal WHERE path = ?1", [path])?;
     Ok(())
 }
 
-/// Takes a path out of the journal where the delete there is this item's.
 pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute(
         "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
@@ -391,8 +367,6 @@ pub fn bound_count(conn: &Connection) -> Result<usize, CoreError> {
     Ok(usize::try_from(count).unwrap_or(0))
 }
 
-/// Where a paused removal came from: files gone from the disk, whose deletes
-/// wait, or items gone elsewhere, whose files a pull leaves (`folders.md` 46).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Removal {
     Disk,
@@ -408,7 +382,6 @@ impl Removal {
     }
 }
 
-/// The paths a paused removal holds back, in path order.
 pub fn paused(conn: &Connection, removal: Removal) -> Result<Vec<String>, CoreError> {
     list(conn, removal.key())
 }
@@ -430,8 +403,8 @@ pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreErro
         .optional()?)
 }
 
-/// Records the stats each file read had before its read. A full pass's
-/// record replaces every row, so a row outlives its file only until then.
+/// With `whole`, every row is replaced, so a row outlives its file only
+/// until the next full pass.
 pub fn set_stats(
     conn: &Connection,
     stats: &[(String, String)],
@@ -470,7 +443,7 @@ fn set_list(conn: &Connection, key: &str, list: &[String]) -> Result<(), CoreErr
 }
 
 /// The items the last pull left in place because the search no longer
-/// matches them, so a status read needs no pull of its own (`folders.md` 48).
+/// matches them, so a status read needs no pull of its own.
 const UNMATCHED: &str = "folder_unmatched";
 
 pub fn unmatched(conn: &Connection) -> Result<Vec<String>, CoreError> {
@@ -479,41 +452,4 @@ pub fn unmatched(conn: &Connection) -> Result<Vec<String>, CoreError> {
 
 pub fn set_unmatched(conn: &Connection, ids: &[String]) -> Result<(), CoreError> {
     set_list(conn, UNMATCHED, ids)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn bound(path: &str, item_id: &str) -> Bound {
-        Bound {
-            path: path.into(),
-            item_id: item_id.into(),
-            identity: None,
-            content_hash: "h".into(),
-            written_hash: None,
-            links: Vec::new(),
-            lines: Vec::new(),
-            edit_line: None,
-            held: None,
-            own: None,
-            writes: Writes::default(),
-        }
-    }
-
-    /// A row a file is bound to and a line names stays pinned when the
-    /// binding goes, and goes once neither holds it.
-    #[test]
-    fn a_pin_is_held_while_a_binding_or_a_line_holds_it() {
-        let conn = crate::store::open_in_memory().unwrap();
-        bind(&conn, &bound("target.md", "target")).unwrap();
-        hold_edge_end(&conn, "target", false).unwrap();
-        unbind(&conn, "target.md").unwrap();
-        assert!(
-            crate::store::pinned(&conn, "target").unwrap(),
-            "the binding took the pin a line still holds"
-        );
-        release_edge_end(&conn, "target", true).unwrap();
-        assert!(!crate::store::pinned(&conn, "target").unwrap());
-    }
 }

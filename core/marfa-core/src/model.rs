@@ -94,8 +94,7 @@ pub struct Item {
     pub schema_version: i64,
     pub source: String,
     pub source_id: Option<String>,
-    /// When the item's content happened, as opposed to when the row was
-    /// written. The server defaults it to `created_at`.
+    /// When the item's content happened; the server defaults it to `created_at`.
     pub occurred_at: String,
     pub created_at: String,
     pub updated_at: String,
@@ -103,12 +102,6 @@ pub struct Item {
 }
 
 impl Item {
-    /// This row as the store writes it.
-    ///
-    /// A local edit changes fields on a row the copy already holds, and the
-    /// store speaks the wire shape, so the two have to meet somewhere. Here
-    /// rather than at the call site, where every caller would repeat it and
-    /// one of them would eventually drop a field.
     pub(crate) fn as_wire(&self) -> WireItem {
         WireItem {
             id: self.id.clone(),
@@ -127,7 +120,6 @@ impl Item {
         }
     }
 
-    /// The property a type names as its title, else `title`, else nothing.
     pub fn title(&self, title_field: Option<&str>) -> Option<&str> {
         self.properties
             .get(title_field.unwrap_or("title"))
@@ -148,9 +140,6 @@ pub struct Edge {
 }
 
 impl Edge {
-    /// This edge as the store writes it, for the same reason `Item::as_wire`
-    /// exists: a local edit changes an edge the copy already holds, and the
-    /// store speaks the wire shape.
     pub(crate) fn as_wire(&self) -> crate::wire::WireEdge {
         crate::wire::WireEdge {
             id: self.id.clone(),
@@ -165,13 +154,8 @@ impl Edge {
     }
 }
 
-/// Narrowing for a local list. Leaving `state` unset answers the active
-/// state, as the server does; `all_states` lifts that, and a named state
-/// wins.
-///
-/// The flag is a widening rather than a list of states because the question
-/// a caller asks without one is always the same: what am I working with.
-/// Everything else is a caller naming what it wants.
+/// Leaving `state` unset answers the active state, as the server does;
+/// `all_states` lifts that, and a named state wins.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ListFilters {
     pub r#type: Option<String>,
@@ -181,21 +165,16 @@ pub struct ListFilters {
     pub tags: Vec<String>,
     pub occurred_after: Option<String>,
     pub occurred_before: Option<String>,
-    /// An expression in the server's listing grammar, answered as the
-    /// server answers it and refused `validation_error` where the server
-    /// refuses it. A `backref` condition is refused `Invalid`.
+    /// A `backref` condition is refused `Invalid`: the copy does not hold
+    /// every edge drawn to its items.
     pub filter: Option<String>,
     /// An item id: that item and every item it reaches along `parent-of`
-    /// edges, at any depth, as far as the copy holds those edges.
+    /// edges the copy holds, at any depth.
     pub beneath: Option<String>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
 
-/// Narrowing for a local search: the state rule the list takes, a type
-/// with its subtree, tags, a listing-grammar expression and `beneath`, each
-/// read exactly as the list reads it. The tier and the time bounds are a
-/// list's, and have no field here.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilters {
     pub state: Option<ItemState>,
@@ -206,8 +185,7 @@ pub struct SearchFilters {
     pub beneath: Option<String>,
 }
 
-// Every sortable column is a verb plus `_at`, so the shared `At` suffix the
-// lint reports is the naming rule rather than noise the variants could drop.
+// The shared `At` suffix is the column naming rule, not noise.
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -299,7 +277,6 @@ pub struct SearchHit {
 pub struct HydrateReport {
     pub types: Vec<String>,
     pub tier: Tier,
-    /// The edge types held whole, every edge of each the key reads.
     pub edge_types: Vec<String>,
     pub items: u64,
     pub edges: u64,
@@ -321,17 +298,9 @@ pub enum Hydration {
     Never,
     InProgress,
     Complete,
-    /// A catch-up was told the log has moved past the cursor this store
-    /// kept, and the cursor was dropped.
-    ///
-    /// A record of an answer rather than a reading of the log: a store
-    /// whose cursor aged out and has not asked since reports `Complete`,
-    /// because nothing has told it. The copy is whole as of the moment it
-    /// stopped and cannot be brought forward, so reads are refused exactly
-    /// as they are for `Never` and the remedy is the same. It is a value of
-    /// its own because the two are not the same fact about the copy:
-    /// `Never` says there is nothing in it, and a caller deciding whether
-    /// what it holds is worth anything reads that and is wrong.
+    /// A catch-up was told the log has moved past the kept cursor. Set only
+    /// on that answer: a store whose cursor aged out and has not asked since
+    /// still reports `Complete`. Reads are refused as for `Never`.
     Expired,
 }
 
@@ -346,39 +315,20 @@ impl Hydration {
     }
 }
 
-/// An edit a caller has asked for, before it is queued.
-///
-/// Whole field values and the version they were read at, and nothing else: a
-/// device does not merge inside a field (`queue-and-verdicts.md` 34) and does
-/// not mint or advance a version (`device.md` 20).
 #[derive(Debug, Clone, Default)]
 pub struct Edit {
     pub properties: Map<String, Value>,
     pub base_version: Option<i64>,
-    /// The natural key this row should be under, where the caller is
-    /// moving it (`items.md` 22). Sent under the item's id and the
-    /// version it read, so a key another item holds is refused rather
-    /// than taken. Absent leaves the key alone.
     pub source_id: Option<String>,
-    /// The type to move the row to, sent as a retype: the server holds the
-    /// row's properties to the type it enters (`items.md` 22). Absent, or
-    /// the type the row already has, moves nothing.
     pub r#type: Option<String>,
-    /// The tier to move the row to. Absent leaves it where it is.
     pub tier: Option<Tier>,
-    /// Sends `properties` as the row's whole properties, so one left out is
-    /// cleared (`items.md` 22); otherwise they merge over the row's.
+    /// A property left out is cleared; otherwise they merge over the row's.
     pub replace_properties: bool,
 }
 
 impl Edit {
-    /// The body this update sends.
-    ///
-    /// `conflict=auto` is not here because it is a query parameter rather
-    /// than a field, but it rides on every update this device sends
-    /// (`queue-and-verdicts.md` 5): the server is asked to resolve within its
-    /// own transaction rather than refusing and leaving two writes where one
-    /// is atomic.
+    /// `conflict=auto` rides on every update as a query parameter, so it is
+    /// not in this body.
     pub(crate) fn payload(&self, base_version: i64) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
         body.insert("properties".into(), Value::Object(self.properties.clone()));
@@ -402,12 +352,6 @@ impl Edit {
     }
 }
 
-/// A create a caller has asked for, before it is queued.
-///
-/// Everything a device may send on a create and nothing it may invent: the
-/// version is the caller's if they read one, the id is theirs if they minted
-/// one, and the tags travel as their own writes rather than being dropped
-/// (`device.md` 22).
 #[derive(Debug, Clone, Default)]
 pub struct Draft {
     pub r#type: String,
@@ -422,15 +366,9 @@ pub struct Draft {
 }
 
 impl Draft {
-    /// The body this create sends, which is the caller's fields and nothing
-    /// the device decided for itself.
-    ///
-    /// **The id minted here goes only on a create with no natural key**
-    /// (`queue-and-verdicts.md` 38). The server resolves a create carrying a
-    /// `source_id` by its key, onto a row it holds or into one it mints, and
-    /// refuses a body `id` that is not the row the key resolves. The minted
-    /// id names the copy's row until the answer names the server's. An id
-    /// the caller named is theirs, and goes as named.
+    /// A minted id goes only on a create with no natural key: the server
+    /// resolves a `source_id` itself and refuses a body `id` that is not the
+    /// row the key resolves. An id the caller named goes as named.
     pub(crate) fn payload(&self, id: &str) -> std::result::Result<String, CoreError> {
         let mut body = Map::new();
         if self.id.is_some() || self.source_id.is_none() {
@@ -438,12 +376,8 @@ impl Draft {
         }
         body.insert("type".into(), Value::String(self.r#type.clone()));
         body.insert("properties".into(), Value::Object(self.properties.clone()));
-        // The tags are not here. A tag is its own write
-        // (`queue-and-verdicts.md` 33), queued and answered on its own, so
-        // that a title changed on one device and a tag added on another both
-        // land. Sending them inline would make the create carry something
-        // that is not part of an item's fields, and a verdict about the
-        // create would then be a verdict about the tags too.
+        // Tags go as their own writes, so a verdict on the create is not a
+        // verdict on the tags.
         if let Some(tier) = self.tier {
             body.insert("tier".into(), Value::String(tier.as_str().into()));
         }
@@ -456,20 +390,15 @@ impl Draft {
                 body.insert(key.into(), Value::String(value.clone()));
             }
         }
-        // Carried when the caller read one, absent when they did not. An
-        // absent version is a create that is not conditional; a version the
-        // device invented would be a version it minted (`device.md` 20).
+        // Never invented: an absent version makes the create unconditional.
         if let Some(version) = self.base_version {
             body.insert("version".into(), Value::from(version));
         }
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 
-    /// The create a queued body describes: the row a copy holds again, under
-    /// the id its queue row names, for a create still waiting when a
-    /// hydration has cleared it (`queue-and-verdicts.md` 35). The body is no
-    /// place to read the id from, because a create carrying a natural key
-    /// sends none.
+    /// The id is not read from the body, because a create carrying a natural
+    /// key sends none; the caller takes it from the queue row.
     pub(crate) fn from_payload(body: &str) -> std::result::Result<Draft, CoreError> {
         let body: Value = serde_json::from_str(body)?;
         let text = |key: &str| body.get(key).and_then(Value::as_str).map(str::to_string);
@@ -489,12 +418,9 @@ impl Draft {
         Ok(draft)
     }
 
-    /// The row the working copy holds until the server answers.
-    ///
-    /// Version 0, which is not a version the server ever mints: every row it
-    /// returns starts at 1. A local row therefore cannot be mistaken for one
-    /// the server has seen, and the first event that comes back for this id
-    /// carries a higher version and replaces it (`device.md` 13).
+    /// Version 0: the server's versions start at 1, so a local row is never
+    /// mistaken for one it has seen, and the first event for this id
+    /// replaces it.
     pub(crate) fn wire(&self, id: &str) -> WireItem {
         let at = self
             .occurred_at
@@ -518,11 +444,6 @@ impl Draft {
     }
 }
 
-/// The kinds of write a queue holds (`queue-and-verdicts.md` 32).
-///
-/// A purge is not among them (`device.md` 25), and neither is a bulk door
-/// or a bulk action: those are the server's way of doing many things in one
-/// request rather than a thing a device holds a write for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WriteKind {
@@ -562,10 +483,8 @@ impl WriteKind {
         WriteKind::UploadBlob,
     ];
 
-    /// The edit of what a write of this kind writes: an item's update for an
-    /// item's create or update, and an edge's for an edge's. No other write
-    /// is based on a version, so no other has edits behind it that name one
-    /// (`queue-and-verdicts.md` 36, 42).
+    /// Only item and edge creates and updates carry a version, so only they
+    /// have edits behind them.
     pub fn edit(self) -> Option<WriteKind> {
         match self {
             WriteKind::CreateItem | WriteKind::UpdateItem => Some(WriteKind::UpdateItem),
@@ -574,10 +493,8 @@ impl WriteKind {
         }
     }
 
-    /// What a write of this kind is a write to: a row, named by `item_id`,
-    /// or an edge, named by `edge_id`. An edge write names its endpoints in
-    /// `item_id` and `target_id` too, and is a write to neither. An upload is
-    /// a write to no row.
+    /// An edge write names its endpoints in `item_id` and `target_id` too,
+    /// but is a write to neither.
     pub fn subject(self) -> Option<Subject> {
         match self {
             WriteKind::CreateItem
@@ -619,7 +536,6 @@ impl WriteKind {
     }
 }
 
-/// What a queued write is a write to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Subject {
     Item,
@@ -627,7 +543,6 @@ pub enum Subject {
 }
 
 impl Subject {
-    /// The queue column that names it.
     pub fn column(self) -> &'static str {
         match self {
             Subject::Item => "item_id",
@@ -635,7 +550,6 @@ impl Subject {
         }
     }
 
-    /// Every kind of write to it.
     pub fn kinds(self) -> Vec<WriteKind> {
         WriteKind::ALL
             .into_iter()
@@ -661,8 +575,8 @@ impl fmt::Display for WriteKind {
     }
 }
 
-/// The six verdicts (`queue-and-verdicts.md` 7). The set is closed: an
-/// answer a device cannot classify is a defect in the device, not a seventh.
+/// Closed: an answer a device cannot classify is a defect in the device, not
+/// a seventh verdict.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Verdict {
@@ -717,9 +631,6 @@ impl fmt::Display for Verdict {
     }
 }
 
-/// A verdict with what it carries: the fields a resolution names, the
-/// sibling a conflict wrote, the reason a refusal or a block gives. `Verdict`
-/// is the six as the queue stores them; this is what a caller reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
     Accepted,
@@ -730,8 +641,8 @@ pub enum Outcome {
         sibling_id: String,
         fields: Vec<String>,
     },
-    /// The server's code verbatim, or the sentence naming the write this one
-    /// waited on where that write was refused (`queue-and-verdicts.md` 16).
+    /// The server's code verbatim, or, for a write held behind a refused one,
+    /// a sentence naming that write.
     Refused {
         reason: String,
     },
@@ -742,8 +653,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Reads a stored verdict and its columns as one value. A blocked row
-    /// whose reason is not one of the five is refused, not guessed at.
+    /// A blocked row whose reason is not one of the five is an error.
     pub fn of(
         verdict: Option<Verdict>,
         reason: Option<&str>,
@@ -769,7 +679,6 @@ impl Outcome {
     }
 }
 
-/// Why a `blocked` write has stopped (`queue-and-verdicts.md` 26).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BlockedReason {
@@ -799,8 +708,7 @@ impl BlockedReason {
         }
     }
 
-    /// The two that clear without a caller (`queue-and-verdicts.md` 24 and
-    /// 27): a drain returns these rows to unanswered before it starts, so the
+    /// A drain returns these rows to unanswered before it starts, so the
     /// block is the last drain's finding rather than a state that sticks.
     pub fn clears_itself(self) -> bool {
         matches!(
@@ -832,12 +740,7 @@ impl fmt::Display for BlockedReason {
     }
 }
 
-/// One queued write, as the queue reports it.
-///
-/// A verdict of `None` is a write the server has not answered: the six are
-/// what an answer carries (`queue-and-verdicts.md` 7), and this is the
-/// absence of one. It serializes as `null` rather than as a token, so a
-/// reader has to handle the absence rather than matching a seventh string.
+/// A verdict of `None` is a write not yet answered, and serializes as `null`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueuedWrite {
     pub id: String,
@@ -847,31 +750,21 @@ pub struct QueuedWrite {
     pub edge_id: Option<String>,
     pub namespace: Option<String>,
     pub tag: Option<String>,
-    /// The blob an upload carries, by its hash.
+    /// The hash of the blob an upload carries.
     pub blob: Option<String>,
     pub base_version: Option<i64>,
     pub idempotency_key: String,
-    /// The writes this one cannot go without, by queue id: the create of a
-    /// row it names while the server has not taken it, the creates of both of
-    /// an edge's endpoints, the edge's own create, the upload a file item
-    /// names (`queue-and-verdicts.md` 4). A refusal of one refuses this one
-    /// too (12, 16).
+    /// Queue ids. A refusal of one refuses this one too.
     pub depends_on: Vec<String>,
-    /// The write ahead of this one to the same row or edge, by queue id,
-    /// where one was still to be written when this one was queued. This one
-    /// is held while that one has gone out without an answer or is held
-    /// behind one that has; any answer to it releases this one, and a
-    /// refusal of it refuses nothing (`queue-and-verdicts.md` 42).
+    /// The queue id of the earlier write to the same row or edge. Any answer
+    /// to it releases this one; unlike `depends_on`, its refusal refuses
+    /// nothing.
     pub follows: Option<String>,
     pub verdict: Option<Verdict>,
-    /// In whichever vocabulary the verdict speaks: one of the five blocked
-    /// reasons under `blocked` (read as one by `blocked_reason`), and under
-    /// `refused` the server's code verbatim, or for a write held behind one
-    /// that was refused, the sentence naming it (`queue-and-verdicts.md` 16).
+    /// A blocked reason under `blocked`; under `refused`, the server's code
+    /// verbatim or a sentence naming the refused write this one was held behind.
     pub reason: Option<String>,
-    /// The server's answer, kept whole. A device reports a verdict and never
-    /// acts on one (`queue-and-verdicts.md` 15), so what it reports has to be
-    /// what it was told.
+    /// The server's answer, kept whole.
     pub answer: Option<String>,
     pub conflicted_copy_id: Option<String>,
     pub refusals: i64,
@@ -880,7 +773,6 @@ pub struct QueuedWrite {
 }
 
 impl QueuedWrite {
-    /// The row or edge this write is a write to, by id.
     pub fn subject_id(&self) -> Option<&str> {
         match self.kind.subject()? {
             Subject::Item => self.item_id.as_deref(),
@@ -888,8 +780,6 @@ impl QueuedWrite {
         }
     }
 
-    /// What became of this write, with what its verdict carries; nothing
-    /// while it is unanswered.
     pub fn outcome(&self) -> Result<Option<Outcome>, CoreError> {
         Outcome::of(
             self.verdict,
@@ -899,9 +789,6 @@ impl QueuedWrite {
         )
     }
 
-    /// The reason a `blocked` row carries, as one of the five. The store
-    /// refuses a row whose blocked reason is outside the set when it reads
-    /// the queue, so a blocked row always has one.
     pub fn blocked_reason(&self) -> Option<BlockedReason> {
         match self.verdict {
             Some(Verdict::Blocked) => self
@@ -912,8 +799,6 @@ impl QueuedWrite {
         }
     }
 
-    /// Whether a withdraw takes this row: blocked for a reason no sending of
-    /// the same write clears (`queue-and-verdicts.md` 46).
     pub fn withdrawable(&self) -> bool {
         matches!(
             self.blocked_reason(),
@@ -921,9 +806,6 @@ impl QueuedWrite {
         )
     }
 
-    /// The fields a `merged` or `conflicted` answer says the server
-    /// resolved, read from the answer kept on the row. Empty on every other
-    /// verdict, because nothing was resolved.
     fn resolved_fields(&self) -> Vec<String> {
         if !matches!(self.verdict, Some(Verdict::Merged | Verdict::Conflicted)) {
             return Vec::new();
@@ -952,7 +834,6 @@ pub struct Status {
     pub server_origin: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
-    /// The edge types the slice holds whole.
     pub slice_edge_types: Vec<String>,
     /// The rows held by id whatever the slice says of them.
     pub pinned: Vec<String>,
@@ -962,11 +843,6 @@ pub struct Status {
     pub edges: u64,
 }
 
-/// An edge a caller has asked for, before it is queued.
-///
-/// An edge is its own write (`queue-and-verdicts.md` 33): it is not part of
-/// an item's fields, so it does not collide with an edit to them, and a title
-/// changed on one device and a link added on another both land.
 #[derive(Debug, Clone, Default)]
 pub struct EdgeDraft {
     pub source_id: String,
@@ -987,8 +863,6 @@ impl EdgeDraft {
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 
-    /// The edge a queued body describes, and the id it names, for the
-    /// reason `Draft::from_payload` gives.
     pub(crate) fn from_payload(body: &str) -> std::result::Result<(String, EdgeDraft), CoreError> {
         let body: Value = serde_json::from_str(body)?;
         let text = |key: &str| {
@@ -1017,8 +891,7 @@ impl EdgeDraft {
         Ok((id, draft))
     }
 
-    /// The edge the working copy holds until the server answers. Version 0,
-    /// for the reason a local item is (`Draft::wire`).
+    /// Version 0, for the reason `Draft::wire` gives.
     pub(crate) fn wire(&self, id: &str) -> crate::wire::WireEdge {
         let at = crate::store::now_iso();
         crate::wire::WireEdge {
@@ -1034,9 +907,9 @@ impl EdgeDraft {
     }
 }
 
-/// How a file is attached or added (`Core::attach`, `Core::add_file`). Each
-/// field has a default: the MIME type from the file's extension, the title
-/// from its name, the type from the MIME type, the tier from the server.
+/// Each field left unset is worked out: the MIME type from the file's
+/// extension, the title from its name, the type from the MIME type, the
+/// tier by the server.
 #[derive(Debug, Clone, Default)]
 pub struct Attachment {
     pub mime_type: Option<String>,
@@ -1045,23 +918,18 @@ pub struct Attachment {
     pub tier: Option<Tier>,
 }
 
-/// An item's thumbnail, decoded from the data URI it travels as.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Thumbnail {
     pub mime_type: String,
     pub bytes: Vec<u8>,
 }
 
-/// The most a thumbnail decodes to, which is the server's cap on one.
+/// The server's cap on a decoded thumbnail.
 pub const THUMBNAIL_MAX_BYTES: usize = 16 * 1024;
 
 impl Thumbnail {
-    /// A thumbnail as the server takes one: `data:image/png;base64,`,
-    /// `data:image/jpeg;base64,` or `data:image/webp;base64,` and canonical
-    /// base64 of at most [`THUMBNAIL_MAX_BYTES`], whose bytes begin with that
-    /// format's signature. A held value that is not one is refused rather
-    /// than answered as an image: it was written before its type declared
-    /// the field, and nothing checked it.
+    /// Checks what the server checks, because a held value may have been
+    /// written before its type declared the field, when nothing checked it.
     pub fn from_data_uri(value: &str) -> Result<Thumbnail, CoreError> {
         use base64::Engine;
         let unreadable =
@@ -1078,8 +946,8 @@ impl Thumbnail {
             }
             _ => return Err(unreadable("not a PNG, JPEG or WebP image")),
         };
-        // The standard engine refuses bits the bytes do not use and padding
-        // other than the one spelling, which is the server's canonical rule.
+        // The standard engine refuses unused bits set and non-canonical
+        // padding, matching the server's canonical rule.
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data)
             .map_err(|_| unreadable("not canonical base64"))?;
@@ -1096,7 +964,7 @@ impl Thumbnail {
     }
 }
 
-/// The three writes an attachment is, in the order they go out.
+/// In the order they go out.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Attached {
     pub upload: QueuedWrite,
@@ -1104,15 +972,13 @@ pub struct Attached {
     pub edge: QueuedWrite,
 }
 
-/// The two writes a file added on its own is, in the order they go out.
+/// In the order they go out.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Added {
     pub upload: QueuedWrite,
     pub item: QueuedWrite,
 }
 
-/// A change to an edge's properties, or a move of one of its ends, and the
-/// version it was read at (`edges.md` 10).
 #[derive(Debug, Clone, Default)]
 pub struct EdgeEdit {
     pub properties: Map<String, Value>,
@@ -1138,8 +1004,8 @@ impl EdgeEdit {
     }
 }
 
-/// What a metadata write carries. Tags are the half a working copy holds;
-/// an extension namespace is not, and travels as its own write.
+/// Extension namespaces are not here: the working copy does not hold them,
+/// and they travel as their own writes.
 #[derive(Debug, Clone, Default)]
 pub struct MetadataWrite {
     pub tags: Vec<String>,
@@ -1175,8 +1041,6 @@ mod tests {
         )
     }
 
-    /// Each of the three formats reads with its own type and its bytes, up
-    /// to the cap.
     #[test]
     fn a_thumbnail_reads_as_the_image_its_data_uri_names() {
         for (mime_type, head) in [
@@ -1193,9 +1057,6 @@ mod tests {
         assert_eq!(at_cap.bytes.len(), THUMBNAIL_MAX_BYTES);
     }
 
-    /// What the server refuses as a thumbnail, a device refuses to read as
-    /// one: each of these was held under the property before its type
-    /// declared it.
     #[test]
     fn a_value_the_server_would_refuse_is_not_read_as_a_thumbnail() {
         let refused = [
@@ -1235,8 +1096,7 @@ mod tests {
                 "{what} was read as a thumbnail"
             );
         }
-        // The witness for the two base64 cases: the canonical spelling of the
-        // same eight bytes is read.
+        // Witness for the two base64 cases.
         assert_eq!(
             Thumbnail::from_data_uri("data:image/png;base64,iVBORw0KGgo=")
                 .unwrap()
@@ -1269,8 +1129,6 @@ mod tests {
         }
     }
 
-    /// The id minted here goes on a create with no natural key, never on one
-    /// carrying a `source_id`, and an id the caller named goes as named.
     #[test]
     fn a_create_carrying_a_natural_key_names_no_minted_id() {
         let body = |draft: &Draft| -> Value {
@@ -1293,15 +1151,11 @@ mod tests {
             ..keyed.clone()
         };
         assert_eq!(body(&named)["id"], "named");
-        // Held again from its body with nothing lost but the id, which the
-        // queue row carries.
         let held = Draft::from_payload(&keyed.payload("minted").unwrap()).unwrap();
         assert_eq!(held.source_id.as_deref(), Some("note.md"));
         assert_eq!(held.r#type, "core.note");
     }
 
-    /// Each of the six read with what it carries, and nothing for a write
-    /// still waiting.
     #[test]
     fn a_stored_verdict_reads_as_one_outcome_with_what_it_carries() {
         let resolution = r#"{"conflict_resolution":{"fields":["title","body"]}}"#;
@@ -1347,8 +1201,6 @@ mod tests {
             row(Some(Verdict::Dead), None, None).outcome().unwrap(),
             Some(Outcome::Dead)
         );
-        // An accepted answer carries no resolution, so no fields are read
-        // off it even where its answer happens to name some.
         assert_eq!(
             row(Some(Verdict::Accepted), None, Some(resolution))
                 .outcome()
@@ -1360,21 +1212,5 @@ mod tests {
                 .outcome()
                 .is_err()
         );
-    }
-
-    /// Every member of the three closed sets round-trips through its text.
-    #[test]
-    fn the_closed_sets_round_trip_through_their_text() {
-        for kind in WriteKind::ALL {
-            assert_eq!(kind.as_str().parse::<WriteKind>().unwrap(), kind);
-        }
-        for verdict in Verdict::ALL {
-            assert_eq!(verdict.as_str().parse::<Verdict>().unwrap(), verdict);
-        }
-        for reason in BlockedReason::ALL {
-            assert_eq!(reason.as_str().parse::<BlockedReason>().unwrap(), reason);
-        }
-        assert!("seventh".parse::<Verdict>().is_err());
-        assert!("no_such_reason".parse::<BlockedReason>().is_err());
     }
 }

@@ -1,6 +1,3 @@
-//! What a file's frontmatter lines mean (`folders.md` 7): the item's own
-//! fields, the lines that name it, edges, and every other line a property.
-
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -10,11 +7,10 @@ use super::edge_types::EdgeTypes;
 use crate::catalog::Catalog;
 use crate::model::{Item, ItemState, Tier};
 
-/// The frontmatter field that names the item a Markdown file is.
 pub const ID_FIELD: &str = "marfa_id";
 
-/// The frontmatter field that names the version a Markdown file was written
-/// from, which an edit from it is based on (`folders.md` 23).
+/// The version a Markdown file was written from, which an edit from it is
+/// based on.
 pub const VERSION_FIELD: &str = "marfa_version";
 
 pub const TYPE_FIELD: &str = "type";
@@ -37,7 +33,6 @@ pub fn reserved(name: &str, edge_types: &EdgeTypes) -> bool {
     ) || edge_types.is_name(name)
 }
 
-/// The item's own fields, as a file shows them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Own {
     pub r#type: String,
@@ -120,17 +115,14 @@ pub struct Lines {
     pub state: Option<ItemState>,
 }
 
-/// A Markdown file's frontmatter, read as an item's.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Read {
     pub lines: Lines,
-    /// Every line that is a property, in the file's order.
     pub properties: Map<String, Value>,
 }
 
-/// Splits frontmatter into the item's own fields and its properties, or says
-/// why an own field holds what no item can. Lines naming the item, its
-/// version or an edge are neither.
+/// Lines naming the item, its version or an edge are neither own fields nor
+/// properties.
 pub fn read(front: &Map<String, Value>, edge_types: &EdgeTypes) -> Result<Read, String> {
     let mut read = Read::default();
     for (name, value) in front {
@@ -225,7 +217,6 @@ pub fn lines_of(item: &Item) -> Map<String, Value> {
     lines
 }
 
-/// The property a type's file body is, and the one its file name is.
 pub fn body_field<'a>(catalog: &'a Catalog, r#type: &str) -> &'a str {
     catalog.body_field(r#type).unwrap_or(BODY_FIELD)
 }
@@ -270,8 +261,6 @@ mod tests {
 
     use super::*;
 
-    /// `cites` as a publisher registers it, which a file reads as an edge
-    /// because the server lists it.
     fn edge_types() -> EdgeTypes {
         use super::super::edge_types::{EdgeType, End};
         EdgeTypes::of(vec![

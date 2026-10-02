@@ -1,5 +1,3 @@
-//! Edges as frontmatter lines (`folders.md` 11).
-
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value};
@@ -15,8 +13,7 @@ use crate::Result;
 use crate::catalog::Catalog;
 use crate::model::{Edge, EdgeDraft, EdgeEdit, Item};
 
-/// A file's links and lines, read once every file in the scan is bound
-/// (`folders.md` 33).
+/// A file's links and lines, read once every file in the scan is bound.
 pub(super) struct EdgeWork {
     pub path: String,
     pub item_id: String,
@@ -24,12 +21,9 @@ pub(super) struct EdgeWork {
     pub front: Map<String, Value>,
     pub had_links: Vec<String>,
     pub had_lines: Vec<Line>,
-    /// The body's embeds as the walk found them (`folders.md` 12).
     pub embeds: Vec<(String, Target)>,
 }
 
-/// What a file's links and lines left behind: the record the binding keeps,
-/// and why the file is held where a line changed nothing.
 pub(super) struct Outcome {
     pub links: Vec<String>,
     pub lines: Vec<Line>,
@@ -40,7 +34,7 @@ pub(super) struct Outcome {
     pub embeds: Vec<String>,
 }
 
-/// Every name an item answers to in this copy, folded (`folders.md` 27): its
+/// Every name an item answers to in this copy, folded: its title, and its
 /// title, and its file's path and name here with and without the extension.
 pub(super) struct Names {
     ids: HashMap<String, BTreeSet<String>>,
@@ -86,7 +80,6 @@ impl Names {
     }
 }
 
-/// A file's path and name, each with and without its extension, folded.
 fn file_names(path: &str) -> Vec<String> {
     let stem = |text: &str| match text.rsplit_once('.') {
         Some((stem, _)) if !stem.is_empty() && !stem.ends_with('/') => stem.to_string(),
@@ -107,7 +100,6 @@ fn file_names(path: &str) -> Vec<String> {
 /// A file's lines by name, and the edges they name.
 type Written = (Vec<(String, Value)>, Vec<Line>);
 
-/// What a typed name resolves to.
 #[derive(Debug, Clone)]
 enum Resolved {
     Found {
@@ -154,8 +146,6 @@ impl Resolved {
 /// this is named by id instead.
 const LOOKUP_PAGES: usize = 5;
 
-/// Resolves typed names over the copy and, wherever it can be asked, the
-/// server (`folders.md` 11).
 pub(super) struct Resolver<'a> {
     folder: &'a Folder,
     catalog: &'a Catalog,
@@ -312,8 +302,6 @@ fn is_id(text: &str) -> bool {
     text.len() == 36 && uuid::Uuid::parse_str(text).is_ok()
 }
 
-/// One frontmatter line's reading: its name, its type, the end the file is,
-/// and what it names, or why it names nothing readable.
 struct Group<'t> {
     name: String,
     edge_type: &'t EdgeType,
@@ -382,7 +370,6 @@ impl Folder {
         Ok(Some((at(other), other)))
     }
 
-    /// The edges the copy holds at either end of an item, each once.
     fn edges_at(&self, id: &str) -> Result<Vec<Edge>> {
         let mut edges = self.core.edges_from(id)?;
         for edge in self.core.edges_to(id)? {
@@ -393,7 +380,6 @@ impl Folder {
         Ok(edges)
     }
 
-    /// The other ends of the edges an item's file writes.
     pub(super) fn written_ends(
         &self,
         item: &Item,
@@ -579,8 +565,8 @@ impl Folder {
         })
     }
 
-    /// Queues what a file's links, embeds and lines change (`folders.md` 11,
-    /// 12, 31); a line read no way it was written changes nothing of its type.
+    /// Queues what a file's links, embeds and lines change; a line read no way
+    /// it was written changes nothing of its type.
     pub(super) fn queue_edges(
         &self,
         work: &EdgeWork,

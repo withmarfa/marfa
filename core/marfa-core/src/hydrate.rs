@@ -13,18 +13,6 @@ use crate::{Core, Result};
 const HEAD_ATTEMPTS: usize = 3;
 const HEAD_READ_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Fills the copy with the declared slice, read after a head read so the
-/// snapshot has a resume point from before its first page: its types at its
-/// tier, every edge of `edge_types` the key reads, and the pinned rows, each
-/// read again (`device.md` 1).
-///
-/// The copy is cleared once the head read and the catalog are in, before
-/// the first page. A head read or a catalog on another contract is refused
-/// before anything is cleared. A page on another contract is refused after
-/// it: the copy holds only the pages read before that one, so a
-/// re-hydration refused on its first page leaves it empty, and it refuses
-/// reads with `hydration_incomplete` until a hydration completes. Nothing
-/// the refused page carried is applied (`device.md` 42).
 pub(crate) fn hydrate(
     core: &Core,
     http: &Http,
@@ -109,11 +97,8 @@ pub(crate) fn hydrate(
             let Some(next) = page.next_cursor.clone() else {
                 break;
             };
-            // A cursor that does not move is a server saying there is more
-            // and handing back the same place to look. Without this a
-            // hydration spins forever before the store is usable at all,
-            // which is worse than the same shape in a drain: there is no
-            // copy to fall back on and nothing has been written yet.
+            // A server can report more while handing back the same cursor;
+            // without this check a hydration spins forever.
             let next = Some(next);
             if next == page_cursor {
                 return Err(CoreError::Decoding(
@@ -155,8 +140,6 @@ pub(crate) fn hydrate(
         if store::item_held(&*core.conn()?, &id)? {
             continue;
         }
-        // A pinned row the server does not show this key stays pinned and
-        // holds nothing until an event brings it.
         let Some((row, edges)) = read_with_edges(http, &id)? else {
             continue;
         };
@@ -208,15 +191,9 @@ pub(crate) fn hydrate(
     })
 }
 
-/// Puts the writes still waiting back into the copy a hydration has just
-/// refilled (`queue-and-verdicts.md` 30, 35).
-///
 /// The queue survives a hydration and the copy does not, so without this a
 /// create still waiting is a row a local read no longer finds, and an edit
-/// still waiting reads as undone, while the queue goes on sending both.
-///
-/// An edge's create is held again only where the refilled copy takes it, by
-/// `whole` and the rows now held (`device.md` 44). It stays queued either way.
+/// still waiting reads as undone.
 fn lay_queue_over(conn: &rusqlite::Connection, catalog: &Catalog, whole: &[String]) -> Result<()> {
     let waiting = store::waiting_writes(conn)?;
     let mut items: Vec<&str> = Vec::new();
@@ -292,13 +269,10 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     Ok(declared)
 }
 
-/// Refuses a slice naming a type the key cannot read, before the copy is
-/// cleared (`device.md` 6). The listing answers such a type as one with no
-/// rows, so the slice would hold none of it and say nothing.
-///
-/// The key's own map decides, read from `GET /keys/current`. A wildcard
-/// names whatever is under it, which may be nothing, and a credential that
-/// is not a key cannot read its own map, so both are taken as declared.
+/// The listing answers a type the key cannot read as one with no rows, so
+/// the slice would hold none of it and say nothing. A wildcard may match
+/// nothing, and a credential that is not a key cannot read its own map, so
+/// both are taken as declared.
 fn refuse_unreadable(http: &Http, types: &[String]) -> Result<()> {
     let named: Vec<&str> = types
         .iter()
@@ -327,8 +301,7 @@ fn refuse_unreadable(http: &Http, types: &[String]) -> Result<()> {
     })
 }
 
-/// Edge types to hold whole, each named once. A comma is refused because the
-/// listing reads one as a list of types.
+/// A comma is refused because the listing reads one as a list of types.
 fn declared_edge_types(edge_types: &[String]) -> Result<Vec<String>> {
     let mut declared: Vec<String> = Vec::new();
     for raw in edge_types {
@@ -349,8 +322,6 @@ fn declared_edge_types(edge_types: &[String]) -> Result<Vec<String>> {
     Ok(declared)
 }
 
-/// One row by id with every edge it draws, overflow included, read outside
-/// any transaction. `None` where the server holds no such row.
 pub(crate) fn read_with_edges(
     http: &Http,
     id: &str,
@@ -366,8 +337,8 @@ pub(crate) fn read_with_edges(
     Ok(Some((read, edges)))
 }
 
-/// Writes a row read by id and its edges, waiting writes laid back over them;
-/// one held at a later version came from an event since the read, and stays.
+/// A row held at a later version came from an event since the read, and
+/// stays.
 pub(crate) fn hold_row(
     conn: &rusqlite::Connection,
     catalog: &Catalog,
@@ -388,8 +359,7 @@ pub(crate) fn hold_row(
     Ok(())
 }
 
-/// The edges an inline block could not carry, fetched before any write so no
-/// transaction waits on the network.
+/// Fetched before any write so no transaction waits on the network.
 pub(crate) fn fetch_overflow(
     http: &Http,
     item_id: &str,
@@ -401,8 +371,7 @@ pub(crate) fn fetch_overflow(
     while let Some(asked_for) = cursor {
         let page = http.item_edges_page(item_id, edge_type, Some(&asked_for))?;
         edges.extend(page.data);
-        // Same reason as the item pages above: a repeated cursor is an
-        // unbounded loop, and this one runs per item of the slice.
+        // A repeated cursor would loop forever.
         if page.next_cursor.as_deref() == Some(asked_for.as_str()) {
             return Err(CoreError::Decoding(
                 "the server kept answering with the same cursor while reporting more edges".into(),
@@ -413,8 +382,8 @@ pub(crate) fn fetch_overflow(
     Ok(edges)
 }
 
-/// The event log's head at this moment, so the snapshot about to be taken has
-/// a resume point from before its first page.
+/// Read before the first page so the snapshot has a resume point from before
+/// it.
 fn read_head(http: &Http) -> Result<String> {
     for _ in 0..HEAD_ATTEMPTS {
         let reader = http.open_events(None, HEAD_READ_TIMEOUT)?;
