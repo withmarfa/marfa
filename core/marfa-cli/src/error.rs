@@ -307,8 +307,6 @@ impl From<serde_json::Error> for CliError {
     }
 }
 
-/// The text the root's help carries about leaving. `core/README.md`
-/// carries the same table by hand.
 pub const EXIT_CODES_HELP: &str = "\
 Exit codes:
   0  done
