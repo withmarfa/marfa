@@ -997,7 +997,7 @@
           "error"
         ]
       },
-      "InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
+      "EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -1006,6 +1006,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "edge_constraint_violation",
                   "invalid_id",
                   "invalid_transition",
                   "missing_required_field",
@@ -7040,7 +7041,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An inline edge naming an edge type that does not exist answers `edge_type_not_found`, and one naming a target that does not exist or whose type the caller may not read answers `item_not_found`, the two targets alike.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. An inline edge naming an edge type that does not exist answers `edge_type_not_found`, and one naming a target that does not exist or whose type the caller may not read answers `item_not_found`, the two targets alike.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7252,7 +7253,7 @@
           "Items"
         ],
         "summary": "Soft delete an item",
-        "description": "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+        "description": "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
         "security": [
           {
             "bearerAuth": []
@@ -7268,6 +7269,17 @@
             "description": "Item id",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is."
+            },
+            "required": false,
+            "description": "The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is.",
+            "name": "version",
+            "in": "query"
           },
           {
             "name": "Idempotency-Key",
@@ -7312,7 +7324,7 @@
             }
           },
           "400": {
-            "description": "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+            "description": "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7375,7 +7387,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7405,7 +7417,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7438,11 +7450,18 @@
             }
           },
           "409": {
-            "description": "A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry.",
+            "description": "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was trashed. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was trashed, retry.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },
@@ -7726,7 +7745,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7954,7 +7973,7 @@
           "Items"
         ],
         "summary": "Transition item state",
-        "description": "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
+        "description": "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
         "security": [
           {
             "bearerAuth": []
@@ -8036,11 +8055,11 @@
             }
           },
           "400": {
-            "description": "Invalid transition",
+            "description": "`invalid_transition`: the type's lifecycle does not allow the move. `edge_constraint_violation`: a `block` edge holds a row a move into trashed would take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -8099,7 +8118,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8951,7 +8970,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8981,7 +9000,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9226,7 +9245,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9256,7 +9275,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9507,7 +9526,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9537,7 +9556,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10146,7 +10165,7 @@
             }
           },
           "403": {
-            "description": "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
+            "description": "The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: \"type\", name, level: \"write\" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10176,7 +10195,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13166,7 +13185,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -13434,7 +13453,7 @@
             }
           },
           "404": {
-            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.",
+            "description": "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.",
             "content": {
               "application/json": {
                 "schema": {
@@ -17718,7 +17737,7 @@
           "Types"
         ],
         "summary": "Delete a registered type",
-        "description": "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).\n\nThe tombstones purges left under the type go with it.",
+        "description": "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).\n\nThe tombstones purges left under the type go with it.",
         "security": [
           {
             "bearerAuth": []

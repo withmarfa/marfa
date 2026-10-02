@@ -1,6 +1,7 @@
 import type { Storage } from "../interface.js";
 import { createConnection } from "./connection.js";
 import { wrapDbWithRequestContext } from "./request-context.js";
+import { withCommitHooks } from "../commit-hooks.js";
 import { SqliteItemStore } from "./item-store.js";
 import { SqliteMetadataStore } from "./metadata-store.js";
 import { SqliteVersionStore } from "./version-store.js";
@@ -170,7 +171,10 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
      * becomes a savepoint of it, as the stores' own transactions do.
      */
     async runInTransaction<T>(fn: () => T | Promise<T>): Promise<T> {
-      return await db.transaction(async () => await fn());
+      return await withCommitHooks(
+        (body) => db.transaction(async () => await body()),
+        fn,
+      );
     },
     betterAuthDb: baseDb,
     /** Raw query escape hatch for the storage tests; nothing outside a

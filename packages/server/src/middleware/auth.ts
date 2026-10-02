@@ -13,10 +13,12 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
   hasPermission,
+  resolveExtensionPermission,
 } from "@withmarfa/shared";
 import type { ApiKey, Permission, TypeFilter } from "@withmarfa/shared";
 import type { OauthAccessTokenRow, Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
+import { extensionLabelOf } from "../auth/extension-label.js";
 
 // ---------------------------------------------------------------------------
 // Hono environment type (shared across all routes)
@@ -627,18 +629,67 @@ export function checkTypePermission(
 ): void {
   const key = checkAuth(apiKey);
   if (!mayReadType(key, type)) {
-    throw new MarfaError(
+    throw grantRefusal(
       ErrorCode.TYPE_NOT_PERMITTED,
       `No access to type "${type}"`,
+      { kind: "type", name: type, level },
     );
   }
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (level === "write" && resolved === "read") {
-    throw new MarfaError(
+    throw grantRefusal(
       ErrorCode.TYPE_NOT_PERMITTED,
       `Write access to type "${type}" denied`,
+      { kind: "type", name: type, level },
     );
   }
+}
+
+/** The grant a refusal is about: what a key lacks, so a client holding a
+ *  write the refusal stopped can tell a narrowed key from a write that will
+ *  never land, and send it again once the grant is back. */
+export interface MissingGrant {
+  kind: "type" | "edge_type" | "extension";
+  /** The type or edge type's identifier, or the extension namespace. */
+  name: string;
+  /** The level the key lacks, which is the level the door asked for. */
+  level: "read" | "write";
+}
+
+/**
+ * A refusal caused by a grant the key does not hold, naming it in
+ * `details.grant`. Every refusal of that kind is built here, and nothing
+ * else carries the field: the reserved-namespace fence and a natural key
+ * resolving a row the key may not read are refused for other reasons and
+ * name no grant, the first because no grant opens it and the second
+ * because naming the type would disclose the row.
+ */
+export function grantRefusal(
+  code: ErrorCode,
+  message: string,
+  grant: MissingGrant,
+  details: Record<string, unknown> = {},
+): MarfaError {
+  return new MarfaError(code, message, { ...details, grant });
+}
+
+/** The key's grant on an extension namespace, at `level`. */
+export function checkExtensionPermission(
+  apiKey: ApiKey | undefined,
+  namespace: string,
+  level: "read" | "write",
+): void {
+  const perm = resolveExtensionPermission(
+    namespace,
+    apiKey?.extension_permissions,
+    extensionLabelOf(apiKey),
+  );
+  if (perm === "write" || (level === "read" && perm === "read")) return;
+  throw grantRefusal(
+    ErrorCode.FORBIDDEN,
+    `No ${level} access to extension namespace "${namespace}"`,
+    { kind: "extension", name: namespace, level },
+  );
 }
 
 /**
@@ -889,6 +940,51 @@ export function checkResolvedRowWrite(
   checkTypeAccess(apiKey, row.type, "write");
 }
 
+/**
+ * The row a write door names by id, refused as its `notFound` where it is
+ * missing, where the key may not read its type, and where it is in the bin.
+ * A row in the bin is refused with `details.trashed` to a key that may read
+ * its type, so a client holding a write to it can tell a row someone deleted
+ * from one that never existed, and offer it back; to any other key the two
+ * read alike.
+ */
+export function checkWritableRow<T extends { type: string; state: string }>(
+  apiKey: ApiKey | undefined,
+  row: T | null | undefined,
+  notFound: () => MarfaError,
+): T {
+  const key = checkAuth(apiKey);
+  return writableRowOf(row, (type) => mayReadType(key, type), notFound);
+}
+
+/** `checkWritableRow` for a writer that answers what it may read. */
+export function writableRowOf<T extends { type: string; state: string }>(
+  row: T | null | undefined,
+  mayRead: (type: string) => boolean,
+  notFound: () => MarfaError,
+): T {
+  if (!row || !mayRead(row.type)) throw notFound();
+  if (row.state === "trashed") {
+    const refusal = notFound();
+    throw new MarfaError(refusal.code, refusal.message, {
+      ...refusal.details,
+      trashed: true,
+    });
+  }
+  return row;
+}
+
+/** `checkWritableRow` for the request's credential, refusing first a
+ *  credential whose type map reaches no type, as a read door does. */
+export function requireWritableRow<T extends { type: string; state: string }>(
+  c: Context<AppEnv>,
+  row: T | null | undefined,
+  notFound: () => MarfaError,
+): T {
+  getTypeFilter(c);
+  return checkWritableRow(c.get("apiKey"), row, notFound);
+}
+
 /** Whether the credential may read this row's type. */
 export function mayReadRow(c: Context<AppEnv>, row: { type: string }): boolean {
   return mayReadType(checkAuth(c.get("apiKey")), row.type);
@@ -1008,9 +1104,10 @@ export function checkEdgePermission(
 ): void {
   const apiKey = checkAuth(key);
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
-  throw new MarfaError(
+  throw grantRefusal(
     ErrorCode.EDGE_PERMISSION_DENIED,
     `Missing edge.${edgeType}:${level} permission`,
+    { kind: "edge_type", name: edgeType, level },
     { edge_type: edgeType, required: level },
   );
 }
@@ -1123,13 +1220,22 @@ export function getTypeFilter(
   level: "read" | "write" = "read",
 ): TypeFilter {
   const filter = computeTypeFilter(c.get("apiKey"), level);
+  if (level === "read") refuseReachingNoType(filter);
+  return filter;
+}
+
+/** `getTypeFilter`'s refusal, for a credential in hand. */
+export function checkReachesSomeType(apiKey: ApiKey | undefined): void {
+  refuseReachingNoType(computeTypeFilter(apiKey));
+}
+
+function refuseReachingNoType(filter: TypeFilter): void {
   // `allowed === undefined` is "no credential at all" and nothing else;
   // the doors that reach here have already required one.
-  if (level === "read" && filter.allowed?.length === 0) {
+  if (filter.allowed?.length === 0) {
     throw new MarfaError(
       ErrorCode.TYPE_NOT_PERMITTED,
       "This credential's type permissions reach no type, so there is nothing on the data plane it may read.",
     );
   }
-  return filter;
 }

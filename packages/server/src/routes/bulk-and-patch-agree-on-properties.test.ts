@@ -197,14 +197,10 @@ describe("a property payload one door refuses, the other refuses too", () => {
       "a string, which is what the type asks for",
     );
   });
-  // The guard the same-type arm carries and the move arm does not, pinned.
-  //
-  // `validateProperties` reports an absent schema as `Unknown type` rather
-  // than as no opinion, so an unguarded same-type update would refuse every
-  // write to a type this request's registry does not carry — a custom type
-  // registered on another server, or one deleted since the row was written.
-  // Delete the guard and this case reddens with that refusal.
-  it("accepts a same-type update to a type with no schema to judge it against", async () => {
+  // A row whose type is gone from the registry has no schema to hold a
+  // write to, and one registered again under its id may hold another shape,
+  // so both doors refuse to write it until the type is back.
+  it("refuses a same-type update to a row whose type is not registered", async () => {
     const orphan = "user.orphaned_by_this_test";
     // Straight into the runtime overlay, which is where `POST /types` puts
     // one.
@@ -224,7 +220,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     });
     expect(seeded.status).toBe(200);
 
-    // The row outlives its type, which is the state the guard is for.
+    // The row outlives its type.
     unregisterTypeSchema(orphan);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
@@ -242,9 +238,8 @@ describe("a property payload one door refuses, the other refuses too", () => {
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as BulkResponse;
-    expect(data.results[0]?.error?.message ?? "").not.toContain("Unknown type");
-    expect(data.counts.errored).toBe(0);
-    expect(data.counts.updated).toBe(1);
+    expect(data.results[0]?.error?.code).toBe("unknown_type");
+    expect(data.counts.updated).toBe(0);
   });
 
   // The two refusals say different things, and nothing pinned that: inverting

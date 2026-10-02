@@ -1,6 +1,11 @@
-import { ErrorCode, MarfaError, getResolvedFields } from "@withmarfa/shared";
+import { createHash } from "node:crypto";
+import {
+  ErrorCode,
+  MarfaError,
+  getResolvedFields,
+  listTypes,
+} from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
-import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import { writeItem } from "../storage/item-write.js";
@@ -84,12 +89,18 @@ export class TextEnrichmentSweeper {
    * but the write is validated, so a ceiling set above what the type will
    * accept parks the item instead of storing it, and lowering the ceiling
    * back has to re-offer exactly those rows.
+   *
+   * The registered types are another: the write is judged against the row's
+   * type, and refused outright where that type is not registered, so a type
+   * registered, removed, or changed in its definition at any version
+   * reconsiders what it parked.
    */
   private get configSignature(): string {
     return JSON.stringify({
       max_blob_bytes: this.opts.maxBlobBytes,
       max_text_chars: this.opts.maxTextChars,
       ocr: this.opts.ocr !== null,
+      types: registeredTypesFingerprint(),
     });
   }
 
@@ -311,23 +322,32 @@ export class TextEnrichmentSweeper {
       } catch (err) {
         if (
           !(err instanceof MarfaError) ||
-          err.code !== ErrorCode.INVALID_PROPERTIES
+          (err.code !== ErrorCode.INVALID_PROPERTIES &&
+            err.code !== ErrorCode.UNKNOWN_TYPE)
         ) {
           throw err;
         }
         // A skip, never a transient failure. The refusal is a property of
         // the extractor output and the type, both fixed under a given
         // configuration, so retrying it would burn the whole attempt budget
-        // to reach the same answer. The config signature is what re-offers
-        // it once a ceiling moves.
-        const refusal = `invalid properties: ${
-          (
-            (err.details as { errors?: { field: string; message: string }[] })
-              .errors ?? []
-          )
-            .map((e) => `${e.field}: ${e.message}`)
-            .join("; ") || err.message
-        }`;
+        // to reach the same answer. The row stays skipped until its blob or
+        // the config signature changes: a ceiling moved, or the registered
+        // types, which is what offers a row whose type was not registered
+        // again once it is.
+        const refusal =
+          err.code === ErrorCode.UNKNOWN_TYPE
+            ? `unknown type: ${fresh.type}`
+            : `invalid properties: ${
+                (
+                  (
+                    err.details as {
+                      errors?: { field: string; message: string }[];
+                    }
+                  ).errors ?? []
+                )
+                  .map((e) => `${e.field}: ${e.message}`)
+                  .join("; ") || err.message
+              }`;
         await recordSkip(refusal);
         log("warn", "Text enrichment refused by validation", {
           item_id: candidate.item_id,
@@ -340,7 +360,6 @@ export class TextEnrichmentSweeper {
       // the write. Nothing recorded: the row is re-offered next run and
       // judged against whatever the item has become.
       if (written.outcome !== "updated") return "skipped";
-      const updated = written.item;
 
       if (textError !== null) {
         // Half of it landed. Recorded as a failure anyway, so the retry
@@ -354,11 +373,6 @@ export class TextEnrichmentSweeper {
         await record("done", reasons.length > 0 ? reasons.join("; ") : null);
       }
 
-      await publish({
-        type: "updated",
-        item: updated,
-        metadata: written.metadata,
-      });
       return textError === null ? "extracted" : "failed";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -454,4 +468,30 @@ async function readAll(blobs: BlobLayer, hash: string): Promise<Buffer | null> {
     return Buffer.concat(chunks);
   }
   return null;
+}
+
+/** The registered types' definitions, as the config signature carries
+ *  them. The definitions rather than their versions, because a type
+ *  re-registered through `PUT /types/{id}` keeps its version whatever
+ *  changed. */
+export function registeredTypesFingerprint(): string {
+  const listed = listTypes()
+    .map((type) => stableJson(type))
+    .sort()
+    .join("\n");
+  return createHash("sha256").update(listed).digest("hex");
+}
+
+/** JSON with every object's keys in order, so one definition always reads
+ *  the same however it was built. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
 }

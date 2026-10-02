@@ -143,12 +143,14 @@ describe("a bulk purge takes only trashed rows", () => {
     // match leaves `system.*` rows out (`exclude_system_types`) unless the
     // operator key names them, so no job a working credential queues
     // reaches one; the chunk is run directly.
+    // Grants already uninstalled, so the live-grant refusal every purge asks
+    // first lets both through to the state the purge is judged by.
     async function connection(): Promise<string> {
       const item = await itemWrites(ctx.storage).create({
         type: "system.connection",
         properties: {
           kind: "app",
-          status: "active",
+          status: "revoked",
           granted_at: new Date().toISOString(),
         },
       });
@@ -175,12 +177,10 @@ describe("a bulk purge takes only trashed rows", () => {
       credential,
     });
     expect(result.succeeded).toEqual([revoked]);
+    // Refused as the single purge door refuses it: a reserved row not yet in
+    // its soft-deleted state is behind the reserved-namespace fence.
     expect(result.errors).toEqual([
-      expect.objectContaining({
-        id: active,
-        code: "invalid_transition",
-        message: "Only revoked items can be purged",
-      }),
+      expect.objectContaining({ id: active, code: "type_not_permitted" }),
     ]);
     expect(await ctx.storage.items.getIncludingTrashed(revoked)).toBeNull();
     expect((await ctx.storage.items.get(active))?.state).toBe("active");

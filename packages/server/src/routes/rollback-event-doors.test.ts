@@ -22,39 +22,25 @@
  * synchronous, so a same-process subscriber (SSE viewers, outbound webhook
  * delivery) always receives the phantom. The
  * `event_log` row does not always survive to show it, because the log is
- * written through the same transaction-aware db the door writes through:
+ * written in the door's transaction, and a rolled-back transaction takes it
+ * with everything else. The log then looks correct and ONLY the subscriber
+ * assertion reddens, which is why both are made.
  *
- *   - On a door that opens a transaction, a publish moved inside it has its
- *     `event_log` row rolled back with everything else. The log then looks
- *     correct and ONLY the subscriber assertion reddens.
- *   - On a door that opens none, a publish moved above the write commits its
- *     log row, so BOTH assertions redden.
- *
- * Both halves were measured rather than reasoned about. A guard written
- * against the log alone would pass every transactional case, which is the
- * half where a rollback is a real event rather than a hypothetical one.
- *
- * **Each door is proved twice.** Once unbroken, so the subscriber is known
- * to hear this door at all — a negative assertion against a probe that could
- * never have seen anything is not evidence — and once with the write forced
- * to come apart. Two shapes of breakage, because the doors are two shapes:
- *
- *   - A door that wraps its write in `storage.runInTransaction` is broken by
- *     rolling that transaction back the instant its last write lands. It is
- *     the only probe that reaches the case where the write really did happen
- *     and really was undone.
- *   - A door that opens no transaction has nothing to roll back. Its write
- *     is a single statement and the property reduces to ordering, so it is
- *     broken by making that write throw. Weaker, and honest about it: it
- *     catches a publish moved above the write and nothing else.
+ * **Each door is proved three times.** Once unbroken, so the subscriber is
+ * known to hear this door at all — a negative assertion against a probe that
+ * could never have seen anything is not evidence. Once with its transaction
+ * rolled back the instant its last write lands, the only probe that reaches
+ * the case where the write really did happen and really was undone. And once
+ * with its event refused by the log, which must undo the write: a change
+ * whose event is lost is one a client catching up from the log never learns
+ * of.
  *
  * How many transactions each door opens is measured rather than assumed. The
  * unbroken run counts them and the table below has to match exactly. A count
  * rather than a yes-or-no, because a door that grew a preflight transaction
- * would take the breakage on that one, never reach its real write, and pass
+ * would take the rollback on that one, never reach its real write, and pass
  * for the wrong reason.
  */
-import { itemWrites } from "../storage/item-writes.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -185,32 +171,6 @@ function rollBackAfterTheWrite(): Injection {
   };
 }
 
-/**
- * Make one named storage write throw.
- *
- * For the doors that open no transaction. `owner` is the store the method
- * hangs off, so the replacement is installed where the route resolves it:
- * every route reads `storage.<store>.<method>` per call rather than
- * capturing it, which is what makes this reach them.
- */
-function breakWrite<O extends object>(owner: O, method: keyof O): Injection {
-  const original = owner[method];
-  let fired = 0;
-  // The stores are plain objects behind an interface, so the replacement is
-  // an ordinary assignment; the cast is only to satisfy the indexed type.
-  owner[method] = ((...args: unknown[]): never => {
-    void args;
-    fired += 1;
-    throw new ForcedFailure(String(method));
-  }) as O[keyof O];
-  return {
-    fired: () => fired,
-    restore: () => {
-      owner[method] = original;
-    },
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Listening
 // ---------------------------------------------------------------------------
@@ -304,7 +264,7 @@ interface Door {
    * How many transactions the door opens through `storage.runInTransaction`,
    * asserted by exact equality against the count taken on the unbroken run.
    *
-   * A count rather than a yes-or-no. The breakage throws out of the FIRST
+   * A count rather than a yes-or-no. The rollback throws out of the FIRST
    * transaction it sees, so a door that grew a preflight transaction (a
    * lock, a reservation) would be broken there, never reach the write
    * this file is about, and pass while proving nothing. Pinning the number
@@ -334,8 +294,6 @@ interface Door {
    * changed and the stream silent.
    */
   survivesBreakage: boolean;
-  /** How to break a door that opens no transaction. */
-  breakage?: () => Injection;
 }
 
 const NAMESPACE = "testapp";
@@ -605,7 +563,6 @@ const doors: Door[] = [
     name: "POST /items/{id}/transition moves an item's state",
     family: "item",
     transactions: 1,
-    breakage: () => breakWrite(itemWrites(ctx.storage), "transition"),
     setup: async () => ({ item: await makeNote("transitioning") }),
     act: async (s) => {
       const res = await request(
@@ -629,7 +586,6 @@ const doors: Door[] = [
     name: "POST /items/{id}/restore brings an item back",
     family: "item",
     transactions: 1,
-    breakage: () => breakWrite(itemWrites(ctx.storage), "restore"),
     setup: async () => {
       const item = await makeNote("to restore");
       await request(ctx.app, "DELETE", `/items/${item}`, {
@@ -838,8 +794,8 @@ const doors: Door[] = [
   {
     name: "PATCH /edges/{id} edits an edge's properties",
     family: "edge",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.edges, "updateProperties"),
+    transactions: 1,
+
     setup: async () => {
       const item = await makeNote("edge source");
       const other = await makeNote("edge target");
@@ -889,8 +845,8 @@ const doors: Door[] = [
   {
     name: "DELETE /edges/{id} removes an edge",
     family: "edge",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.edges, "delete"),
+    transactions: 1,
+
     setup: async () => {
       const item = await makeNote("edge source");
       const other = await makeNote("edge target");
@@ -1247,8 +1203,7 @@ describe("a rolled-back write announces nothing", () => {
 
       it("announces nothing when the write is forced to come apart", async () => {
         const state = { ...NO_STATE, ...(await door.setup()) };
-        const injection =
-          door.transactions > 0 ? rollBackAfterTheWrite() : door.breakage!();
+        const injection = rollBackAfterTheWrite();
         let succeeded = true;
         let heard: Heard;
         try {
@@ -1264,6 +1219,27 @@ describe("a rolled-back write announces nothing", () => {
         expect(succeeded).toBe(false);
         expect(door.attributable(heard, state)).toEqual([]);
         expect(heard.logged).toBe(0);
+        await expect(door.landed(state)).resolves.toBe(door.survivesBreakage);
+      });
+
+      it("writes nothing when its event cannot be written", async () => {
+        const state = { ...NO_STATE, ...(await door.setup()) };
+        const log = ctx.storage.eventLog;
+        const append = log.append.bind(log);
+        let refused = 0;
+        log.append = () => {
+          refused += 1;
+          return Promise.reject(new ForcedFailure("the event append"));
+        };
+        let succeeded: boolean;
+        try {
+          succeeded = await door.act(state);
+        } finally {
+          log.append = append;
+        }
+
+        expect(refused).toBeGreaterThan(0);
+        expect(succeeded).toBe(false);
         await expect(door.landed(state)).resolves.toBe(door.survivesBreakage);
       });
     });
@@ -1307,28 +1283,20 @@ interface PublishingFile {
 
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
-  "routes/items.ts": {
-    sites: 15,
-    why: "create, upsert, patch, the conflicted copy a resolving patch spawns and the edges it copies, delete, the two the purge door emits, and the four tag and metadata doors",
+  "storage/item-write.ts": {
+    sites: 13,
+    why: "every item write's own events, inside its transaction: a create and its edges, an update with the keep-both copy it may write and the edges either changed, a delete and what its cascade took, a transition, a restore and what either brought back, and a purge with the edges it took",
   },
-  "routes/items-lifecycle.ts": {
-    sites: 3,
-    why: "transition and restore, and the rows either brings back that the row's trash took",
+  "routes/items.ts": {
+    sites: 4,
+    why: "the four tag and metadata doors",
   },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
-  "routes/folders.ts": {
-    sites: 3,
-    why: "folder create, change and revoke",
-  },
   "routes/extensions.ts": { sites: 2, why: "the two extension doors" },
-  "routes/bulk.ts": {
-    sites: 2,
-    why: "the atomic item batch and its inline edges",
-  },
-  "routes/edges-bulk.ts": { sites: 2, why: "the atomic edge batch" },
+  "routes/edges-bulk.ts": { sites: 1, why: "the edge batch, per entry" },
   "bulk-actions/runner.ts": {
-    sites: 6,
-    why: "six arms through six sites: transition publishes for itself and for the rows a restore out of the bin brings back, update_tags for itself, purge announces its cascade and its rows through two, and the three property-shaped arms share one local helper",
+    sites: 1,
+    why: "update_tags, per row; every other arm writes through the item write, which announces",
   },
   "routes/_edges-inline.ts": {
     sites: 2,
@@ -1347,15 +1315,9 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
  * rather than omitted so the next reader can see the decision and reopen it.
  */
 const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
-  "routes/auth-pages.ts": { sites: 2, why: "grant projection at sign-in" },
-  "routes/auth-consent.ts": { sites: 1, why: "grant projection at consent" },
   "routes/admin-archive.ts": {
     sites: 2,
     why: "archive restore, an admin surface: the items it wrote and the edges between them, in that order",
-  },
-  "enrichment/sweeper.ts": {
-    sites: 1,
-    why: "a background sweeper, outside a request",
   },
 };
 

@@ -389,4 +389,83 @@ describe("edge cascade semantics", () => {
     const del2 = await client.deleteItem(source);
     expect(del2.ok).toBe(true);
   });
+
+  it("a transition into the bin takes what a delete takes, and a restore brings it back", async () => {
+    const parent = await makeItem("t-parent");
+    const child = await makeItem("t-child");
+    const edge = await client.createEdge({
+      source_id: parent,
+      target_id: child,
+      edge_type: "parent-of",
+    });
+    expect(edge.ok).toBe(true);
+    trackEdge(ctx, edge.data.edge.id);
+
+    const moved = await client.transitionItem(parent, "trashed");
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.state).toBe("trashed");
+    expect((await client.getItem(child)).status).toBe(404);
+
+    // Recorded as taken with the parent, so leaving the bin brings it back.
+    const back = await client.transitionItem(parent, "active");
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    const restored = await client.getItem(child);
+    expect(restored.status).toBe(200);
+    expect(restored.data.item.state).toBe("active");
+  });
+
+  it("a block edge refuses a transition into the bin as it refuses a delete", async () => {
+    const etId = `mock.block-transition.${ctx.runId}`;
+    const reg = await client.registerEdgeType({
+      id: etId,
+      cardinality: "many-to-many",
+      cascade_on_delete: "block",
+    });
+    expect(reg.ok).toBe(true);
+    trackEdgeType(ctx, etId);
+
+    const source = await makeItem("tb-src");
+    const target = await makeItem("tb-tgt");
+    const edge = await client.createEdge({
+      source_id: source,
+      target_id: target,
+      edge_type: etId,
+    });
+    expect(edge.ok).toBe(true);
+    const edgeId = edge.data.edge.id;
+    trackEdge(ctx, edgeId);
+
+    const moved = await client.transitionItem(source, "trashed");
+    expect(moved.status).toBe(400);
+    expect(moved.error?.error.code).toBe("edge_constraint_violation");
+    expect(
+      (moved.error?.error.details?.blocking_edges as Array<{ id: string }>).map(
+        (e) => e.id,
+      ),
+    ).toEqual([edgeId]);
+    expect((await client.getItem(source)).data.item.state).toBe("active");
+
+    // The bulk-action transition is held by the same edge, per row.
+    const tag = `block-bulk-${ctx.runId}`;
+    expect((await client.updateMetadata(source, { tags: [tag] })).ok).toBe(
+      true,
+    );
+    const queued = await client.bulkAction({
+      action: "transition",
+      state: "trashed",
+      filter: { tags: [tag] },
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const job = await client.pollBulkActionToTerminal(
+      (queued.data as { id: string }).id,
+    );
+    expect(job.result?.succeeded).toBe(0);
+    expect(job.result?.errors).toEqual([
+      expect.objectContaining({
+        id: source,
+        code: "edge_constraint_violation",
+      }),
+    ]);
+    expect((await client.getItem(source)).data.item.state).toBe("active");
+  });
 });

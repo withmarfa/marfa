@@ -769,19 +769,9 @@ export interface ItemStore {
   delete(id: string, trashedWith?: CascadeRoot): Promise<void>;
   /** The row each cascaded row's trash named, while the bin holds it. */
   cascadeMarks(ids: string[]): Promise<Map<string, CascadeRoot>>;
-  /** Hard-deletes a trashed row, leaving its tombstones. So do `bulkPurge`
-   *  and `purgeTrashedOlderThan`. */
+  /** Hard-deletes a trashed row, leaving its tombstones. So does
+   *  `purgeTrashedOlderThan`. */
   purge(id: string): Promise<void>;
-  /**
-   * Hard-delete every row in `ids` that is in its type's soft-deleted
-   * state, the gate single-item `purge` enforces, and return the ids it
-   * took. A row in any other state and an unknown id are skipped, and the
-   * caller reports them. Cascades metadata and versions via ON DELETE
-   * CASCADE; the caller removes the taken rows' edges (source and target
-   * directions) in the same transaction. Cleans the search index for each
-   * row taken.
-   */
-  bulkPurge(ids: string[]): Promise<string[]>;
   restore(id: string): Promise<Item>;
   /**
    * Restores the rows a trash took with it through cascading edges that lie
@@ -840,7 +830,7 @@ export interface ItemStore {
    * so measuring from it would restart the retention clock on an edit made
    * in the bin.
    *
-   * Unlike `bulkPurge`, this drops the purged items' edges itself (both
+   * Unlike `purge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
    * the automatic trash lifecycle with no route layer above it to do the
    * cleanup, and edges have no FK to items to fall back on.
@@ -2450,17 +2440,6 @@ export interface EdgeStore {
   /** Mirror of `deleteBySource` for inbound edges. */
   deleteByTarget(targetId: string, edgeType?: string): Promise<Edge[]>;
   /**
-   * Batched `deleteBySource` — drop every edge whose `source_id` is in
-   * `sourceIds`, optionally filtered by `edge_type`. Single SQL DELETE per
-   * call regardless of how many ids are passed. Returns the number of
-   * rows deleted; an empty `sourceIds` is a 0-row no-op. Used by the
-   * bulk-action purge worker so 100 items' worth of outbound edges drop
-   * in one statement instead of 100.
-   */
-  deleteBySourceBatch(sourceIds: string[], edgeType?: string): Promise<Edge[]>;
-  /** Mirror of `deleteBySourceBatch` for inbound edges. */
-  deleteByTargetBatch(targetIds: string[], edgeType?: string): Promise<Edge[]>;
-  /**
    * Count edges where the given item is source. Used for cardinality checks.
    */
   countBySource(sourceId: string, edgeType: string): Promise<number>;
@@ -3133,18 +3112,20 @@ export interface InboundStore {
   }): Promise<number>;
 }
 
-/** The item store's methods that write an item row. */
-export type ItemWriteMethod =
+/** The item store's methods that write an item row. Taken through `Pick`,
+ *  so a name the store no longer has fails to compile. */
+export type ItemWriteMethod = keyof Pick<
+  ItemStore,
   | "create"
   | "update"
   | "delete"
   | "purge"
-  | "bulkPurge"
   | "restore"
   | "restoreBeneath"
   | "transition"
   | "purgeTrashedOlderThan"
-  | "purgeRevokedAppGrantsOlderThan";
+  | "purgeRevokedAppGrantsOlderThan"
+>;
 
 /**
  * The item store as everything outside the write path holds it: its reads,

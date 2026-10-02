@@ -730,7 +730,7 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       throw err;
     }
 
-    // Filled inside the transaction, announced after it commits.
+    // Filled inside the transaction and announced at its end, inside it.
     const restoredItems: { item: Item; metadata: Metadata }[] = [];
     const restoredEdges: Edge[] = [];
     let result;
@@ -785,6 +785,9 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
                 capture_longitude: item.capture_longitude as number | undefined,
                 tags: archiveTags(meta),
               },
+              // Announced below with the extensions it carries, which a
+              // second write sets.
+              { announce: false },
             );
             imported++;
             resolvableIds.add(created.id);
@@ -798,10 +801,6 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
             const extensions = archiveExtensions(meta);
             const { extensions: stored, updated_at } =
               await storage.metadata.setExtensions(created.id, extensions);
-            // Collected, not announced — for the same reason as the edges
-            // below. A rollback would take the row away and the
-            // `event_log` append with it, leaving a live subscriber
-            // holding a frame no replay can repair.
             restoredItems.push({
               // The extensions write bumps the item's modification time,
               // and `created` was read before it ran. Announcing that
@@ -923,12 +922,43 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
             edge_type: edgeType,
             properties: (edge.properties ?? {}) as Record<string, unknown>,
           });
-          // Collected, not announced. This runs inside the restore's
-          // transaction, and a later edge failing rolls the whole import
-          // back — including the `event_log` append, so a replay cannot
-          // repair a frame a live subscriber already received.
           restoredEdges.push(restored);
           edgesImported++;
+        }
+
+        // Announced inside the restore's transaction, so the log holds
+        // every row it wrote or none: a restore is a write like any other
+        // from a subscriber's side, and the log is the only catch-up there
+        // is. Items before edges, because an edge names two endpoints and a
+        // client receiving one for a row it has never heard of has no way
+        // to resolve it.
+        //
+        // Fan-out is declined, as it is on every other door that writes in
+        // bulk: a restore carries up to `MAX_ARCHIVE_ITEMS` rows, and
+        // driving outbound work per row per subscribed connection would
+        // push an archive's worth of writes back out to whatever an
+        // installed connection is joined to. The flag governs only the
+        // outbound side effects, and rides the persisted row, so a catch-up
+        // that rebuilds these events reaches the same answer.
+        for (const { item, metadata } of restoredItems) {
+          await publish({
+            type: "created",
+            item,
+            metadata,
+            enableFanout: false,
+          });
+        }
+        const sourceTypes = await sourceTypesFor(
+          storage,
+          restoredEdges.map((edge) => edge.source_id),
+        );
+        for (const edge of restoredEdges) {
+          await publishEdge({
+            type: "edge_created",
+            edge,
+            sourceType: sourceTypes.get(edge.source_id),
+            enableFanout: false,
+          });
         }
 
         return {
@@ -948,46 +978,6 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       throw err;
     } finally {
       releaseBlobs();
-    }
-
-    // After the transaction committed. A restore is a write like any
-    // other from a subscriber's side: a client connected while an archive
-    // is restored has to learn about the rows it wrote, and nothing later
-    // repairs a gap here — the event log is the only catch-up there is.
-    //
-    // Items before edges, because an edge names two endpoints and a client
-    // receiving one for a row it has never heard of has no way to resolve
-    // it.
-    //
-    // Fan-out is declined, as it is on every other door that writes in
-    // bulk. A restore carries up to `MAX_ARCHIVE_ITEMS` rows, and driving
-    // outbound work per row per subscribed connection would push an
-    // archive's worth of writes back out to whatever an installed
-    // bidirectional connection is joined to — work nobody asked for, and
-    // work a restore is the least likely write to want. The flag governs
-    // only the outbound side effects: the log row and the stream frame
-    // land either way, which is the whole point of announcing these at
-    // all. It rides the persisted row too, so a catch-up that rebuilds
-    // these events reaches the same answer.
-    for (const { item, metadata } of restoredItems) {
-      await publish({
-        type: "created",
-        item,
-        metadata,
-        enableFanout: false,
-      });
-    }
-    const sourceTypes = await sourceTypesFor(
-      storage,
-      restoredEdges.map((edge) => edge.source_id),
-    );
-    for (const edge of restoredEdges) {
-      await publishEdge({
-        type: "edge_created",
-        edge,
-        sourceType: sourceTypes.get(edge.source_id),
-        enableFanout: false,
-      });
     }
 
     await storage.audit.log({

@@ -40,7 +40,11 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
+import {
+  bulkAtomicRollback,
+  failedEntry,
+  isEntryVerdict,
+} from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { edgeReadable, sourceTypesFor } from "./_edge-visibility.js";
 import {
@@ -551,7 +555,7 @@ export function edgesBulkRoutes(storage: Storage) {
           if (isEntryVerdict(err)) {
             throw bulkAtomicRollback(
               i,
-              { code: err.code, message: err.message },
+              { code: err.code, message: err.message, details: err.details },
               "edge",
             );
           }
@@ -571,76 +575,71 @@ export function edgesBulkRoutes(storage: Storage) {
       })),
     );
 
-    const run = async (): Promise<{
-      results: BulkEdgeResult[];
-      createdEdges: Edge[];
-      updatedEdges: Edge[];
-    }> => {
+    const run = async (): Promise<BulkEdgeResult[]> => {
       const results: BulkEdgeResult[] = [];
-      const createdEdges: Edge[] = [];
-      const updatedEdges: Edge[] = [];
       for (const [i, raw] of rawEdges.entries()) {
-        const { result, created, updated } = await processBulkEdge(
-          storage,
-          raw,
-          i,
-          {
+        // Each entry's edge and its event commit together: inside the page's
+        // transaction when it is atomic, in one of its own otherwise. Both
+        // outcomes are announced, an upsert replacing an edge's properties
+        // being an edit a subscriber cannot tell from one made through
+        // `PATCH /edges/{id}`.
+        const entry = async () => {
+          const processed = await processBulkEdge(storage, raw, i, {
             mode,
             existingByTriple,
             checkEdgeWrite,
             mayRead,
             mayTell: (edge) => edgeReadable(storage, requireAuth(c), edge),
-          },
+          });
+          const written = processed.created ?? processed.updated;
+          if (written) {
+            const sourceTypes = await sourceTypesFor(storage, [
+              written.source_id,
+            ]);
+            await publishEdge({
+              type: processed.created ? "edge_created" : "edge_updated",
+              edge: written,
+              sourceType: sourceTypes.get(written.source_id),
+              enableFanout,
+            });
+          }
+          return processed;
+        };
+        let result: BulkEdgeResult;
+        const committed = results.some(
+          (r) => r.outcome === "created" || r.outcome === "updated",
         );
+        if (atomic) {
+          ({ result } = await entry());
+        } else if (!committed) {
+          ({ result } = await storage.runInTransaction(entry));
+        } else {
+          try {
+            ({ result } = await storage.runInTransaction(entry));
+          } catch (err) {
+            result = { index: i, outcome: "errored", error: failedEntry(err) };
+          }
+        }
         if (atomic && result.outcome === "errored") {
           throw bulkAtomicRollback(
             i,
-            { code: result.error?.code, message: result.error?.message },
+            {
+              code: result.error?.code,
+              message: result.error?.message,
+              details: result.error?.details,
+            },
             "edge",
           );
         }
         results.push(result);
-        if (created) createdEdges.push(created);
-        if (updated) updatedEdges.push(updated);
       }
-      return { results, createdEdges, updatedEdges };
+      return results;
     };
 
-    const { results, createdEdges, updatedEdges } = atomic
-      ? await storage.runInTransaction(run)
-      : await run();
+    const results = atomic ? await storage.runInTransaction(run) : await run();
 
     const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
     for (const r of results) counts[r.outcome] += 1;
-
-    // Both outcomes publish. An upsert that replaces an existing edge's
-    // properties is an edit, and a subscriber has no way to tell it apart
-    // from one made through `PATCH /edges/:id` — so publishing for one and
-    // not the other would make propagation depend on which route the
-    // writer happened to use. `skipped` and `errored` wrote nothing and
-    // publish nothing.
-    const sourceTypes = await sourceTypesFor(
-      storage,
-      [...createdEdges, ...updatedEdges].map((edge) => edge.source_id),
-    );
-    for (const edge of createdEdges) {
-      const sourceType = sourceTypes.get(edge.source_id);
-      await publishEdge({
-        type: "edge_created",
-        edge,
-        sourceType,
-        enableFanout,
-      });
-    }
-    for (const edge of updatedEdges) {
-      const sourceType = sourceTypes.get(edge.source_id);
-      await publishEdge({
-        type: "edge_updated",
-        edge,
-        sourceType,
-        enableFanout,
-      });
-    }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

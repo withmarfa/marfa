@@ -269,7 +269,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
         runInTransaction: <T>(fn: () => Promise<T>) => fn(),
         items: {
           listInactiveAppGrants: () => Promise.resolve(inactive),
-          get: (id: string) =>
+          getIncludingTrashed: (id: string) =>
             Promise.resolve({
               id,
               type: "system.connection",

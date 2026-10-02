@@ -3,7 +3,6 @@
  * every `system.*` write, so a folder's settings are created, changed and
  * revoked here, gated on write to `system.folder` in the caller's type map.
  */
-import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
@@ -23,12 +22,12 @@ import {
   itemProvenanceSource,
   requireAuth,
   standingRule,
+  grantRefusal,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import type { ItemWriteResult } from "../storage/item-write.js";
 import { depthInsideFolder } from "../folder-path.js";
-import { publish } from "../pubsub.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema, TierEnum } from "./_schemas.js";
@@ -268,9 +267,10 @@ function assertSettings(settings: Settings): void {
 function requireFolderWrite(c: Context<AppEnv>): void {
   const key = requireAuth(c);
   if (resolveTypePermission(FOLDER_TYPE, key.type_permissions) !== "write") {
-    throw new MarfaError(
+    throw grantRefusal(
       ErrorCode.TYPE_NOT_PERMITTED,
       `Write access to type "${FOLDER_TYPE}" denied`,
+      { kind: "type", name: FOLDER_TYPE, level: "write" },
     );
   }
 }
@@ -492,7 +492,6 @@ export function folderRoutes(storage: Storage) {
         blob_proof: requestBlobProof(c, storage),
       },
     );
-    await publish({ type: "created", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: credential?.id,
@@ -538,7 +537,6 @@ export function folderRoutes(storage: Storage) {
       throw new Error("A folder update always carries settings to merge");
     }
     const { item, metadata } = written(result);
-    await publish({ type: "updated", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -554,7 +552,9 @@ export function folderRoutes(storage: Storage) {
 
   router.openapi(revokeFolderRoute, async (c) => {
     const { id } = c.req.valid("param");
-    const item = await storage.runInTransaction(async () => {
+    // One change to a subscriber: the stamp rides on the state change that
+    // announces both.
+    const { item, metadata } = await storage.runInTransaction(async () => {
       refuseRevoked(await requireFolder(storage, id));
       await writeItem(
         storage,
@@ -565,11 +565,15 @@ export function folderRoutes(storage: Storage) {
           properties: { revoked_at: new Date().toISOString() },
           blob_proof: requestBlobProof(c, storage),
         },
+        { announce: false },
       );
-      return await itemWrites(storage).transition(id, "revoked");
+      const { item: revoked } = await writeItem(
+        storage,
+        { kind: "platform" },
+        { op: "transition", id, state: "revoked" },
+      );
+      return { item: revoked, metadata: await storage.metadata.get(id) };
     });
-    const metadata = await storage.metadata.get(id);
-    await publish({ type: "state_changed", item, metadata });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,

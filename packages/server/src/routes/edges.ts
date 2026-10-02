@@ -723,13 +723,20 @@ export function edgeRoutes(storage: Storage) {
           },
           mayReadEdgeEnd(c),
         );
-        return storage.edges.createRaw({
+        const created = await storage.edges.createRaw({
           id: body.id,
           source_id: body.source_id,
           target_id: body.target_id,
           edge_type: body.edge_type,
           properties: body.properties,
         });
+        // With the edge, so the two commit together or not at all.
+        await publishEdge({
+          type: "edge_created",
+          edge: created,
+          sourceType: sourceItem.type,
+        });
+        return created;
       });
     } catch (err) {
       // The concurrency backstop. The row appeared between the pre-check
@@ -745,11 +752,6 @@ export function edgeRoutes(storage: Storage) {
       if (!raced) throw err;
       return c.json({ edge: raced, acknowledged: true }, 200);
     }
-    await publishEdge({
-      type: "edge_created",
-      edge,
-      sourceType: sourceItem.type,
-    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -794,9 +796,8 @@ export function edgeRoutes(storage: Storage) {
       );
     }
     const properties = body.properties ?? {};
-    const result = stale
-      ? { ok: false as const, current: existing }
-      : ends === null
+    const write = async () =>
+      ends === null
         ? await storage.edges.updateProperties(id, properties, body.version)
         : await storage.runInTransaction(async () => {
             const current = await storage.edges.get(id);
@@ -833,6 +834,27 @@ export function edgeRoutes(storage: Storage) {
               ends,
             );
           });
+    // An edit is as observable as a create or a delete: without it a second
+    // device keeps the stale payload with nothing saying otherwise. Written
+    // with the edit, so the two commit together or not at all.
+    const result = stale
+      ? { ok: false as const, current: existing }
+      : await storage.runInTransaction(async () => {
+          const written = await write();
+          if (written.ok) {
+            // A move can change the source, so its type is read for the
+            // edge as it now stands.
+            const sourceTypes = await sourceTypesFor(storage, [
+              written.edge.source_id,
+            ]);
+            await publishEdge({
+              type: "edge_updated",
+              edge: written.edge,
+              sourceType: sourceTypes.get(written.edge.source_id),
+            });
+          }
+          return written;
+        });
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
       // the whole current edge so the client can re-apply over it without
@@ -861,16 +883,6 @@ export function edgeRoutes(storage: Storage) {
       );
     }
     const updated = result.edge;
-    // A move can change the source, so its type is read for the edge as
-    // it now stands.
-    const sourceTypes = await sourceTypesFor(storage, [updated.source_id]);
-    // An edit is as observable as a create or a delete: without it a second
-    // device keeps the stale payload with nothing saying otherwise.
-    await publishEdge({
-      type: "edge_updated",
-      edge: updated,
-      sourceType: sourceTypes.get(updated.source_id),
-    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -899,11 +911,13 @@ export function edgeRoutes(storage: Storage) {
     );
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
-    await storage.edges.delete(id);
-    await publishEdge({
-      type: "edge_deleted",
-      edge: existing,
-      sourceType: srcItem?.type,
+    await storage.runInTransaction(async () => {
+      await storage.edges.delete(id);
+      await publishEdge({
+        type: "edge_deleted",
+        edge: existing,
+        sourceType: srcItem?.type,
+      });
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

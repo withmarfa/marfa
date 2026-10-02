@@ -12,19 +12,19 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct PurgeItem409Response {
+pub struct DeleteItem409Response {
     #[serde(rename = "error")]
     pub error: Box<models::IdempotencyKeyInFlightRefusalError>,
     #[serde(rename = "current")]
     pub current: Box<models::ConflictSnapshot>,
 }
 
-impl PurgeItem409Response {
+impl DeleteItem409Response {
     pub fn new(
         error: models::IdempotencyKeyInFlightRefusalError,
         current: models::ConflictSnapshot,
-    ) -> PurgeItem409Response {
-        PurgeItem409Response {
+    ) -> DeleteItem409Response {
+        DeleteItem409Response {
             error: Box::new(error),
             current: Box::new(current),
         }

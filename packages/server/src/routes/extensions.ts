@@ -14,23 +14,24 @@
  * the storage layer, which is also what writes a `system.*` row.
  */
 
-import { ITEM_NOT_FOUND, READ_REFUSED } from "./_item-refusals.js";
+import {
+  ITEM_NOT_FOUND,
+  ITEM_NOT_FOUND_ON_WRITE,
+  READ_REFUSED,
+} from "./_item-refusals.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { extensionLabelOf } from "../auth/extension-label.js";
-import {
-  MarfaError,
-  ErrorCode,
-  isValidId,
-  resolveExtensionPermission,
-} from "@withmarfa/shared";
+import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import { readableExtensions } from "./_extension-reach.js";
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  checkExtensionPermission,
   requireAuth,
   requireReadableRow,
+  requireWritableRow,
   requireTypeAccess,
   readsSomeType,
 } from "../middleware/auth.js";
@@ -245,7 +246,7 @@ const setExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -306,7 +307,7 @@ const deleteExtensionRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -350,17 +351,7 @@ export function extensionRoutes(storage: Storage) {
       () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
     );
 
-    const perm = resolveExtensionPermission(
-      namespace,
-      apiKey?.extension_permissions,
-      extensionLabelOf(apiKey),
-    );
-    if (perm === "none") {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `No read access to extension namespace "${namespace}"`,
-      );
-    }
+    checkExtensionPermission(apiKey, namespace, "read");
 
     const extensions = await storage.metadata.getExtensions(id);
     const data = extensions[namespace] ?? null;
@@ -379,10 +370,10 @@ export function extensionRoutes(storage: Storage) {
     const body = c.req.valid("json");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, extensions } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+    const { extensions } = await storage.runInTransaction(async () => {
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
       );
       // An extension is part of the item's row, so the item's type gate runs
@@ -396,17 +387,7 @@ export function extensionRoutes(storage: Storage) {
         );
       }
 
-      const perm = resolveExtensionPermission(
-        namespace,
-        apiKey?.extension_permissions,
-        extensionLabelOf(apiKey),
-      );
-      if (perm !== "write") {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `No write access to extension namespace "${namespace}"`,
-        );
-      }
+      checkExtensionPermission(apiKey, namespace, "write");
 
       const serialized = JSON.stringify(body);
       if (serialized.length > 102_400) {
@@ -417,23 +398,23 @@ export function extensionRoutes(storage: Storage) {
       }
 
       const written = await storage.metadata.setExtension(id, namespace, body);
-      return { item, extensions: written };
-    });
 
-    // The extensions map and the tags are one metadata row, and the four
-    // doors that write the other half of it publish. A subscriber cannot
-    // tell which door wrote the row, so emitting for one and not the other
-    // makes propagation depend on which the writer happened to use — and an
-    // app storing sidecar state here changed a record no second device was
-    // ever told about.
-    //
-    // Read the row back rather than composing the event from the extensions
-    // this call returned: the payload carries the whole metadata, and half
-    // of it is the half this door did not touch.
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata: await storage.metadata.get(id),
+      // The extensions map and the tags are one metadata row, and the four
+      // doors that write the other half of it publish. A subscriber cannot
+      // tell which door wrote the row, so emitting for one and not the other
+      // makes propagation depend on which the writer happened to use — and an
+      // app storing sidecar state here changed a record no second device was
+      // ever told about.
+      //
+      // Read the row back rather than composing the event from the extensions
+      // this call returned: the payload carries the whole metadata, and half
+      // of it is the half this door did not touch.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: await storage.metadata.get(id),
+      });
+      return { extensions: written };
     });
 
     void storage.audit.log({
@@ -457,10 +438,10 @@ export function extensionRoutes(storage: Storage) {
     const apiKey = c.get("apiKey");
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, extensions } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+    const { extensions } = await storage.runInTransaction(async () => {
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
       );
       // An extension is part of the item's row, so the item's type gate runs
@@ -475,31 +456,21 @@ export function extensionRoutes(storage: Storage) {
       } else {
         const isOwner = extensionLabelOf(apiKey) === namespace;
         if (!isOwner) {
-          const perm = resolveExtensionPermission(
-            namespace,
-            apiKey?.extension_permissions,
-            extensionLabelOf(apiKey),
-          );
-          if (perm !== "write") {
-            throw new MarfaError(
-              ErrorCode.FORBIDDEN,
-              `No write access to extension namespace "${namespace}"`,
-            );
-          }
+          checkExtensionPermission(apiKey, namespace, "write");
         }
       }
 
       const written = await storage.metadata.deleteExtension(id, namespace);
-      return { item, extensions: written };
-    });
 
-    // A removal is as observable as a write, and for the same reason as
-    // the replace door above: the namespace's absence from the payload is
-    // how a subscriber learns to drop its own copy.
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata: await storage.metadata.get(id),
+      // A removal is as observable as a write, and for the same reason as
+      // the replace door above: the namespace's absence from the payload is
+      // how a subscriber learns to drop its own copy.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: await storage.metadata.get(id),
+      });
+      return { extensions: written };
     });
 
     void storage.audit.log({

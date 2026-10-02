@@ -1,9 +1,9 @@
 import {
   ITEM_NOT_FOUND,
+  ITEM_NOT_FOUND_ON_WRITE,
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
-import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -16,28 +16,20 @@ import {
   isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
-  softDeleteState,
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type {
-  ApiKey,
-  Edge,
-  Item,
-  ItemState,
-  Metadata,
-} from "@withmarfa/shared";
+import type { ApiKey, Item, ItemState, Metadata } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { credentialIdempotencyKey } from "../middleware/idempotency.js";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
+  requireWritableRow,
   checkTypeAccess,
-  checkTypePermission,
   getTypeFilter,
   typeReader,
-  mayReadType,
   requireAuth,
   requireReadableRow,
   requireTypeAccess,
@@ -49,12 +41,10 @@ import type {
   ItemFilters,
   ItemSortField,
 } from "../storage/interface.js";
-import { writeItem } from "../storage/item-write.js";
+import { rowOf, writeItem } from "../storage/item-write.js";
 import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
-import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import { planCascadeDelete } from "../storage/edge-cascade.js";
-import { publish, publishEdge } from "../pubsub.js";
+import { publish } from "../pubsub.js";
 import {
   excludesSystemTypes,
   SYSTEM_INCLUDE_TOKEN,
@@ -67,13 +57,8 @@ import {
   groupAndCap,
   HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
-import { announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
-import {
-  assertFilterEdgeTermsReadable,
-  readableEdges,
-  sourceTypesFor,
-} from "./_edge-visibility.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
@@ -95,7 +80,6 @@ import {
   resolveStateFilter,
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
-import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
 import {
@@ -900,7 +884,7 @@ const updateItemRoute = createRoute({
           ]),
         },
       },
-      description: `${ITEM_NOT_FOUND} An inline edge naming an edge type that does not exist answers \`edge_type_not_found\`, and one naming a target that does not exist or whose type the caller may not read answers \`item_not_found\`, the two targets alike.`,
+      description: `${ITEM_NOT_FOUND_ON_WRITE} An inline edge naming an edge type that does not exist answers \`edge_type_not_found\`, and one naming a target that does not exist or whose type the caller may not read answers \`item_not_found\`, the two targets alike.`,
     },
     409: {
       content: {
@@ -933,11 +917,21 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: IdParam,
+    query: z.object({
+      version: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is.",
+        ),
+    }),
   },
   responses: {
     200: {
@@ -957,7 +951,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+        "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
     },
     401: {
       content: {
@@ -981,7 +975,14 @@ const deleteItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
+    },
+    409: {
+      content: {
+        "application/json": { schema: StaleVersionSchema },
+      },
+      description:
+        "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was trashed. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was trashed, retry.",
     },
   },
 });
@@ -1106,7 +1107,7 @@ const putMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1169,7 +1170,7 @@ const patchMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1234,7 +1235,7 @@ const addTagsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1287,7 +1288,7 @@ const removeTagRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1390,38 +1391,6 @@ async function acknowledgedItemBody(
 // Router
 // ---------------------------------------------------------------------------
 
-/**
- * A block refusal listing, and counting, only the blocking edges whose kind
- * and both ends the caller may read, so a hidden holder is never named.
- */
-async function withoutHiddenBlockers(
-  storage: Storage,
-  key: ApiKey,
-  err: unknown,
-): Promise<unknown> {
-  const details = err instanceof MarfaError ? err.details : undefined;
-  const blockers = (details as { blocking_edges?: Edge[] } | undefined)
-    ?.blocking_edges;
-  const root = (details as { root_item_id?: string } | undefined)?.root_item_id;
-  if (!(err instanceof MarfaError) || !blockers || !root) return err;
-  const readable = await readableEdges(storage, key, blockers);
-  const targets = await storage.items.getMany(
-    readable.map((edge) => edge.target_id),
-    { includeTrashed: true },
-  );
-  const listed = readable.filter((edge) => {
-    const target = targets.get(edge.target_id);
-    return target !== undefined && mayReadType(key, target.type);
-  });
-  return new MarfaError(
-    err.code,
-    listed.length === 0
-      ? `Cannot delete item ${root}: blocked by an edge with cascade_on_delete=block`
-      : `Cannot delete item ${root}: blocked by ${String(listed.length)} edge(s) with cascade_on_delete=block`,
-    { ...details, blocking_edges: listed },
-  );
-}
-
 export function itemRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -1458,38 +1427,49 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid occurred_at");
     }
     const key = requireAuth(c);
-    // Resolving the row, every rule the write must pass and the write itself
-    // happen in one transaction, against the row and type as they stand
-    // there. A natural key or a minted id that resolves a row is decided
-    // there too, so two sends of one key land on one row.
-    const result = await writeItem(
-      storage,
-      { kind: "credential", key },
-      {
-        op: "put",
-        door: "item",
-        type,
-        properties: body.properties,
-        ...(body.id !== undefined && { id: body.id }),
-        ...(body.state !== undefined && { state: body.state as ItemState }),
-        ...(body.tier !== undefined && { tier: body.tier }),
-        ...(body.occurred_at !== undefined && {
-          occurred_at: body.occurred_at,
-        }),
-        ...(body.source !== undefined && { source: body.source }),
-        ...(body.source_id !== undefined && { source_id: body.source_id }),
-        ...(body.version !== undefined && { version: body.version }),
-        ...(body.capture_latitude !== undefined && {
-          capture_latitude: body.capture_latitude,
-        }),
-        ...(body.capture_longitude !== undefined && {
-          capture_longitude: body.capture_longitude,
-        }),
-        ...(body.tags !== undefined && { tags: body.tags }),
-        ...(body.edges !== undefined && { edges: body.edges }),
-        blob_proof: requestBlobProof(c, storage),
-      },
-    );
+    // Resolving the row, every rule the write must pass, the write itself
+    // and its events happen in one transaction, against the row and type as
+    // they stand there. A natural key or a minted id that resolves a row is
+    // decided there too, so two sends of one key land on one row. What the
+    // answer reads is read inside it as well, so a write that committed is
+    // never answered with a failure.
+    const { result, hydrated } = await storage.runInTransaction(async () => {
+      const result = await writeItem(
+        storage,
+        { kind: "credential", key },
+        {
+          op: "put",
+          door: "item",
+          type,
+          properties: body.properties,
+          ...(body.id !== undefined && { id: body.id }),
+          ...(body.state !== undefined && { state: body.state as ItemState }),
+          ...(body.tier !== undefined && { tier: body.tier }),
+          ...(body.occurred_at !== undefined && {
+            occurred_at: body.occurred_at,
+          }),
+          ...(body.source !== undefined && { source: body.source }),
+          ...(body.source_id !== undefined && { source_id: body.source_id }),
+          ...(body.version !== undefined && { version: body.version }),
+          ...(body.capture_latitude !== undefined && {
+            capture_latitude: body.capture_latitude,
+          }),
+          ...(body.capture_longitude !== undefined && {
+            capture_longitude: body.capture_longitude,
+          }),
+          ...(body.tags !== undefined && { tags: body.tags }),
+          ...(body.edges !== undefined && { edges: body.edges }),
+          blob_proof: requestBlobProof(c, storage),
+        },
+      );
+      return {
+        result,
+        hydrated:
+          result.outcome === "updated"
+            ? await hydrateEdgesForItem(storage, key, result.item.id)
+            : undefined,
+      };
+    });
 
     switch (result.outcome) {
       case "unchanged":
@@ -1506,20 +1486,6 @@ export function itemRoutes(storage: Storage) {
         return c.json(result.conflict, 409);
       case "updated": {
         const { item: updatedItem, metadata: updatedMetadata } = result;
-        const hydratedExisting = await hydrateEdgesForItem(
-          storage,
-          key,
-          updatedItem.id,
-        );
-        await publish({
-          type: "updated",
-          item: updatedItem,
-          metadata: updatedMetadata,
-        });
-        // After the item: a subscriber cannot tell an edge written through
-        // an item from one written through `/edges`, so silence here would
-        // make propagation depend on which door the writer used.
-        if (result.edges) await announceInlineEdges(storage, result.edges);
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
           key_id: key.id,
@@ -1535,7 +1501,7 @@ export function itemRoutes(storage: Storage) {
         });
         return c.json(
           {
-            item: { ...updatedItem, edges: hydratedExisting },
+            item: { ...updatedItem, edges: hydrated ?? {} },
             metadata: readableMetadata(updatedMetadata, key),
           },
           200,
@@ -1567,18 +1533,6 @@ export function itemRoutes(storage: Storage) {
       ),
     };
 
-    await publish({
-      type: "created",
-      item,
-      metadata,
-    });
-    // The item's own edges, announced after the item itself so a
-    // subscriber that resolves an edge's endpoints has already been told
-    // the new one exists.
-    // Every one of them is the new item's own, written from it.
-    for (const edge of createdEdges) {
-      await publishEdge({ type: "edge_created", edge, sourceType: item.type });
-    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: key.id,
@@ -2038,31 +1992,41 @@ export function itemRoutes(storage: Storage) {
     const key = requireAuth(c);
     // A `type` that matches the row is the ordinary case and passes; one
     // that disagrees is refused unless `retype` asks to move the row, which
-    // needs write on the type entered as well as the one left.
-    const result = await writeItem(
-      storage,
-      { kind: "credential", key },
-      {
-        op: "update",
-        id,
-        ...(body.type !== undefined && { declared_type: body.type }),
-        ...(body.retype === true && { retype: true }),
-        ...(hasProperties && { properties: body.properties }),
-        ...(body.properties_mode !== undefined && {
-          properties_mode: body.properties_mode,
-        }),
-        ...(hasTier && { tier: body.tier }),
-        ...(hasOccurredAt && { occurred_at: body.occurred_at }),
-        ...(hasSourceId && { source_id: body.source_id }),
-        ...(hasEdges && { edges: body.edges }),
-        version: body.version,
-        ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
-        // The key that makes a re-executed write produce one keep-both
-        // sibling rather than two.
-        ...(idempotencyKey !== null && { idempotency_key: idempotencyKey }),
-        blob_proof: requestBlobProof(c, storage),
-      },
-    );
+    // needs write on the type entered as well as the one left. The edges the
+    // answer carries are read inside the write's transaction.
+    const { result, hydrated } = await storage.runInTransaction(async () => {
+      const result = await writeItem(
+        storage,
+        { kind: "credential", key },
+        {
+          op: "update",
+          id,
+          ...(body.type !== undefined && { declared_type: body.type }),
+          ...(body.retype === true && { retype: true }),
+          ...(hasProperties && { properties: body.properties }),
+          ...(body.properties_mode !== undefined && {
+            properties_mode: body.properties_mode,
+          }),
+          ...(hasTier && { tier: body.tier }),
+          ...(hasOccurredAt && { occurred_at: body.occurred_at }),
+          ...(hasSourceId && { source_id: body.source_id }),
+          ...(hasEdges && { edges: body.edges }),
+          version: body.version,
+          ...(conflictMode !== undefined && { conflict_mode: conflictMode }),
+          // The key that makes a re-executed write produce one keep-both
+          // sibling rather than two.
+          ...(idempotencyKey !== null && { idempotency_key: idempotencyKey }),
+          blob_proof: requestBlobProof(c, storage),
+        },
+      );
+      return {
+        result,
+        hydrated:
+          result.outcome === "updated"
+            ? await hydrateEdgesForItem(storage, key, id)
+            : undefined,
+      };
+    });
 
     if (result.outcome === "conflict" || result.outcome === "stale") {
       // Stamped here because this refusal is returned rather than thrown, so
@@ -2077,58 +2041,22 @@ export function itemRoutes(storage: Storage) {
     if (result.outcome !== "updated") {
       throw new Error(`PATCH /items/{id} answered ${result.outcome}`);
     }
-    const txResult = result.item;
-    const patchedEdgeChanges = result.edges;
-
     // Off the item before anything reads it. It describes what this write
-    // did, not what the row is, and the row has no such column — leaving it
-    // on would put a field in the published event, and in the response's
-    // `item`, that no read of the item ever returns.
-    const {
-      conflict_resolution: resolution,
-      conflict_sibling: sibling,
-      conflict_sibling_edges: siblingEdges,
-      ...resolvedItem
-    } = txResult;
+    // did, not what the row is, and the row has no such column.
+    const resolution = result.item.conflict_resolution;
+    const resolvedItem = rowOf(result.item);
 
-    const metadata = result.metadata;
-    // The sibling first, then the row that gave its value up. A subscriber
-    // then never observes a window in which the losing edit has left the
-    // original and does not yet exist anywhere — which is the state this
-    // whole feature exists to prevent.
-    if (sibling) {
-      await publish({
-        type: "created",
-        item: sibling,
-        metadata: await storage.metadata.get(sibling.id),
-      });
-      await announceInlineEdges(storage, {
-        created: siblingEdges ?? [],
-        deleted: [],
-      });
-    }
-    await publish({
-      type: "updated",
-      item: resolvedItem,
-      metadata,
-    });
-    // After the item, and after the transaction committed. Announcing
-    // from inside would describe edges a rollback then took away.
-    if (patchedEdgeChanges) {
-      await announceInlineEdges(storage, patchedEdgeChanges);
-    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "item.update",
       resource_type: "item",
       resource_id: id,
     });
-    const hydrated = await hydrateEdgesForItem(storage, requireAuth(c), id);
     return c.json(
       {
-        item: { ...resolvedItem, edges: hydrated },
-        metadata: readableMetadata(metadata, c.get("apiKey")),
+        item: { ...resolvedItem, edges: hydrated ?? {} },
+        metadata: readableMetadata(result.metadata, key),
         // Present only where the server actually resolved a collision. It is
         // the only thing that names the sibling: no route reports what a
         // write created, so without this the row exists and nothing can
@@ -2146,78 +2074,24 @@ export function itemRoutes(storage: Storage) {
     }
 
     const key = requireAuth(c);
-
-    const targetItem = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    // A misspelled `version` stripped by the validator would delete
+    // unconditionally, which is the act the parameter exists to guard.
+    refuseUnknownQueryParams(c.req.raw.url, deleteItemRoute.request.query);
+    const { version } = c.req.valid("query");
+    const result = await writeItem(
+      storage,
+      { kind: "credential", key },
+      { op: "delete", id, ...(version !== undefined && { version }) },
     );
-    requireTypeAccess(c, targetItem.type, "write");
-    const root = { id, type: targetItem.type };
-    // **No live-connection refusal on the named row, because the cascade
-    // below already covers it.** `planCascadeDelete` walks post-order and
-    // pushes the root itself, so `toDelete` always contains the row named in
-    // the URL and the loop inside the transaction asks the refusal of it like
-    // any other. A second call here would be a duplicate rather than a defense.
-    //
-    // The check itself stays where the cascade is, and has to: the type gate
-    // above ran against the named row alone, and a `parent-of` edge can carry
-    // a live `system.connection` out through a delete of something else
-    // entirely, when a grant's tokens must not outlive the row that names
-    // their owner (`_connection-refusal.ts`).
-    const snapshots = await storage.runInTransaction(async () => {
-      const toDelete = await planCascadeDelete(storage.edges, id).catch(
-        async (err: unknown) => {
-          throw await withoutHiddenBlockers(storage, key, err);
-        },
-      );
-      const snaps = await Promise.all(
-        toDelete.map((delId) => storage.items.get(delId)),
-      );
-      // **Every row the cascade reaches, not just the one named in the URL.**
-      // `parent-of` ships with `cascade_on_delete: "cascade"` and admits any
-      // type at either end, so a connection that deletes a row it wrote takes
-      // every child with it — including rows a live sibling wrote. Guarding
-      // the target alone would leave the rule one edge away from being
-      // void: the direct delete of a sibling's row refused while the same
-      // row goes through the cascade.
-      //
-      // Inside the transaction so a refusal rolls the whole plan back rather
-      // than leaving a partial cascade, and against the snapshots already
-      // read rather than a second round of reads.
-      // A `parent-of` edge from any row to a live grant would otherwise
-      // carry the grant out through the cascade with no refusal, from a
-      // credential that could not write it directly.
-      for (const snap of snaps) {
-        if (!snap) continue;
-        refuseUnlessUninstalled(snap, mayReadType(key, snap.type));
-      }
-      for (const delId of toDelete) {
-        await itemWrites(storage).delete(
-          delId,
-          delId === id ? undefined : root,
-        );
-      }
-      return snaps;
-    });
-
-    // Publish post-commit — a rollback must never leak a `deleted` event.
-    for (const snapshot of snapshots) {
-      if (snapshot) {
-        // A bounded lifecycle soft-deletes to `revoked`.
-        const state = softDeleteState(snapshot.type);
-        await publish({
-          type: "deleted",
-          item: { ...snapshot, state },
-          // The mark `storage.items.delete` records, on the same terms.
-          ...(snapshot.id !== id &&
-            state === "trashed" && { trashedWith: root }),
-        });
-      }
+    if (result.outcome === "stale") {
+      // Returned rather than thrown, so the error handler that sets this
+      // never runs.
+      c.header("X-Error-Code", result.conflict.error.code);
+      return c.json(result.conflict, 409);
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "item.delete",
       resource_type: "item",
       resource_id: id,
@@ -2262,10 +2136,10 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+    const { metadata } = await storage.runInTransaction(async () => {
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
@@ -2280,12 +2154,13 @@ export function itemRoutes(storage: Storage) {
       }
 
       const written = await storage.metadata.set(id, tags);
-      return { item, metadata: written };
-    });
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata,
+      // With the write, so the change and its event commit together.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: written,
+      });
+      return { metadata: written };
     });
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
@@ -2303,10 +2178,10 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+    const { metadata } = await storage.runInTransaction(async () => {
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
@@ -2339,14 +2214,15 @@ export function itemRoutes(storage: Storage) {
       // bound.
 
       const written = await storage.metadata.merge(id, tags);
-      return { item, metadata: written };
+      // With the write, so the change and its event commit together.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: written,
+      });
+      return { metadata: written };
     });
 
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata,
-    });
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
@@ -2363,10 +2239,10 @@ export function itemRoutes(storage: Storage) {
     const tags = body.tags;
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+    const { metadata } = await storage.runInTransaction(async () => {
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
@@ -2377,7 +2253,13 @@ export function itemRoutes(storage: Storage) {
       // computes it. See the sibling door above for why there is no
       // projection here.
       const written = await storage.metadata.addTags(id, tags);
-      return { item, metadata: written };
+      // With the write, so the change and its event commit together.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: written,
+      });
+      return { metadata: written };
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -2386,11 +2268,6 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
       details: { tags },
-    });
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata,
     });
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
@@ -2408,123 +2285,25 @@ export function itemRoutes(storage: Storage) {
     // unconditionally, which is the act the parameter exists to guard.
     refuseUnknownQueryParams(c.req.raw.url, purgeItemRoute.request.query);
     const { version } = c.req.valid("query");
-    // Including trashed, because purge follows trash; the message is the one
-    // `storage.items.purge` answers, so a hidden row and no row read alike.
-    const purgeTarget = requireReadableRow(
-      c,
-      await storage.items.getIncludingTrashed(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    const key = requireAuth(c);
+    // The key's type map is asked whatever state the row is in, and the
+    // version, where one is named, against the row inside the purge's own
+    // transaction: a check before it would let a write land between the two
+    // and be destroyed unseen.
+    const outcome = await writeItem(
+      storage,
+      { kind: "credential", key },
+      { op: "purge", id, ...(version !== undefined && { version }) },
     );
-    refuseUnlessUninstalled(purgeTarget);
-
-    // The key's type map is asked whatever state the row is in, as restore
-    // and the bulk purge ask it: a key that may only read a type destroys
-    // none of its rows, trashed or not.
-    //
-    // The reserved-namespace fence is asked only of a row not yet
-    // soft-deleted. There it names the real reason (no credential trashes a
-    // `system.*` row), where the state check below would read as an ordering
-    // mistake. A reserved row already soft-deleted got there by a cascade or
-    // an archive restore; no credential gets past the fence and the map both,
-    // so asking the fence would strand the row for good.
-    //
-    // The state is the type's own soft-deleted state, not the literal
-    // `trashed`: a `system.connection` ends `revoked`, and
-    // `storage.items.purge` gates on the same derived state.
-    if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
-      checkTypePermission(c.get("apiKey"), purgeTarget.type, "write");
-    } else {
-      checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
-    }
-
-    // **No provenance guard here**, and that is a finding rather than an
-    // omission: a row is refused or purged by the permission asked above and
-    // the type gate, and nothing marks a row as one writer's rather than
-    // another's. A guard here would be unreachable code no test could pin,
-    // which is worse than none because it reads as a protection somebody is
-    // relying on.
-    // Edges have no FK to items — explicit cleanup required before purge.
-    // Every edge the purge takes with it, announced individually. A
-    // subscriber holding a graph cannot infer these from the item's own
-    // removal: an edge pointing AT the purged item lives on another item,
-    // and nothing else tells that item's holder it lost a relationship.
-    //
-    // All three writes in one transaction. Edges are the only record that
-    // two items were related, so losing them while the row survives is not
-    // recoverable from anything the caller holds — and the caller was told
-    // the purge failed, so its own copy still has both. The wrapper the
-    // request already runs inside is not a rollback boundary: a handler
-    // that throws still commits, because the error is caught inside the
-    // composed chain and the transaction closes normally. A door that wants
-    // atomicity has to open its own.
-    // Read before the purge, which takes the mark with the row.
-    const trashedWith = (await storage.items.cascadeMarks([id])).get(id);
-    //
-    // The version is compared inside the same transaction, against the row
-    // re-read there: a check before it would let a write land between the
-    // two and be destroyed unseen.
-    const outcome = await storage.runInTransaction(async () => {
-      if (version !== undefined) {
-        const current = await storage.items.getIncludingTrashed(id);
-        if (current && current.version !== version) {
-          return staleVersion(current.version, current.properties, version, {
-            id: current.id,
-            tier: current.tier ?? "library",
-            occurred_at: current.occurred_at,
-            source_id: current.source_id ?? null,
-            type: current.type,
-          });
-        }
-      }
-      const removed = [
-        ...(await storage.edges.deleteBySource(id)),
-        ...(await storage.edges.deleteByTarget(id)),
-      ];
-      // Read before the purge takes the row: each announcement carries its
-      // source's type, and one of those sources is the row going now.
-      const sourceTypes = await sourceTypesFor(
-        storage,
-        removed.map((edge) => edge.source_id),
-      );
-      await itemWrites(storage).purge(id);
-      return { removed, sourceTypes };
-    });
-    if ("error" in outcome) {
+    if (outcome.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this
       // never runs.
-      c.header("X-Error-Code", outcome.error.code);
-      return c.json(outcome, 409);
+      c.header("X-Error-Code", outcome.conflict.error.code);
+      return c.json(outcome.conflict, 409);
     }
-    const cascaded = outcome.removed;
-    for (const edge of cascaded) {
-      await publishEdge({
-        type: "edge_deleted",
-        edge,
-        sourceType: outcome.sourceTypes.get(edge.source_id),
-        purgedWith: id,
-      });
-    }
-    // The item itself, which the cascade above does not cover. A trashed
-    // row announced `item.deleted`, which says recoverable; nothing else
-    // says the row has gone, and no later event can, because the row is
-    // absent rather than changed. Without this a client holding it would
-    // keep it until a full re-import, and one offline across the purge
-    // would never learn it happened.
-    //
-    // Last, mirroring the ordering a create states in reverse: an edge
-    // arrives behind the item it belongs to, so a removal puts the edges
-    // first and the row they hang off after them.
-    //
-    // The snapshot read before the purge, because there is nothing left to
-    // read afterwards.
-    await publish({
-      type: "purged",
-      item: purgeTarget,
-      ...(trashedWith && { trashedWith }),
-    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "item.purge",
       resource_type: "item",
       resource_id: id,
@@ -2546,17 +2325,23 @@ export function itemRoutes(storage: Storage) {
 
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
-    const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+    const { metadata } = await storage.runInTransaction(async () => {
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
       // The metadata layer reaches the same row the properties doors
       // guard, so it answers to the same row-level rule.
       const written = await storage.metadata.removeTag(id, tag);
-      return { item, metadata: written };
+      // With the write, so the change and its event commit together.
+      await publish({
+        type: "metadata_changed",
+        item: await itemAfterMetadataWrite(storage, item),
+        metadata: written,
+      });
+      return { metadata: written };
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -2565,11 +2350,6 @@ export function itemRoutes(storage: Storage) {
       resource_type: "item",
       resource_id: id,
       details: { tag },
-    });
-    await publish({
-      type: "metadata_changed",
-      item: await itemAfterMetadataWrite(storage, item),
-      metadata,
     });
     return c.json(
       { metadata: readableMetadata(metadata, c.get("apiKey")) },
