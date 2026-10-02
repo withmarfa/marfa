@@ -15,6 +15,7 @@ import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { PERMISSIONS } from "@withmarfa/shared";
 import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
+import { purgeBlob } from "../housekeeping/blob-delete.js";
 
 let ctx: TestContext;
 
@@ -637,6 +638,73 @@ describe("POST /admin/restore-archive", () => {
     // At least the blob uploaded above, which the export carries.
     expect(data.blobs_imported).toBeGreaterThanOrEqual(1);
     expect(readdirSync(ctx.blobs.disk.spoolDir)).toEqual([]);
+  });
+});
+
+describe("POST /admin/restore-archive against the orphan sweep", () => {
+  it("keeps bytes it found already stored when a purge is due for them", async () => {
+    // The restore finds the bytes on disk, keeps them rather than its own
+    // copy, and registers its rows a moment later. A purge landing between
+    // the two would delete the bytes the restore then registers.
+    const blob = makeBlobData(
+      `restored over a due purge ${String(Date.now())}`,
+    );
+    const uploaded = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.workingKey}`,
+        "Content-Type": "text/plain",
+      },
+      body: blob.data,
+    });
+    expect(uploaded.status).toBe(201);
+    await ctx.storage.runInTransaction(() =>
+      ctx.storage.blobs.retainOrphans([blob.hash], "2026-01-01T00:00:00.000Z"),
+    );
+    const due = {
+      before: "2026-01-02T00:00:00.000Z",
+      runStartedAt: "2026-01-02T00:00:00.000Z",
+    };
+
+    const disk = ctx.blobs.disk;
+    const has = disk.has.bind(disk);
+    let checked = false;
+    disk.has = async (hash) => {
+      if (hash === blob.hash) checked = true;
+      return has(hash);
+    };
+    const storage = ctx.storage;
+    const runInTransaction = storage.runInTransaction.bind(storage);
+    let purging: Promise<boolean> | undefined;
+    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
+      if (checked && !purging) {
+        purging = purgeBlob(storage, ctx.blobs, blob.hash, due);
+        // Long enough for the purge to finish when nothing holds it back.
+        await Promise.race([
+          purging,
+          new Promise((resolve) => setTimeout(resolve, 200)),
+        ]);
+      }
+      return runInTransaction(fn);
+    };
+    let res: Response;
+    try {
+      res = await postArchive(
+        await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
+      );
+    } finally {
+      disk.has = has;
+      storage.runInTransaction = runInTransaction;
+    }
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(purging).toBeDefined();
+    expect(await purging).toBe(false);
+    expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
+    expect(await disk.has(blob.hash)).not.toBeNull();
+    const served = await ctx.app.request(`/blobs/${blob.hash}`, {
+      headers: { Authorization: `Bearer ${ctx.operatorKey}` },
+    });
+    expect(served.status).toBe(200);
   });
 });
 
