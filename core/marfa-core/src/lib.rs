@@ -2319,7 +2319,7 @@ mod tests {
             (include_str!("sse.rs"), others),
             (include_str!("store.rs"), others),
             (include_str!("wire.rs"), others),
-            (include_str!("folder/mod.rs"), others),
+            (include_str!("folder/mod.rs"), &["working"][..]),
             (include_str!("folder/document.rs"), others),
             (include_str!("folder/identity.rs"), others),
             (include_str!("folder/settings.rs"), others),

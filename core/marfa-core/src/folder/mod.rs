@@ -200,7 +200,7 @@ impl Folder {
 
     fn bind(root: PathBuf, folder: &str, server: Server) -> Result<Folder> {
         let state = root.join(STATE_DIR);
-        let core = Core::open(state.join("core.sqlite"), Some(server))?;
+        let core = working(Core::open(state.join("core.sqlite"), Some(server))?)?;
         if let Some(bound) = settings_file::bound(&core)?
             && bound != folder
         {
@@ -256,17 +256,11 @@ impl Folder {
     pub fn open(root: impl AsRef<Path>, server: Option<Server>) -> Result<Folder> {
         let root = root.as_ref().to_path_buf();
         let state = root.join(STATE_DIR);
-        let not_a_folder = || {
-            CoreError::Invalid(format!(
-                "{} is not a folder; `folders add` makes one",
-                root.display()
-            ))
-        };
         if !state.join("core.sqlite").exists() {
-            return Err(not_a_folder());
+            return Err(not_a_folder(&root));
         }
-        let core = Core::open(state.join("core.sqlite"), server)?;
-        let folder = settings_file::bound(&core)?.ok_or_else(not_a_folder)?;
+        let core = working(Core::open(state.join("core.sqlite"), server)?)?;
+        let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
         let opened = Folder {
             root,
             folder,
@@ -282,6 +276,27 @@ impl Folder {
             let _ = opened.register();
         }
         Ok(opened)
+    }
+
+    /// Reads the store without claiming it, so it answers beside a running
+    /// watch and never keeps one from starting.
+    pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
+        let root = root.as_ref().to_path_buf();
+        let state = root.join(STATE_DIR);
+        if !state.join("core.sqlite").exists() {
+            return Err(not_a_folder(&root));
+        }
+        let core = Core::open_reader(state.join("core.sqlite"))?;
+        let folder = settings_file::bound(&core)?.ok_or_else(|| not_a_folder(&root))?;
+        Folder {
+            root,
+            folder,
+            core,
+            key: std::sync::Mutex::new(None),
+            permissions: std::sync::OnceLock::new(),
+            store_mark: store_mark(&state),
+        }
+        .status()
     }
 
     /// Answers whether the directory was listed.
@@ -315,14 +330,8 @@ impl Folder {
         }
     }
 
-    /// Leaves the folder's files; refused while it is held or writes wait.
+    /// Leaves the folder's files; refused while writes wait.
     pub fn remove(self) -> Result<()> {
-        if self.core.handle() != crate::Handle::Writer {
-            return Err(CoreError::Invalid(format!(
-                "{} is held by another process, a `folders watch` say; stop it and remove the folder then",
-                self.root.display()
-            )));
-        }
         let waiting = self
             .core
             .queue()?
@@ -418,7 +427,6 @@ impl Folder {
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
-        self.core.lock.refuse_unless_writer()?;
         let fetched = self.core.http()?.catalog()?;
         crate::store::replace_catalog(&*self.core.conn()?, &fetched)?;
         let edge_types = EdgeTypes::load(&*self.core.conn()?)?;
@@ -496,6 +504,21 @@ impl Folder {
             && !in_package(&self.root, path)
             && !in_nested_folder(&self.root, path)
     }
+}
+
+fn not_a_folder(root: &Path) -> CoreError {
+    CoreError::Invalid(format!(
+        "{} is not a folder; `folders add` makes one",
+        root.display()
+    ))
+}
+
+/// One process works a folder at a time: every working path starts from a
+/// `Folder` this makes, so a second opener is refused before it reads or
+/// writes a file, a binding or the server.
+fn working(core: Core) -> Result<Core> {
+    core.lock.refuse_unless_writer()?;
+    Ok(core)
 }
 
 fn in_nested_folder(root: &Path, relative: &str) -> bool {
@@ -4055,5 +4078,27 @@ fn safe_name(title: &str) -> String {
         "untitled".into()
     } else {
         trimmed.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_another_process_holds_is_refused_before_it_is_worked() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let holder = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&holder, "01a00000-0000-7000-8000-000000000001").unwrap();
+        assert!(
+            matches!(
+                Folder::open(dir.path(), None),
+                Err(CoreError::ReadingHandle)
+            ),
+            "a second opener was handed a folder to work beside the one holding it"
+        );
+        assert!(working(holder).is_ok());
     }
 }

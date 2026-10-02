@@ -147,7 +147,7 @@ pub fn run(command: FoldersCommand, named: &Named, json: bool) -> Result<(), Cli
             )
         }
         FoldersCommand::Status { dir } => {
-            let report = Folder::open(&dir, None)?.status()?;
+            let report = Folder::status_of(&dir)?;
             output::report(&report, json, || describe_status(&report))
         }
         FoldersCommand::Confirm { dir } => {

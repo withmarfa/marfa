@@ -73,8 +73,8 @@ impl FileStatus {
 }
 
 impl Folder {
-    /// Writes nothing, so a reading handle beside a running watch answers it.
-    pub fn status(&self) -> Result<StatusReport> {
+    /// Writes nothing, so a store opened without holding it answers it.
+    pub(super) fn status(&self) -> Result<StatusReport> {
         self.refuse_if_gone()?;
         let settings = self.settings()?;
         let (catalog, edge_types) = {

@@ -15116,13 +15116,70 @@ describe("folders on one Mac", () => {
         "a folder was removed from under its running watch",
       ).toBe(false);
       if (refused.ok) return;
-      expect(refused.refusal.raw).toContain("folders watch");
+      expect(refused.refusal.code).toBe("reading_handle");
       expect(existsSync(join(harness.dir, ".marfa"))).toBe(true);
     } finally {
       await watch.stop();
     }
     const removed = await harness.folder.remove();
     expect(removed.ok, JSON.stringify(removed)).toBe(true);
+  });
+
+  it("lets one process work a folder at a time, and answers its status beside it", async () => {
+    harness = await folderHarness("one-worker", {
+      rows: {
+        "core.note": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-00000000f0a1",
+              properties: { title: "Kept", body: "as it was\n" },
+            },
+          },
+        ],
+      },
+    });
+    scriptFolderWrites(harness);
+    const watch = harness.folder.watch();
+    try {
+      await vi.waitFor(
+        () => {
+          expect(existsSync(join(harness!.dir, "Kept.md"))).toBe(true);
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      for (const [name, run] of [
+        ["pull", () => harness!.folder.pull()],
+        ["scan", () => harness!.folder.scan()],
+        ["push", () => harness!.folder.push()],
+        ["confirm", () => harness!.folder.confirm()],
+      ] as const) {
+        const refused = await run();
+        expect(
+          refused.ok,
+          `a ${name} worked the folder beside its running watch`,
+        ).toBe(false);
+        if (refused.ok) continue;
+        expect(refused.refusal.code, refused.refusal.raw).toBe(
+          "reading_handle",
+        );
+      }
+      const another = harness.folder.watch();
+      await vi.waitFor(() => {
+        expect(another.running(), "a second watch ran beside the first").toBe(
+          false,
+        );
+      });
+      expect(another.stderr).toContain("reading handle");
+      // Status writes nothing, so it answers beside the watch.
+      const status = await harness.folder.status();
+      expect(status.ok, JSON.stringify(status)).toBe(true);
+      expect(watch.running(), watch.stderr).toBe(true);
+    } finally {
+      await watch.stop();
+    }
+    // The witness: alone, the same pull works the folder.
+    const pulled = await harness.folder.pull();
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
   });
 
   it("lists a folder reached through a symlink once, and never as another", async () => {
