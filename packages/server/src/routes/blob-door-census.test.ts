@@ -268,6 +268,7 @@ describe("every blob door is held to the credential's reach", () => {
           res.headers.get("Content-Security-Policy"),
           `${verb} ${door}`,
         ).toBe("sandbox; default-src 'none'");
+        // Sent on every answer by the app's security headers, not the door.
         expect(
           res.headers.get("X-Content-Type-Options"),
           `${verb} ${door}`,

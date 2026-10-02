@@ -249,8 +249,9 @@ const UNIVERSAL_RESPONSE_HEADERS = [CONTRACT_HEADER, "X-Request-ID"];
 
 /**
  * Every header an answer carries that a browser hides from a page on another
- * origin unless CORS exposes it: the chain's, the blob doors' own, and the
- * export's file name. None is on the safelist, and a client that cannot see
+ * origin unless CORS exposes it: the chain's, the blob doors' own (their
+ * range, validator, disposition and sandbox policy), and the export's file
+ * name. None is on the safelist, and a client that cannot see
  * `X-Marfa-Contract` refuses every success it is sent. `app.cors.test.ts`
  * holds this to every header the document declares.
  */
@@ -260,6 +261,7 @@ export const EXPOSED_RESPONSE_HEADERS: readonly string[] = [
   "Content-Range",
   "ETag",
   "Content-Disposition",
+  "Content-Security-Policy",
 ];
 
 /** Headers the rate limiter sets on every response that passes through it. */

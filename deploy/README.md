@@ -24,6 +24,8 @@ The six the server reads for its object store are the six the sidecar reads, fro
 | `SQLITE_PATH`          | the server, Litestream (`/data/marfa.db` in the image)                                                                           |
 | `BLOB_PATH`            | the server (`/data/blobs` in the image)                                                                                          |
 
+**The bucket must be on a different site from the instance.** A blob link the object store signs serves the bytes from the bucket's own host, as a download of the blob's recorded type, but a signed link cannot carry the sandbox policy or `nosniff` the instance's own blob answers do (`conformance/spec/blobs.md` 25). Its safety rests on that host being another site: an endpoint under the instance's own domain (say the instance at `marfa.example.com` and the bucket at `files.example.com`) would let an uploaded HTML or SVG blob run as a page of the same site if a browser rendered it.
+
 Plus what any instance needs: `API_KEY_SALT` and `MARFA_AUTH_SECRET`, which the image's `NODE_ENV=production` makes the server refuse to boot without, `MARFA_AUTH_BASE_URL`, and `PORT` when `8600` is not wanted. `.env.example` at the repository root carries the rest by name; values live in the deployment's own secret store, never in a file here.
 
 ## Building and running

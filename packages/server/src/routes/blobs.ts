@@ -111,10 +111,6 @@ const BYTES_HEADERS = {
       "Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded.",
     schema: { type: "string" as const },
   },
-  "X-Content-Type-Options": {
-    description: "Always `nosniff`.",
-    schema: { type: "string" as const },
-  },
   "Accept-Ranges": {
     description: "Always `bytes`: one range of a blob can be asked for.",
     schema: { type: "string" as const },
@@ -644,7 +640,6 @@ export function blobRoutes(
       "Content-Type": record.mime_type,
       "Content-Disposition": blobDisposition(hash),
       "Content-Security-Policy": BLOB_CONTENT_SECURITY_POLICY,
-      "X-Content-Type-Options": "nosniff",
       "Accept-Ranges": "bytes",
       ETag: `"${hash}"`,
     };

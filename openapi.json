@@ -19209,12 +19209,6 @@
                   "type": "string"
                 }
               },
-              "X-Content-Type-Options": {
-                "description": "Always `nosniff`.",
-                "schema": {
-                  "type": "string"
-                }
-              },
               "Accept-Ranges": {
                 "description": "Always `bytes`: one range of a blob can be asked for.",
                 "schema": {
@@ -19263,12 +19257,6 @@
               },
               "Content-Security-Policy": {
                 "description": "Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded.",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Content-Type-Options": {
-                "description": "Always `nosniff`.",
                 "schema": {
                   "type": "string"
                 }

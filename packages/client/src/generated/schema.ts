@@ -9752,8 +9752,6 @@ export interface operations {
                     "Content-Disposition"?: string;
                     /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
                     "Content-Security-Policy"?: string;
-                    /** @description Always `nosniff`. */
-                    "X-Content-Type-Options"?: string;
                     /** @description Always `bytes`: one range of a blob can be asked for. */
                     "Accept-Ranges"?: string;
                     /** @description The blob's content hash, so a cached copy is validated by the name it was fetched under. */
@@ -9776,8 +9774,6 @@ export interface operations {
                     "Content-Disposition"?: string;
                     /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
                     "Content-Security-Policy"?: string;
-                    /** @description Always `nosniff`. */
-                    "X-Content-Type-Options"?: string;
                     /** @description Always `bytes`: one range of a blob can be asked for. */
                     "Accept-Ranges"?: string;
                     /** @description The blob's content hash, so a cached copy is validated by the name it was fetched under. */
