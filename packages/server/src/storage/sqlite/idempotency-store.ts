@@ -14,6 +14,7 @@ type Row = typeof idempotencyRecords.$inferSelect;
 function toRecord(row: Row): IdempotencyRecord {
   return {
     id: row.id,
+    credential: row.credential,
     idempotency_key: row.idempotency_key,
     fingerprint: row.fingerprint,
     state: row.state as IdempotencyRecordState,
@@ -34,6 +35,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
       .insert(idempotencyRecords)
       .values({
         id: input.id,
+        credential: input.credential,
         idempotency_key: input.idempotency_key,
         fingerprint: input.fingerprint,
         state: "in_flight",
@@ -44,7 +46,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
       .all();
     if (inserted.length > 0) return { claimed: true };
 
-    const held = await this.find(input.idempotency_key);
+    const held = await this.find(input.credential, input.idempotency_key);
     // The INSERT lost and the winner is already gone: a `release()` after
     // a 5xx, or the retention sweep, landing between the two statements.
     // Nobody holds the key and nobody is coming to complete it, and this
@@ -155,11 +157,19 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
     return rows.length;
   }
 
-  private async find(key: string): Promise<IdempotencyRecord | null> {
+  private async find(
+    credential: string,
+    key: string,
+  ): Promise<IdempotencyRecord | null> {
     const rows = await this.db
       .select()
       .from(idempotencyRecords)
-      .where(eq(idempotencyRecords.idempotency_key, key))
+      .where(
+        and(
+          eq(idempotencyRecords.credential, credential),
+          eq(idempotencyRecords.idempotency_key, key),
+        ),
+      )
       .all();
     const row = rows[0];
     return row ? toRecord(row) : null;

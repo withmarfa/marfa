@@ -33,34 +33,6 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
   constructor(private db: DrizzleDb) {}
 
   async create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow> {
-    if (input.idempotency_key) {
-      // SQLite supports ON CONFLICT … DO UPDATE … RETURNING; on conflict
-      // we set a no-op so RETURNING surfaces the existing row.
-      const rows = await this.db
-        .insert(bulkActionJobs)
-        .values({
-          id: input.id,
-          api_key_id: input.api_key_id,
-          status: "queued",
-          action: input.action,
-          input: input.input,
-          matched_ids: input.matched_ids,
-          matched_count: input.matched_count,
-          idempotency_key: input.idempotency_key,
-          created_at: input.created_at,
-        })
-        .onConflictDoUpdate({
-          target: [bulkActionJobs.idempotency_key],
-          targetWhere: sql`idempotency_key IS NOT NULL`,
-          set: { id: sql`bulk_action_jobs.id` },
-        })
-        .returning()
-        .all();
-      const row = rows[0];
-      if (!row) throw new Error("bulk_action_jobs INSERT returned no row");
-      return rowToJob(row);
-    }
-
     const rows = await this.db
       .insert(bulkActionJobs)
       .values({
@@ -71,7 +43,6 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
         input: input.input,
         matched_ids: input.matched_ids,
         matched_count: input.matched_count,
-        idempotency_key: null,
         created_at: input.created_at,
       })
       .returning()
@@ -241,7 +212,6 @@ function rowToJob(row: typeof bulkActionJobs.$inferSelect): BulkActionJobRow {
     error: row.error,
     worker_id: row.worker_id,
     worker_heartbeat_at: row.worker_heartbeat_at,
-    idempotency_key: row.idempotency_key,
     created_at: row.created_at,
     started_at: row.started_at,
     finished_at: row.finished_at,

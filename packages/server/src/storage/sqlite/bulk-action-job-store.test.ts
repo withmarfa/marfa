@@ -31,7 +31,6 @@ async function inProgressJob(
     input: JSON.stringify({ action: "transition", state: "archived" }),
     matched_ids: JSON.stringify(["a"]),
     matched_count: 1,
-    idempotency_key: null,
     created_at: at(0),
   });
   const claimed = await jobs.claimNext("worker", at(1));

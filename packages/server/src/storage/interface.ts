@@ -573,7 +573,8 @@ export interface ConflictResolutionInput {
   /** Absent means `manual`: the envelope. */
   conflict_mode?: ConflictMode;
   /**
-   * The caller's `Idempotency-Key`, when it sent one. Only used to derive the
+   * The caller's `Idempotency-Key` within its credential, when it sent one,
+   * from `credentialIdempotencyKey`. Only used to derive the
    * id of a keep-both sibling, so that a write which runs twice writes one.
    * Absent, the sibling gets a fresh id and a genuine re-execution duplicates
    * it — which is the honest outcome, since without a key the server has no
@@ -2141,6 +2142,8 @@ export type IdempotencyRecordState = "in_flight" | "complete";
 
 export interface IdempotencyRecord {
   id: string;
+  /** The credential the key belongs to; see `ClaimIdempotencyKeyInput`. */
+  credential: string;
   idempotency_key: string;
   fingerprint: string;
   state: IdempotencyRecordState;
@@ -2154,6 +2157,12 @@ export interface IdempotencyRecord {
 
 export interface ClaimIdempotencyKeyInput {
   id: string;
+  /**
+   * The credential that sent the key: a key's id, or for a signed-in app its
+   * grant. A key is unique only within it, so two credentials choosing the
+   * same key never meet.
+   */
+  credential: string;
   idempotency_key: string;
   fingerprint: string;
   created_at: string;
@@ -2656,7 +2665,6 @@ export interface BulkActionJobRow {
   error: string | null;
   worker_id: string | null;
   worker_heartbeat_at: string | null;
-  idempotency_key: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -2669,7 +2677,6 @@ export interface CreateBulkActionJobInput {
   input: string;
   matched_ids: string;
   matched_count: number;
-  idempotency_key: string | null;
   created_at: string;
 }
 
@@ -2680,13 +2687,7 @@ export interface BulkActionJobProgress {
 }
 
 export interface BulkActionJobStore {
-  /**
-   * INSERT a fresh row in `queued` state. When `idempotency_key` is set
-   * and a row with the same `idempotency_key` already
-   * exists, returns that existing row instead of creating a new one
-   * — the `ON CONFLICT` happens at the unique-index level so this is a
-   * race-safe replay path.
-   */
+  /** INSERT a fresh row in `queued` state. */
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
   /** Fetch by id. The store returns the row regardless of caller; the route
    *  handler enforces auth: the credential that created the job, or the

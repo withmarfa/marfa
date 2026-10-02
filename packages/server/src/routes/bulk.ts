@@ -1679,7 +1679,6 @@ export function bulkRoutes(storage: Storage) {
     // 202. `enable_fanout` is never read here for that reason — it travels
     // to the worker inside the stored input, which is the request body
     // verbatim.
-    const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const apiKeyId = c.get("apiKey")?.id ?? null;
     const job = await storage.bulkActionJobs.create({
       id: generateId(),
@@ -1688,7 +1687,6 @@ export function bulkRoutes(storage: Storage) {
       input: JSON.stringify(body),
       matched_ids: JSON.stringify(matched.map((i) => i.id)),
       matched_count: matched.length,
-      idempotency_key: idempotencyKey,
       created_at: new Date().toISOString(),
     });
     // Wake the worker rather than leaving the job to be found by the idle
@@ -1704,10 +1702,6 @@ export function bulkRoutes(storage: Storage) {
         sub_action: action,
         matched: matched.length,
         job_id: job.id,
-        idempotency_replay: !!(
-          idempotencyKey &&
-          job.created_at < new Date(Date.now() - 1000).toISOString()
-        ),
       },
     });
 

@@ -34,6 +34,7 @@ async function seed(opts: { key: string; ageHours: number }): Promise<string> {
   const id = generateId();
   const claim = await ctx.storage.idempotency.claim({
     id,
+    credential: "cred",
     idempotency_key: opts.key,
     fingerprint: "f",
     created_at: new Date(Date.now() - opts.ageHours * HOUR).toISOString(),
@@ -56,6 +57,7 @@ describe("cleanup", () => {
     // would satisfy a one-sided assertion.
     const oldClaim = await ctx.storage.idempotency.claim({
       id: generateId(),
+      credential: "cred",
       idempotency_key: old,
       fingerprint: "f",
       created_at: new Date().toISOString(),
@@ -64,6 +66,7 @@ describe("cleanup", () => {
 
     const freshClaim = await ctx.storage.idempotency.claim({
       id: generateId(),
+      credential: "cred",
       idempotency_key: fresh,
       fingerprint: "f",
       created_at: new Date().toISOString(),
@@ -77,6 +80,7 @@ describe("claim", () => {
     const key = `claimed-${generateId()}`;
     const first = await ctx.storage.idempotency.claim({
       id: generateId(),
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "one",
       created_at: new Date().toISOString(),
@@ -85,6 +89,7 @@ describe("claim", () => {
 
     const second = await ctx.storage.idempotency.claim({
       id: generateId(),
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "two",
       created_at: new Date().toISOString(),
@@ -100,6 +105,25 @@ describe("claim", () => {
     expect(second.held.state).toBe("in_flight");
   });
 
+  it("holds one key apart for two credentials", async () => {
+    const key = `shared-${generateId()}`;
+    const claimAs = (credential: string) =>
+      ctx.storage.idempotency.claim({
+        id: generateId(),
+        credential,
+        idempotency_key: key,
+        fingerprint: credential,
+        created_at: new Date().toISOString(),
+      });
+    expect((await claimAs("cred-a")).claimed).toBe(true);
+    expect((await claimAs("cred-b")).claimed).toBe(true);
+    // The witness: within one credential the key is still held.
+    const again = await claimAs("cred-a");
+    expect(again.claimed).toBe(false);
+    if (again.claimed || again.held === null) throw new Error("unreachable");
+    expect(again.held.fingerprint).toBe("cred-a");
+  });
+
   it("admits exactly one takeover of an abandoned claim", async () => {
     // The compare-and-swap under the lease. Two callers meeting one
     // abandoned claim read the same `created_at`; only the first UPDATE
@@ -109,6 +133,7 @@ describe("claim", () => {
     const id = generateId();
     await ctx.storage.idempotency.claim({
       id,
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "dead",
       created_at: heldSince,
@@ -152,6 +177,7 @@ describe("claim", () => {
     const holderSince = new Date().toISOString();
     const first = await ctx.storage.idempotency.claim({
       id: holderId,
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "one",
       created_at: holderSince,
@@ -160,14 +186,14 @@ describe("claim", () => {
 
     const store = ctx.storage.idempotency;
     const seam = store as unknown as {
-      find(key: string): Promise<IdempotencyRecord | null>;
+      find(credential: string, key: string): Promise<IdempotencyRecord | null>;
     };
     const realFind = seam.find.bind(store);
     let released = false;
-    seam.find = async (k) => {
+    seam.find = async (credential, k) => {
       await store.release(holderId, holderSince);
       released = true;
-      return realFind(k);
+      return realFind(credential, k);
     };
 
     const secondId = generateId();
@@ -175,6 +201,7 @@ describe("claim", () => {
     try {
       second = await store.claim({
         id: secondId,
+        credential: "cred",
         idempotency_key: key,
         fingerprint: "two",
         created_at: new Date().toISOString(),
@@ -218,6 +245,7 @@ describe("claim", () => {
     const heldSince = new Date().toISOString();
     await ctx.storage.idempotency.claim({
       id,
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "f",
       created_at: heldSince,
@@ -250,6 +278,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     const staleSince = new Date(Date.now() - 10 * 60_000).toISOString();
     await ctx.storage.idempotency.claim({
       id,
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "slow-writer",
       created_at: staleSince,
@@ -283,6 +312,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     // asserted by asking the store rather than by trusting the boolean.
     const probe = await ctx.storage.idempotency.claim({
       id: generateId(),
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "third-arrival",
       created_at: new Date().toISOString(),
@@ -320,6 +350,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
     // carrying none of the displaced writer's body.
     const probe = await ctx.storage.idempotency.claim({
       id: generateId(),
+      credential: "cred",
       idempotency_key: key,
       fingerprint: "third-arrival",
       created_at: new Date().toISOString(),

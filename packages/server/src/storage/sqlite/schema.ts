@@ -594,7 +594,6 @@ export const bulkActionJobs = sqliteTable(
     error: text("error"),
     worker_id: text("worker_id"),
     worker_heartbeat_at: text("worker_heartbeat_at"),
-    idempotency_key: text("idempotency_key"),
     created_at: text("created_at").notNull(),
     started_at: text("started_at"),
     finished_at: text("finished_at"),
@@ -602,9 +601,6 @@ export const bulkActionJobs = sqliteTable(
   (table) => [
     index("idx_bulk_action_jobs_status").on(table.status),
     index("idx_bulk_action_jobs_gc").on(table.status, table.finished_at),
-    uniqueIndex("idx_bulk_action_jobs_idempotency")
-      .on(table.idempotency_key)
-      .where(sql`idempotency_key IS NOT NULL`),
   ],
 );
 
@@ -1055,10 +1051,14 @@ export const enrichmentState = sqliteTable("enrichment_state", {
  * a collision, a version conflict or a missing row depending on the verb,
  * and none of those is the question a retry is asking.
  *
+ * A key belongs to the credential that sent it, named by `credential`: a
+ * key's id, or for a signed-in app its grant, so every token of the grant
+ * shares one keyspace and two credentials never share one.
+ *
  * `fingerprint` is what makes a repeat a repeat: a digest of the method,
- * path, query, body and calling credential. A key arriving with a different
- * one is refused rather than served, because serving it would silently drop
- * a write the caller believes it made.
+ * path, query and body. A key arriving with a different one is refused
+ * rather than served, because serving it would silently drop a write the
+ * caller believes it made.
  *
  * Rows age out on the event-log retention sweep rather than through a
  * sweeper of their own, which is also what bounds how long a client may
@@ -1068,6 +1068,7 @@ export const idempotencyRecords = sqliteTable(
   "idempotency_records",
   {
     id: text("id").primaryKey(),
+    credential: text("credential").notNull(),
     idempotency_key: text("idempotency_key").notNull(),
     fingerprint: text("fingerprint").notNull(),
     /** `in_flight` while the write runs, `complete` once it answered. */
@@ -1080,7 +1081,10 @@ export const idempotencyRecords = sqliteTable(
     completed_at: text("completed_at"),
   },
   (table) => [
-    uniqueIndex("idx_idempotency_records_key").on(table.idempotency_key),
+    uniqueIndex("idx_idempotency_records_key").on(
+      table.credential,
+      table.idempotency_key,
+    ),
     // Serves the retention sweep, which is a range over `created_at`.
     index("idx_idempotency_records_gc").on(table.created_at),
   ],

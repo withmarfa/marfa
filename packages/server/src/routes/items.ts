@@ -39,6 +39,7 @@ import {
   resolveIncomingProperties,
 } from "../storage/merge-properties.js";
 import { log } from "../middleware/logger.js";
+import { credentialIdempotencyKey } from "../middleware/idempotency.js";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
@@ -2459,10 +2460,10 @@ export function itemRoutes(storage: Storage) {
 
     const body = c.req.valid("json");
     const { conflict: conflictMode } = c.req.valid("query");
-    // The same header the replay cache in front of this route claims. Read
-    // here so a keep-both sibling can be given an id derived from it, which
-    // is what makes a re-executed write produce one sibling rather than two.
-    const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
+    // The key the replay cache in front of this route claims, as this
+    // credential's own, so a keep-both sibling can be given an id derived
+    // from it: a re-executed write then produces one sibling rather than two.
+    const idempotencyKey = credentialIdempotencyKey(c);
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
     const hasEdges =
