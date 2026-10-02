@@ -8,7 +8,7 @@
  * inline edges. A rule asked before the transaction opened is advisory: a
  * retype, a type change or a trash landing in between is exactly what it
  * exists to notice. `item-write-census.test.ts` fails on a module that
- * writes an item row any other way.
+ * writes an item row any other way, outside the exceptions it names.
  *
  * The doors keep what is theirs: parsing the request, rendering the answer,
  * and announcing what committed.
@@ -654,6 +654,22 @@ async function put(
           throw idReused(row, write.type);
         }
         requireDeclaredTypeMatches(write.type, row);
+      }
+      // The id finds a row whatever source wrote it, and a natural key is
+      // its source's: an entry moves one only under the source it is
+      // written under, or it takes the row from the key its own connector
+      // syncs it by.
+      if (
+        matchedBy === "id" &&
+        write.source_id !== undefined &&
+        write.source_id !== (row.source_id ?? undefined) &&
+        row.source !== source
+      ) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `This entry is written under the source "${source ?? "(none)"}" and may not move a natural key under the source "${row.source}".`,
+          { source: row.source },
+        );
       }
       // A re-sync naming no tier leaves the row's tier where it is: the
       // person may have moved it since the connector last wrote it.

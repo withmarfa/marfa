@@ -567,14 +567,16 @@ function judgeResult(
   if (!getTypeSchema(resultingType)) return;
   const validation = validateProperties(resultingType, result);
   if (validation.success) return;
-  const moving = resultingType !== rowType;
+  // The fields named in the message as well as in `details`: a bulk action
+  // reports a row's refusal by its code and message alone.
+  const detail = validation.errors
+    .map((e) => `${e.field}: ${e.message}`)
+    .join("; ");
   throw new MarfaError(
     ErrorCode.INVALID_PROPERTIES,
-    moving
-      ? `Cannot move item to "${resultingType}": ${validation.errors
-          .map((e) => `${e.field}: ${e.message}`)
-          .join("; ")}`
-      : "Invalid properties",
+    resultingType !== rowType
+      ? `Cannot move item to "${resultingType}": ${detail}`
+      : `Invalid properties: ${detail}`,
     { errors: validation.errors },
   );
 }

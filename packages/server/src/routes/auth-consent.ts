@@ -1208,8 +1208,8 @@ async function projectGrantOnConsent(
   let priorScopes: string[] = [];
 
   if (grantItemId) {
-    // Route the update through `storage.items.update` (not a raw SQL
-    // patch) so it writes a versions snapshot, bumps updated_at + version,
+    // Route the update through `writeItem` (not a raw SQL patch) so it
+    // validates, writes a versions snapshot, bumps updated_at + version,
     // and lets the row sort correctly under /items?sort=updated_at.
     // Pre-fetch to compute prior scopes for the narrowing check below.
     const existing = await storage.items.get(grantItemId);

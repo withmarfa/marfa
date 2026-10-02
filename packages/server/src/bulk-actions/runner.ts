@@ -8,8 +8,11 @@
  * can stay per-row.
  *
  * Authorization: matched_ids were resolved at job-create-time inside a
- * request context with full type-permission narrowing, and the worker
- * hands each chunk only the ids the queuing credential may still write.
+ * request context with full type-permission narrowing, the worker hands
+ * each chunk only the ids the queuing credential may still write, and the
+ * property-shaped and tag arms ask again of each row inside the chunk's
+ * transaction, as it stands when it is written: the first through the item
+ * write, the tag arm itself.
  *
  * Every chunk publishes what it wrote, on every action. The publish is
  * what appends to the event log, and the log is what a client rebuilding
@@ -25,7 +28,8 @@ import type { CascadeRoot, Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
-import { MarfaError, softDeleteState } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, softDeleteState } from "@withmarfa/shared";
+import { checkTypeAccess, mayReadType } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import { blobProof } from "../routes/_blob-reach.js";
 import { sourceTypesFor } from "../routes/_edge-visibility.js";
@@ -312,6 +316,7 @@ async function runUpdateTagsChunk({
   storage,
   input,
   ids,
+  credential,
 }: RunChunkContext): Promise<ChunkOutcome> {
   if (input.action !== "update_tags")
     throw new Error("runUpdateTagsChunk: wrong action");
@@ -325,19 +330,30 @@ async function runUpdateTagsChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        let metadata: Metadata | undefined;
-        if (add.length > 0) {
-          metadata = await storage.metadata.addTags(id, add);
-        }
-        for (const tag of remove) {
-          // Announced whether or not the tag was there to remove. That is
-          // deliberate: the doors report on the request rather than on the
-          // diff, a caller cannot tell the two apart from the response
-          // either, and comparing before and after per tag would cost a
-          // read per row to suppress an event a subscriber treats as
-          // idempotent anyway.
-          metadata = await storage.metadata.removeTag(id, tag);
-        }
+        // A savepoint per row, holding the row's gate and its tag writes, so
+        // the gate is asked of the row as it stands when it is written and a
+        // row that fails leaves nothing behind.
+        const metadata = await storage.runInTransaction(async () => {
+          const row = await storage.items.getIncludingTrashed(id);
+          if (!row || !mayReadType(credential.key, row.type)) {
+            throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
+          }
+          checkTypeAccess(credential.key, row.type, "write");
+          let written: Metadata | undefined;
+          if (add.length > 0) {
+            written = await storage.metadata.addTags(id, add);
+          }
+          for (const tag of remove) {
+            // Announced whether or not the tag was there to remove. That is
+            // deliberate: the doors report on the request rather than on
+            // the diff, a caller cannot tell the two apart from the
+            // response either, and comparing before and after per tag
+            // would cost a read per row to suppress an event a subscriber
+            // treats as idempotent anyway.
+            written = await storage.metadata.removeTag(id, tag);
+          }
+          return written;
+        });
         if (metadata) changed.set(id, metadata);
         succeeded.push(id);
       } catch (err) {

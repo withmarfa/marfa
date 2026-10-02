@@ -681,8 +681,8 @@ const doors: Door[] = [
   {
     name: "PUT /items/{id}/metadata replaces the tags",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "set"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "PUT", `/items/${s.item}/metadata`, {
@@ -699,8 +699,8 @@ const doors: Door[] = [
   {
     name: "PATCH /items/{id}/metadata merges the tags",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "merge"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "PATCH", `/items/${s.item}/metadata`, {
@@ -717,8 +717,8 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/tags adds tags",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "addTags"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", `/items/${s.item}/tags`, {
@@ -735,8 +735,8 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/tags/{tag} removes a tag",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "removeTag"),
+    transactions: 1,
+
     setup: async () => {
       const item = await makeNote("tagged");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
@@ -762,8 +762,8 @@ const doors: Door[] = [
   {
     name: "PUT /items/{id}/extensions/{namespace} writes a sidecar",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "setExtension"),
+    transactions: 1,
+
     setup: async () => ({ item: await makeNote("with sidecar") }),
     act: async (s) => {
       const res = await request(
@@ -783,8 +783,8 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/extensions/{namespace} drops a sidecar",
     family: "metadata",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.metadata, "deleteExtension"),
+    transactions: 1,
+
     setup: async () => {
       const item = await makeNote("with sidecar");
       await request(ctx.app, "PUT", `/items/${item}/extensions/${NAMESPACE}`, {

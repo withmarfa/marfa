@@ -38,17 +38,16 @@ import { forwardHeaders } from "./forward-headers.js";
 import { publish } from "../pubsub.js";
 
 /**
- * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
- * through `ItemStore.create` on first consent and `ItemStore.update` on
- * re-consent so the row gets full ItemStore treatment: search indexing, metadata-row insertion, versions snapshot on
- * re-consent, the `created`/`updated` event emission, and `source` /
- * `origin` stamping. Returns the connection-item id, whether the call
+ * Persist (or refresh) a `kind: app` connection through `writeItem`, which
+ * creates it on first consent and updates it on re-consent, so the row gets
+ * what every item write gets: validation, search indexing, metadata-row
+ * insertion, a versions snapshot on re-consent, and `source` stamping. Returns the connection-item id, whether the call
  * created vs updated the projection, and the scope list the record now
  * holds, which on re-consent is the union rather than the request, so the
  * caller's audit row can report both without recomputing it.
  *
- * Uses `findGrantItemId` to detect the re-consent case and routes through
- * `items.update` (same shape as the code-flow consent's
+ * Uses `findGrantItemId` to detect the re-consent case and updates through
+ * `writeItem` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
  * writes there are the standing grant plus this approval, never less: an
