@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setPlatformDrift } from "../storage/platform-drift.js";
+import { sqliteRequestContext } from "../storage/sqlite/request-context.js";
 
 const contexts: TestContext[] = [];
 
@@ -296,6 +297,86 @@ describe("DELETE /admin/platform-types/{id}", () => {
 
     const rows = await ctx.storage.types.loadAll();
     expect(rows.map((r) => r.schema.id)).toContain(id);
+  });
+});
+
+describe("DELETE /admin/platform-types/{id} decides in one transaction", () => {
+  it("never leaves an item written during the removal without its type", async () => {
+    // An item of the type written after the count and before the delete
+    // must either be counted, so the removal is refused, or be refused
+    // itself once the type is gone. Never both written.
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+    const items = ctx.storage.items;
+    const count = items.countByType.bind(items);
+    let creating: Promise<unknown> | undefined;
+    items.countByType = async (type: string) => {
+      const counted = await count(type);
+      // As another request: outside this one's transaction.
+      creating ??= sqliteRequestContext
+        .exit(() =>
+          items.create({
+            type: id,
+            properties: { name: "written mid-removal" },
+            source: "test",
+            source_id: "drift-race",
+          }),
+        )
+        .then(
+          () => "created",
+          (err: unknown) => err,
+        );
+      // Long enough for the write to land when nothing holds it back.
+      await Promise.race([
+        creating,
+        new Promise((resolve) => setTimeout(resolve, 200)),
+      ]);
+      return counted;
+    };
+
+    const res = await request(
+      ctx.app,
+      "DELETE",
+      `/admin/platform-types/${id}`,
+      { key: ctx.operatorKey },
+    );
+    const created = await creating;
+    items.countByType = count;
+
+    const rows = await ctx.storage.types.loadAll();
+    const registered = rows.some((row) => row.schema.id === id);
+    const carried = await count(id);
+    if (res.status === 200) {
+      expect(created).not.toBe("created");
+      expect(registered).toBe(false);
+      expect(carried).toBe(0);
+    } else {
+      expect(res.status).toBe(409);
+      expect(created).toBe("created");
+      expect(registered).toBe(true);
+    }
+  });
+
+  it("names the key that removed the type in its audit row", async () => {
+    const ctx = await newContext();
+    const id = await seedDriftedType(ctx);
+    const res = await request(
+      ctx.app,
+      "DELETE",
+      `/admin/platform-types/${id}`,
+      { key: ctx.operatorKey },
+    );
+    expect(res.status).toBe(200);
+    const operator = (await ctx.storage.keys.list()).find(
+      (key) => key.is_operator,
+    );
+    expect(operator).toBeDefined();
+    const audit = await ctx.storage.audit.list({
+      action: "platform_type.removed",
+      resource_id: id,
+    });
+    expect(audit.data).toHaveLength(1);
+    expect(audit.data[0]?.key_id).toBe(operator?.id);
   });
 });
 

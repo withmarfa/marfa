@@ -34,6 +34,7 @@ import { requireOperatorKey } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import { platformDrift } from "../storage/platform-drift.js";
+import { writeTypesInTransaction } from "./_type-write.js";
 
 const DriftedTypeSchema = z
   .object({
@@ -97,7 +98,7 @@ const removeDriftedTypeRoute = createRoute({
   summary: "Remove one shipped type the build no longer carries",
   security: [{ bearerAuth: [] }],
   description:
-    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.",
+    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type; refused with `409` when items still carry it, because the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade; and refused with `409` when another registered type inherits from it, naming them in `details.child_types`, because a parent supplies its children's fields. The item count and the inheriting types are asked in the transaction that removes the row, rather than read from the boot-time report, so an item of the type written meanwhile is either counted or refused. The removal is audited as `platform_type.removed`, naming the key. The type stops resolving at once, on this process and not at the next restart: the row and the in-process registry entry go together. Operator key only.",
   request: {
     params: z.object({ id: z.string() }),
   },
@@ -218,48 +219,56 @@ export function adminPlatformTypeRoutes(storage: Storage) {
       );
     }
 
-    // Recomputed, never the listing's copy. This is the one part of the
-    // report that changes without a restart, and a removal reasoning from a
-    // stale count is the failure this route exists to avoid.
-    const itemCount = await storage.items.countByType(id);
-    if (itemCount > 0) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `${String(itemCount)} item(s) still carry "${id}". The row is what makes them resolve, so it stays registered until they move.`,
-        { type: id, item_count: itemCount },
-      );
-    }
+    // The count, the children and the delete are one transaction, as the
+    // ordinary type delete's are: the store takes the type out of the
+    // registry before it commits, and an item create asks the registry
+    // inside its own transaction, so an item written meanwhile either lands
+    // first and is counted or comes after and is refused.
+    await writeTypesInTransaction(storage, [id], async () => {
+      // Recomputed, never the listing's copy. This is the one part of the
+      // report that changes without a restart, and a removal reasoning from
+      // a stale count is the failure this route exists to avoid.
+      const itemCount = await storage.items.countByType(id);
+      if (itemCount > 0) {
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `${String(itemCount)} item(s) still carry "${id}". The row is what makes them resolve, so it stays registered until they move.`,
+          { type: id, item_count: itemCount },
+        );
+      }
 
-    // Asked after the item count and before the write, because it is the
-    // guard the item count cannot stand in for: the types most certain to
-    // report zero items are the abstract parents.
-    const children = await declaredChildrenOf(storage, id);
-    if (children.length > 0) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `${String(children.length)} type(s) inherit from "${id}": ${children.join(", ")}. Removing it would leave them resolving without the fields they inherit.`,
-        { type: id, child_types: children },
-      );
-    }
+      // Asked after the item count and before the write, because it is the
+      // guard the item count cannot stand in for: the types most certain to
+      // report zero items are the abstract parents.
+      const children = await declaredChildrenOf(storage, id);
+      if (children.length > 0) {
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `${String(children.length)} type(s) inherit from "${id}": ${children.join(", ")}. Removing it would leave them resolving without the fields they inherit.`,
+          { type: id, child_types: children },
+        );
+      }
 
-    const removed = await storage.types.deletePlatformType(id);
-    if (!removed) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `No platform row for "${id}"`, {
-        type: id,
+      const removed = await storage.types.deletePlatformType(id);
+      if (!removed) {
+        throw new MarfaError(
+          ErrorCode.NOT_FOUND,
+          `No platform row for "${id}"`,
+          { type: id },
+        );
+      }
+
+      // Audited because it is irreversible, and in the same transaction, so
+      // a removal is never reported that nothing recorded nor recorded
+      // without happening.
+      await storage.audit.logOrThrow({
+        action: "platform_type.removed",
+        resource_type: "type",
+        resource_id: id,
+        client_ip: c.get("clientIp") ?? null,
+        key_id: c.get("apiKey")?.id,
+        details: { type: id },
       });
-    }
-
-    // Audited because it is irreversible. Deleting an ordinary type already
-    // writes a row, so an operator removing a platform one should not be the
-    // quieter of the two. Propagating rather than fire-and-forget:
-    // reporting a removal nothing recorded is worse than failing the
-    // request.
-    await storage.audit.logOrThrow({
-      action: "platform_type.removed",
-      resource_type: "type",
-      resource_id: id,
-      client_ip: c.get("clientIp") ?? null,
-      details: { type: id },
     });
 
     return c.json({ removed: true as const, id }, 200);
