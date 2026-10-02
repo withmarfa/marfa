@@ -667,6 +667,42 @@ describe("Query-language: edge[X]=Y and backref[X]=Y", () => {
     expect(ids).not.toContain(b);
   });
 
+  it("refuses a shorthand value carrying a backslash instead of quoting it into the next clause", async () => {
+    const target = await createItem();
+    const a = await createItem();
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: a, target_id: target, edge_type: "about" },
+    });
+    // The first value would close its own string with the backslash
+    // swallowing the quote, so the second clause's opening quote ends it
+    // and the second value is read as filter syntax.
+    const injected = encodeURIComponent(" OR state exists OR type eq ");
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&limit=200&edge[about]=${encodeURIComponent("x\\")}&edge[about]=${injected}`,
+      { key: ctx.workingKey },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain("backslash");
+  });
+
+  it("still quotes a double quote in a shorthand value", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?type=core.note&limit=200&edge[about]=${encodeURIComponent('a"b')}`,
+      { key: ctx.workingKey },
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { data: unknown[] }).data).toEqual([]);
+  });
+
   it("filters items by inbound edge via ?backref[X]=Y", async () => {
     const source = await createItem();
     const a = await createItem();

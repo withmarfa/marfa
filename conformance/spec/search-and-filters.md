@@ -58,3 +58,7 @@ Every listing door shares one grammar. `GET /items` is the reference; `GET /edge
 ## Restore
 
 29. The archive's `manifest.json` is held to the fields the restore reads: `version`, the number `0`, and `blobs`, an object whose every entry carries a string `mime_type` and a non-negative integer `size_bytes`. A manifest missing or mistyping any of them refuses the whole archive `400 validation_error`, the message naming each field and `details.errors` carrying each as a dotted `path`, before anything is written; the same archive under a well-formed manifest restores. A manifest naming another version is refused for its version (27) rather than its shape, since another version is free to lay its fields out differently. Fields the restore does not read, the writer's counts and provenance among them, are not asked about. `compliance/admin-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`.
+
+## Edge shorthands
+
+30. **An `edge[<type>]` or `backref[<type>]` shorthand value carrying a backslash is refused `400 validation_error`.** The filter grammar reads `\"` as a quote and every other backslash literally, so a backslash cannot be quoted: one before the closing quote would run the value on into the next clause, where it would be read as filter syntax. An item id never carries one. A double quote in the value is quoted and matches nothing. `compliance/validation.test.ts › refuses an edge shorthand value carrying a backslash, and still takes a quote`.

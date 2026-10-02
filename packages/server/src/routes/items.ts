@@ -2104,6 +2104,17 @@ export function itemRoutes(storage: Storage) {
           { empty_parameters: [key] },
         );
       }
+      // The filter grammar reads `\"` as a quote and takes every other
+      // backslash literally, so a backslash cannot be quoted: one before the
+      // closing quote would swallow it, and the value would run on into the
+      // next clause. An item id never carries one.
+      if (val.includes("\\")) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `The "${key}" filter value contains a backslash. An edge shorthand names an item by its id, which never carries one.`,
+          { invalid_parameters: [key] },
+        );
+      }
       edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
     }
     let filter = query.filter ?? undefined;

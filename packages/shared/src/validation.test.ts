@@ -147,6 +147,37 @@ describe("isValidEmail", () => {
   it("rejects spaces", () => {
     expect(isValidEmail("user @example.com")).toBe(false);
   });
+
+  it.each([
+    ["user@a.b", true],
+    ["user@a.b.", true],
+    ["user@.a.b", true],
+    ["user@a..b", true],
+    ["user@.com", false],
+    ["user@com.", false],
+    ["user@.", false],
+    ["user@..", false],
+    ["user@nodot", false],
+    ["@example.com", false],
+    ["a@b@example.com", false],
+    ["user@exa\tmple.com", false],
+  ])("answers %j with %s", (value, expected) => {
+    expect(isValidEmail(value)).toBe(expected);
+  });
+
+  it("refuses an address longer than 254 characters", () => {
+    const local = "a".repeat(248);
+    expect(isValidEmail(`${local}@b.com`)).toBe(true);
+    expect(isValidEmail(`${local}x@b.com`)).toBe(false);
+  });
+
+  it("answers a long adversarial input at once", () => {
+    const start = performance.now();
+    expect(isValidEmail(`a@${"a.".repeat(50_000)}`)).toBe(false);
+    expect(isValidEmail(`a@${".".repeat(100_000)}`)).toBe(false);
+    expect(isValidEmail(`a@${"a@.".repeat(50_000)}`)).toBe(false);
+    expect(performance.now() - start).toBeLessThan(200);
+  });
 });
 
 describe("isValidLanguageCode", () => {
