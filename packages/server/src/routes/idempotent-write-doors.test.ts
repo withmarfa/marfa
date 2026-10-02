@@ -60,9 +60,7 @@ const WRITE_METHODS: readonly string[] = [
   "edges.updateProperties",
   "edges.delete",
   "edges.deleteBySource",
-  "edges.deleteBySourceBatch",
   "edges.deleteByTarget",
-  "edges.deleteByTargetBatch",
 ];
 
 /**

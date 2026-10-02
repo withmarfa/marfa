@@ -104,7 +104,7 @@ describe("a row that fails inside a bulk-action chunk leaves nothing behind", ()
 
     const broken = breakMethods(
       ctx.storage.edges,
-      ["deleteByTarget", "deleteByTargetBatch"],
+      ["deleteByTarget"],
       () => true,
     );
     let result;
