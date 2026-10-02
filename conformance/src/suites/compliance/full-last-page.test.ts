@@ -148,6 +148,20 @@ const seeds: Record<string, () => Promise<Read>> = {
     return async (page) =>
       answered(await client.listItemEdges(hub!, page)) as Page;
   },
+  "GET /items/{id}/versions": async () => {
+    const [id] = await notes(1);
+    // Each update leaves one snapshot behind.
+    for (let version = 1; version <= LIMIT; version++) {
+      answered(
+        await client.updateItem(id!, {
+          properties: { title: `history ${String(version)}` },
+          version,
+        }),
+      );
+    }
+    return async (page) =>
+      answered(await client.getVersions(id!, page)) as Page;
+  },
   "GET /items/{id}/backrefs": async () => {
     const [target, ...sources] = await notes(1 + LIMIT);
     await edgesFrom(
@@ -280,7 +294,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(10);
+    expect(cursorDoors).toHaveLength(11);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 
