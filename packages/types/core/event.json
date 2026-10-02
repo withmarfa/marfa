@@ -24,7 +24,7 @@
     },
     "duration": {
       "type": "number",
-      "description": "Duration in seconds"
+      "description": "Duration in seconds; the length of each occurrence of a series that states no ends_at."
     },
     "place": {
       "type": "string",
@@ -59,7 +59,7 @@
     "recurrence": {
       "type": "array",
       "items_type": "string",
-      "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored."
+      "description": "RFC 5545 recurrence property lines (RRULE, RDATE, EXDATE). Present on the series itself; occurrences are computed from it at read time rather than stored, starting with starts_at itself. A write is refused when a line cannot be read or is not applied (EXRULE, an RDATE period), when the rule names no date that exists after the start, or when it produces no occurrence within the bound a read unfolds a rule to."
     },
     "all_day": {
       "type": "boolean",
@@ -67,11 +67,11 @@
     },
     "timezone": {
       "type": "string",
-      "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC. This is the start zone: an event that ends somewhere else states that in end_timezone."
+      "description": "IANA time zone the event's schedule keeps its wall-clock hour in, e.g. Europe/Berlin. Stored times stay instants; a recurring series expands in this zone so occurrences keep their local hour across a daylight-saving transition. Absent means the rule advances in UTC. This is the start zone: an event that ends somewhere else states that in end_timezone. A write is refused unless the zone database resolves it as a named zone."
     },
     "end_timezone": {
       "type": "string",
-      "description": "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule."
+      "description": "IANA time zone the event ends in, when that differs from timezone — a flight lands in a zone it did not depart from, and both ends are wall-clock facts a person reads off a ticket. Absent means the event ends in the zone it started in. Recurrence expands in timezone only; this field never anchors a rule. A write is refused unless the zone database resolves it as a named zone."
     },
     "original_starts_at": {
       "type": "string",

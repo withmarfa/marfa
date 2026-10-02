@@ -32,6 +32,10 @@ import type {
 import { ErrorCode, MarfaError } from "./errors.js";
 import type { EnforcementSettings, InstanceConfig } from "./types.js";
 import { isValidTypeIdentifier, RESERVED_ROOTS } from "./validation.js";
+import { eventScheduleIssues } from "./recurrence.js";
+
+/** The type whose schedule fields every write is held to, with its subtypes. */
+const EVENT_TYPE = "core.event";
 
 // Re-export schema-shape types and the shipped registries so consumers of
 // @withmarfa/shared don't need to reach into @withmarfa/types directly.
@@ -1017,10 +1021,14 @@ export function validateProperties(
   const own = Object.assign(Object.create(null) as object, properties);
   const result = schema.safeParse(own);
   if (result.success) {
-    return {
-      success: true,
-      data: { ...(result.data as Record<string, unknown>) },
-    };
+    const data = { ...(result.data as Record<string, unknown>) };
+    // An event's rule is unfolded on every calendar read, so a rule no read
+    // can unfold is refused here, where every item write is judged.
+    if (isSubtypeOf(typeId, EVENT_TYPE)) {
+      const errors = eventScheduleIssues(data);
+      if (errors.length > 0) return { success: false, errors };
+    }
+    return { success: true, data };
   }
 
   const errors = result.error.issues.map((issue) => ({
