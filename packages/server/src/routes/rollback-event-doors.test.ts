@@ -54,6 +54,7 @@
  * would take the breakage on that one, never reach its real write, and pass
  * for the wrong reason.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,14 +128,22 @@ interface Injection {
  * record each door's shape as an observation rather than as a reading of
  * the source.
  */
+/**
+ * Set while a door's outermost transaction runs. A call made inside it is a
+ * savepoint of that transaction rather than one of its own, so neither the
+ * count nor the forced rollback below sees it.
+ */
+const outermost = new AsyncLocalStorage<true>();
+
 function countTransactions(): Injection {
   const original = ctx.storage.runInTransaction.bind(ctx.storage);
   let fired = 0;
   ctx.storage.runInTransaction = async <T>(
     fn: () => T | Promise<T>,
   ): Promise<T> => {
+    if (outermost.getStore()) return original(fn);
     fired += 1;
-    return original(fn);
+    return outermost.run(true, () => original(fn));
   };
   return {
     fired: () => fired,
@@ -158,11 +167,14 @@ function rollBackAfterTheWrite(): Injection {
   ctx.storage.runInTransaction = async <T>(
     fn: () => T | Promise<T>,
   ): Promise<T> => {
-    return original(async () => {
-      await fn();
-      fired += 1;
-      throw new ForcedFailure("the transaction body");
-    });
+    if (outermost.getStore()) return original(fn);
+    return outermost.run(true, () =>
+      original(async () => {
+        await fn();
+        fired += 1;
+        throw new ForcedFailure("the transaction body");
+      }),
+    );
   };
   return {
     fired: () => fired,
@@ -898,8 +910,7 @@ const doors: Door[] = [
   {
     name: "POST /folders creates a folder",
     family: "item",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.items, "create"),
+    transactions: 1,
     setup: () => Promise.resolve({ tag: uniq("folder") }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/folders", {
