@@ -273,6 +273,11 @@ export async function bootServer(args: BootOptions): Promise<void> {
     // default here: `marfa:up` says `false` outright, so an ambient
     // variable cannot flip the instance every other file shares.
     RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED || "false",
+    // Every webhook fixture delivers to a receiver on loopback, which a
+    // server refuses by default. On unless the caller says otherwise, so the
+    // fixture about that refusal can boot a server of its own with it off.
+    MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
+      process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
   };
   delete env.NODE_ENV;
 

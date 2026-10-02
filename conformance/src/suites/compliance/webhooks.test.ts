@@ -8,7 +8,7 @@ import {
   trackWebhook,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, createTask } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import {
   expectSignedBy,
@@ -474,36 +474,229 @@ describe("outbound webhooks", () => {
     expect(survived.data.active).toBe(true);
   });
 
-  it("refuses a subscription from a credential that cannot read everything", async () => {
-    // A second gate, past `webhooks.manage`, and a different refusal. A
-    // subscription sends whatever matches to an endpoint the server does
-    // not control, so a credential that can read only some types would be
-    // exporting the rest through a door it cannot read them through.
-    const keyResp = await client.createKey({
-      label: "scoped-reader",
-      source: `${ctx.source}-scoped-reader`,
+  /** A key the run's key mints with `webhooks.manage` and the reach given. */
+  async function keyWith(
+    label: string,
+    reach: Record<string, unknown>,
+  ): Promise<{ id: string; client: MarfaClient }> {
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
       permissions: ["webhooks.manage"],
-      type_permissions: { "core.note": "write" },
+      ...reach,
     });
-    expect(keyResp.ok).toBe(true);
-    trackKey(ctx, keyResp.data.id);
-    const scoped = new MarfaClient({
-      baseUrl: apiUrl,
-      apiKey: keyResp.data.key,
-    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    return {
+      id: minted.data.id,
+      client: new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key }),
+    };
+  }
 
-    const create = await scoped.createWebhook({
-      url: receiverUrl,
+  it("delivers to a credential that reads part of what is stored only that part", async () => {
+    const narrow = await keyWith("partial-reader", {
+      type_permissions: { "core.note": "read" },
+    });
+    const created = await narrow.client.createWebhook({
+      url: receiver.hookUrl("partial-reader"),
       events: ["item.created"],
     });
-    expect(create.status).toBe(403);
-    expect(create.error?.error.code).toBe("scoped_credential_not_permitted");
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, narrow.client);
 
-    // The control: the same credential holds `webhooks.manage`, so the
-    // refusal is the reach and not the permission — a key missing the
-    // permission answers `forbidden` in the case above.
-    const list = await scoped.listWebhooks();
-    expect(list.ok).toBe(true);
+    // The unreadable event first, so the readable one after it is the
+    // sentinel that says the first was not merely late.
+    const task = await client.createItem(
+      createTask({ source: ctx.source, properties: { title: "unreadable" } }),
+    );
+    expect(task.ok).toBe(true);
+    trackItem(ctx, task.data.item.id);
+    const note = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "readable" } }),
+    );
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+
+    await receiver.waitFor(
+      (r) =>
+        r.path === "/hook/partial-reader" && r.body.includes(note.data.item.id),
+    );
+    const toThisHook = receiver.received.filter(
+      (r) => r.path === "/hook/partial-reader",
+    );
+    expect(toThisHook.some((r) => r.body.includes(task.data.item.id))).toBe(
+      false,
+    );
+    const rows = await narrow.client.listWebhookDeliveries(created.data.id);
+    expect(rows.ok).toBe(true);
+    expect(rows.data.data).toHaveLength(1);
+  });
+
+  it("delivers only the extension namespaces the credential may read", async () => {
+    const reader = await keyWith("alpha-reader", {
+      type_permissions: { "*": "read" },
+      extension_permissions: { "webhook.alpha": "read" },
+    });
+    const created = await reader.client.createWebhook({
+      url: receiver.hookUrl("alpha-reader"),
+      events: ["metadata.changed"],
+    });
+    expect(created.status).toBe(201);
+    trackWebhook(ctx, created.data.id, reader.client);
+
+    const note = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "namespaced" } }),
+    );
+    expect(note.ok).toBe(true);
+    trackItem(ctx, note.data.item.id);
+    const id = note.data.item.id;
+    expect(
+      (await client.setItemExtension(id, "webhook.alpha", { a: 1 })).ok,
+    ).toBe(true);
+    expect(
+      (await client.setItemExtension(id, "webhook.beta", { b: 2 })).ok,
+    ).toBe(true);
+
+    // The second write's event is the one whose item holds both namespaces.
+    const delivery = await receiver.waitFor(
+      (r) =>
+        r.path === "/hook/alpha-reader" &&
+        r.body.includes(id) &&
+        receiver.received.filter(
+          (x) => x.path === "/hook/alpha-reader" && x.body.includes(id),
+        ).length === 2,
+    );
+    const last = receiver.received
+      .filter((r) => r.path === "/hook/alpha-reader" && r.body.includes(id))
+      .map((r) => JSON.parse(r.body) as { metadata: { extensions: object } });
+    expect(delivery).toBeDefined();
+    for (const body of last) {
+      expect(Object.keys(body.metadata.extensions)).toEqual(["webhook.alpha"]);
+    }
+    // The witness: the item holds the namespace the delivery left out.
+    const beta = await client.getItemExtension(id, "webhook.beta");
+    expect(beta.ok).toBe(true);
+  });
+
+  it("answers a subscription another credential registered as an unknown id on every door", async () => {
+    const mine = await client.createWebhook({
+      url: receiver.hookUrl("owned"),
+      events: ["item.created"],
+    });
+    expect(mine.status).toBe(201);
+    trackWebhook(ctx, mine.data.id, client);
+    const other = await keyWith("other-owner", {});
+
+    for (const refused of [
+      await other.client.getWebhook(mine.data.id),
+      await other.client.updateWebhook(mine.data.id, {
+        url: receiver.hookUrl("taken-over"),
+      }),
+      await other.client.listWebhookDeliveries(mine.data.id),
+      await other.client.deleteWebhook(mine.data.id),
+    ]) {
+      expect(refused.status).toBe(404);
+      expect(refused.error?.error.code).toBe("webhook_not_found");
+    }
+    const listed = await other.client.listWebhooks();
+    expect(listed.ok).toBe(true);
+    expect(listed.data.data.map((w) => w.id)).not.toContain(mine.data.id);
+
+    // The witness: the owner still reaches it, unchanged.
+    const owned = await client.getWebhook(mine.data.id);
+    expect(owned.ok).toBe(true);
+    expect(owned.data.url).toBe(receiver.hookUrl("owned"));
+  });
+
+  it("stops delivering once the credential that registered it is revoked", async () => {
+    const owner = await keyWith("revoked-owner", {
+      type_permissions: { "*": "read" },
+    });
+    const created = await owner.client.createWebhook({
+      url: receiver.hookUrl("revoked-owner"),
+      events: ["item.created"],
+    });
+    expect(created.status).toBe(201);
+
+    const before = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "before" } }),
+    );
+    expect(before.ok).toBe(true);
+    trackItem(ctx, before.data.item.id);
+    // The witness: the subscription delivers while its credential stands.
+    await receiver.waitFor(
+      (r) =>
+        r.path === "/hook/revoked-owner" &&
+        r.body.includes(before.data.item.id),
+    );
+
+    expect((await client.revokeKey(owner.id)).ok).toBe(true);
+    const after = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "after" } }),
+    );
+    expect(after.ok).toBe(true);
+    trackItem(ctx, after.data.item.id);
+
+    // A sentinel on a subscription of the run's own key, registered after
+    // the revoke, says the event was dispatched.
+    const sentinel = await client.createWebhook({
+      url: receiver.hookUrl("revoke-sentinel"),
+      events: ["item.created"],
+    });
+    expect(sentinel.status).toBe(201);
+    trackWebhook(ctx, sentinel.data.id, client);
+    const last = await client.createItem(
+      createNote({ source: ctx.source, properties: { body: "sentinel" } }),
+    );
+    expect(last.ok).toBe(true);
+    trackItem(ctx, last.data.item.id);
+    await receiver.waitFor(
+      (r) =>
+        r.path === "/hook/revoke-sentinel" &&
+        r.body.includes(last.data.item.id),
+    );
+    expect(
+      receiver.received.some(
+        (r) =>
+          r.path === "/hook/revoked-owner" &&
+          (r.body.includes(after.data.item.id) ||
+            r.body.includes(last.data.item.id)),
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a secret shorter than 32 characters, the empty one included", async () => {
+    for (const secret of ["", "x".repeat(31)]) {
+      const refused = await client.createWebhook({
+        url: receiverUrl,
+        events: ["item.created"],
+        secret,
+      });
+      expect(refused.status).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+    const taken = await client.createWebhook({
+      url: receiverUrl,
+      events: ["item.created"],
+      secret: "x".repeat(32),
+    });
+    expect(taken.status).toBe(201);
+    trackWebhook(ctx, taken.data.id, client);
+  });
+
+  it("refuses a URL that is not http or https, or carries credentials", async () => {
+    for (const url of [
+      "ftp://receiver.example/hook",
+      "file:///etc/passwd",
+      "https://user:pass@receiver.example/hook",
+    ]) {
+      const refused = await client.createWebhook({
+        url,
+        events: ["item.created"],
+      });
+      expect(refused.status, url).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
   });
 
   it("answers 404 for an unknown subscription on every door", async () => {
