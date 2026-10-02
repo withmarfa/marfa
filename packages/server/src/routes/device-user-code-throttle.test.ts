@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestAccount,
+  createTestContext,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import {
   DEVICE_CODE_ADDRESS_LIMIT,
@@ -7,9 +11,10 @@ import {
 } from "./auth-pages.js";
 
 /**
- * The device code entry form (`POST /auth/device`) limits how many codes
- * are tried, per caller address and across the instance, whatever codes they
- * are. A sweep tries each code once, so only a count that ignores which code
+ * Every door that looks a device code up (the entry form, `POST
+ * /auth/device`, and the consent screen and its decision, `GET` and `POST
+ * /auth/device/consent`) counts the lookup in one limit, per caller address
+ * and across the instance, whatever codes they are. A sweep tries each code once, so only a count that ignores which code
  * was submitted can stop one.
  *
  * Marfa's own rate limiter is off in the test context, so a redirect
@@ -100,6 +105,62 @@ describe("device code entry limits", () => {
     }
     expect(await submit(ctx, codeFor(7777), "192.0.2.8")).toContain(
       "error=invalid_code",
+    );
+  });
+
+  it("counts the consent screen's lookups and its decision's in the same limit", async () => {
+    ctx = await createTestContext();
+    const c = ctx;
+    await createTestAccount(c, "owner@example.com", "correct horse battery");
+    const signedIn = await request(c.app, "POST", "/auth/sign-in/email", {
+      body: { email: "owner@example.com", password: "correct horse battery" },
+      headers: { origin: ORIGIN },
+    });
+    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+      signedIn.headers.get("set-cookie") ?? "",
+    )?.[1];
+    if (cookie === undefined) throw new Error("sign-in set no session");
+
+    const screen = (code: string, peer: string) =>
+      request(c.app, "GET", `/auth/device/consent?user_code=${code}`, {
+        headers: { cookie },
+        peer,
+      });
+    const decide = (code: string, peer: string) =>
+      request(c.app, "POST", "/auth/device/consent", {
+        form: { user_code: code, decision: "approve" },
+        headers: { origin: ORIGIN, cookie },
+        peer,
+      });
+
+    // The consent screen alone.
+    for (let i = 0; i < DEVICE_CODE_ADDRESS_LIMIT; i++) {
+      const res = await screen(codeFor(i), "203.0.113.40");
+      expect(res.headers.get("location")).toContain("error=invalid_code");
+    }
+    expect(
+      (await screen(codeFor(100), "203.0.113.40")).headers.get("location"),
+    ).toContain("error=too_many_attempts");
+
+    // The decision alone.
+    for (let i = 0; i < DEVICE_CODE_ADDRESS_LIMIT; i++) {
+      expect((await decide(codeFor(i), "203.0.113.41")).status).toBe(404);
+    }
+    const refused = await decide(codeFor(100), "203.0.113.41");
+    expect(refused.status).toBe(302);
+    expect(refused.headers.get("location")).toContain(
+      "error=too_many_attempts",
+    );
+
+    // All three doors share one count.
+    for (let i = 0; i < 4; i++) {
+      await submit(c, codeFor(i), "203.0.113.42");
+      await screen(codeFor(i + 10), "203.0.113.42");
+    }
+    await decide(codeFor(20), "203.0.113.42");
+    await decide(codeFor(21), "203.0.113.42");
+    expect(await submit(c, codeFor(30), "203.0.113.42")).toContain(
+      "error=too_many_attempts",
     );
   });
 });

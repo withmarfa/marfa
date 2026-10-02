@@ -197,12 +197,13 @@ async function createUserAppGrant(
 export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
-  // The device code entry form is reached without a session, so a lookup
-  // has nobody to key on but the caller's address and the instance itself.
-  // Both are counted on every submission before the code is looked up: a
-  // sweep tries each code once, so a count per code never fires, and a
-  // count of failures alone would still let the sweep find the live code it
-  // was looking for. A person types one code, or a few if they mistype.
+  // Every door that looks a device code up counts the lookup here first:
+  // the entry form, and the consent screen and its decision, which take a
+  // code from the URL or the form as readily. A lookup is counted against
+  // the caller's address and the instance, before it is made: a sweep tries
+  // each code once, so a count per code never fires, and a count of
+  // failures alone would still let the sweep find the live code it was
+  // looking for. A person approving one device makes three lookups.
   const deviceCodePerAddress = new KeyedThrottle(storage, {
     family: "device-user-code-address",
     limit: DEVICE_CODE_ADDRESS_LIMIT,
@@ -213,6 +214,19 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     limit: DEVICE_CODE_INSTANCE_LIMIT,
     windowMs: DEVICE_CODE_WINDOW_MS,
   });
+
+  /** Count a device code lookup and say whether it may be made. One the
+   *  address window refuses is not counted against the instance's, so one
+   *  caller alone cannot close device sign-in for everyone. */
+  const admitCodeLookup = async (c: Context<AppEnv>): Promise<boolean> => {
+    const ip = c.var.clientIp;
+    const local = await deviceCodePerAddress.attempt(
+      ip ? addressBucket(ip) : "unknown",
+    );
+    return (
+      local.allowed && (await deviceCodePerInstance.attempt("all")).allowed
+    );
+  };
 
   /**
    * Gate `/auth/authorize` on a Better Auth cookie session. Every caller must
@@ -580,15 +594,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       return c.redirect(`/auth/device?error=missing_code`, 302);
     }
 
-    // A submission refused by the address window is not counted against
-    // the instance's, so one caller alone cannot close the form for everyone.
-    const ip = c.var.clientIp;
-    const local = await deviceCodePerAddress.attempt(
-      ip ? addressBucket(ip) : "unknown",
-    );
-    const allowed =
-      local.allowed && (await deviceCodePerInstance.attempt("all")).allowed;
-    if (!allowed) {
+    if (!(await admitCodeLookup(c))) {
       return c.redirect(
         `/auth/device?error=too_many_attempts&user_code=${encodeURIComponent(submitted)}`,
         302,
@@ -646,6 +652,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
     const userCode = normalizeUserCode(url.searchParams.get("user_code") ?? "");
     if (!userCode) {
       return c.redirect("/auth/device?error=missing_code", 302);
+    }
+    if (!(await admitCodeLookup(c))) {
+      return c.redirect("/auth/device?error=too_many_attempts", 302);
     }
     // Verified with the session's cookies, which is what claims a pending
     // code for this person: the plugin approves only a code its owner has
@@ -729,6 +738,9 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
         ErrorCode.VALIDATION_ERROR,
         "user_code and decision are required",
       );
+    }
+    if (!(await admitCodeLookup(c))) {
+      return c.redirect("/auth/device?error=too_many_attempts", 302);
     }
     const verdict = await deviceAuth.deviceVerify(userCode, c.req.raw.headers);
     if (!verdict.ok) {
