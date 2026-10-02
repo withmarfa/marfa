@@ -1,7 +1,10 @@
 name: Core
 
-# A push to `main` also runs it for the server the live tests boot, so a
-# server pull request does not hold a macOS runner.
+# A pull request runs it when `scripts/ci-required.ts` says the change can
+# affect it. A push to `main` also runs it for the server the live tests
+# boot, so a server pull request does not hold a macOS runner. The push is
+# filtered here rather than by the classifier, because a run that started
+# would cancel the one before it and then skip.
 on:
   push:
     branches: [main]
@@ -16,12 +19,9 @@ on:
       - "pnpm-workspace.yaml"
       - "tsconfig.base.json"
       - ".github/workflows/core.yml"
+      - "!**/*.md"
   pull_request:
     branches: [main]
-    paths:
-      - "core/**"
-      - "openapi.json"
-      - ".github/workflows/core.yml"
   schedule:
     - cron: "47 3 * * *"
   workflow_dispatch:
@@ -40,7 +40,25 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      core: ${{ steps.classify.outputs.core }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - id: classify
+        run: node scripts/ci-required.ts
+
   core:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     name: Core (Rust, bindings, live)
     timeout-minutes: 90
     runs-on: macos-26

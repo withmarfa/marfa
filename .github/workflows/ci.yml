@@ -34,6 +34,9 @@ permissions:
   contents: read
 
 jobs:
+  # Every job below runs only when `scripts/ci-required.ts` says the pull
+  # request can affect it. A skipped job satisfies its required check, where
+  # a `paths` filter on the workflow would leave the check pending.
   changes:
     name: Classify changes
     runs-on: ubuntu-latest
@@ -41,8 +44,16 @@ jobs:
     permissions:
       contents: read
     outputs:
-      required: ${{ steps.classify.outputs.required }}
-      core: ${{ steps.classify.outputs.core }}
+      ci-sqlite: ${{ steps.classify.outputs.ci-sqlite }}
+      workspace: ${{ steps.classify.outputs.workspace }}
+      core-checks: ${{ steps.classify.outputs.core-checks }}
+      conformance: ${{ steps.classify.outputs.conformance }}
+      cli-scenarios: ${{ steps.classify.outputs.cli-scenarios }}
+      restore-drill: ${{ steps.classify.outputs.restore-drill }}
+      types-freshness: ${{ steps.classify.outputs.types-freshness }}
+      openapi-freshness: ${{ steps.classify.outputs.openapi-freshness }}
+      version-fields: ${{ steps.classify.outputs.version-fields }}
+      clients-freshness: ${{ steps.classify.outputs.clients-freshness }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,7 +66,7 @@ jobs:
 
   ci-sqlite:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.ci-sqlite != 'false') }}
     name: CI (SQLite)
     timeout-minutes: 60
     runs-on: ubuntu-latest
@@ -69,26 +80,33 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - run: pnpm typecheck
-      - run: pnpm lint
+      # Prettier reads Markdown as well as code, and the classifier's test
+      # reads the whole tree, so a documentation change stops after these.
       - run: pnpm format:check
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      - run: pnpm vitest run ci/ci-required.test.ts
+      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+        run: pnpm build
+      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+        run: pnpm typecheck
+      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+        run: pnpm lint
       # Cache the language model fetched by the real OCR test.
-      - uses: actions/cache@v6
+      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+        uses: actions/cache@v6
         with:
           path: ~/.cache/marfa-tessdata
           key: tessdata-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
+      # The version check asks cargo how it reads the manifests, so it runs
+      # in its own job and this one needs no Rust.
+      - if: ${{ needs.changes.outputs.workspace != 'false' }}
+        run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
 
   # `marfa-client` is held to its generator, not these: `--no-deps` keeps
   # clippy off it where a crate depends on it. Formatting still takes it,
   # since the generator formats what it writes.
   core-checks:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks != 'false') }}
     name: Core checks
     timeout-minutes: 30
     runs-on: macos-26
@@ -134,7 +152,7 @@ jobs:
   # the contract failed.
   conformance:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance != 'false') }}
     name: Conformance
     timeout-minutes: 60
     runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
@@ -152,18 +170,40 @@ jobs:
       # type registry from the same place.
       - run: pnpm --filter "@withmarfa/server..." build
 
-      - uses: dtolnay/rust-toolchain@stable
+      # A pull request that leaves the crates alone reuses the binary `main`
+      # built from the same sources and runs no Rust. A push, the nightly and
+      # a dispatch always build it, with the current compiler.
+      - name: Key the device under test
+        id: device-key
+        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the device under test
+        id: device
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          path: core/target/debug/marfa
+          key: ${{ steps.device-key.outputs.key }}
+      # Restored with the time it was built, which the device suite reads as
+      # older than this checkout's sources; the key vouches that they match.
+      - if: ${{ steps.device.outputs.cache-hit == 'true' }}
+        run: touch core/target/debug/marfa
+      - if: ${{ steps.device.outputs.cache-hit != 'true' }}
+        uses: dtolnay/rust-toolchain@stable
+      - if: ${{ steps.device.outputs.cache-hit != 'true' }}
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the device under test
+        if: ${{ steps.device.outputs.cache-hit != 'true' }}
         working-directory: core
-        run: |
-          cargo build -p marfa-cli
-          echo "MARFA_DEVICE_BIN=$PWD/target/debug/marfa" >> "$GITHUB_ENV"
+        run: cargo build -p marfa-cli
+      - if: ${{ steps.device.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: core/target/debug/marfa
+          key: ${{ steps.device-key.outputs.key }}
+      - run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
 
       # Typecheck, lint and format are not repeated here. The suite is a
       # workspace package, so the root's own checks reach it and they run in
@@ -244,7 +284,7 @@ jobs:
   # everything the server publishes.
   cli-scenarios:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.cli-scenarios != 'false') }}
     name: CLI scenarios
     timeout-minutes: 60
     runs-on: ${{ (github.event_name == 'schedule' || inputs.macos) && 'macos-26' || 'ubuntu-latest' }}
@@ -259,18 +299,40 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
-      - uses: dtolnay/rust-toolchain@stable
+      # A pull request that leaves the crates alone reuses the binary `main`
+      # built from the same sources and runs no Rust. A push, the nightly and
+      # a dispatch always build it, with the current compiler.
+      - name: Key the binary under test
+        id: device-key
+        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the binary under test
+        id: device
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
         with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+          path: core/target/debug/marfa
+          key: ${{ steps.device-key.outputs.key }}
+      # Restored with the time it was built, which the device suite reads as
+      # older than this checkout's sources; the key vouches that they match.
+      - if: ${{ steps.device.outputs.cache-hit == 'true' }}
+        run: touch core/target/debug/marfa
+      - if: ${{ steps.device.outputs.cache-hit != 'true' }}
+        uses: dtolnay/rust-toolchain@stable
+      - if: ${{ steps.device.outputs.cache-hit != 'true' }}
+        uses: Swatinem/rust-cache@v2
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build the binary under test
+        if: ${{ steps.device.outputs.cache-hit != 'true' }}
         working-directory: core
-        run: |
-          cargo build -p marfa-cli
-          echo "MARFA_DEVICE_BIN=$PWD/target/debug/marfa" >> "$GITHUB_ENV"
+        run: cargo build -p marfa-cli
+      - if: ${{ steps.device.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: core/target/debug/marfa
+          key: ${{ steps.device-key.outputs.key }}
+      - run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
 
       - name: Boot the server from this checkout
         working-directory: conformance
@@ -318,7 +380,7 @@ jobs:
   # artifact whether or not it passed.
   restore-drill:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.restore-drill != 'false') }}
     name: Restore drill
     timeout-minutes: 30
     runs-on: ubuntu-latest
@@ -369,10 +431,9 @@ jobs:
           path: ${{ runner.temp }}/drill/reports/restore-drill.md
           if-no-files-found: ignore
 
-  # Generated-artifact drift must still be checked for every code change.
   types-freshness:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.types-freshness != 'false') }}
     name: Types codegen freshness
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -399,7 +460,7 @@ jobs:
 
   openapi-freshness:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.openapi-freshness != 'false') }}
     name: OpenAPI spec freshness
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -413,9 +474,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Build first — the generator script imports through @withmarfa/shared,
-      # which needs its dist/ before tsx can resolve it.
-      - run: pnpm build
+      # The generator script imports through @withmarfa/shared, which needs
+      # its dist/ before tsx can resolve it.
+      - run: pnpm --filter "@withmarfa/server..." build
       - name: Regenerate and check for drift
         run: |
           pnpm --filter @withmarfa/server run generate:openapi
@@ -426,7 +487,7 @@ jobs:
 
   version-fields:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.version-fields != 'false') }}
     name: No file holds a version
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -441,8 +502,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       # No build step: the check reads manifests off the tree. A version
       # exists only when a tag is cut, and `release.yml` is the one writer;
       # a pull request that moves a manifest off the placeholder is refused
@@ -465,7 +524,7 @@ jobs:
   # which does not see an untracked file.
   clients-freshness:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.required != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.clients-freshness != 'false') }}
     name: Generated clients are fresh
     timeout-minutes: 15
     runs-on: ubuntu-latest
@@ -494,7 +553,7 @@ jobs:
           java-version: "21"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: rustfmt
       - name: Regenerate the Rust client and check for drift
         run: |
           rm -rf core/marfa-client/src
