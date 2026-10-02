@@ -1,16 +1,6 @@
 /**
  * The stream shows a subscriber only the extension namespaces it may read.
  *
- * `readableMetadata` narrows an item's `extensions` map to what the
- * caller's `extension_permissions` admit, and every REST read of metadata
- * goes through it. The event path did not: `GET /events` narrows on the
- * item *type* alone, and the frame carries `event.metadata` verbatim — so
- * a credential holding no permission on a namespace still received its
- * contents, live and on replay, for every item whose type it could read.
- *
- * The realtime and webhooks pages both say payloads are filtered by the
- * subscriber's permissions. For extension namespaces that was not true.
- *
  * **Both delivery paths, because they are two different pieces of code.**
  * The live path serializes from the in-memory event; the `Last-Event-ID`
  * replay re-sends the stored `payload` string from `event_log` without

@@ -4,8 +4,7 @@ import type { Storage } from "../storage/interface.js";
 
 /**
  * Batched hydration for `GET /items?include=extensions` and friends. One
- * SELECT covers the whole list; each per-item record is then narrowed
- * by `readableExtensions` to the namespaces the caller may read.
+ * SELECT covers the whole list.
  *
  * Mirrors the `_edges-hydrate.ts` pattern so future `?include=` values
  * have a consistent shape. List reads stay lean by default; callers opt

@@ -9,9 +9,14 @@
  * answer is a stream the document cannot see into. Each has to be classified
  * below before this file goes green, and each is then driven twice: with a
  * key whose extension map reaches every namespace, the witness that the
- * namespace it should not see is there to be leaked, and with a key whose map
- * reaches one namespace, which must be answered that one and no other.
+ * namespace it should not see is there to be leaked, and with a key that does
+ * not reach the unseen namespace, which must be answered without it.
+ *
+ * The census stops at the document: doors listed in `unpublished-routes.json`
+ * are not walked, and a field typed as an open record could carry extension
+ * data without being found here.
  */
+import { randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
@@ -357,6 +362,39 @@ async function seedFolder(): Promise<string> {
  * NDJSON format streams, through a separate path.
  */
 const VARIANTS: Record<string, Driver> = {
+  "POST /items, a repeat of a create under its id": async (key) => {
+    const id = `${randomUUID().slice(0, 14)}7${randomUUID().slice(15)}`;
+    const body = {
+      id,
+      type: "core.note",
+      properties: { title: "repeated", body: "repeated" },
+    };
+    const first = await request(ctx.app, "POST", "/items", { key, body });
+    expect(first.status).toBe(201);
+    await stampBothNamespaces(id);
+    const repeat = await request(ctx.app, "POST", "/items", { key, body });
+    expect(await repeat.clone().json()).toMatchObject({ acknowledged: true });
+    return answer(repeat);
+  },
+  "GET /items/{id}?include=neighbors": async (key) => {
+    const target = await seedNote();
+    // The row read carries no namespace, so what is found is the neighbor's.
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: {
+        type: "core.note",
+        properties: { title: "source", body: "source" },
+        edges: { references: [target.id] },
+      },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+    return answer(
+      await request(ctx.app, "GET", `/items/${item.id}?include=neighbors`, {
+        key,
+      }),
+    );
+  },
   "GET /export?format=archive": async (key) => {
     await seedNote();
     return answer(
