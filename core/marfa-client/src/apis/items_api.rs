@@ -644,7 +644,7 @@ pub enum SettleTombstonesError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum TransitionItemError {
-    Status400(models::InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal),
+    Status400(models::EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
@@ -1555,7 +1555,7 @@ pub fn settle_tombstones(
     }
 }
 
-/// Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
+/// Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
 pub fn transition_item(
     configuration: &configuration::Configuration,
     params: TransitionItemParams,

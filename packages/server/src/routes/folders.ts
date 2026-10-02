@@ -3,7 +3,6 @@
  * every `system.*` write, so a folder's settings are created, changed and
  * revoked here, gated on write to `system.folder` in the caller's type map.
  */
-import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
@@ -566,7 +565,12 @@ export function folderRoutes(storage: Storage) {
           blob_proof: requestBlobProof(c, storage),
         },
       );
-      return await itemWrites(storage).transition(id, "revoked");
+      const { item: revoked } = await writeItem(
+        storage,
+        { kind: "platform" },
+        { op: "transition", id, state: "revoked" },
+      );
+      return revoked;
     });
     const metadata = await storage.metadata.get(id);
     await publish({ type: "state_changed", item, metadata });

@@ -460,6 +460,60 @@ describe("type registry", () => {
     expect(again.error?.error.code).toBe("unknown_type");
   });
 
+  it("refuses a write to a row a forced delete left, until its type is registered again", async () => {
+    const typeId = testTypeId("force-delete-then-patch");
+    const created = await client.registerType({
+      id: typeId,
+      fields: { name: { type: "string" } },
+    });
+    expect(created.ok).toBe(true);
+    const item = await client.createItem({
+      type: typeId,
+      properties: { name: "kept" },
+      source: ctx.source,
+      source_id: `orphan-${ctx.runId}`,
+    });
+    expect(item.ok).toBe(true);
+    const id = item.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.deleteType(typeId, true)).ok).toBe(true);
+
+    const patched = await client.updateItem(id, {
+      properties: { name: "changed" },
+      version: item.data.item.version,
+    });
+    expect(patched.status).toBe(400);
+    expect(patched.error?.error.code).toBe("unknown_type");
+    const resynced = await client.createItem({
+      type: typeId,
+      properties: { name: "changed" },
+      source: ctx.source,
+      source_id: `orphan-${ctx.runId}`,
+    });
+    expect(resynced.status).toBe(400);
+    expect(resynced.error?.error.code).toBe("unknown_type");
+    expect((await client.getItem(id)).data.item.properties.name).toBe("kept");
+
+    // Registered again, under another shape: the row is the type's again and
+    // a write to it is held to that shape.
+    const again = await client.registerType({
+      id: typeId,
+      fields: { name: { type: "number" } },
+    });
+    expect(again.ok).toBe(true);
+    const refused = await client.updateItem(id, {
+      properties: { name: "still a string" },
+      version: item.data.item.version,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_properties");
+    const accepted = await client.updateItem(id, {
+      properties: { name: 3 },
+      version: item.data.item.version,
+    });
+    expect(accepted.status, JSON.stringify(accepted.error)).toBe(200);
+  });
+
   it("refuses deleting a parent while a subtype still declares it", async () => {
     const parentId = testTypeId("subtype-parent");
     const childId = testTypeId("subtype-child");

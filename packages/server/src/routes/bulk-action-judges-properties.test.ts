@@ -124,19 +124,18 @@ describe("the bulk-action door judges a property patch", () => {
     // roll back the rows that had already succeeded, and with every row
     // failing that is indistinguishable from working correctly.
     //
-    // The second row is of a type with no registered schema, so the same
-    // patch is judged for the note and unjudged for it.
-    const loose = "user.unjudged_in_a_mixed_chunk";
+    // The second row is of a type whose schema takes the same patch, so the
+    // one patch is refused for the note and written for it.
+    const loose = "user.takes_a_number_in_a_mixed_chunk";
     registerTypeSchema({
       id: loose,
       version: 1,
-      fields: { body: { type: "string" } },
+      fields: { body: { type: "number" } },
     });
     try {
       const marker = `bapmix-${Math.random().toString(36).slice(2, 8)}`;
       const note = await seed(marker);
-      const other = await seedOfType(marker, loose, { body: "before" });
-      unregisterTypeSchema(loose);
+      const other = await seedOfType(marker, loose, { body: 1 });
 
       const outcome = await patchByTag(marker, REFUSED_BY_THE_TYPE);
 
@@ -146,9 +145,8 @@ describe("the bulk-action door judges a property patch", () => {
       expect(outcome.errors[0]?.id).toBe(note);
       expect(outcome.errors[0]?.code).toBe("invalid_properties");
 
-      // The refused row is untouched and the judged-nothing row is written,
-      // which is what says the transaction did not roll back around the
-      // refusal.
+      // The refused row is untouched and the other row is written, which is
+      // what says the transaction did not roll back around the refusal.
       expect(await bodyOf(note)).toBe(`bap-${marker}`);
       expect(await bodyOf(other)).toBe(12345);
     } finally {
@@ -156,12 +154,7 @@ describe("the bulk-action door judges a property patch", () => {
     }
   });
 
-  it("accepts a patch to a type it has no schema to judge against", async () => {
-    // The guard the single-item door carries. `validateProperties` reports an
-    // absent schema as `Unknown type` rather than as no opinion, so judging
-    // unguarded would refuse every row of a type this worker's registry does
-    // not hold — a runtime-registered type, or one deleted since the row
-    // was written.
+  it("refuses a patch to a row whose type is not registered", async () => {
     const orphan = "user.orphaned_by_the_bulk_action_test";
     registerTypeSchema({
       id: orphan,
@@ -175,22 +168,22 @@ describe("the bulk-action door judges a property patch", () => {
     try {
       id = await seed(marker, orphan);
     } finally {
-      // The row outlives its type, which is the state the guard is for.
+      // The row outlives its type.
       unregisterTypeSchema(orphan);
     }
 
-    const outcome = await patchByTag(marker, { note: "still fine" });
-    expect(outcome.errors).toHaveLength(0);
-    expect(outcome.succeeded).toBe(1);
+    const outcome = await patchByTag(marker, { note: "changed" });
+    expect(outcome.succeeded).toBe(0);
+    expect(outcome.errors).toEqual([
+      expect.objectContaining({ id, code: "unknown_type" }),
+    ]);
 
-    // Reporting success is not writing. A door that skipped the row and
-    // counted it anyway would pass on the counts alone.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
       key: ctx.workingKey,
     });
     const { item } = (await after.json()) as {
       item: { properties: { note?: unknown } };
     };
-    expect(item.properties.note).toBe("still fine");
+    expect(item.properties.note).toBe("fine");
   });
 });

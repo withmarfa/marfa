@@ -1312,8 +1312,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
     why: "create, upsert, patch, the conflicted copy a resolving patch spawns and the edges it copies, delete, the two the purge door emits, and the four tag and metadata doors",
   },
   "routes/items-lifecycle.ts": {
-    sites: 3,
-    why: "transition and restore, and the rows either brings back that the row's trash took",
+    sites: 4,
+    why: "transition and restore, the rows a transition into the bin takes with it, and the rows either brings back that the row's trash took",
   },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
   "routes/folders.ts": {
@@ -1327,8 +1327,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   },
   "routes/edges-bulk.ts": { sites: 2, why: "the atomic edge batch" },
   "bulk-actions/runner.ts": {
-    sites: 6,
-    why: "six arms through six sites: transition publishes for itself and for the rows a restore out of the bin brings back, update_tags for itself, purge announces its cascade and its rows through two, and the three property-shaped arms share one local helper",
+    sites: 7,
+    why: "six arms through seven sites: transition publishes for itself, for the rows its trash takes and for the rows a restore out of the bin brings back, update_tags for itself, purge announces its cascade and its rows through two, and the three property-shaped arms share one local helper",
   },
   "routes/_edges-inline.ts": {
     sites: 2,
