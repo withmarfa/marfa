@@ -22,8 +22,8 @@ import {
   ErrorCode,
   isValidId,
   resolveExtensionPermission,
-  filterExtensionsByPermission,
 } from "@withmarfa/shared";
+import { readableExtensions } from "./_extension-reach.js";
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
@@ -204,7 +204,7 @@ const setExtensionRoute = createRoute({
           schema: ExtensionsResponseSchema,
         },
       },
-      description: "Updated extensions",
+      description: "The namespaces on the item the caller may read",
     },
     400: {
       content: {
@@ -268,7 +268,7 @@ const deleteExtensionRoute = createRoute({
           schema: ExtensionsResponseSchema,
         },
       },
-      description: "Remaining extensions after deletion",
+      description: "The namespaces left on the item the caller may read",
     },
     400: {
       content: {
@@ -328,13 +328,7 @@ export function extensionRoutes(storage: Storage) {
     );
 
     const extensions = await storage.metadata.getExtensions(id);
-    const filtered = filterExtensionsByPermission(
-      extensions,
-      apiKey?.extension_permissions,
-      extensionLabelOf(apiKey),
-    );
-
-    return c.json({ extensions: filtered }, 200);
+    return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
   });
 
   router.openapi(getExtensionRoute, async (c) => {
@@ -441,7 +435,7 @@ export function extensionRoutes(storage: Storage) {
       resource_id: id,
       details: { namespace },
     });
-    return c.json({ extensions }, 200);
+    return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
   });
 
   router.openapi(deleteExtensionRoute, async (c) => {
@@ -502,7 +496,7 @@ export function extensionRoutes(storage: Storage) {
       resource_id: id,
       details: { namespace },
     });
-    return c.json({ extensions }, 200);
+    return c.json({ extensions: readableExtensions(extensions, apiKey) }, 200);
   });
 
   return router;

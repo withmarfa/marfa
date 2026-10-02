@@ -28,7 +28,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import { ItemSchema, MetadataSchema } from "./_schemas.js";
-import { filterMetadataForCaller } from "./util.js";
+import { readableMetadata } from "./_extension-reach.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -242,7 +242,7 @@ export function bulkGetRoutes(storage: Storage) {
       const metadataList = await storage.metadata.getMany(visibleIds);
       const metadataMap = new Map(metadataList.map((m) => [m.item_id, m]));
       const metadata = visible.map((item) =>
-        filterMetadataForCaller(
+        readableMetadata(
           metadataMap.get(item.id) ?? {
             item_id: item.id,
             tags: [],

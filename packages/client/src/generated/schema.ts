@@ -57,7 +57,7 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.
+         * @description Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.
          *
          *     `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.
          *
@@ -6715,7 +6715,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Updated extensions */
+            /** @description The namespaces on the item the caller may read */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6848,7 +6848,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Remaining extensions after deletion */
+            /** @description The namespaces left on the item the caller may read */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

@@ -5,6 +5,7 @@ import {
   createTestContext,
   trackItem,
   trackEdge,
+  trackKey,
   cleanup,
 } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
@@ -63,6 +64,7 @@ async function deliver(
   id: string,
   act: () => Promise<void>,
   signal: AbortSignal,
+  subscriber: string = apiKey,
 ) {
   // One predicate for both the wait and the pick. Waiting on name-and-id and
   // then returning the first frame of that name alone hands the caller a
@@ -72,7 +74,7 @@ async function deliver(
     const data = e.data as { item?: { id?: string }; edge?: { id?: string } };
     return e.event === name && (data.item?.id === id || data.edge?.id === id);
   };
-  const stream: EventStream = await openEventStream(apiUrl, apiKey);
+  const stream: EventStream = await openEventStream(apiUrl, subscriber);
   expect(stream.response.status).toBe(200);
   try {
     // Headers are in, which is not the same as the subscription being on the
@@ -391,6 +393,46 @@ describe("event stream contract", () => {
     expect(data.item.id).toBe(id);
     expect(data.metadata?.extensions?.["connection.runtime"]).toEqual({
       probe: ctx.runId,
+    });
+  });
+
+  it("carries on a metadata.changed frame only the extension namespaces the subscriber may read", async ({
+    signal,
+  }) => {
+    const seen = `stream-seen-${ctx.runId}`;
+    const unseen = `stream-unseen-${ctx.runId}`;
+    const id = await seed("extension-narrowed");
+    expect((await client.setItemExtension(id, seen, { a: 1 })).ok).toBe(true);
+    const keyResp = await client.createKey({
+      label: "events-one-namespace",
+      source: `${ctx.source}-events-one-namespace`,
+      permissions: [],
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { [seen]: "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const write = async () => {
+      const put = await client.setItemExtension(id, unseen, { secret: 2 });
+      expect(put.ok).toBe(true);
+    };
+    type Frame = { metadata?: { extensions?: Record<string, unknown> } };
+
+    // The witness: a subscriber that may read the namespace is sent it.
+    const full = await deliver("metadata.changed", id, write, signal);
+    expect((full?.data as Frame).metadata?.extensions?.[unseen]).toEqual({
+      secret: 2,
+    });
+
+    const narrow = await deliver(
+      "metadata.changed",
+      id,
+      write,
+      signal,
+      keyResp.data.key,
+    );
+    expect((narrow?.data as Frame).metadata?.extensions).toEqual({
+      [seen]: { a: 1 },
     });
   });
 

@@ -152,6 +152,54 @@ describe("metadata extensions", () => {
     expect(malformed.error?.error.code).toBe("invalid_id");
   });
 
+  it("answers a key only the namespaces its extension map reads, on the replace and delete doors as on the reads", async () => {
+    const seen = `seen-${ctx.runId}`;
+    const unseen = `unseen-${ctx.runId}`;
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(note.ok).toBe(true);
+    const id = note.data.item.id;
+    trackItem(ctx, id);
+    expect((await client.setItemExtension(id, seen, { a: 1 })).ok).toBe(true);
+    // The witness: the namespace the narrow key does not hold is on the
+    // item, and a key that may read it is answered it.
+    const full = await client.setItemExtension(id, unseen, { secret: 2 });
+    expect(full.ok).toBe(true);
+    expect(full.data.extensions[unseen]).toEqual({ secret: 2 });
+
+    const keyResp = await client.createKey({
+      label: "extensions-one-namespace",
+      source: `${ctx.source}-extensions-one-namespace`,
+      permissions: [],
+      type_permissions: { "core.note": "write" },
+      extension_permissions: { [seen]: "write" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const narrow = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const replaced = await narrow.setItemExtension(id, seen, { a: 3 });
+    expect(replaced.status).toBe(200);
+    expect(replaced.data.extensions).toEqual({ [seen]: { a: 3 } });
+    const listed = await narrow.listItemExtensions(id);
+    expect(listed.data.extensions).toEqual({ [seen]: { a: 3 } });
+    const item = await narrow.getItem(id);
+    expect(item.data.metadata.extensions).toEqual({ [seen]: { a: 3 } });
+    const bulk = await narrow.bulkGet([id], ["metadata", "extensions"]);
+    expect(bulk.status).toBe(200);
+    expect(JSON.stringify(bulk.data)).toContain(seen);
+    expect(JSON.stringify(bulk.data)).not.toContain(unseen);
+    const removed = await narrow.deleteItemExtension(id, seen);
+    expect(removed.status).toBe(200);
+    expect(removed.data.extensions).toEqual({});
+
+    // Left out of the answers, and left alone on the item.
+    const kept = await client.getItemExtension(id, unseen);
+    expect(kept.data.data).toEqual({ secret: 2 });
+  });
+
   it("refuses a key without reach on the namespace", async () => {
     // Write on the item's type and no extension map, so the namespace is
     // the only gate left to refuse it.

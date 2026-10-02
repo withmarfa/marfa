@@ -1,14 +1,10 @@
-import { extensionLabelOf } from "../auth/extension-label.js";
-import { filterExtensionsByPermission } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
+import { readableExtensions } from "./_extension-reach.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
  * Batched hydration for `GET /items?include=extensions` and friends. One
- * SELECT covers the whole list; each per-item record is then passed
- * through `filterExtensionsByPermission` so the caller only sees
- * namespaces it can read — same rule `GET /items/:id/extensions`
- * enforces.
+ * SELECT covers the whole list.
  *
  * Mirrors the `_edges-hydrate.ts` pattern so future `?include=` values
  * have a consistent shape. List reads stay lean by default; callers opt
@@ -23,14 +19,7 @@ export async function hydrateExtensionsForItems(
   const raw = await storage.metadata.getExtensionsForItems(itemIds);
   const out = new Map<string, Record<string, Record<string, unknown>>>();
   for (const [id, extensions] of raw) {
-    out.set(
-      id,
-      filterExtensionsByPermission(
-        extensions,
-        apiKey?.extension_permissions,
-        extensionLabelOf(apiKey),
-      ),
-    );
+    out.set(id, readableExtensions(extensions, apiKey));
   }
   return out;
 }

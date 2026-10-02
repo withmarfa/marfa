@@ -24,7 +24,7 @@ import {
   pageOf,
   resolveStateFilter,
 } from "./_schemas.js";
-import { filterMetadataForCaller } from "./util.js";
+import { readableMetadata } from "./_extension-reach.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
 import {
   refuseUnknownQueryParams,
@@ -317,7 +317,7 @@ export function searchRoutes(storage: Storage) {
     const apiKey = c.get("apiKey");
     const filtered = results.slice(0, limit).map((r) => ({
       ...r,
-      metadata: filterMetadataForCaller(r.metadata, apiKey),
+      metadata: readableMetadata(r.metadata, apiKey),
     }));
     const next = offset + limit;
     return c.json(

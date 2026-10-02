@@ -20,7 +20,7 @@ import {
 import type { EdgeEventWithId, ItemEventWithId, LiveFrame } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { ApiKey, Edge, Metadata } from "@withmarfa/shared";
-import { filterMetadataForCaller } from "./util.js";
+import { readableMetadata } from "./_extension-reach.js";
 import {
   edgeKindReadable,
   edgeReadable,
@@ -261,7 +261,7 @@ export interface EventRoutesOptions {
  */
 function itemFrameFor(stored: Record<string, unknown>, apiKey: ApiKey): string {
   const frame = frameFor(stored, (type) => mayReadType(apiKey, type));
-  // Shape-checked: `filterMetadataForCaller` iterates `.extensions`, and a
+  // Shape-checked: `readableMetadata` iterates `.extensions`, and a
   // throw here would end a replay short of events the client never re-asks for.
   const metadata: unknown = frame.metadata;
   if (metadata === null || typeof metadata !== "object") {
@@ -273,7 +273,7 @@ function itemFrameFor(stored: Record<string, unknown>, apiKey: ApiKey): string {
   }
   return JSON.stringify({
     ...frame,
-    metadata: filterMetadataForCaller(metadata as Metadata, apiKey),
+    metadata: readableMetadata(metadata as Metadata, apiKey),
   });
 }
 

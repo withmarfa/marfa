@@ -116,7 +116,7 @@ import {
   pageOf,
   resolveStateFilter,
 } from "./_schemas.js";
-import { filterMetadataForCaller } from "./util.js";
+import { readableMetadata } from "./_extension-reach.js";
 import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
@@ -696,7 +696,7 @@ const getItemRoute = createRoute({
   tags: ["Items"],
   summary: "Get an item",
   description:
-    "Returns a single item with its metadata layer and outbound edges hydrated inline; extensions are not included. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.\n\n" +
+    "Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.\n\n" +
     "`?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.\n\n" +
     "Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.",
   security: [{ bearerAuth: [] }],
@@ -1389,7 +1389,7 @@ async function acknowledgedItemBody(
   const [item = existing] = await withCascadeMarks(storage, apiKey, [existing]);
   return {
     item,
-    metadata: filterMetadataForCaller(metadata, apiKey),
+    metadata: readableMetadata(metadata, apiKey),
     acknowledged: true,
   };
 }
@@ -1838,7 +1838,7 @@ export function itemRoutes(storage: Storage) {
         return c.json(
           {
             item: itemWithEdges,
-            metadata: filterMetadataForCaller(updatedMetadata, c.get("apiKey")),
+            metadata: readableMetadata(updatedMetadata, c.get("apiKey")),
           },
           200,
         );
@@ -2054,7 +2054,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(
       {
         item: itemWithEdges,
-        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
       },
       201,
     );
@@ -2266,7 +2266,7 @@ export function itemRoutes(storage: Storage) {
         {
           data: rows.map((item) => ({
             item: decorate(item),
-            metadata: filterMetadataForCaller(
+            metadata: readableMetadata(
               metadataMap.get(item.id) ?? {
                 item_id: item.id,
                 tags: [],
@@ -2421,7 +2421,7 @@ export function itemRoutes(storage: Storage) {
         const metaById = new Map(metaList.map((m) => [m.item_id, m]));
         neighbors = visible.map((n) => ({
           item: n,
-          metadata: filterMetadataForCaller(
+          metadata: readableMetadata(
             metaById.get(n.id) ?? { item_id: n.id, tags: [], extensions: {} },
             apiKey,
           ),
@@ -2432,7 +2432,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(
       {
         item: { ...item, edges },
-        metadata: filterMetadataForCaller(metadata, apiKey),
+        metadata: readableMetadata(metadata, apiKey),
         ...(includeBackrefs && backrefs ? { backrefs } : {}),
         ...(neighbors !== undefined
           ? {
@@ -2862,7 +2862,7 @@ export function itemRoutes(storage: Storage) {
     return c.json(
       {
         item: { ...resolvedItem, edges: hydrated },
-        metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        metadata: readableMetadata(metadata, c.get("apiKey")),
         // Present only where the server actually resolved a collision. It is
         // the only thing that names the sibling: no route reports what a
         // write created, so without this the row exists and nothing can
@@ -2978,7 +2978,7 @@ export function itemRoutes(storage: Storage) {
     );
     const metadata = await storage.metadata.get(id);
     return c.json(
-      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });
@@ -3015,7 +3015,7 @@ export function itemRoutes(storage: Storage) {
       metadata,
     });
     return c.json(
-      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });
@@ -3071,7 +3071,7 @@ export function itemRoutes(storage: Storage) {
       metadata,
     });
     return c.json(
-      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });
@@ -3112,7 +3112,7 @@ export function itemRoutes(storage: Storage) {
       metadata,
     });
     return c.json(
-      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });
@@ -3277,7 +3277,7 @@ export function itemRoutes(storage: Storage) {
       metadata,
     });
     return c.json(
-      { metadata: filterMetadataForCaller(metadata, c.get("apiKey")) },
+      { metadata: readableMetadata(metadata, c.get("apiKey")) },
       200,
     );
   });
