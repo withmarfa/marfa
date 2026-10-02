@@ -59,7 +59,7 @@ export interface paths {
          * Get an item
          * @description Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.
          *
-         *     `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.
+         *     `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the first page of the item's version snapshots the caller may read, oldest first, which `GET /items/{id}/versions` continues from its `next_cursor`. Tokens are comma-separated and compose.
          *
          *     Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
          */
@@ -129,7 +129,7 @@ export interface paths {
         };
         /**
          * List item versions
-         * @description Returns the version-snapshot history for one item, oldest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.
+         * @description Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the `type`, `tier`, `occurred_at` and `source_id` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, so a page can come back short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
          */
         get: operations["listItemVersions"];
         put?: never;
@@ -1837,6 +1837,11 @@ export interface components {
             properties: {
                 [key: string]: unknown;
             };
+            /** @description The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it. */
+            type: string;
+            tier: components["schemas"]["Tier"];
+            occurred_at: string;
+            source_id: string | null;
             created_at: string;
         };
         InvalidIdRefusal: {
@@ -1916,6 +1921,16 @@ export interface components {
             error: {
                 /** @enum {string} */
                 code: "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
+                message: string;
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        InvalidIdOrValidationErrorRefusal: {
+            error: {
+                /** @enum {string} */
+                code: "invalid_id" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -2108,16 +2123,6 @@ export interface components {
         ExtensionsResponse: {
             extensions: {
                 [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        InvalidIdOrValidationErrorRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "invalid_id" | "validation_error";
-                message: string;
-                details?: {
                     [key: string]: unknown;
                 };
             };
@@ -4514,7 +4519,12 @@ export interface operations {
     };
     listItemVersions: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Page size, 1–200 (default 50) */
+                limit?: number;
+                /** @description Opaque cursor from a previous page's `next_cursor`. */
+                cursor?: string;
+            };
             header?: never;
             path: {
                 /** @description Item id whose version history to return */
@@ -4538,7 +4548,7 @@ export interface operations {
                     "application/json": components["schemas"]["VersionPage"];
                 };
             };
-            /** @description The id is not a well-formed item id. */
+            /** @description The id is not a well-formed item id, or a query parameter is unknown or out of range, or the cursor is malformed or was issued by another listing. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4550,7 +4560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdRefusal"];
+                    "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */

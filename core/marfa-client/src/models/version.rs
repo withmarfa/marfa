@@ -21,6 +21,15 @@ pub struct Version {
     pub version: f64,
     #[serde(rename = "properties")]
     pub properties: std::collections::HashMap<String, serde_json::Value>,
+    /// The type the row had at this version, which a row moved since no longer has. A snapshot is answered only to a credential that may read it.
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(rename = "tier")]
+    pub tier: models::Tier,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: String,
+    #[serde(rename = "source_id", deserialize_with = "Option::deserialize")]
+    pub source_id: Option<String>,
     #[serde(rename = "created_at")]
     pub created_at: String,
 }
@@ -31,6 +40,10 @@ impl Version {
         item_id: String,
         version: f64,
         properties: std::collections::HashMap<String, serde_json::Value>,
+        r#type: String,
+        tier: models::Tier,
+        occurred_at: String,
+        source_id: Option<String>,
         created_at: String,
     ) -> Version {
         Version {
@@ -38,6 +51,10 @@ impl Version {
             item_id,
             version,
             properties,
+            r#type,
+            tier,
+            occurred_at,
+            source_id,
             created_at,
         }
     }

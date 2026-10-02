@@ -115,6 +115,10 @@ pub struct GetItemStatsParams {
 pub struct ListItemVersionsParams {
     /// Item id whose version history to return
     pub id: String,
+    /// Page size, 1–200 (default 50)
+    pub limit: Option<i32>,
+    /// Opaque cursor from a previous page's `next_cursor`.
+    pub cursor: Option<String>,
 }
 
 /// struct for passing parameters to the method [`list_items`]
@@ -531,7 +535,7 @@ pub enum GetItemStatsError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ListItemVersionsError {
-    Status400(models::InvalidIdRefusal),
+    Status400(models::InvalidIdOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
     Status403(models::TypeNotPermittedRefusal),
     Status404(models::ItemNotFoundRefusal),
@@ -1024,7 +1028,7 @@ pub fn get_bulk_action_job(
     }
 }
 
-/// Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.  `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the item's version snapshots, oldest first. Tokens are comma-separated and compose.  Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
+/// Returns a single item with its metadata layer and outbound edges hydrated inline, the metadata carrying the extension namespaces the caller may read. A row that is not stored answers 404, and so does a row whose type the credential's type map does not reach, with the same code and message, so the answer says nothing of whether the row exists or what type it is. A credential whose map reaches no type at all is refused `403 type_not_permitted`, whatever the id names.  `?include=` widens the response with the item's 1-hop neighborhood in one round trip instead of a per-section fan-out: `backrefs` adds inbound edges grouped by type (same block shape as `edges`, capped + cursored per type); `neighbors` adds the far-end items of the item's edges (outbound targets, plus inbound sources when `backrefs` is also requested), each with its metadata and filtered to what the caller may read; `versions` adds the first page of the item's version snapshots the caller may read, oldest first, which `GET /items/{id}/versions` continues from its `next_cursor`. Tokens are comma-separated and compose.  Every edge carried on a response is held to the two permissions `GET /edges/{id}` asks for: read on the source item's type, and read on the edge type. A block whose edges all fail is left out rather than returned empty, so a response can carry fewer kinds of relationship than the item has.
 pub fn get_item(
     configuration: &configuration::Configuration,
     params: GetItemParams,
@@ -1145,7 +1149,7 @@ pub fn get_item_stats(
     }
 }
 
-/// Returns the version-snapshot history for one item, oldest first. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous.
+/// Returns the version-snapshot history for one item, oldest first, paged by cursor. Each snapshot carries the properties the row held before the write that left it behind and the `type`, `tier`, `occurred_at` and `source_id` the row had at that version. Requires read access to the item's type now, and a snapshot is answered only where the credential may also read the type it was written under: a row moved from a type the credential may not read keeps those snapshots, and they are left out rather than refused, so a page can come back short. Older snapshots are thinned on a rolling schedule and the most recent is never dropped, so the history is not guaranteed to be contiguous. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.
 pub fn list_item_versions(
     configuration: &configuration::Configuration,
     params: ListItemVersionsParams,
@@ -1157,6 +1161,12 @@ pub fn list_item_versions(
     );
     let mut req_builder = configuration.client.request(reqwest::Method::GET, &uri_str);
 
+    if let Some(ref param_value) = params.limit {
+        req_builder = req_builder.query(&[("limit", &param_value.to_string())]);
+    }
+    if let Some(ref param_value) = params.cursor {
+        req_builder = req_builder.query(&[("cursor", &param_value.to_string())]);
+    }
     if let Some(ref user_agent) = configuration.user_agent {
         req_builder = req_builder.header(reqwest::header::USER_AGENT, user_agent.clone());
     }
