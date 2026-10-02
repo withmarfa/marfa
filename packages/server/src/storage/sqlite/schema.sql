@@ -3,7 +3,8 @@
 --
 -- Applied in full at every database open. Every statement is idempotent, so
 -- an existing database is left as it is. The FTS5 virtual table lives in
--- sqlite/connection.ts, which drizzle-kit cannot express.
+-- sqlite/connection.ts, which drizzle-kit cannot express; the triggers at
+-- the end are declared as SQL in schema.ts for the same reason.
 
 CREATE TABLE IF NOT EXISTS `api_keys` (
 	`id` text PRIMARY KEY NOT NULL,
@@ -657,3 +658,15 @@ CREATE TABLE IF NOT EXISTS `versions` (
 );
 
 CREATE INDEX IF NOT EXISTS `idx_versions_item_id` ON `versions` (`item_id`);
+
+CREATE TRIGGER IF NOT EXISTS `item_blob_references_insert_lifts_blob_orphans` AFTER INSERT ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = NEW.hash; END;
+CREATE TRIGGER IF NOT EXISTS `item_blob_references_delete_lifts_blob_orphans` AFTER DELETE ON `item_blob_references` BEGIN DELETE FROM `blob_orphans` WHERE hash = OLD.hash; END;
+CREATE TRIGGER IF NOT EXISTS `metadata_insert_lifts_blob_orphans` AFTER INSERT ON `metadata` BEGIN DELETE FROM `blob_orphans` WHERE instr(NEW.extensions, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `metadata_update_lifts_blob_orphans` AFTER UPDATE OF extensions ON `metadata` BEGIN DELETE FROM `blob_orphans` WHERE instr(OLD.extensions, substr(hash, 8)) > 0 OR instr(NEW.extensions, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `metadata_delete_lifts_blob_orphans` AFTER DELETE ON `metadata` BEGIN DELETE FROM `blob_orphans` WHERE instr(OLD.extensions, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `edges_insert_lifts_blob_orphans` AFTER INSERT ON `edges` BEGIN DELETE FROM `blob_orphans` WHERE instr(NEW.properties, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `edges_update_lifts_blob_orphans` AFTER UPDATE OF properties ON `edges` BEGIN DELETE FROM `blob_orphans` WHERE instr(OLD.properties, substr(hash, 8)) > 0 OR instr(NEW.properties, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `edges_delete_lifts_blob_orphans` AFTER DELETE ON `edges` BEGIN DELETE FROM `blob_orphans` WHERE instr(OLD.properties, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `versions_insert_lifts_blob_orphans` AFTER INSERT ON `versions` BEGIN DELETE FROM `blob_orphans` WHERE instr(NEW.properties, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `versions_update_lifts_blob_orphans` AFTER UPDATE OF properties ON `versions` BEGIN DELETE FROM `blob_orphans` WHERE instr(OLD.properties, substr(hash, 8)) > 0 OR instr(NEW.properties, substr(hash, 8)) > 0; END;
+CREATE TRIGGER IF NOT EXISTS `versions_delete_lifts_blob_orphans` AFTER DELETE ON `versions` BEGIN DELETE FROM `blob_orphans` WHERE instr(OLD.properties, substr(hash, 8)) > 0; END;

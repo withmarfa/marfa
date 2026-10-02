@@ -42,8 +42,17 @@ export class BlobOrphanReporter {
   async runOnce(): Promise<OrphanResult> {
     const now = this.nowFn();
     const startedAt = now.toISOString();
+    // A purge a failing store keeps from finishing stays recorded for the
+    // next run and is logged, so it never stops the report being written.
     for (const hash of await this.storage.blobs.listPendingPurges()) {
-      await finishPurge(this.storage, this.stores, hash);
+      try {
+        await finishPurge(this.storage, this.stores, hash);
+      } catch (err) {
+        log("error", "blob.purge_unfinished", {
+          hash,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     const unreferenced = await this.unreferencedHashes();
     // The time is read inside the transaction, so a report is never older

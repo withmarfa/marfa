@@ -456,6 +456,36 @@ describe("the rules that keep a blob's bytes", () => {
     expect((await operator.downloadBlob(hash)).status).toBe(404);
   });
 
+  it("lifts the report on a reference added and removed between runs", async () => {
+    const hash = await uploadText("named, then unnamed, between runs");
+    await run("blob-orphans");
+    expect(
+      (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
+    ).toContain(hash);
+
+    // A file item names it, and the report lets it go at once.
+    const file = await client.createItem({
+      type: "core.file",
+      source: ctx.source,
+      properties: { blob_ref: hash, mime_type: "text/plain" },
+    });
+    expect(file.ok, JSON.stringify(file.error)).toBe(true);
+    expect(
+      (await operator.listBlobOrphans()).data.data.map((row) => row.hash),
+    ).not.toContain(hash);
+    const id = file.data.item.id;
+    expect((await client.deleteItem(id)).status).toBe(200);
+    const purged = await client.purgeItem(id);
+    expect(purged.status, JSON.stringify(purged.error)).toBe(200);
+
+    // Unnamed again, it waits a fresh grace rather than going on the old
+    // report.
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(hash)).status).toBe(200);
+    await run("blob-orphans");
+    expect((await operator.downloadBlob(hash)).status).toBe(404);
+  });
+
   it("keeps a blob a note links in its body after the file item naming it is purged", async () => {
     // Two images, each named by a file item that is trashed and purged; a
     // note links only the first in its body. The second is the witness

@@ -582,7 +582,9 @@ describe("a blob sent or named again while the sweep runs", () => {
     expect(await reporter.runOnce()).toMatchObject({ purged: 0 });
     expect(await ctx.storage.blobs.get(hash)).not.toBeNull();
     expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
-    expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
+    // The next walk sees the reference and leaves it out of the report.
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 0 });
   });
 
   it("keeps a reported blob an edge names after the walk", async () => {
@@ -623,6 +625,88 @@ describe("a blob sent or named again while the sweep runs", () => {
   });
 });
 
+describe("a reference added or removed between runs", () => {
+  it("restarts the grace for a blob an item named and then stopped naming", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "named, then unnamed, between runs");
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    expect((await ctx.storage.blobs.listOrphans()).map((r) => r.hash)).toEqual([
+      hash,
+    ]);
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.workingKey,
+      body: { type: "core.note", properties: { body: "x", blob_ref: hash } },
+    });
+    expect(created.status).toBe(201);
+    // The new reference lifts the report.
+    expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
+    const item = ((await created.json()) as { item: { id: string } }).item;
+    const trashed = await request(ctx.app, "DELETE", `/items/${item.id}`, {
+      key: ctx.workingKey,
+    });
+    expect(trashed.status).toBe(200);
+    const purged = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
+      key: ctx.workingKey,
+    });
+    expect(purged.status, await purged.clone().text()).toBe(200);
+
+    // The run after reports it afresh rather than purging on the old report.
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 0, purged: 1 });
+  });
+
+  it("restarts the grace for a blob an edge named and then stopped naming", async () => {
+    ctx = await createTestContext();
+    const hash = await upload(ctx, "named by an edge between runs");
+    const ids: string[] = [];
+    for (const body of ["one end", "the other end"]) {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body } },
+      });
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as { item: { id: string } }).item.id);
+    }
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: {
+        source_id: ids[0],
+        target_id: ids[1],
+        edge_type: "about",
+        properties: { caption: `see ${hash}` },
+      },
+    });
+    expect(edge.status).toBe(201);
+    expect(await ctx.storage.blobs.listOrphans()).toEqual([]);
+    const edgeId = ((await edge.json()) as { edge: { id: string } }).edge.id;
+    const removed = await request(ctx.app, "DELETE", `/edges/${edgeId}`, {
+      key: ctx.workingKey,
+    });
+    expect(removed.status, await removed.clone().text()).toBe(200);
+    time.advance(1);
+    expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
+    expect(await ctx.blobs.disk.has(hash)).not.toBeNull();
+  });
+});
+
 describe("a purge cut short between the row and the bytes", () => {
   /** Make the disk store's next delete fail, as a crash or an outage would. */
   function failNextDelete(c: TestContext): void {
@@ -655,6 +739,42 @@ describe("a purge cut short between the row and the bytes", () => {
     await reporter.runOnce();
     expect(await ctx.blobs.disk.has(hash)).toBeNull();
     expect(await ctx.storage.blobs.listPendingPurges()).toEqual([]);
+  });
+
+  it("keeps reporting while a store's deletes keep failing", async () => {
+    ctx = await createTestContext();
+    const stuck = await upload(ctx, "a store that never lets go");
+    const time = clock();
+    const reporter = new BlobOrphanReporter(
+      ctx.storage,
+      ctx.blobs,
+      0,
+      time.nowFn,
+    );
+    await reporter.runOnce();
+    time.advance(1);
+    const disk = ctx.blobs.disk;
+    const original = disk.delete.bind(disk);
+    disk.delete = () => Promise.reject(new Error("store unavailable"));
+    try {
+      await expect(reporter.runOnce()).rejects.toThrow("store unavailable");
+      expect(await ctx.storage.blobs.listPendingPurges()).toEqual([stuck]);
+      // The unfinished purge is retried and logged, and the run still
+      // reports what is new.
+      const fresh = await upload(ctx, "reported despite the stuck store");
+      time.advance(1);
+      expect(await reporter.runOnce()).toEqual({ reported: 1, purged: 0 });
+      expect(
+        (await ctx.storage.blobs.listOrphans()).map((r) => r.hash),
+      ).toEqual([fresh]);
+      expect(await ctx.storage.blobs.listPendingPurges()).toEqual([stuck]);
+    } finally {
+      disk.delete = original;
+    }
+    time.advance(1);
+    await reporter.runOnce();
+    expect(await ctx.storage.blobs.listPendingPurges()).toEqual([]);
+    expect(await disk.has(stuck)).toBeNull();
   });
 
   it("keeps bytes uploaded again before the next run finishes the purge", async () => {

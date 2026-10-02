@@ -16,6 +16,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BLOB_REFERENCE_TRIGGERS } from "../src/storage/sqlite/schema.js";
 
 const SERVER_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMA_TS = "src/storage/sqlite/schema.ts";
@@ -26,7 +27,8 @@ const HEADER = `-- Generated from ${SCHEMA_TS} by scripts/generate-schema-sql.ts
 --
 -- Applied in full at every database open. Every statement is idempotent, so
 -- an existing database is left as it is. The FTS5 virtual table lives in
--- sqlite/connection.ts, which drizzle-kit cannot express.
+-- sqlite/connection.ts, which drizzle-kit cannot express; the triggers at
+-- the end are declared as SQL in schema.ts for the same reason.
 
 `;
 
@@ -48,5 +50,10 @@ const idempotent = rendered
   .replace(/^CREATE TABLE /gm, "CREATE TABLE IF NOT EXISTS ")
   .replace(/^CREATE (UNIQUE )?INDEX /gm, "CREATE $1INDEX IF NOT EXISTS ");
 
-writeFileSync(SCHEMA_SQL, HEADER + idempotent.trimEnd() + "\n");
+const triggers = BLOB_REFERENCE_TRIGGERS.join("\n");
+
+writeFileSync(
+  SCHEMA_SQL,
+  HEADER + idempotent.trimEnd() + "\n\n" + triggers + "\n",
+);
 process.stderr.write(`wrote ${SCHEMA_SQL}\n`);
