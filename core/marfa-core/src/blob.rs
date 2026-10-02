@@ -164,7 +164,12 @@ impl Cache {
     }
 
     fn copy_in(&self, mut from: impl Read) -> std::result::Result<(String, u64, PathBuf), Copy> {
-        fs::create_dir_all(&self.dir).map_err(Copy::Cache)?;
+        let mut made = fs::DirBuilder::new();
+        made.recursive(true);
+        // Another account on the machine reads nothing of what a key reads.
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut made, 0o700);
+        made.create(&self.dir).map_err(Copy::Cache)?;
         let incoming = self.dir.join(format!(".incoming-{}", uuid::Uuid::now_v7()));
         let copied = (|| {
             let mut to = File::create(&incoming).map_err(Copy::Cache)?;
