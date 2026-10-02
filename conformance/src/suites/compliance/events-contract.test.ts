@@ -509,6 +509,77 @@ describe("event stream contract", () => {
     ).toBe("validation_error");
   });
 
+  it("refuses a cursor that is not a decimal event id", async () => {
+    // The witness: a cursor the log could have issued opens a stream.
+    const fine = await openEventStream(apiUrl, apiKey, {
+      lastEventId: "0",
+      connectTimeoutMs: 30_000,
+    });
+    try {
+      expect(fine.response.status).toBe(200);
+    } finally {
+      await fine.close();
+    }
+    for (const cursor of [
+      "abc",
+      "0x10",
+      "-1",
+      "+5",
+      "007",
+      "1.0",
+      "9223372036854775808",
+    ]) {
+      const r = await fetch(`${apiUrl}/events`, {
+        headers: { Authorization: `Bearer ${apiKey}`, "Last-Event-ID": cursor },
+      });
+      expect(r.status, `Last-Event-ID ${JSON.stringify(cursor)}`).toBe(400);
+      const body = (await r.json()) as {
+        error: { code: string; details?: { errors?: { path: string }[] } };
+      };
+      expect(body.error.code).toBe("validation_error");
+      expect(body.error.details?.errors?.[0]?.path).toBe("Last-Event-ID");
+    }
+  });
+
+  it("refuses a cursor past the log's head with a terminal cursor_ahead frame", async ({
+    signal,
+  }) => {
+    const head = await baselineEventId(
+      apiUrl,
+      apiKey,
+      () => seed("cursor-ahead-head"),
+      signal,
+    );
+    // Far enough past the head that no other file's writes reach it while
+    // this one runs.
+    const ahead = String(BigInt(head.eventId) + 1_000_000_000_000n);
+    await withStream(apiUrl, apiKey, { lastEventId: ahead }, async (stream) => {
+      expect(stream.response.status).toBe(200);
+      const { events } = await collectUntil(
+        stream,
+        (evts) => evts.some((e) => e.event === "cursor_ahead"),
+        "a cursor_ahead frame",
+        signal,
+      );
+      const frame = events.find((e) => e.event === "cursor_ahead");
+      const data = frame?.data as {
+        type: string;
+        requested: string;
+        head: string;
+      };
+      expect(data.type).toBe("cursor_ahead");
+      expect(data.requested).toBe(ahead);
+      expect(BigInt(data.head) >= BigInt(head.eventId)).toBe(true);
+      expect(BigInt(data.head) < BigInt(ahead)).toBe(true);
+      // No `id:`, so a reconnect without reading it is refused again
+      // rather than resumed from somewhere else; and it is the last frame.
+      expect(frame?.id).toBeUndefined();
+      expect(events.some((e) => e.event === "stream_live")).toBe(false);
+      const reader = stream.response.body?.getReader();
+      expect((await reader?.read())?.done).toBe(true);
+    });
+  });
+
   it("refuses a subscription with no credential", async () => {
     const r = await fetch(`${apiUrl}/events`);
     expect(r.status).toBe(401);
