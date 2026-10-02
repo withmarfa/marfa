@@ -80,9 +80,10 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # Prettier reads Markdown as well as code, so a documentation change
-      # stops here.
+      # Prettier reads Markdown as well as code, and the classifier's test
+      # reads the whole tree, so a documentation change stops after these.
       - run: pnpm format:check
+      - run: pnpm vitest run ci/ci-required.test.ts
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
         run: pnpm build
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
@@ -98,7 +99,7 @@ jobs:
       # The version check asks cargo how it reads the manifests, so it runs
       # in its own job and this one needs no Rust.
       - if: ${{ needs.changes.outputs.workspace != 'false' }}
-        run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts
+        run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
 
   # `marfa-client` is held to its generator, not these: `--no-deps` keeps
   # clippy off it where a crate depends on it. Formatting still takes it,
@@ -169,14 +170,23 @@ jobs:
       # type registry from the same place.
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # The binary depends only on the crates it is built from, so a change
-      # that leaves them alone reuses the one `main` built and runs no Rust.
+      # A pull request that leaves the crates alone reuses the binary `main`
+      # built from the same sources and runs no Rust. A push, the nightly and
+      # a dispatch always build it, with the current compiler.
+      - name: Key the device under test
+        id: device-key
+        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the device under test
         id: device
+        if: ${{ github.event_name == 'pull_request' }}
         uses: actions/cache/restore@v6
         with:
           path: core/target/debug/marfa
-          key: marfa-${{ runner.os }}-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-core/**', 'core/marfa-cli/**', 'core/marfa-client/**', '!core/*/tests/**') }}
+          key: ${{ steps.device-key.outputs.key }}
+      # Restored with the time it was built, which the device suite reads as
+      # older than this checkout's sources; the key vouches that they match.
+      - if: ${{ steps.device.outputs.cache-hit == 'true' }}
+        run: touch core/target/debug/marfa
       - if: ${{ steps.device.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@stable
       - if: ${{ steps.device.outputs.cache-hit != 'true' }}
@@ -192,7 +202,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: core/target/debug/marfa
-          key: ${{ steps.device.outputs.cache-primary-key }}
+          key: ${{ steps.device-key.outputs.key }}
       - run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
 
       # Typecheck, lint and format are not repeated here. The suite is a
@@ -289,14 +299,23 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter "@withmarfa/server..." build
 
-      # The binary depends only on the crates it is built from, so a change
-      # that leaves them alone reuses the one `main` built and runs no Rust.
+      # A pull request that leaves the crates alone reuses the binary `main`
+      # built from the same sources and runs no Rust. A push, the nightly and
+      # a dispatch always build it, with the current compiler.
+      - name: Key the binary under test
+        id: device-key
+        run: echo "key=marfa-$RUNNER_OS-${{ hashFiles('core/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the binary under test
         id: device
+        if: ${{ github.event_name == 'pull_request' }}
         uses: actions/cache/restore@v6
         with:
           path: core/target/debug/marfa
-          key: marfa-${{ runner.os }}-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-core/**', 'core/marfa-cli/**', 'core/marfa-client/**', '!core/*/tests/**') }}
+          key: ${{ steps.device-key.outputs.key }}
+      # Restored with the time it was built, which the device suite reads as
+      # older than this checkout's sources; the key vouches that they match.
+      - if: ${{ steps.device.outputs.cache-hit == 'true' }}
+        run: touch core/target/debug/marfa
       - if: ${{ steps.device.outputs.cache-hit != 'true' }}
         uses: dtolnay/rust-toolchain@stable
       - if: ${{ steps.device.outputs.cache-hit != 'true' }}
@@ -312,7 +331,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: core/target/debug/marfa
-          key: ${{ steps.device.outputs.cache-primary-key }}
+          key: ${{ steps.device-key.outputs.key }}
       - run: echo "MARFA_DEVICE_BIN=$PWD/core/target/debug/marfa" >> "$GITHUB_ENV"
 
       - name: Boot the server from this checkout

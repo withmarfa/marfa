@@ -20,8 +20,9 @@ import { fileURLToPath } from "node:url";
 
 /** Each output, named for the job that reads it. */
 export const JOBS = [
-  // `CI (SQLite)`. It runs for anything Prettier checks, and its build,
-  // typecheck, lint and tests run only for `workspace`.
+  // `CI (SQLite)`. It runs the format check and this classifier's test for
+  // any change outside `core/`, and its build, typecheck, lint and tests
+  // only for `workspace`.
   "ci-sqlite",
   "workspace",
   "core-checks",
@@ -32,7 +33,8 @@ export const JOBS = [
   "openapi-freshness",
   "version-fields",
   "clients-freshness",
-  // `core.yml`'s live job.
+  // `core.yml`'s live job, on macOS. It boots the server too, but a pull
+  // request that changes only the server leaves it to the push to `main`.
   "core",
 ] as const;
 
@@ -41,7 +43,7 @@ export type Job = (typeof JOBS)[number];
 const ALL: readonly Job[] = JOBS;
 const CI_YML: readonly Job[] = JOBS.filter((job) => job !== "core");
 
-/** Every job that boots the server built from this checkout. */
+/** Every job the server's code can change the result of, but `core`. */
 const SERVER: readonly Job[] = [
   "workspace",
   "conformance",
@@ -58,7 +60,7 @@ const RUST: readonly Job[] = [
   "core",
 ];
 
-/** Every job that installs or builds the pnpm workspace. */
+/** Every job that installs or builds the pnpm workspace, but `core`. */
 const WORKSPACE: readonly Job[] = [
   "workspace",
   "conformance",
@@ -71,8 +73,8 @@ const WORKSPACE: readonly Job[] = [
 ];
 
 /**
- * First match wins. Prettier and the version check are added on top by
- * `affected`, since they read files whatever else reads them.
+ * First match wins. The format check, the version check and lint are added
+ * on top by `affected`, since they read files whatever else reads them.
  */
 export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // What decides what runs is proven on everything it decides.
@@ -82,18 +84,25 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^\.github\/workflows\/core\.yml$/, ["workspace", "core"]],
   [/^\.github\/workflows\//, ["workspace"]],
   [/^\.github\//, []],
+  // Checkout applies it to every file every job reads.
+  [/^\.gitattributes$/, ALL],
 
   // The contract's statements are cited by number and checked by the suite.
   [/^conformance\/spec\//, ["conformance"]],
-  // Markdown anywhere else is read only by Prettier, and a published
-  // package's README by the version check. A fixture is test input, so it
-  // falls through to its folder's rule.
-  [/^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/).*\.md$/i, []],
-  [/^(LICENSE|\.gitattributes|\.env\.example|\.infisical\.json)$/, []],
+  // Markdown anywhere else is read only by Prettier, and a package's README
+  // by the version check. A fixture is test input and a generated tree is
+  // checked file by file, so those fall through to their folder's rule.
+  [
+    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/|core\/marfa-client\/).*\.md$/i,
+    [],
+  ],
+  [/^(LICENSE|\.env\.example|\.infisical\.json)$/, []],
   [/^\.claude\//, []],
 
-  // The drill installs the image's Litestream and runs its configuration.
-  [/^deploy\/(Dockerfile|litestream\.yml)$/, ["restore-drill"]],
+  // The drill installs the image's Litestream and runs its configuration,
+  // which the offline lane's own test reads too.
+  [/^deploy\/Dockerfile$/, ["restore-drill"]],
+  [/^deploy\/litestream\.yml$/, ["restore-drill", "conformance"]],
   [/^deploy\//, []],
 
   [/^packages\/types\//, [...SERVER, "types-freshness"]],
@@ -129,10 +138,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The generator's configuration and templates make the client's source,
   // and the freshness check regenerates it from them.
   [/^core\/marfa-client\//, ["clients-freshness"]],
-  // A crate's tests are not in the binary, and spec citations are read
-  // only from `src/`.
-  [/^core\/(marfa-core|marfa-cli)\/tests\//, ["core-checks", "core"]],
-  [/^core\/(marfa-core|marfa-cli)\//, RUST],
   [/^core\/Cargo\.toml$/, [...RUST, "clients-freshness", "workspace"]],
   [/^core\/Cargo\.lock$/, [...RUST, "clients-freshness"]],
   [/^core\/\.cargo\//, [...RUST, "workspace"]],
@@ -140,17 +145,24 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/scripts\/test-limits\.sh$/, ["core-checks", "core", "workspace"]],
   // Only the live tests boot a server.
   [/^core\/scripts\/(server-up|server-down|seed|binding-proof)\.sh$/, ["core"]],
+  [/^core\/scripts\//, ["core-checks", "core"]],
   [
     /^core\/bindings\/swift\/(Cargo\.toml|\.config\/)/,
     ["core-checks", "core", "workspace"],
   ],
+  [/^core\/bindings\/swift\//, ["core-checks", "core"]],
   // The Node module's JavaScript side is built and tested only by the live job.
   [/^core\/bindings\/node\/(test|scripts)\//, ["core"]],
   [
     /^core\/bindings\/node\/(index\.js|index\.d\.ts|package\.json|pnpm-lock\.yaml|tsconfig\.json)$/,
     ["core"],
   ],
-  [/^core\//, ["core-checks", "core"]],
+  [/^core\/bindings\//, ["core-checks", "core"]],
+  // A crate's tests are not in the binary, and spec citations are read only
+  // from `src/`.
+  [/^core\/[^/]+\/tests\//, ["core-checks", "core"]],
+  // Any other crate can be one the binary is built from.
+  [/^core\//, RUST],
 
   // The server's tests, the clients, the core's tests and the offline lane
   // all read the committed document.
@@ -182,16 +194,21 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^\.prettierignore$/, []],
 ];
 
-/** What `prettier --check .` reads: everything outside `core/` it can parse. */
-function formatted(path: string): boolean {
+/**
+ * Whether `CI (SQLite)` runs its format check and this classifier's test
+ * for a path: anything outside `core/`, which Prettier ignores, but the
+ * licence, and every crate manifest, which the test reads.
+ */
+function checked(path: string): boolean {
   return (
-    !path.startsWith("core/") &&
-    (/\.(md|ts|tsx|mts|cts|js|jsx|mjs|cjs|json|jsonc|json5|ya?ml|css|scss|less|html|graphql)$/i.test(
-      path,
-    ) ||
-      path === ".prettierignore" ||
-      path === ".gitignore")
+    (!path.startsWith("core/") && path !== "LICENSE") ||
+    basename(path) === "Cargo.toml"
   );
+}
+
+/** What `eslint .` reads: JavaScript and TypeScript outside its ignores. */
+function linted(path: string): boolean {
+  return /\.[cm]?[jt]sx?$/.test(path) && !/^(core|conformance)\//.test(path);
 }
 
 /**
@@ -213,7 +230,8 @@ export function affected(path: string): Set<Job> {
   const rule = RULES.find(([pattern]) => pattern.test(path));
   const jobs = new Set<Job>(rule ? rule[1] : ALL);
   if (versioned(path)) jobs.add("version-fields");
-  if (formatted(path) || jobs.has("workspace")) jobs.add("ci-sqlite");
+  if (linted(path)) jobs.add("workspace");
+  if (checked(path) || jobs.has("workspace")) jobs.add("ci-sqlite");
   return jobs;
 }
 

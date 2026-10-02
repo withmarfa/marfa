@@ -127,7 +127,32 @@ describe("what a change runs", () => {
       ["conformance/scripts/restore-drill.ts"],
       ["ci-sqlite", "workspace", "restore-drill"],
     ],
-    ["the image's Litestream", ["deploy/Dockerfile"], ["restore-drill"]],
+    [
+      "the image's Litestream",
+      ["deploy/Dockerfile"],
+      ["ci-sqlite", "restore-drill"],
+    ],
+    [
+      "the Litestream configuration, which the offline lane also reads",
+      ["deploy/litestream.yml"],
+      ["ci-sqlite", "conformance", "restore-drill"],
+    ],
+    [
+      "JavaScript that ESLint reads",
+      ["deploy/healthcheck.js"],
+      ["ci-sqlite", "workspace"],
+    ],
+    [
+      "Markdown in a generated tree, which its freshness check refuses",
+      ["core/marfa-client/NOTES.md", "packages/types/generated/NOTES.md"],
+      [...SERVER, "types-freshness", "clients-freshness"],
+    ],
+    ["the attributes checkout applies", [".gitattributes"], [...JOBS]],
+    [
+      "a crate the binary could come to be built from",
+      ["core/marfa-wire/src/lib.rs"],
+      RUST,
+    ],
     [
       "a dependency",
       ["pnpm-lock.yaml"],
@@ -144,9 +169,9 @@ describe("what a change runs", () => {
       ],
     ],
     [
-      "a crate manifest",
+      "a crate manifest, which this test reads",
       ["core/marfa-core/Cargo.toml"],
-      [...RUST, "version-fields"],
+      ["ci-sqlite", ...RUST, "version-fields"],
     ],
     [
       "ci.yml, which defines every job it runs",
@@ -207,17 +232,41 @@ describe("what a change runs", () => {
     expect(tracked().filter(unnamed)).toEqual([]);
   });
 
-  it("treats Markdown as documentation except the contract and package READMEs", () => {
-    const checked = tracked()
-      .filter((path) => path.endsWith(".md"))
-      .filter((path) => [...affected(path)].some((job) => job !== "ci-sqlite"));
-    expect(checked.length).toBeGreaterThan(0);
+  it("treats Markdown as documentation but the contract, package READMEs, fixtures and generated trees", () => {
+    const beyond = (path: string) =>
+      [...affected(path)].filter((job) => job !== "ci-sqlite");
+    const markdown = tracked().filter((path) => path.endsWith(".md"));
+    // The witnesses: the contract and a package's README reach a job.
+    expect(beyond("conformance/spec/items.md")).toEqual(["conformance"]);
+    expect(beyond("packages/client/README.md")).toEqual(["version-fields"]);
     expect(
-      checked.filter((path) => !path.startsWith("conformance/spec/")),
-    ).toEqual(["packages/client/README.md", "packages/types/README.md"]);
-    expect(
-      checked.filter((path) => path.startsWith("conformance/spec/")),
-    ).toEqual(tracked().filter((path) => path.startsWith("conformance/spec/")));
+      markdown.filter((path) => {
+        const jobs = beyond(path);
+        if (jobs.length === 0) return false;
+        if (path.startsWith("conformance/spec/")) {
+          return jobs.join() !== "conformance";
+        }
+        if (/^(packages|core)\/.+\/README[^/]*$/.test(path)) {
+          return jobs.join() !== "version-fields";
+        }
+        return true;
+      }),
+    ).toEqual([]);
+  });
+
+  it("holds Markdown in every generated tree to its freshness check", () => {
+    const trees = readFileSync(join(ROOT, ".gitattributes"), "utf8")
+      .split("\n")
+      .map((line) => /^\/?(\S+)\/\*\* linguist-generated=true$/.exec(line)?.[1])
+      .filter((tree) => tree !== undefined);
+    expect(trees.length).toBeGreaterThan(0);
+    for (const tree of trees) {
+      const jobs = [...affected(`${tree}/NOTES.md`)];
+      expect(
+        jobs.some((job) => job.endsWith("-freshness")),
+        `${tree}: ${jobs.join(", ")}`,
+      ).toBe(true);
+    }
   });
 });
 
@@ -260,6 +309,20 @@ function walk(dir: string): string[] {
         ? walk(join(dir, entry.name))
         : [join(dir, entry.name)],
   );
+}
+
+/** Whether an `@actions/glob` pattern, as `hashFiles` reads it, matches a path. */
+function globMatches(glob: string, path: string): boolean {
+  const pattern = glob
+    .split("**")
+    .map((part) =>
+      part
+        .split("*")
+        .map((piece) => piece.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+        .join("[^/]*"),
+    )
+    .join(".*");
+  return new RegExp(`^${pattern}$`).test(path);
 }
 
 interface Step {
@@ -311,18 +374,21 @@ describe("each job reads its own answer", () => {
     }
   });
 
-  it("CI (SQLite) checks formatting for any change and the rest only for the workspace", () => {
+  it("CI (SQLite) checks formatting and these rules for any change and the rest only for the workspace", () => {
     const steps = workflow("ci.yml").jobs["ci-sqlite"]?.steps ?? [];
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
     expect(steps[format]?.if).toBeUndefined();
-    const after = steps.slice(format + 1);
+    expect(steps[format + 1]).toEqual({
+      run: "pnpm vitest run ci/ci-required.test.ts",
+    });
+    const after = steps.slice(format + 2);
     expect(after.map((step) => step.run ?? step.uses)).toEqual([
       "pnpm build",
       "pnpm typecheck",
       "pnpm lint",
       "actions/cache@v6",
-      'MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts',
+      'MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts',
     ]);
     for (const step of after) {
       expect(step.if).toBe("${{ needs.changes.outputs.workspace != 'false' }}");
@@ -437,17 +503,30 @@ describe("what a job reads reaches it", () => {
 
     const { jobs } = workflow("ci.yml");
     for (const job of ["conformance", "cli-scenarios"]) {
-      const key =
-        jobs[job]?.steps.find((s) => s.id === "device")?.with?.key ?? "";
-      for (const input of [
-        "core/Cargo.toml",
-        "core/Cargo.lock",
-        ...[...crates].map((crate) => `core/${crate}/**`),
-      ]) {
-        expect(key, `${job} keys its binary on ${input}`).toContain(
-          `'${input}'`,
-        );
+      const steps = jobs[job]?.steps ?? [];
+      const run = steps.find((s) => s.id === "device-key")?.run ?? "";
+      const globs = [...run.matchAll(/'([^']+)'/g)].map((m) => m[1] ?? "");
+      expect(globs, job).toContain("core/**");
+      expect(globs, job).toContain(".github/workflows/ci.yml");
+      const excluded = globs
+        .filter((glob) => glob.startsWith("!"))
+        .map((glob) => glob.slice(1));
+      expect(excluded.length).toBeGreaterThan(0);
+      for (const crate of crates) {
+        const source = `core/${crate}/src/lib.rs`;
+        expect(
+          excluded.filter((glob) => globMatches(glob, source)),
+          `${job} keys its binary on ${source}`,
+        ).toEqual([]);
       }
+      // Restored only for a pull request, and made newer than the checkout,
+      // which the device suite refuses a binary for not being.
+      const restore = steps.find((s) => s.id === "device");
+      expect(restore?.if).toBe("${{ github.event_name == 'pull_request' }}");
+      expect(restore?.with?.key).toBe("${{ steps.device-key.outputs.key }}");
+      expect(
+        steps.find((s) => s.run === "touch core/target/debug/marfa")?.if,
+      ).toBe("${{ steps.device.outputs.cache-hit == 'true' }}");
       for (const crate of crates) {
         expect(
           affected(`core/${crate}/src/lib.rs`).has(job as Job),
