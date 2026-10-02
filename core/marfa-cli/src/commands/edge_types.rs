@@ -37,5 +37,11 @@ pub fn run(command: EdgeTypesCommand, remote: &Remote, out: &Printer) -> Result<
         EdgeTypesCommand::Register(body) => register_request(body.read()?),
         EdgeTypesCommand::Delete { id } => delete_request(id),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &command {
+        EdgeTypesCommand::Delete { id, .. } => {
+            out.report(&answer, || format!("removed edge type {id}"))
+        }
+        _ => out.value(&answer),
+    }
 }

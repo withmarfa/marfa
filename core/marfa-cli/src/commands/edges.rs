@@ -206,5 +206,24 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         EdgesCommand::Delete { id, idempotency } => idempotency.apply(delete_request(id)),
         EdgesCommand::Bulk(args) => bulk_request(args)?,
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &command {
+        EdgesCommand::Create(args) => out.report(&answer, || {
+            let id = answer
+                .get("edge")
+                .and_then(|edge| edge.get("id"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let mut sentence = format!(
+                "linked {} -> {} with {} edge {id}",
+                args.source, args.target, args.type_
+            );
+            if answer.get("acknowledged") == Some(&Value::Bool(true)) {
+                sentence.push_str("; the server already held this write");
+            }
+            sentence
+        }),
+        EdgesCommand::Delete { id, .. } => out.report(&answer, || format!("removed edge {id}")),
+        _ => out.value(&answer),
+    }
 }

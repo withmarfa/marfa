@@ -79,5 +79,9 @@ pub fn run(command: TypesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         TypesCommand::Drift => drift_request(),
         TypesCommand::Prune { id } => prune_request(id),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &command {
+        TypesCommand::Delete { id, .. } => out.report(&answer, || format!("removed type {id}")),
+        _ => out.value(&answer),
+    }
 }
