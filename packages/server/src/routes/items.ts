@@ -3,7 +3,6 @@ import {
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
-import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -20,13 +19,7 @@ import {
   resolveEnforcement,
   malformedTypeIdentifier,
 } from "@withmarfa/shared";
-import type {
-  ApiKey,
-  Edge,
-  Item,
-  ItemState,
-  Metadata,
-} from "@withmarfa/shared";
+import type { ApiKey, Item, ItemState, Metadata } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { credentialIdempotencyKey } from "../middleware/idempotency.js";
 import type { Context } from "hono";
@@ -38,9 +31,7 @@ import {
   requireTypeAccess,
   requireReadableRow,
   checkTypeAccess,
-  checkTypePermission,
   getTypeFilter,
-  mayReadType,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -49,9 +40,7 @@ import type {
 } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
 import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
-import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
-import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { publish, publishEdge } from "../pubsub.js";
 import {
   excludesSystemTypes,
@@ -67,11 +56,7 @@ import {
 } from "./_edges-hydrate.js";
 import { announceInlineEdges } from "./_edges-inline.js";
 import { itemAfterMetadataWrite } from "./_metadata-publish.js";
-import {
-  assertFilterEdgeTermsReadable,
-  readableEdges,
-  sourceTypesFor,
-} from "./_edge-visibility.js";
+import { assertFilterEdgeTermsReadable } from "./_edge-visibility.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
@@ -93,7 +78,6 @@ import {
   resolveStateFilter,
 } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
-import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
 import {
@@ -1375,38 +1359,6 @@ async function acknowledgedItemBody(
 // Router
 // ---------------------------------------------------------------------------
 
-/**
- * A block refusal listing, and counting, only the blocking edges whose kind
- * and both ends the caller may read, so a hidden holder is never named.
- */
-async function withoutHiddenBlockers(
-  storage: Storage,
-  key: ApiKey,
-  err: unknown,
-): Promise<unknown> {
-  const details = err instanceof MarfaError ? err.details : undefined;
-  const blockers = (details as { blocking_edges?: Edge[] } | undefined)
-    ?.blocking_edges;
-  const root = (details as { root_item_id?: string } | undefined)?.root_item_id;
-  if (!(err instanceof MarfaError) || !blockers || !root) return err;
-  const readable = await readableEdges(storage, key, blockers);
-  const targets = await storage.items.getMany(
-    readable.map((edge) => edge.target_id),
-    { includeTrashed: true },
-  );
-  const listed = readable.filter((edge) => {
-    const target = targets.get(edge.target_id);
-    return target !== undefined && mayReadType(key, target.type);
-  });
-  return new MarfaError(
-    err.code,
-    listed.length === 0
-      ? `Cannot delete item ${root}: blocked by an edge with cascade_on_delete=block`
-      : `Cannot delete item ${root}: blocked by ${String(listed.length)} edge(s) with cascade_on_delete=block`,
-    { ...details, blocking_edges: listed },
-  );
-}
-
 export function itemRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -2128,78 +2080,30 @@ export function itemRoutes(storage: Storage) {
     }
 
     const key = requireAuth(c);
-
-    const targetItem = requireReadableRow(
-      c,
-      await storage.items.get(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
+    const result = await writeItem(
+      storage,
+      { kind: "credential", key },
+      { op: "delete", id },
     );
-    requireTypeAccess(c, targetItem.type, "write");
-    const root = { id, type: targetItem.type };
-    // **No live-connection refusal on the named row, because the cascade
-    // below already covers it.** `planCascadeDelete` walks post-order and
-    // pushes the root itself, so `toDelete` always contains the row named in
-    // the URL and the loop inside the transaction asks the refusal of it like
-    // any other. A second call here would be a duplicate rather than a defense.
-    //
-    // The check itself stays where the cascade is, and has to: the type gate
-    // above ran against the named row alone, and a `parent-of` edge can carry
-    // a live `system.connection` out through a delete of something else
-    // entirely, when a grant's tokens must not outlive the row that names
-    // their owner (`_connection-refusal.ts`).
-    const snapshots = await storage.runInTransaction(async () => {
-      const toDelete = await planCascadeDelete(storage.edges, id).catch(
-        async (err: unknown) => {
-          throw await withoutHiddenBlockers(storage, key, err);
-        },
-      );
-      const snaps = await Promise.all(
-        toDelete.map((delId) => storage.items.get(delId)),
-      );
-      // **Every row the cascade reaches, not just the one named in the URL.**
-      // `parent-of` ships with `cascade_on_delete: "cascade"` and admits any
-      // type at either end, so a connection that deletes a row it wrote takes
-      // every child with it — including rows a live sibling wrote. Guarding
-      // the target alone would leave the rule one edge away from being
-      // void: the direct delete of a sibling's row refused while the same
-      // row goes through the cascade.
-      //
-      // Inside the transaction so a refusal rolls the whole plan back rather
-      // than leaving a partial cascade, and against the snapshots already
-      // read rather than a second round of reads.
-      // A `parent-of` edge from any row to a live grant would otherwise
-      // carry the grant out through the cascade with no refusal, from a
-      // credential that could not write it directly.
-      for (const snap of snaps) {
-        if (!snap) continue;
-        refuseUnlessUninstalled(snap, mayReadType(key, snap.type));
-      }
-      for (const delId of toDelete) {
-        await itemWrites(storage).delete(
-          delId,
-          delId === id ? undefined : root,
-        );
-      }
-      return snaps;
-    });
-
-    // Publish post-commit — a rollback must never leak a `deleted` event.
-    for (const snapshot of snapshots) {
-      if (snapshot) {
-        // A bounded lifecycle soft-deletes to `revoked`.
-        const state = softDeleteState(snapshot.type);
-        await publish({
-          type: "deleted",
-          item: { ...snapshot, state },
-          // The mark `storage.items.delete` records, on the same terms.
-          ...(snapshot.id !== id &&
-            state === "trashed" && { trashedWith: root }),
-        });
-      }
+    if (result.outcome === "stale") {
+      throw new Error("A delete naming no version cannot be stale");
+    }
+    const root = { id, type: result.item.type };
+    // After the commit, so a rollback never leaks a `deleted` event. The
+    // rows the cascade took first, as the store takes them.
+    for (const snapshot of [...result.trashed, result.item]) {
+      // A bounded lifecycle soft-deletes to `revoked`.
+      const state = softDeleteState(snapshot.type);
+      await publish({
+        type: "deleted",
+        item: { ...snapshot, state },
+        // The mark the delete records, on the same terms.
+        ...(snapshot.id !== id && state === "trashed" && { trashedWith: root }),
+      });
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "item.delete",
       resource_type: "item",
       resource_id: id,
@@ -2392,123 +2296,44 @@ export function itemRoutes(storage: Storage) {
     // unconditionally, which is the act the parameter exists to guard.
     refuseUnknownQueryParams(c.req.raw.url, purgeItemRoute.request.query);
     const { version } = c.req.valid("query");
-    // Including trashed, because purge follows trash; the message is the one
-    // `storage.items.purge` answers, so a hidden row and no row read alike.
-    const purgeTarget = requireReadableRow(
-      c,
-      await storage.items.getIncludingTrashed(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
+    const key = requireAuth(c);
+    // The key's type map is asked whatever state the row is in, and the
+    // version, where one is named, against the row inside the purge's own
+    // transaction: a check before it would let a write land between the two
+    // and be destroyed unseen.
+    const outcome = await writeItem(
+      storage,
+      { kind: "credential", key },
+      { op: "purge", id, ...(version !== undefined && { version }) },
     );
-    refuseUnlessUninstalled(purgeTarget);
-
-    // The key's type map is asked whatever state the row is in, as restore
-    // and the bulk purge ask it: a key that may only read a type destroys
-    // none of its rows, trashed or not.
-    //
-    // The reserved-namespace fence is asked only of a row not yet
-    // soft-deleted. There it names the real reason (no credential trashes a
-    // `system.*` row), where the state check below would read as an ordering
-    // mistake. A reserved row already soft-deleted got there by a cascade or
-    // an archive restore; no credential gets past the fence and the map both,
-    // so asking the fence would strand the row for good.
-    //
-    // The state is the type's own soft-deleted state, not the literal
-    // `trashed`: a `system.connection` ends `revoked`, and
-    // `storage.items.purge` gates on the same derived state.
-    if (purgeTarget.state === softDeleteState(purgeTarget.type)) {
-      checkTypePermission(c.get("apiKey"), purgeTarget.type, "write");
-    } else {
-      checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
-    }
-
-    // **No provenance guard here**, and that is a finding rather than an
-    // omission: a row is refused or purged by the permission asked above and
-    // the type gate, and nothing marks a row as one writer's rather than
-    // another's. A guard here would be unreachable code no test could pin,
-    // which is worse than none because it reads as a protection somebody is
-    // relying on.
-    // Edges have no FK to items — explicit cleanup required before purge.
-    // Every edge the purge takes with it, announced individually. A
-    // subscriber holding a graph cannot infer these from the item's own
-    // removal: an edge pointing AT the purged item lives on another item,
-    // and nothing else tells that item's holder it lost a relationship.
-    //
-    // All three writes in one transaction. Edges are the only record that
-    // two items were related, so losing them while the row survives is not
-    // recoverable from anything the caller holds — and the caller was told
-    // the purge failed, so its own copy still has both. The wrapper the
-    // request already runs inside is not a rollback boundary: a handler
-    // that throws still commits, because the error is caught inside the
-    // composed chain and the transaction closes normally. A door that wants
-    // atomicity has to open its own.
-    // Read before the purge, which takes the mark with the row.
-    const trashedWith = (await storage.items.cascadeMarks([id])).get(id);
-    //
-    // The version is compared inside the same transaction, against the row
-    // re-read there: a check before it would let a write land between the
-    // two and be destroyed unseen.
-    const outcome = await storage.runInTransaction(async () => {
-      if (version !== undefined) {
-        const current = await storage.items.getIncludingTrashed(id);
-        if (current && current.version !== version) {
-          return staleVersion(current.version, current.properties, version, {
-            id: current.id,
-            tier: current.tier ?? "library",
-            occurred_at: current.occurred_at,
-            source_id: current.source_id ?? null,
-            type: current.type,
-          });
-        }
-      }
-      const removed = [
-        ...(await storage.edges.deleteBySource(id)),
-        ...(await storage.edges.deleteByTarget(id)),
-      ];
-      // Read before the purge takes the row: each announcement carries its
-      // source's type, and one of those sources is the row going now.
-      const sourceTypes = await sourceTypesFor(
-        storage,
-        removed.map((edge) => edge.source_id),
-      );
-      await itemWrites(storage).purge(id);
-      return { removed, sourceTypes };
-    });
-    if ("error" in outcome) {
+    if (outcome.outcome === "stale") {
       // Returned rather than thrown, so the error handler that sets this
       // never runs.
-      c.header("X-Error-Code", outcome.error.code);
-      return c.json(outcome, 409);
+      c.header("X-Error-Code", outcome.conflict.error.code);
+      return c.json(outcome.conflict, 409);
     }
-    const cascaded = outcome.removed;
-    for (const edge of cascaded) {
+    // Every edge the purge took, announced individually: an edge pointing AT
+    // the purged item lives on another item, and nothing else tells that
+    // item's holder it lost a relationship.
+    for (const edge of outcome.edges) {
       await publishEdge({
         type: "edge_deleted",
         edge,
-        sourceType: outcome.sourceTypes.get(edge.source_id),
+        sourceType: outcome.edgeSourceTypes.get(edge.source_id),
         purgedWith: id,
       });
     }
-    // The item itself, which the cascade above does not cover. A trashed
-    // row announced `item.deleted`, which says recoverable; nothing else
-    // says the row has gone, and no later event can, because the row is
-    // absent rather than changed. Without this a client holding it would
-    // keep it until a full re-import, and one offline across the purge
-    // would never learn it happened.
-    //
-    // Last, mirroring the ordering a create states in reverse: an edge
-    // arrives behind the item it belongs to, so a removal puts the edges
-    // first and the row they hang off after them.
-    //
-    // The snapshot read before the purge, because there is nothing left to
-    // read afterwards.
+    // The item itself, last: a trashed row announced `item.deleted`, which
+    // says recoverable, and nothing else says the row has gone. The snapshot
+    // read before the purge, because there is nothing left to read after.
     await publish({
       type: "purged",
-      item: purgeTarget,
-      ...(trashedWith && { trashedWith }),
+      item: outcome.item,
+      ...(outcome.trashedWith && { trashedWith: outcome.trashedWith }),
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      key_id: c.get("apiKey")?.id,
+      key_id: key.id,
       action: "item.purge",
       resource_type: "item",
       resource_id: id,

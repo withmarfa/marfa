@@ -23,12 +23,14 @@ import {
   hasBoundedLifecycle,
   isValidId,
   resolveEnforcement,
+  softDeleteState,
   validateTransition,
 } from "@withmarfa/shared";
 import type {
   AncestorUnavailableResponse,
   ApiKey,
   ConflictResponse,
+  Edge,
   EnforcementSettings,
   Item,
   ItemState,
@@ -39,6 +41,7 @@ import {
   checkEdgePermission,
   checkResolvedRowWrite,
   checkTypeAccess,
+  checkTypePermission,
   computeTypeFilter,
   itemProvenanceSource,
   mayReadType,
@@ -52,10 +55,13 @@ import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { sourceAllowlistRefusal } from "../routes/_source-allowlist.js";
 import { assertTierApplicable } from "../routes/_tier-rules.js";
 import { edgeTargetNotFound } from "./edge-constraints.js";
+import { planCascadeDelete } from "./edge-cascade.js";
+import { readableEdges, sourceTypesFor } from "../routes/_edge-visibility.js";
+import { refuseUnlessUninstalled } from "../routes/_connection-refusal.js";
 import { staleVersion } from "./conflict.js";
 import type { ConflictMode, StaleVersionResponse } from "./conflict.js";
 import { readInstanceConfig } from "./instance-config.js";
-import type { ResolvedItem, Storage } from "./interface.js";
+import type { CascadeRoot, ResolvedItem, Storage } from "./interface.js";
 import type { BlobProof } from "./sqlite/blob-references.js";
 
 /**
@@ -140,7 +146,73 @@ export interface ItemCreate {
   blob_proof?: BlobProof;
 }
 
-export type ItemWrite = ItemUpdate | ItemPut | ItemCreate;
+/** `DELETE /items/{id}`: the row into the bin, with what its cascading
+ *  edges take. */
+export interface ItemDelete {
+  op: "delete";
+  id: string;
+  /** The version the caller read; absent deletes whatever stands. */
+  version?: number;
+}
+
+/** A move along the type's lifecycle. Into the bin it is a delete; out of
+ *  it, a restore. */
+export interface ItemTransition {
+  op: "transition";
+  id: string;
+  state: ItemState;
+}
+
+export interface ItemRestore {
+  op: "restore";
+  id: string;
+}
+
+/** The hard delete behind a soft one, with the row's edges. */
+export interface ItemPurge {
+  op: "purge";
+  id: string;
+  version?: number;
+}
+
+export type ItemWrite =
+  | ItemUpdate
+  | ItemPut
+  | ItemCreate
+  | ItemDelete
+  | ItemTransition
+  | ItemRestore
+  | ItemPurge;
+
+/** What a lifecycle write moved, for the caller to announce. */
+export interface ItemMoved {
+  outcome: "moved";
+  /** The row as it now stands, or as it stood before a purge took it. */
+  item: Item;
+  /** The state the row left. */
+  from: ItemState;
+  /** Rows a trash took with it through cascading edges, as they stood
+   *  before it, each recorded as taken with `item`. */
+  trashed: Item[];
+  /** Rows a restore brought back because the trash that took them was
+   *  undone. */
+  broughtBack: Item[];
+  /** Edges a purge took with the row. */
+  edges: Edge[];
+  /** The type of each such edge's source, read before the purge took the
+   *  row, which its announcement carries (`edges.md` 23). */
+  edgeSourceTypes: Map<string, string>;
+  /** The trash a purged row was taken by, read before the purge. */
+  trashedWith?: CascadeRoot;
+}
+
+type ResultOf<W extends ItemWrite> = W extends ItemCreate
+  ? ItemCreated
+  : W extends ItemDelete | ItemPurge
+    ? ItemMoved | Extract<ItemWriteResult, { outcome: "stale" }>
+    : W extends ItemTransition | ItemRestore
+      ? ItemMoved
+      : ItemWriteResult;
 
 export interface ItemCreated {
   outcome: "created";
@@ -201,22 +273,12 @@ async function naming<T>(id: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export async function writeItem(
+export async function writeItem<W extends ItemWrite>(
   storage: Storage,
-  writer: { kind: "platform" },
-  write: ItemCreate,
-): Promise<ItemCreated>;
-export async function writeItem(
-  storage: Storage,
-  writer: ItemWriter,
-  write: ItemWrite,
-): Promise<ItemWriteResult>;
-export async function writeItem(
-  storage: Storage,
-  writer: ItemWriter,
-  write: ItemWrite,
-): Promise<ItemWriteResult> {
-  return await storage.runInTransaction(async () => {
+  writer: W extends ItemCreate ? { kind: "platform" } : ItemWriter,
+  write: W,
+): Promise<ResultOf<W>> {
+  const result = await storage.runInTransaction(async () => {
     switch (write.op) {
       case "update":
         return await updateById(storage, writer, write);
@@ -224,8 +286,17 @@ export async function writeItem(
         return await put(storage, writer, write);
       case "create":
         return await createPlatformRow(storage, writer, write);
+      case "delete":
+        return await deleteRow(storage, writer, write);
+      case "transition":
+        return await transitionRow(storage, writer, write);
+      case "restore":
+        return await restoreRow(storage, writer, write);
+      case "purge":
+        return await purgeRow(storage, writer, write);
     }
   });
+  return result as ResultOf<W>;
 }
 
 function credentialOf(writer: ItemWriter): ApiKey | undefined {
@@ -782,4 +853,222 @@ async function createPlatformRow(
     item: created,
     metadata: { item_id: created.id, tags: write.tags ?? [], extensions: {} },
   };
+}
+
+/** A lifecycle door's row: in the bin included, refused as missing where the
+ *  writer may not read its type. */
+async function lifecycleRow(
+  storage: Storage,
+  writer: ItemWriter,
+  id: string,
+  { includeTrashed, message }: { includeTrashed: boolean; message: string },
+): Promise<Item> {
+  assertReachesSomeType(writer);
+  const row = includeTrashed
+    ? await storage.items.getIncludingTrashed(id)
+    : await storage.items.get(id);
+  if (!row || !mayRead(writer, row.type)) {
+    throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, message);
+  }
+  return row;
+}
+
+function staleAgainst(
+  row: Item,
+  version: number | undefined,
+): Extract<ItemWriteResult, { outcome: "stale" }> | undefined {
+  if (version === undefined || version === row.version) return undefined;
+  return {
+    outcome: "stale",
+    id: row.id,
+    conflict: staleVersion(row.version, row.properties, version, {
+      id: row.id,
+      tier: row.tier ?? "library",
+      occurred_at: row.occurred_at,
+      source_id: row.source_id ?? null,
+      type: row.type,
+    }),
+  };
+}
+
+function moved(
+  item: Item,
+  from: ItemState,
+  rest: Partial<ItemMoved> = {},
+): ItemMoved {
+  return {
+    outcome: "moved",
+    item,
+    from,
+    trashed: [],
+    broughtBack: [],
+    edges: [],
+    edgeSourceTypes: new Map(),
+    ...rest,
+  };
+}
+
+/**
+ * The row into its type's soft-deleted state, and every row its cascading
+ * edges reach with it, each recorded as taken with it so a restore brings it
+ * back. A `block` edge on any of them refuses the whole move, and so does a
+ * live grant record the cascade would carry out.
+ */
+async function trash(
+  storage: Storage,
+  writer: ItemWriter,
+  row: Item,
+): Promise<Item[]> {
+  const root: CascadeRoot = { id: row.id, type: row.type };
+  let toTrash: string[];
+  try {
+    toTrash = await planCascadeDelete(storage.edges, row.id);
+  } catch (err) {
+    throw await withoutHiddenBlockers(storage, writer, err);
+  }
+  const taken = await Promise.all(toTrash.map((id) => storage.items.get(id)));
+  for (const snap of taken) {
+    if (!snap) continue;
+    refuseUnlessUninstalled(snap, mayRead(writer, snap.type));
+  }
+  for (const id of toTrash) {
+    await itemWrites(storage).delete(id, id === row.id ? undefined : root);
+  }
+  return taken.filter(
+    (snap): snap is Item => snap !== null && snap.id !== row.id,
+  );
+}
+
+/**
+ * A block refusal listing, and counting, only the blocking edges whose kind
+ * and both ends the writer may read, so a hidden holder is never named.
+ */
+async function withoutHiddenBlockers(
+  storage: Storage,
+  writer: ItemWriter,
+  err: unknown,
+): Promise<unknown> {
+  if (writer.kind !== "credential") return err;
+  const details = err instanceof MarfaError ? err.details : undefined;
+  const blockers = (details as { blocking_edges?: Edge[] } | undefined)
+    ?.blocking_edges;
+  const root = (details as { root_item_id?: string } | undefined)?.root_item_id;
+  if (!(err instanceof MarfaError) || !blockers || !root) return err;
+  const readable = await readableEdges(storage, writer.key, blockers);
+  const targets = await storage.items.getMany(
+    readable.map((edge) => edge.target_id),
+    { includeTrashed: true },
+  );
+  const listed = readable.filter((edge) => {
+    const target = targets.get(edge.target_id);
+    return target !== undefined && mayReadType(writer.key, target.type);
+  });
+  return new MarfaError(
+    err.code,
+    listed.length === 0
+      ? `Cannot delete item ${root}: blocked by an edge with cascade_on_delete=block`
+      : `Cannot delete item ${root}: blocked by ${String(listed.length)} edge(s) with cascade_on_delete=block`,
+    { ...details, blocking_edges: listed },
+  );
+}
+
+async function deleteRow(
+  storage: Storage,
+  writer: ItemWriter,
+  write: ItemDelete,
+): Promise<ItemMoved | Extract<ItemWriteResult, { outcome: "stale" }>> {
+  const row = await lifecycleRow(storage, writer, write.id, {
+    includeTrashed: false,
+    message: `Item ${write.id} not found`,
+  });
+  assertTypeWrite(writer, row.type);
+  const stale = staleAgainst(row, write.version);
+  if (stale) return stale;
+  const trashed = await trash(storage, writer, row);
+  return moved(row, row.state, { trashed });
+}
+
+async function transitionRow(
+  storage: Storage,
+  writer: ItemWriter,
+  write: ItemTransition,
+): Promise<ItemMoved> {
+  const row = await lifecycleRow(storage, writer, write.id, {
+    includeTrashed: true,
+    message: "Item not found",
+  });
+  assertTypeWrite(writer, row.type);
+  // Into the bin is a delete by another name: it takes what a delete takes,
+  // is held by what holds a delete, and is restored as a delete is.
+  if (write.state === "trashed" && row.state !== "trashed") {
+    const error = validateTransition(row.type, row.state, write.state);
+    if (error) throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
+    const trashed = await trash(storage, writer, row);
+    const now = await storage.items.getIncludingTrashed(row.id);
+    return moved(now ?? row, row.state, { trashed });
+  }
+  const broughtBack =
+    row.state === "trashed" && write.state === "active"
+      ? await itemWrites(storage).restoreBeneath(row.id)
+      : [];
+  const item = await itemWrites(storage).transition(row.id, write.state);
+  return moved(item, row.state, { broughtBack });
+}
+
+async function restoreRow(
+  storage: Storage,
+  writer: ItemWriter,
+  write: ItemRestore,
+): Promise<ItemMoved> {
+  const row = await lifecycleRow(storage, writer, write.id, {
+    includeTrashed: true,
+    message: `Item ${write.id} not found`,
+  });
+  assertTypeWrite(writer, row.type);
+  const broughtBack = await itemWrites(storage).restoreBeneath(row.id);
+  const item = await itemWrites(storage).restore(row.id);
+  return moved(item, row.state, { broughtBack });
+}
+
+async function purgeRow(
+  storage: Storage,
+  writer: ItemWriter,
+  write: ItemPurge,
+): Promise<ItemMoved | Extract<ItemWriteResult, { outcome: "stale" }>> {
+  // The message `storage.items.purge` answers, so a hidden row and no row
+  // read alike.
+  const row = await lifecycleRow(storage, writer, write.id, {
+    includeTrashed: true,
+    message: "Item not found",
+  });
+  refuseUnlessUninstalled(row);
+  // The reserved-namespace fence is asked only of a row not yet
+  // soft-deleted. A reserved row already there got there by a cascade or an
+  // archive restore, and no credential gets past the fence and the map
+  // both, so asking it would strand the row for good.
+  if (writer.kind === "credential") {
+    if (row.state === softDeleteState(row.type)) {
+      checkTypePermission(writer.key, row.type, "write");
+    } else {
+      checkTypeAccess(writer.key, row.type, "write");
+    }
+  }
+  const stale = staleAgainst(row, write.version);
+  if (stale) return stale;
+  const trashedWith = (await storage.items.cascadeMarks([row.id])).get(row.id);
+  // Edges carry no foreign key to items, so they go with the row here.
+  const edges = [
+    ...(await storage.edges.deleteBySource(row.id)),
+    ...(await storage.edges.deleteByTarget(row.id)),
+  ];
+  const edgeSourceTypes = await sourceTypesFor(
+    storage,
+    edges.map((edge) => edge.source_id),
+  );
+  await itemWrites(storage).purge(row.id);
+  return moved(row, row.state, {
+    edges,
+    edgeSourceTypes,
+    ...(trashedWith && { trashedWith }),
+  });
 }

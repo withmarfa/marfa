@@ -564,7 +564,6 @@ function judgeResult(
 ): void {
   if (input.properties === undefined && input.type === undefined) return;
   const resultingType = input.type ?? rowType;
-  if (!getTypeSchema(resultingType)) return;
   const validation = validateProperties(resultingType, result);
   if (validation.success) return;
   // The fields named in the message as well as in `details`: a bulk action
@@ -1082,6 +1081,16 @@ export class SqliteItemStore implements ItemStore {
         throw new MarfaError(
           ErrorCode.INVALID_TRANSITION,
           "Cannot update trashed item",
+        );
+      }
+      // A row whose type a forced delete removed has no schema to hold a
+      // write to, and one registered again under its id may hold another
+      // shape: its fields stay as they are until the type is back.
+      if (!getTypeSchema(row.type)) {
+        throw new MarfaError(
+          ErrorCode.UNKNOWN_TYPE,
+          `Unknown type: ${row.type}. Register it via POST /types before writing items of it.`,
+          { type: row.type },
         );
       }
       // Asked inside the write lock, as a create asks it: a type deleted
@@ -1608,35 +1617,6 @@ export class SqliteItemStore implements ItemStore {
       );
     }
     await tx.delete(items).where(inArray(items.id, list)).run();
-  }
-
-  async bulkPurge(ids: string[]): Promise<string[]> {
-    if (ids.length === 0) return [];
-    const unique = Array.from(new Set(ids));
-    const scopedWhere = inArray(items.id, unique);
-
-    return await this.db.transaction(async (tx) => {
-      const rows = await tx
-        .select({ id: items.id, type: items.type, state: items.state })
-        .from(items)
-        .where(scopedWhere)
-        .all();
-      // The single purge's gate, judged here so no caller can purge a row
-      // that is not soft-deleted, whatever it checked beforehand.
-      const scopedIds = rows
-        .filter((row) => row.state === softDeleteState(row.type))
-        .map((row) => row.id);
-      if (scopedIds.length === 0) return [];
-
-      for (const id of scopedIds) {
-        await this.searchStore.remove(id);
-      }
-      await this.rehomeTrashRecords(scopedIds, tx);
-      await recordTombstones(tx, scopedIds, new Date().toISOString());
-      await liftExtensionReportsOf(tx, scopedIds);
-      await tx.delete(items).where(inArray(items.id, scopedIds)).run();
-      return scopedIds;
-    });
   }
 
   async purgeTrashedOlderThan(beforeDate: string): Promise<number> {

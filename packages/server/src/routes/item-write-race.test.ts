@@ -321,4 +321,50 @@ describe("a write raced against a retype is refused on every door", () => {
     }
     expect((await ctx.storage.metadata.get(id)).tags).toEqual([marker]);
   });
+
+  const LIFECYCLE_DOORS = {
+    delete: "DELETE /items/{id}",
+    transition: "POST /items/{id}/transition",
+    restore: "POST /items/{id}/restore",
+    purge: "DELETE /items/{id}/purge",
+  } as const;
+  for (const door of Object.keys(
+    LIFECYCLE_DOORS,
+  ) as (keyof typeof LIFECYCLE_DOORS)[]) {
+    it(LIFECYCLE_DOORS[door], async () => {
+      const { id } = await seedNote(`lifecycle-${door}`);
+      if (door === "restore" || door === "purge") {
+        const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
+          key: narrowKey,
+        });
+        expect(trashed.status).toBe(200);
+      }
+      const race = raceTheNextTransaction(retype(id));
+      let res: Response;
+      try {
+        res =
+          door === "delete"
+            ? await request(ctx.app, "DELETE", `/items/${id}`, {
+                key: narrowKey,
+              })
+            : door === "purge"
+              ? await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+                  key: narrowKey,
+                })
+              : await request(ctx.app, "POST", `/items/${id}/${door}`, {
+                  key: narrowKey,
+                  ...(door === "transition" && { body: { state: "archived" } }),
+                });
+        expect(race.fired()).toBe(true);
+      } finally {
+        race.restore();
+      }
+      expect(res.status).toBe(403);
+      expect(res.headers.get("X-Error-Code")).toBe("type_not_permitted");
+      const row = await ctx.storage.items.getIncludingTrashed(id);
+      expect(row?.state).toBe(
+        door === "restore" || door === "purge" ? "trashed" : "active",
+      );
+    });
+  }
 });

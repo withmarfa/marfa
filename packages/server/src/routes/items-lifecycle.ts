@@ -1,19 +1,15 @@
 import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
-import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireAuth,
-  requireReadableRow,
-  requireTypeAccess,
-} from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import type { CascadeRoot, Storage } from "../storage/interface.js";
 import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { readableMetadata } from "./_extension-reach.js";
+import { writeItem } from "../storage/item-write.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -93,7 +89,7 @@ const transitionItemRoute = createRoute({
   tags: ["Items"],
   summary: "Transition item state",
   description:
-    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
+    "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -122,10 +118,12 @@ const transitionItemRoute = createRoute({
             "missing_required_field",
             "invalid_id",
             "invalid_transition",
+            "edge_constraint_violation",
           ]),
         },
       },
-      description: "Invalid transition",
+      description:
+        "`invalid_transition`: the type's lifecycle does not allow the move. `edge_constraint_violation`: a `block` edge holds a row a move into trashed would take.",
     },
     401: {
       content: {
@@ -188,26 +186,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireAuth(c);
-    // Fetch the (trashed) item to get its type, then run the permission
-    // gate BEFORE calling `restore()`. Running the write first would
-    // leave the item restored with no rollback if the gate throws.
-    // `getIncludingTrashed` sees past the normal trashed-is-invisible
-    // filter.
-    const pending = requireReadableRow(
-      c,
-      await storage.items.getIncludingTrashed(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
-    );
-    requireTypeAccess(c, pending.type, "write");
-    const { restored, broughtBack } = await storage.runInTransaction(
-      async () => {
-        const back = await itemWrites(storage).restoreBeneath(id);
-        return {
-          restored: await itemWrites(storage).restore(id),
-          broughtBack: back,
-        };
-      },
+    const key = requireAuth(c);
+    const { item: restored, broughtBack } = await writeItem(
+      storage,
+      { kind: "credential", key },
+      { op: "restore", id },
     );
     const metadata = await storage.metadata.get(id);
     await publish({
@@ -215,7 +198,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
       item: restored,
       metadata,
     });
-    await publishBroughtBack(storage, { id, type: pending.type }, broughtBack);
+    await publishBroughtBack(storage, { id, type: restored.type }, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -244,41 +227,19 @@ export function itemsLifecycleRoutes(storage: Storage) {
     // body.state is constrained to the lifecycle enum by the route Zod;
     // typeof / truthiness check would be unreachable.
 
-    requireAuth(c);
-    // Read past the trash, as `restore` above does, so a transition out of
-    // it is judged by the type's graph: `trashed` admits `active` alone, and
-    // the store's refusal names the move. Read through the trashed-invisible
-    // getter, every trashed row answered 404 and the graph never spoke.
-    const item = requireReadableRow(
-      c,
-      await storage.items.getIncludingTrashed(id),
-      () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found"),
-    );
-    requireTypeAccess(c, item.type, "write");
-    // **No live-connection refusal here, and two rules make it unreachable.**
-    // The nearer one is in this file: a `system.*` type's lifecycle admits
-    // only `active` to `revoked`, and this route's body schema cannot name
-    // `revoked`, so the store refuses every transition of a connection
-    // whatever the caller holds. The further one is the gate above:
-    // `requireTypeAccess` refuses a `system.connection` write to every
-    // credential the product can mint, since the reserved namespace admits
-    // only `is_operator` and an operator key holds no permissions at all.
-    //
-    // A refusal behind both could never answer, and unreachable enforcement
-    // is worse than none because it reads as a protection somebody is relying
-    // on. `item-state-doors.test.ts` pins the lifecycle rule and
-    // `auth-grant-visibility.test.ts` pins what a caller actually meets.
-    const { updated, broughtBack } = await storage.runInTransaction(
-      async () => {
-        const back =
-          item.state === "trashed" && state === "active"
-            ? await itemWrites(storage).restoreBeneath(id)
-            : [];
-        return {
-          updated: await itemWrites(storage).transition(id, state),
-          broughtBack: back,
-        };
-      },
+    const key = requireAuth(c);
+    // Read past the trash, so a transition out of it is judged by the type's
+    // graph: `trashed` admits `active` alone. A move into the bin takes what
+    // a delete takes and is held by what holds a delete.
+    const {
+      item: updated,
+      from,
+      trashed,
+      broughtBack,
+    } = await writeItem(
+      storage,
+      { kind: "credential", key },
+      { op: "transition", id, state },
     );
     const metadata = await storage.metadata.get(id);
     await publish({
@@ -286,14 +247,22 @@ export function itemsLifecycleRoutes(storage: Storage) {
       item: updated,
       metadata,
     });
-    await publishBroughtBack(storage, { id, type: item.type }, broughtBack);
+    const root = { id, type: updated.type };
+    for (const taken of trashed) {
+      await publish({
+        type: "deleted",
+        item: { ...taken, state: "trashed" },
+        trashedWith: root,
+      });
+    }
+    await publishBroughtBack(storage, root, broughtBack);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
       action: "item.transition",
       resource_type: "item",
       resource_id: id,
-      details: { from_state: item.state, to_state: state },
+      details: { from_state: from, to_state: state },
     });
     return c.json(
       {

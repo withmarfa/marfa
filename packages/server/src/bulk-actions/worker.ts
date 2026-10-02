@@ -267,7 +267,7 @@ export class BulkActionWorker {
     const accSucceeded: string[] = [];
     const accErrors: BulkActionErrorEntry[] = [];
     const accBlobHashes = new Set<string>();
-    const broughtBack = new Set<string>();
+    const carried = new Set<string>();
     let processed = 0;
 
     // What the job has done so far, as `complete` records it and as a job
@@ -356,7 +356,7 @@ export class BulkActionWorker {
             storage: this.storage,
             input,
             ids: permitted,
-            broughtBack,
+            carried,
             credential,
           });
       } catch (err) {
