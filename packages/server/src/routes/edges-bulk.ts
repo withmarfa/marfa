@@ -40,7 +40,11 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
+import {
+  bulkAtomicRollback,
+  failedEntry,
+  isEntryVerdict,
+} from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
 import { edgeReadable, sourceTypesFor } from "./_edge-visibility.js";
 import {
@@ -601,9 +605,21 @@ export function edgesBulkRoutes(storage: Storage) {
           }
           return processed;
         };
-        const { result } = atomic
-          ? await entry()
-          : await storage.runInTransaction(entry);
+        let result: BulkEdgeResult;
+        const committed = results.some(
+          (r) => r.outcome === "created" || r.outcome === "updated",
+        );
+        if (atomic) {
+          ({ result } = await entry());
+        } else if (!committed) {
+          ({ result } = await storage.runInTransaction(entry));
+        } else {
+          try {
+            ({ result } = await storage.runInTransaction(entry));
+          } catch (err) {
+            result = { index: i, outcome: "errored", error: failedEntry(err) };
+          }
+        }
         if (atomic && result.outcome === "errored") {
           throw bulkAtomicRollback(
             i,

@@ -105,3 +105,77 @@ describe("a write and the answer to it", () => {
     expect(listed.data.filter((row) => row.source_id === key)).toHaveLength(1);
   });
 });
+
+describe("a best-effort page whose later entry fails after earlier ones committed", () => {
+  /** Let the first `n` appends through and refuse the next one. */
+  function refuseAppendAfter(n: number): () => number {
+    const log = ctx.storage.eventLog;
+    const append = log.append.bind(log);
+    let seen = 0;
+    let refused = 0;
+    log.append = (entry) => {
+      seen += 1;
+      if (seen === n + 1) {
+        refused += 1;
+        log.append = append;
+        return Promise.reject(new Error("forced failure at the event append"));
+      }
+      return append(entry);
+    };
+    return () => refused;
+  }
+
+  it("reports the failed entry and answers the page, on POST /items/bulk", async () => {
+    const tag = `page-${String(Date.now())}`;
+    const refused = refuseAppendAfter(1);
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.workingKey,
+      headers: { "Idempotency-Key": tag },
+      body: {
+        atomic: false,
+        items: [
+          { type: "core.note", properties: { body: "kept" }, tags: [tag] },
+          { type: "core.note", properties: { body: "lost" }, tags: [tag] },
+        ],
+      },
+    });
+    expect(refused()).toBe(1);
+    expect(res.status).toBe(200);
+    const { results } = (await res.json()) as {
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    expect(results.map((r) => r.outcome)).toEqual(["created", "errored"]);
+    expect(results[1]?.error?.code).toBe("internal_error");
+    const listed = await ctx.storage.items.list({ tags: [tag], limit: 10 });
+    expect(listed.data.map((row) => row.properties.body)).toEqual(["kept"]);
+  });
+
+  it("reports the failed entry and answers the page, on POST /edges/bulk", async () => {
+    const made = async (): Promise<string> => {
+      const res = await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: { type: "core.note", properties: { body: "end" } },
+      });
+      return ((await res.json()) as { item: { id: string } }).item.id;
+    };
+    const [a, b, c2] = [await made(), await made(), await made()];
+    const refused = refuseAppendAfter(1);
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.workingKey,
+      body: {
+        atomic: false,
+        edges: [
+          { source_id: a, target_id: b, edge_type: "references" },
+          { source_id: a, target_id: c2, edge_type: "references" },
+        ],
+      },
+    });
+    expect(refused()).toBe(1);
+    expect(res.status).toBe(200);
+    const { results } = (await res.json()) as {
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    expect(results.map((r) => r.outcome)).toEqual(["created", "errored"]);
+    expect(results[1]?.error?.code).toBe("internal_error");
+  });
+});

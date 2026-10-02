@@ -60,7 +60,11 @@ import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import { refusedRowId, writeItem } from "../storage/item-write.js";
 import type { ItemWriteResult } from "../storage/item-write.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
+import {
+  bulkAtomicRollback,
+  failedEntry,
+  isEntryVerdict,
+} from "./_bulk-rollback.js";
 import { BulkResponseSchema, ItemStateEnum, TierEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
@@ -666,13 +670,26 @@ export function bulkRoutes(storage: Storage) {
 
       const out: ProcessedBulkItem[] = [];
       for (const [i, raw] of items.entries()) {
-        const processed = await processBulkItem(storage, raw, i, {
-          key,
-          mode,
-          blobProof: requestBlobProof(c, storage),
-          retype,
-          enableFanout,
-        });
+        const entry = () =>
+          processBulkItem(storage, raw, i, {
+            key,
+            mode,
+            blobProof: requestBlobProof(c, storage),
+            retype,
+            enableFanout,
+          });
+        let processed: ProcessedBulkItem;
+        if (atomic) {
+          processed = await entry();
+        } else {
+          try {
+            processed = await entry();
+          } catch (err) {
+            processed = {
+              result: { index: i, outcome: "errored", error: failedEntry(err) },
+            };
+          }
+        }
         if (atomic && processed.result.outcome === "errored") {
           // One failure aborts the whole batch: thrown so the transaction
           // rolls back, carrying the entry's refusal out.
