@@ -152,6 +152,70 @@ describe("type registry", () => {
     }
   });
 
+  it("replaces and deletes only the types the key's own type map grants write on", async () => {
+    const own = testTypeId("own-change");
+    const other = testTypeId("other-change");
+    const readOnly = testTypeId("read-change");
+    const fields = { name: { type: "string" as const } };
+    for (const id of [own, other, readOnly]) {
+      expect((await client.registerType({ id, fields })).status).toBe(201);
+    }
+    const keyResp = await client.createKey({
+      label: "type-change-own-map",
+      source: `${ctx.source}-type-change-own-map`,
+      permissions: ["schema.write"],
+      type_permissions: { [own]: "write", [readOnly]: "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    for (const id of [other, readOnly]) {
+      const replaced = await scopedClient.updateType(id, {
+        fields: { taken: { type: "string" } },
+      });
+      expect(replaced.status, id).toBe(403);
+      expect(replaced.error?.error.code).toBe("type_not_permitted");
+      expect(replaced.error?.error.message).toContain(id);
+      await expectMatchesSchema("PUT", "/types/{id}", 403, replaced.error);
+
+      for (const force of [false, true]) {
+        const removed = await scopedClient.deleteType(id, force);
+        expect(removed.status, `${id} force=${String(force)}`).toBe(403);
+        expect(removed.error?.error.code).toBe("type_not_permitted");
+        await expectMatchesSchema("DELETE", "/types/{id}", 403, removed.error);
+      }
+
+      const kept = await client.getType(id);
+      expect(kept.status).toBe(200);
+      expect(Object.keys(kept.data.fields)).toEqual(["name"]);
+
+      // The witness: the same type is replaced and deleted by a key whose
+      // map reaches it.
+      expect(
+        (
+          await client.updateType(id, {
+            fields: { ...fields, kept: fields.name },
+          })
+        ).status,
+      ).toBe(200);
+      expect((await client.deleteType(id, true)).status).toBe(200);
+    }
+
+    // The scoped key changes the type its own map reaches.
+    expect(
+      (
+        await scopedClient.updateType(own, {
+          fields: { ...fields, mine: fields.name },
+        })
+      ).status,
+    ).toBe(200);
+    expect((await scopedClient.deleteType(own, true)).status).toBe(200);
+  });
+
   it("refuses both schema.write doors to a key without it, and declares the refusal", async () => {
     // `PUT` and `DELETE /types/{id}` gate on `schema.write` and published no
     // 403 at all, so the refusal a caller is most likely to meet was the one

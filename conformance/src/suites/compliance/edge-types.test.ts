@@ -238,6 +238,67 @@ describe("custom edge-type registration", () => {
     await expectMatchesSchema("DELETE", "/edge-types/{id}", 403, removed.error);
   });
 
+  it("deletes only the edge types whose id and reverse name the key's own edge map grants write on", async () => {
+    const own = `mock.own-delete.${ctx.runId}`;
+    const other = `mock.other-delete.${ctx.runId}`;
+    const ownReversed = `mock.own-delete-reversed.${ctx.runId}`;
+    const otherReverse = `mock.other-delete-from.${ctx.runId}`;
+    for (const body of [
+      { id: own, cardinality: "many-to-many" as const },
+      { id: other, cardinality: "many-to-many" as const },
+      {
+        id: ownReversed,
+        cardinality: "many-to-many" as const,
+        reverse_name: otherReverse,
+      },
+    ]) {
+      expect((await client.registerEdgeType(body)).status).toBe(201);
+      trackEdgeType(ctx, body.id);
+    }
+    const minted = await client.createKey({
+      label: "edge-types-delete-own-map",
+      source: `${ctx.source}-edge-delete-own-map`,
+      permissions: ["schema.write"],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { [own]: "write", [ownReversed]: "write" },
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const scoped = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+    const listed = async () =>
+      (await client.listEdgeTypes()).data.data.map((t) => t.id);
+
+    for (const [id, refusedName] of [
+      [other, other],
+      [ownReversed, otherReverse],
+    ] as const) {
+      for (const force of [false, true]) {
+        const refused = await scoped.deleteEdgeType(id, force);
+        expect(refused.status, `${id} force=${String(force)}`).toBe(403);
+        expect(refused.error?.error.code).toBe("edge_permission_denied");
+        expect(refused.error?.error.details?.edge_type).toBe(refusedName);
+        await expectMatchesSchema(
+          "DELETE",
+          "/edge-types/{id}",
+          403,
+          refused.error,
+        );
+      }
+      expect(await listed()).toContain(id);
+
+      // The witness: the same edge type is deleted by a key whose map
+      // reaches both its names.
+      expect((await client.deleteEdgeType(id)).status).toBe(200);
+      expect(await listed()).not.toContain(id);
+    }
+
+    // The scoped key deletes the edge type its own map reaches.
+    expect((await scoped.deleteEdgeType(own)).status).toBe(200);
+  });
+
   it("a key without metadata.edge_types:write cannot register an edge type", async () => {
     // A credential that writes every type: the registration door asks for the
     // metadata map, and content reach says nothing about the registry.
