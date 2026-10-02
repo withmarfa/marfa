@@ -40,9 +40,7 @@ function normalizeInstant(value: unknown): string | null {
     // A naive datetime is read as UTC, explicitly. Handing it to `new
     // Date()` unqualified would resolve it in whatever zone the server
     // happens to run in, so the same row would normalize differently on
-    // two machines. The SQL backfills read naive values as UTC as well,
-    // and the writers have to agree byte for byte or a backfilled row and
-    // a rewritten one land on different instants.
+    // two machines.
     candidate = `${raw.replace(" ", "T")}Z`;
   }
 
@@ -85,15 +83,13 @@ function impliedEnd(
   if (startsAt === null) return null;
   const start = Date.parse(startsAt);
   const duration = properties.duration;
-  if (
-    typeof duration === "number" &&
-    Number.isFinite(duration) &&
-    duration > 0
-  ) {
-    return new Date(start + duration * 1000).toISOString();
-  }
-  if (properties.all_day === true) {
-    return new Date(start + 86_400_000).toISOString();
-  }
-  return null;
+  const end =
+    typeof duration === "number" && duration > 0
+      ? start + duration * 1000
+      : properties.all_day === true
+        ? start + 86_400_000
+        : Number.NaN;
+  // Past the range a Date can hold there is no instant to store, so no end.
+  const at = new Date(end);
+  return Number.isNaN(at.getTime()) ? null : at.toISOString();
 }

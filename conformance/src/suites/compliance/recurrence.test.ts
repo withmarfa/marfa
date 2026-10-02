@@ -316,6 +316,10 @@ describe("the window", () => {
   });
 });
 
+/** One more added date than a series may carry. */
+const TOO_MANY_DATES =
+  "RDATE:" + Array.from({ length: 1_001 }, () => "20410201T090000Z").join(",");
+
 describe("what a write may store", () => {
   it.each([
     [
@@ -336,6 +340,14 @@ describe("what a write may store", () => {
     [
       "a rule that cannot be read",
       { recurrence: ["RRULE:INTERVAL=2"] },
+      "recurrence",
+    ],
+    ["a length no instant can hold", { duration: 1e13 }, "duration"],
+    [
+      "more added dates than a series may carry",
+      {
+        recurrence: [TOO_MANY_DATES],
+      },
       "recurrence",
     ],
     [
@@ -492,6 +504,12 @@ describe("a rule too costly to unfold", () => {
         r.data as unknown as { series_errors?: { item_id: string }[] }
       ).series_errors?.filter((e) => e.item_id === costly);
       expect(named).toHaveLength(1);
+      const partial = r.data as unknown as {
+        expansion_incomplete?: boolean;
+        scan: { series_unexpanded: number };
+      };
+      expect(partial.expansion_incomplete).toBe(true);
+      expect(partial.scan.series_unexpanded).toBeGreaterThanOrEqual(1);
     } finally {
       await client.deleteItem(costly);
     }

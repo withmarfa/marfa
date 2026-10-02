@@ -78,6 +78,10 @@ export const MAX_EXPANSION_ITERATIONS = RECURRENCE_WORK_LIMIT;
 
 export class RecurrenceExpansionError extends Error {}
 
+/** An expansion stopped by its own bound before it reached the window's
+ *  end, so the series may be missing occurrences rather than wrong. */
+export class RecurrenceExpansionStopped extends RecurrenceExpansionError {}
+
 /**
  * How much rule-walking one expansion did, for a caller that has to
  * budget in that unit. Accumulated whether the expansion returns or throws:
@@ -147,7 +151,7 @@ export function expandSeries(
       );
     }
     if (err instanceof RecurrenceBoundError) {
-      throw new RecurrenceExpansionError(
+      throw new RecurrenceExpansionStopped(
         `Series ${series.id} was stopped before it reaches the window's end: ${err.message}, so the rule is too costly to expand at read time`,
       );
     }

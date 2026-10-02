@@ -64,9 +64,9 @@ async function createEvent(
 }
 
 /**
- * A row carrying properties no write door accepts any longer, stored past
- * them: the refusal is the witness that the shape is no longer writable,
- * and the row is what an instance holding it from before still reads.
+ * A row carrying properties no write door accepts, stored past them: the
+ * refusal is the witness that the shape cannot be written, and the row is
+ * what an instance holding one still has to read.
  */
 async function storeRefusedEvent(
   properties: Record<string, unknown>,
@@ -619,10 +619,8 @@ describe("the occurrence ceiling", () => {
 });
 
 describe("a row whose declared rule cannot be used", () => {
-  // Every one of these is refused on write now, and an instance can still
-  // hold one written before it was. Each used to leave the response
-  // asserting `series_errors: 0` over a row it had quietly dropped or
-  // quietly misread, which is worse than saying nothing: nobody
+  // Each of these is refused on write, and a row stored past the doors
+  // still has to be named rather than dropped or misread: nobody
   // investigates a calendar that reports itself complete.
   //
   // Anchored in 2031, past every other fixture's window. The series
@@ -741,15 +739,10 @@ describe("a row whose declared rule cannot be used", () => {
 });
 
 describe("a series carrying a timezone that does not resolve", () => {
-  // Every one of these is refused on write now, and an instance can still
-  // hold one written before it was; `Intl` raises a `RangeError` rather
-  // than returning anything for them. The raise
-  // reached this route as a bug rather than as a series' own failure, so
-  // one row took the whole calendar down with a 500 — permanently, on
-  // every window, because the series pass is unwindowed and no narrowing
-  // reaches it. The healthy meeting below is the half that makes it
-  // matter: it was lost too, and its owner could do nothing about it but
-  // find and delete a row they had no reason to suspect.
+  // Each of these is refused on write, and `Intl` raises a `RangeError`
+  // for a row stored past the doors. That raise has to stay this series'
+  // failure: the series pass is unwindowed, so a raise escaping it would
+  // answer every window with a 500 and lose the healthy meeting beside it.
   const FROM = "2033-02-01T00:00:00Z";
   const TO = "2033-02-08T00:00:00Z";
 
@@ -821,10 +814,10 @@ describe("the scan block", () => {
 });
 
 describe("a stored rule that would otherwise hold the read", () => {
-  // Rules that never produce an occurrence, some of which held a widely
-  // used expander inside one step until the process was killed, and one
-  // that is merely too frequent to walk from its start. Refused on write;
-  // an instance holding one from before still has to answer.
+  // Rules that never produce an occurrence, which a step that is not
+  // metered can walk forever, and one that is merely too frequent to walk
+  // from its start. The first are refused on write; a row stored past the
+  // doors still has to be answered.
   const FROM = "2034-03-01T00:00:00Z";
   const TO = "2034-03-08T00:00:00Z";
 
@@ -872,11 +865,40 @@ describe("a stored rule that would otherwise hold the read", () => {
     const body = (await res.json()) as {
       data: OccurrenceRow[];
       series_errors?: SeriesError[];
+      expansion_incomplete?: boolean;
+      scan: { series_unexpanded: number };
     };
     expect(body.data.some((r) => r.item.id === healthyId)).toBe(true);
     expect(body.data.some((r) => ids.includes(r.item.id))).toBe(false);
-    // The rule too costly to walk is stopped inside its walk and named.
+    // The rule too costly to walk is stopped inside its walk and named,
+    // and the read says its calendar may be partial.
     const stopped = body.series_errors?.find((e) => e.item_id === ids[3]);
     expect(stopped?.message).toContain("stopped");
+    expect(body.expansion_incomplete).toBe(true);
+    // Every series stopped this way counts, and only those: the
+    // file shares one instance, so earlier tests' rows can be stopped too.
+    expect(body.scan.series_unexpanded).toBe(
+      (body.series_errors ?? []).filter((e) =>
+        e.message.includes("was stopped"),
+      ).length,
+    );
+  });
+});
+
+describe("a series whose length no instant can hold", () => {
+  it("is refused on write, and a stored one is named while the read answers", async () => {
+    const id = await storeRefusedEvent({
+      title: "a century-plus meeting",
+      starts_at: "2035-01-02T09:00:00.000Z",
+      duration: 1e13,
+      timezone: "Europe/Berlin",
+      recurrence: ["RRULE:FREQ=DAILY"],
+    });
+    const { status, errors } = await occurrences(
+      "2035-01-01T00:00:00Z",
+      "2035-01-08T00:00:00Z",
+    );
+    expect(status).toBe(200);
+    expect(errors.filter((e) => e.item_id === id)).toHaveLength(1);
   });
 });

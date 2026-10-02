@@ -952,11 +952,12 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     // response is never comparing against a number the route is not
     // using.
     expect(body.scan.max_unproductive_iterations).toBe(BUDGET);
-    // The five past the ceiling were never walked, and the response says
-    // so rather than stopping quietly. A calendar that is missing part
-    // of itself and does not admit it is the failure this whole file is
+    // The five past the ceiling were never walked and the ones walked
+    // were each stopped by their own bound, and the response says so
+    // rather than stopping quietly. A calendar that is missing part of
+    // itself and does not admit it is the failure this whole file is
     // organized around.
-    expect(body.scan.series_unexpanded).toBe(5);
+    expect(body.scan.series_unexpanded).toBe(TO_FILL + 5);
     expect(body.expansion_incomplete).toBe(true);
     // Only the ones actually walked are reported as failures, which is
     // what makes the two numbers say different things.
@@ -1173,7 +1174,7 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
     expect(body.error.code).toBe("validation_error");
     expect(body.error.details?.max_occurrences).toBe(5_000);
     expect(body.error.details?.expansion_incomplete).toBe(true);
-    expect(body.error.details?.series_unexpanded).toBe(5);
+    expect(body.error.details?.series_unexpanded).toBe(TO_FILL + 5);
   });
 });
 

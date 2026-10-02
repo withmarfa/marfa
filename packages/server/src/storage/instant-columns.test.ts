@@ -108,6 +108,13 @@ describe("instantColumnValues", () => {
     ).toBe("2026-05-05T09:15:00.000Z");
   });
 
+  it("derives no end from a duration no instant can hold", () => {
+    expect(
+      instantColumnValues({ starts_at: "2026-05-05T09:00:00Z", duration: 1e13 })
+        .ends_at,
+    ).toBeNull();
+  });
+
   it("answers null for junk, absence, and non-strings", () => {
     expect(instantColumnValues({ starts_at: "next tuesday" })).toEqual({
       starts_at: null,

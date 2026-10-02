@@ -433,8 +433,8 @@ describe("expansion is anchored to the series zone, not the reader's", () => {
 
 // ---------------------------------------------------------------------------
 // Values that carry an instant of their own are compared as that instant, and
-// whole days stay whole. Each case here was answered wrongly by an expansion
-// that read every value as a reading of the series' own clock.
+// whole days stay whole. Reading every value as a reading of the series' own
+// clock gets each of these wrong.
 // ---------------------------------------------------------------------------
 
 describe("values carrying their own instant", () => {
@@ -539,9 +539,9 @@ describe("a stored rule that names no date that exists", () => {
   });
 });
 
-// Rules that hold a widely used expander inside a single step until the
-// process is killed or runs out of memory. A row carrying one may predate
-// the write-time refusal, so the read has to survive it on its own.
+// Rules that name no date that exists, which a step that is not metered can
+// walk forever. A row stored past the doors can carry one, so the read has
+// to survive it on its own.
 describe("a stored rule that would otherwise hold the read", () => {
   const window = [
     new Date("2026-06-01T00:00:00Z"),

@@ -31,7 +31,7 @@ pub struct OccurrencePage {
         skip_serializing_if = "Option::is_none"
     )]
     pub series_errors_truncated: Option<bool>,
-    /// Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.
+    /// Present and true when a series' expansion did not finish: a series was stopped by the bound on its own walk, or the request spent `scan.max_unproductive_iterations` on expansions that returned no occurrence before reaching the rest. `data` may be missing occurrences those series held, and `scan.series_unexpanded` says how many there were. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.
     #[serde(
         rename = "expansion_incomplete",
         skip_serializing_if = "Option::is_none"
