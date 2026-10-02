@@ -679,7 +679,11 @@ export function bulkRoutes(storage: Storage) {
             enableFanout,
           });
         let processed: ProcessedBulkItem;
-        if (atomic) {
+        const committed = out.some(
+          (p) =>
+            p.result.outcome === "created" || p.result.outcome === "updated",
+        );
+        if (atomic || !committed) {
           processed = await entry();
         } else {
           try {
