@@ -138,8 +138,8 @@ describe("GET /events replay dedupe", () => {
     const skippedItem = await createNote(SKIPPED);
     const healthyItem = await createNote(HEALTHY);
     const endItem = await createNote(END);
-    // A real edge, so the release's source read finds its source; its
-    // event is published during the gate below, like the rows'.
+    // A real edge from a note; its event is published during the gate
+    // below, like the rows', carrying its source's type as a door's does.
     const edgeRes = await request(ctx.app, "POST", "/edges", {
       key: ctx.workingKey,
       body: {
@@ -190,6 +190,7 @@ describe("GET /events replay dedupe", () => {
       const edgeId = await publishEdge({
         type: "edge_updated",
         edge: healthyEdge,
+        sourceType: healthyItem.type,
       });
       if (edgeId === undefined) {
         throw new Error("publishEdge appended no event id; the log is unwired");

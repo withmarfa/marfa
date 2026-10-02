@@ -1,9 +1,10 @@
 /**
  * One subscription hands a burst of item and edge events on in the order
- * they were published, however long the consumer takes to come back.
+ * they were published, however long the consumer takes to come back, and
+ * hands on everything queued at once.
  *
- * The stream's consumer awaits an edge frame's send before it takes the
- * next frame, so everything published in the meantime queues inside the
+ * The stream's consumer re-reads its credential before it delivers a
+ * batch, so everything published in the meantime queues inside the
  * subscription. A queue drained from the wrong end, or one that put edge
  * events ahead of item events, would pass every test that lets the
  * consumer keep up, because a queue holding one frame has no order to get
@@ -42,7 +43,7 @@ function idOf(frame: LiveFrame): bigint {
  * report a timeout rather than the loss.
  */
 async function take(
-  frames: AsyncGenerator<LiveFrame>,
+  frames: AsyncGenerator<LiveFrame[]>,
   count: number,
 ): Promise<LiveFrame[]> {
   const taken: LiveFrame[] = [];
@@ -63,7 +64,7 @@ async function take(
       if (timer !== undefined) clearTimeout(timer);
     });
     if (next.done) break;
-    taken.push(next.value);
+    taken.push(...next.value);
   }
   return taken;
 }
@@ -90,6 +91,9 @@ describe("subscribeAll under a burst", () => {
 
     const head = await first;
     expect(head.done).toBe(false);
+    // The whole burst was queued before the consumer came back, so it is
+    // one batch: a consumer asking something once per batch asks it once.
+    expect(head.value).toHaveLength(burst.length);
     // A second burst, published after the first frame was taken and
     // before the next is asked for: the generator is suspended at its
     // yield with nothing waiting on the bus, so these arrive with no
@@ -101,8 +105,8 @@ describe("subscribeAll under a burst", () => {
       itemEvent(10),
     ];
     for (const event of parked) emitWake(event);
-    const rest = await take(frames, burst.length + parked.length - 1);
-    const all = [head.value as LiveFrame, ...rest];
+    const rest = await take(frames, parked.length);
+    const all = [...(head.value as LiveFrame[]), ...rest];
     expect(all.map(idOf)).toEqual([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n, 10n]);
     expect(all.map((frame) => frame.kind)).toEqual([
       "item",
@@ -135,8 +139,7 @@ describe("subscribeAll under a burst", () => {
     emitWake(itemEvent(4));
 
     const head = await first;
-    const rest = await take(frames, 2);
-    expect([head.value as LiveFrame, ...rest].map(idOf)).toEqual([1n, 3n, 4n]);
+    expect([...(head.value as LiveFrame[])].map(idOf)).toEqual([1n, 3n, 4n]);
 
     controller.abort();
     await frames.return(undefined);

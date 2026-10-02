@@ -55,6 +55,7 @@ import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 import { blobPrincipal } from "./_blob-reach.js";
+import { sourceTypesFor } from "./_edge-visibility.js";
 
 const MAX_ARCHIVE_ITEMS = 5000;
 // Edges routinely outnumber items; a 4x multiple keeps the cap
@@ -950,10 +951,15 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
         enableFanout: false,
       });
     }
+    const sourceTypes = await sourceTypesFor(
+      storage,
+      restoredEdges.map((edge) => edge.source_id),
+    );
     for (const edge of restoredEdges) {
       await publishEdge({
         type: "edge_created",
         edge,
+        sourceType: sourceTypes.get(edge.source_id),
         enableFanout: false,
       });
     }

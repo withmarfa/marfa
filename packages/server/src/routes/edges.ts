@@ -35,6 +35,7 @@ import {
   edgeKindReadable,
   edgeReadable,
   readableEdges,
+  sourceTypesFor,
 } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
@@ -738,7 +739,11 @@ export function edgeRoutes(storage: Storage) {
       if (!raced) throw err;
       return c.json({ edge: raced, acknowledged: true }, 200);
     }
-    await publishEdge({ type: "edge_created", edge });
+    await publishEdge({
+      type: "edge_created",
+      edge,
+      sourceType: sourceItem.type,
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -850,9 +855,16 @@ export function edgeRoutes(storage: Storage) {
       );
     }
     const updated = result.edge;
+    // A move can change the source, so its type is read for the edge as
+    // it now stands.
+    const sourceTypes = await sourceTypesFor(storage, [updated.source_id]);
     // An edit is as observable as a create or a delete: without it a second
     // device keeps the stale payload with nothing saying otherwise.
-    await publishEdge({ type: "edge_updated", edge: updated });
+    await publishEdge({
+      type: "edge_updated",
+      edge: updated,
+      sourceType: sourceTypes.get(updated.source_id),
+    });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       key_id: c.get("apiKey")?.id,
@@ -885,6 +897,7 @@ export function edgeRoutes(storage: Storage) {
     await publishEdge({
       type: "edge_deleted",
       edge: existing,
+      sourceType: srcItem?.type,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

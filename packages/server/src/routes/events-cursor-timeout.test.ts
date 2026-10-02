@@ -24,8 +24,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
 import { MarfaError } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, storedViewerKey } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { emitWake, type ItemEventWithId } from "../pubsub.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
@@ -41,22 +40,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await ctx.cleanup();
 });
-
-function workingKey(): ApiKey {
-  return {
-    id: "key_events_cursor_timeout",
-    name: "events cursor timeout",
-    key_hash: "unused",
-    // Read on every type: the frame the test publishes has to pass the
-    // projection, or its absence would be the filter's rather than the
-    // hold's.
-    type_permissions: { "*": "read" },
-    extension_permissions: {},
-    edge_permissions: {},
-    metadata_permissions: {},
-    created_at: new Date().toISOString(),
-  } as unknown as ApiKey;
-}
 
 /**
  * The same storage with a head read that never comes back.
@@ -78,10 +61,7 @@ function withStalledHeadRead(storage: Storage): Storage {
 
 function makeApp(storage: Storage, options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", async (c, next) => {
-    c.set("apiKey", workingKey());
-    await next();
-  });
+  app.use("*", storedViewerKey(storage));
   app.route("/events", eventRoutes(storage, options));
   app.onError((err, c) => {
     if (err instanceof MarfaError) {

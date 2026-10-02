@@ -3,7 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
 import { createNote } from "../../generators/items.js";
-import { openEventStream, parseSse } from "../../utils/sse.js";
+import { openEventStream, parseSse, type SseEvent } from "../../utils/sse.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -29,16 +29,20 @@ afterAll(async () => {
  */
 async function readUntil(
   response: Response,
-  done: (text: string) => boolean,
+  done: (events: SseEvent[]) => boolean,
   budgetMs = 30_000,
 ): Promise<{ text: string; closed: boolean }> {
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   const outOfTime = Symbol("out of time");
   let text = "";
+  // Parsed as frames complete: a replay from the log's start can carry
+  // megabytes, and re-parsing all of it per chunk outruns the budget.
+  const events: SseEvent[] = [];
+  let pending = "";
   const deadline = Date.now() + budgetMs;
   for (;;) {
-    if (done(text)) return { text, closed: false };
+    if (done(events)) return { text, closed: false };
     const remaining = deadline - Date.now();
     const next = await Promise.race([
       reader.read(),
@@ -52,7 +56,14 @@ async function readUntil(
       );
     }
     if (next.done) return { text, closed: true };
-    text += decoder.decode(next.value, { stream: true });
+    const chunk = decoder.decode(next.value, { stream: true });
+    text += chunk;
+    pending += chunk;
+    const end = pending.lastIndexOf("\n\n");
+    if (end >= 0) {
+      events.push(...parseSse(pending.slice(0, end + 2)));
+      pending = pending.slice(end + 2);
+    }
   }
 }
 
@@ -99,14 +110,13 @@ describe("the cursor a catch-up resumes from", () => {
     // assertion asks removes the gap between them.
     let text: string;
     try {
-      ({ text } = await readUntil(
-        stream.response,
-        (t) =>
-          parseSse(t).some(
-            (e) =>
-              e.event === "item.created" &&
-              (e.data as { item?: { id?: string } }).item?.id === seededId,
-          ) || t.includes("event: catchup_too_old"),
+      ({ text } = await readUntil(stream.response, (events) =>
+        events.some(
+          (e) =>
+            (e.event === "item.created" &&
+              (e.data as { item?: { id?: string } }).item?.id === seededId) ||
+            e.event === "catchup_too_old",
+        ),
       ));
     } finally {
       await stream.close();

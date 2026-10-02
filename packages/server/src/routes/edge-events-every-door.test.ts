@@ -19,6 +19,9 @@
  * nothing by the item event — the edge event is the only signal it gets.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   createTestContext,
   request,
@@ -33,12 +36,18 @@ import { generateId } from "@withmarfa/shared";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
+/** Every edge event published while this file runs, for the census at its
+ *  end: each door above announces through its own path. */
+const everyAnnouncement = new AbortController();
+let announced: EdgeEventWithId[] = [];
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  announced = collectEdgeEvents(everyAnnouncement.signal).events;
 });
 
 afterAll(async () => {
+  everyAnnouncement.abort();
   await ctx.cleanup();
 });
 
@@ -608,5 +617,86 @@ describe("the properties the announcement itself has to hold", () => {
     expect(
       heard.filter((e) => e.type === "edge_deleted" && e.edge.id === edgeId),
     ).toHaveLength(0);
+  });
+});
+
+/**
+ * Every announcement carries its source item's type, which is what the
+ * stream decides visibility on: a purge announces the edges it took after
+ * their source has gone, so a subscriber cannot look the type up.
+ */
+describe("every announcement names its source's type", () => {
+  it("on the edge doors this file has not yet driven", async () => {
+    const a = await note("census-a");
+    const b = await note("census-b");
+    const created = await request(ctx.app, "POST", "/edges", {
+      key: ctx.workingKey,
+      body: { source_id: a, target_id: b, edge_type: "references" },
+    });
+    expect(created.status).toBe(201);
+    const edge = ((await created.json()) as { edge: { id: string } }).edge;
+    const patched = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: ctx.workingKey,
+      body: { version: 1, properties: { note: "census" } },
+    });
+    expect(patched.status).toBe(200);
+    const bulk = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.workingKey,
+      body: {
+        mode: "upsert",
+        edges: [
+          { source_id: b, target_id: a, edge_type: "references" },
+          {
+            source_id: a,
+            target_id: b,
+            edge_type: "references",
+            properties: { note: "upserted" },
+          },
+        ],
+      },
+    });
+    expect(bulk.status).toBe(200);
+    await settle();
+  });
+
+  it("on every edge event this file's doors published", () => {
+    // The witness: the doors above announced, so an empty census is not
+    // what passes here.
+    expect(announced.length).toBeGreaterThan(20);
+    for (const kind of ["edge_created", "edge_updated", "edge_deleted"]) {
+      expect(announced.some((e) => e.type === kind)).toBe(true);
+    }
+    // Every source in this file is a note.
+    const unnamed = announced.filter((e) => e.sourceType !== "core.note");
+    expect(
+      unnamed.map((e) => `${e.type} ${e.edge.id}: ${String(e.sourceType)}`),
+    ).toEqual([]);
+  });
+
+  it("at every place the server publishes one", () => {
+    // Read from the source, comments aside, so a door added later has to
+    // name it before it can publish: each call's argument up to its
+    // closing brace names `sourceType`.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const missing: string[] = [];
+    let calls = 0;
+    for (const entry of readdirSync(root, {
+      recursive: true,
+      encoding: "utf8",
+    })) {
+      if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
+      const text = readFileSync(join(root, entry), "utf8")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/[^\n]*/g, "");
+      for (const match of text.matchAll(/(?<![\w$.])publishEdge\s*\(\s*\{/g)) {
+        calls += 1;
+        const end = text.indexOf("})", match.index);
+        if (!text.slice(match.index, end).includes("sourceType")) {
+          missing.push(`${entry} at offset ${String(match.index)}`);
+        }
+      }
+    }
+    expect(calls).toBeGreaterThanOrEqual(11);
+    expect(missing).toEqual([]);
   });
 });

@@ -85,6 +85,43 @@ describe("edge events", () => {
     });
   });
 
+  it("carries the source item's type on every edge frame", async ({
+    signal,
+  }) => {
+    await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 200));
+      const src = await makeItem("source-type-src");
+      const tgt = await makeItem("source-type-tgt");
+      const edge = await client.createEdge({
+        source_id: src,
+        target_id: tgt,
+        edge_type: "about",
+      });
+      expect(edge.ok).toBe(true);
+      const edgeId = edge.data.edge.id;
+      expect((await client.deleteEdge(edgeId)).ok).toBe(true);
+      const ours = (e: SseEvent): boolean =>
+        e.event.startsWith("edge.") &&
+        (e.data as { edge?: { id?: string } }).edge?.id === edgeId;
+      const { events } = await collectUntil(
+        stream,
+        (evts) => evts.some((e) => ours(e) && e.event === "edge.deleted"),
+        `edge.created and edge.deleted for ${edgeId}`,
+        signal,
+      );
+      const frames = events.filter(ours);
+      expect(frames.map((e) => e.event)).toEqual([
+        "edge.created",
+        "edge.deleted",
+      ]);
+      for (const frame of frames) {
+        expect((frame.data as { source_type?: string }).source_type).toBe(
+          "core.note",
+        );
+      }
+    });
+  });
+
   it("accepts writes while an event stream is open", async () => {
     // Every Marfa client holds a subscription open and writes through it,
     // so the two have to work together — testing them in isolation misses
@@ -391,5 +428,111 @@ describe("the stream answers only the edges a subscriber may read", () => {
         "the catch-up handed back a kind of relationship this credential may not read",
       ).not.toContain(rows.hiddenKind);
     });
+  });
+  /** A bookmark with an edge to a note, trashed and purged, then a note as
+   *  the sentinel. */
+  async function purgeABookmarkWithAnEdge(
+    label: string,
+  ): Promise<{ edgeId: string; sentinel: string }> {
+    const bookmark = await client.createItem(
+      createBookmark({ properties: { title: `evt-${label}-purged` } }),
+    );
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    const bookmarkId = bookmark.data.item.id;
+    const target = await makeItem(`${label}-purged-target`);
+    const edge = await client.createEdge({
+      source_id: bookmarkId,
+      target_id: target,
+      edge_type: "references",
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
+    expect((await client.deleteItem(bookmarkId)).ok).toBe(true);
+    expect((await client.purgeItem(bookmarkId)).ok).toBe(true);
+    const sentinel = await makeItem(`${label}-purged-sentinel`);
+    return { edgeId: edge.data.edge.id, sentinel };
+  }
+
+  /** A credential reading notes and every kind of relationship. */
+  async function notesOnlyKey(label: string): Promise<string> {
+    const resp = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      permissions: [],
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    expect(resp.ok, JSON.stringify(resp.error)).toBe(true);
+    trackKey(ctx, resp.data.id);
+    return resp.data.key;
+  }
+
+  const purgedEdgeFrame = (events: SseEvent[], edgeId: string) =>
+    events.find(
+      (e) =>
+        e.event === "edge.deleted" &&
+        (e.data as { edge?: { id?: string } }).edge?.id === edgeId,
+    );
+  const itemArrived = (events: SseEvent[], id: string): boolean =>
+    events.some((e) => (e.data as { item?: { id?: string } }).item?.id === id);
+
+  it("withholds a purged item's edges from a subscriber that could not read it, live and on a replay", async ({
+    signal,
+  }) => {
+    const narrow = await notesOnlyKey("stream-purged-narrow");
+    const { eventId } = await baselineEventId(
+      apiUrl,
+      apiKey,
+      () => makeItem("purged-marker"),
+      signal,
+    );
+
+    let rows: { edgeId: string; sentinel: string } | undefined;
+    await withStream(apiUrl, narrow, {}, async (narrowStream) => {
+      await withStream(apiUrl, apiKey, {}, async (wideStream) => {
+        await new Promise((r) => setTimeout(r, 300));
+        rows = await purgeABookmarkWithAnEdge("live");
+        const { edgeId, sentinel } = rows;
+
+        const wide = await collectUntil(
+          wideStream,
+          (evts) => itemArrived(evts, sentinel),
+          `the sentinel ${sentinel} on an unnarrowed stream`,
+          signal,
+        );
+        // The witness: the purge announced the edge, naming its source.
+        const frame = purgedEdgeFrame(wide.events, edgeId);
+        expect(frame, "the purge never announced the edge").toBeDefined();
+        expect((frame?.data as { source_type?: string }).source_type).toBe(
+          "core.bookmark",
+        );
+
+        const seen = await collectUntil(
+          narrowStream,
+          (evts) => itemArrived(evts, sentinel),
+          `the sentinel ${sentinel} on the narrowed stream`,
+          signal,
+        );
+        expect(
+          purgedEdgeFrame(seen.events, edgeId),
+          "a subscriber that may not read bookmarks was told about a purged bookmark's edge",
+        ).toBeUndefined();
+      });
+    });
+
+    const { edgeId, sentinel } = rows!;
+    for (const [key, shown] of [
+      [apiKey, true],
+      [narrow, false],
+    ] as const) {
+      await withStream(apiUrl, key, { lastEventId: eventId }, async (s) => {
+        const { events } = await collectUntil(
+          s,
+          (evts) => itemArrived(evts, sentinel),
+          `the sentinel ${sentinel} on a replay`,
+          signal,
+        );
+        expect(purgedEdgeFrame(events, edgeId) !== undefined).toBe(shown);
+      });
+    }
   });
 });

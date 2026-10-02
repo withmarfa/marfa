@@ -1407,7 +1407,7 @@ export function bulkRoutes(storage: Storage) {
     // Edges after the items, so a subscriber sees the endpoints before the
     // relationship naming them.
     for (const changes of inlineEdgeChanges) {
-      await announceInlineEdges(changes, enableFanout);
+      await announceInlineEdges(storage, changes, enableFanout);
     }
 
     await storage.audit.log({

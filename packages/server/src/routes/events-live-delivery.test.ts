@@ -12,8 +12,7 @@
  */
 import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import { Hono } from "hono";
-import type { ApiKey } from "@withmarfa/shared";
-import { createTestContext, readSse } from "../test-utils.js";
+import { createTestContext, readSse, storedViewerKey } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { eventRoutes } from "./events.js";
 import type { AppEnv } from "../middleware/auth.js";
@@ -37,20 +36,7 @@ let app: Hono<AppEnv>;
 beforeAll(async () => {
   ctx = await createTestContext();
   app = new Hono<AppEnv>();
-  app.use("*", async (c, next) => {
-    c.set("apiKey", {
-      id: "key-events-live-failure",
-      name: "viewer",
-      key_hash: "unused",
-      is_operator: true,
-      type_permissions: { "*": "read" },
-      extension_permissions: {},
-      edge_permissions: {},
-      metadata_permissions: {},
-      created_at: new Date().toISOString(),
-    } as unknown as ApiKey);
-    await next();
-  });
+  app.use("*", storedViewerKey(ctx.storage));
   app.route("/events", eventRoutes(ctx.storage));
 });
 

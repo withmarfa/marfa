@@ -93,6 +93,7 @@ import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import {
   assertFilterEdgeTermsReadable,
   readableEdges,
+  sourceTypesFor,
 } from "./_edge-visibility.js";
 import { withCascadeMarks } from "./_cascade-marks.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
@@ -1820,7 +1821,7 @@ export function itemRoutes(storage: Storage) {
         // `/edges`, so silence here would make propagation depend on
         // which door the writer used.
         if (updatedEdgeChanges) {
-          await announceInlineEdges(updatedEdgeChanges);
+          await announceInlineEdges(storage, updatedEdgeChanges);
         }
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
@@ -2040,8 +2041,9 @@ export function itemRoutes(storage: Storage) {
     // The item's own edges, announced after the item itself so a
     // subscriber that resolves an edge's endpoints has already been told
     // the new one exists.
+    // Every one of them is the new item's own, written from it.
     for (const edge of createdEdges) {
-      await publishEdge({ type: "edge_created", edge });
+      await publishEdge({ type: "edge_created", edge, sourceType: item.type });
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -2839,7 +2841,10 @@ export function itemRoutes(storage: Storage) {
         item: sibling,
         metadata: await storage.metadata.get(sibling.id),
       });
-      await announceInlineEdges({ created: siblingEdges ?? [], deleted: [] });
+      await announceInlineEdges(storage, {
+        created: siblingEdges ?? [],
+        deleted: [],
+      });
     }
     await publish({
       type: "updated",
@@ -2849,7 +2854,7 @@ export function itemRoutes(storage: Storage) {
     // After the item, and after the transaction committed. Announcing
     // from inside would describe edges a rollback then took away.
     if (patchedEdgeChanges) {
-      await announceInlineEdges(patchedEdgeChanges);
+      await announceInlineEdges(storage, patchedEdgeChanges);
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -3201,8 +3206,14 @@ export function itemRoutes(storage: Storage) {
         ...(await storage.edges.deleteBySource(id)),
         ...(await storage.edges.deleteByTarget(id)),
       ];
+      // Read before the purge takes the row: each announcement carries its
+      // source's type, and one of those sources is the row going now.
+      const sourceTypes = await sourceTypesFor(
+        storage,
+        removed.map((edge) => edge.source_id),
+      );
       await storage.items.purge(id);
-      return { removed };
+      return { removed, sourceTypes };
     });
     if ("error" in outcome) {
       // Returned rather than thrown, so the error handler that sets this
@@ -3212,7 +3223,12 @@ export function itemRoutes(storage: Storage) {
     }
     const cascaded = outcome.removed;
     for (const edge of cascaded) {
-      await publishEdge({ type: "edge_deleted", edge, purgedWith: id });
+      await publishEdge({
+        type: "edge_deleted",
+        edge,
+        sourceType: outcome.sourceTypes.get(edge.source_id),
+        purgedWith: id,
+      });
     }
     // The item itself, which the cascade above does not cover. A trashed
     // row announced `item.deleted`, which says recoverable; nothing else

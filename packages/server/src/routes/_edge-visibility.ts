@@ -10,7 +10,8 @@ import type { Storage } from "../storage/interface.js";
  *
  * The two questions `GET /edges/{id}` asks before it answers, as one
  * reading the plural doors, the item's own doors and the stream all take
- * rather than three copies of the same pair. Reading an edge discloses
+ * rather than three copies of the same pair. The stream asks the source
+ * half of the type its event carries rather than of a row it reads. Reading an edge discloses
  * both endpoints, the kind of relationship and the properties on it, so a
  * credential refused one edge at the single door cannot be handed the
  * same edge inside a page, inside an item's response, or on the stream.
@@ -25,30 +26,42 @@ export function edgeKindReadable(key: ApiKey, edge: Edge): boolean {
 }
 
 /**
+ * The pair for an announced edge, asked of the source type its event
+ * carries (`EdgeEvent.sourceType`), live or replayed from the log.
+ *
+ * The stream cannot ask a row instead: a purge announces the edges it took
+ * after their source has gone. An event carrying no type is withheld,
+ * because a source that cannot be classified cannot be shown readable.
+ */
+export function announcedEdgeReadable(
+  key: ApiKey,
+  edge: Edge,
+  sourceType: string | undefined,
+): boolean {
+  return (
+    edgeKindReadable(key, edge) &&
+    sourceType !== undefined &&
+    mayReadType(key, sourceType)
+  );
+}
+
+/**
  * The source half, given the type of the source item.
  *
  * `undefined` means the source could not be resolved, and it does not
  * refuse: `GET /edges/{id}` reads a source it cannot find as a source
  * with no type to refuse, and a plural door that decided the other way
  * would disagree with the singular one about the same row — the
- * disagreement this whole reading exists to remove.
+ * disagreement this whole reading exists to remove. The branch is
+ * unreachable on these doors, because an edge row and the item it hangs
+ * off go together: a purge takes both, and a trash leaves the row to be
+ * found, which is why they read the trashed ones too.
  *
- * **On the collection doors the branch is unreachable**, because an edge
- * row and the item it hangs off go together: a purge takes both, and a
- * trash leaves the row to be found, which is why those doors read the
- * trashed ones too. **On the event stream it is reachable and it
- * discloses**: a purge announces each cascaded `edge.deleted` after the
- * row has gone, so a credential holding the edge type and no read on the
- * purged item's type learns that edge's endpoints and properties.
- * Refusing there instead would withhold those frames from every
- * subscriber, the one that could read the purged item included, because
- * the type nobody can resolve is the same for all of them — so the
- * choice is between disclosing to a few and breaking reconciliation for
- * all. Closing it properly means carrying the source's type on the event
- * where the publisher still knows it, which is a change to the event's
- * shape and to the log, and a decision rather than a fix.
+ * The event stream does not ask this. An edge frame there can outlive its
+ * source, so it carries the source's type from when it was published, and
+ * a frame carrying none is withheld.
  */
-export function sourceTypeReadable(
+function sourceTypeReadable(
   key: ApiKey,
   sourceType: string | undefined,
 ): boolean {
@@ -98,9 +111,8 @@ export async function readableEdges(
  * refusal into a disclosure. An id with no row is simply absent from the
  * answer, which `sourceTypeReadable` reads as a source with no type.
  *
- * Separate from `readableEdges` for the one caller that cannot use it:
- * the event stream's replay, which holds a page of stored rows rather
- * than a page of edges and has to decode them before it can ask anything.
+ * Also what every door announcing an edge reads, so the event carries its
+ * source's type (`EdgeEvent.sourceType`).
  */
 export async function sourceTypesFor(
   storage: Storage,
@@ -116,12 +128,11 @@ export async function sourceTypesFor(
 
 /**
  * The same pair for a single edge, for a caller holding one rather than a
- * collection: the event stream, which sees one frame at a time.
+ * collection.
  *
  * It costs one keyed read of the source item, and only where the edge
- * type passed first — a subscriber that may not read the kind of
- * relationship pays nothing. `readableEdges` answers the empty set
- * without querying at all in that case.
+ * type passed first. `readableEdges` answers the empty set without
+ * querying at all in that case.
  */
 export async function edgeReadable(
   storage: Storage,

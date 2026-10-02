@@ -32,7 +32,7 @@ import type {
   Storage,
 } from "../storage/interface.js";
 import { runChunk, type ChunkOutcome } from "./runner.js";
-import { resolveJobCredential } from "./credential.js";
+import { resolveLiveCredential } from "../auth/live-credential.js";
 import type {
   BulkActionErrorEntry,
   BulkActionInput,
@@ -318,9 +318,10 @@ export class BulkActionWorker {
       // The credential is asked again before every chunk, because the job
       // runs after the request that queued it: a key revoked or narrowed
       // since is answered as the next request bearing it would be.
-      const credential = await resolveJobCredential(
+      const credential = await resolveLiveCredential(
         this.storage,
         job.api_key_id,
+        { tokenOutlivesExpiry: true },
       );
       if (!credential) {
         await this.stopForCredential(

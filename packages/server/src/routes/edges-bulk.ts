@@ -41,7 +41,7 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { bulkAtomicRollback, isEntryVerdict } from "./_bulk-rollback.js";
 import { refuseReusedEdgeId } from "./_reused-edge-id.js";
-import { edgeReadable } from "./_edge-visibility.js";
+import { edgeReadable, sourceTypesFor } from "./_edge-visibility.js";
 import {
   assertEdgeCanBeCreated,
   edgeTargetNotFound,
@@ -617,11 +617,27 @@ export function edgesBulkRoutes(storage: Storage) {
     // not the other would make propagation depend on which route the
     // writer happened to use. `skipped` and `errored` wrote nothing and
     // publish nothing.
+    const sourceTypes = await sourceTypesFor(
+      storage,
+      [...createdEdges, ...updatedEdges].map((edge) => edge.source_id),
+    );
     for (const edge of createdEdges) {
-      await publishEdge({ type: "edge_created", edge, enableFanout });
+      const sourceType = sourceTypes.get(edge.source_id);
+      await publishEdge({
+        type: "edge_created",
+        edge,
+        sourceType,
+        enableFanout,
+      });
     }
     for (const edge of updatedEdges) {
-      await publishEdge({ type: "edge_updated", edge, enableFanout });
+      const sourceType = sourceTypes.get(edge.source_id);
+      await publishEdge({
+        type: "edge_updated",
+        edge,
+        sourceType,
+        enableFanout,
+      });
     }
 
     await storage.audit.log({
