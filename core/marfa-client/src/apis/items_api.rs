@@ -662,7 +662,7 @@ pub enum TransitionItemError {
 pub enum UpdateItemError {
     Status400(models::EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::EdgePermissionDeniedOrTypeNotPermittedRefusal),
+    Status403(models::EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal),
     Status404(models::EdgeTypeNotFoundOrItemNotFoundRefusal),
     Status409(models::UpdateItem409Response),
     Status413(models::RequestTooLargeRefusal),

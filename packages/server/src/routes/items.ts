@@ -882,13 +882,14 @@ const updateItemRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "forbidden",
             "edge_permission_denied",
             "type_not_permitted",
           ]),
         },
       },
       description:
-        "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on.",
+        "`type_not_permitted` when the credential may read the item's type and does not hold write on it, or reaches no type; `edge_permission_denied` when the body's `edges` name an edge type it does not hold write on; `forbidden` when the body changes `source_id` on a row whose source the key neither writes under nor claims, named in `details.source`.",
     },
     404: {
       content: {
