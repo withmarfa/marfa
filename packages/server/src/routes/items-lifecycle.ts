@@ -1,4 +1,5 @@
 import { ITEM_NOT_FOUND, WRITE_REFUSED } from "./_item-refusals.js";
+import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
@@ -204,8 +205,11 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, pending.type, "write");
     const { restored, broughtBack } = await storage.runInTransaction(
       async () => {
-        const back = await storage.items.restoreBeneath(id);
-        return { restored: await storage.items.restore(id), broughtBack: back };
+        const back = await itemWrites(storage).restoreBeneath(id);
+        return {
+          restored: await itemWrites(storage).restore(id),
+          broughtBack: back,
+        };
       },
     );
     const metadata = await storage.metadata.get(id);
@@ -271,10 +275,10 @@ export function itemsLifecycleRoutes(storage: Storage) {
       async () => {
         const back =
           item.state === "trashed" && state === "active"
-            ? await storage.items.restoreBeneath(id)
+            ? await itemWrites(storage).restoreBeneath(id)
             : [];
         return {
-          updated: await storage.items.transition(id, state),
+          updated: await itemWrites(storage).transition(id, state),
           broughtBack: back,
         };
       },

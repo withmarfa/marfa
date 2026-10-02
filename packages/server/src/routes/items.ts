@@ -3,6 +3,7 @@ import {
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
+import { itemWrites } from "../storage/item-writes.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   DEFAULT_PAGE_LIMIT,
@@ -2191,7 +2192,10 @@ export function itemRoutes(storage: Storage) {
         refuseUnlessUninstalled(snap, mayReadType(key, snap.type));
       }
       for (const delId of toDelete) {
-        await storage.items.delete(delId, delId === id ? undefined : root);
+        await itemWrites(storage).delete(
+          delId,
+          delId === id ? undefined : root,
+        );
       }
       return snaps;
     });
@@ -2481,7 +2485,7 @@ export function itemRoutes(storage: Storage) {
         storage,
         removed.map((edge) => edge.source_id),
       );
-      await storage.items.purge(id);
+      await itemWrites(storage).purge(id);
       return { removed, sourceTypes };
     });
     if ("error" in outcome) {

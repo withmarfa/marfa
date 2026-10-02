@@ -20,6 +20,7 @@
  * idempotent-looking write that still bumps a version and wakes every
  * other device.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import {
@@ -372,7 +373,7 @@ describe("a repeat sent while the first is in flight", () => {
     // transaction would be answered with whatever row the lookup happened
     // to find — a 200 for a write that did not happen.
     const id = generateId();
-    const store = ctx.storage.items;
+    const store = itemWrites(ctx.storage);
     const realCreate = store.create.bind(store);
     store.create = () =>
       Promise.reject(

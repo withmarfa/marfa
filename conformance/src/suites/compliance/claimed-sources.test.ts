@@ -861,6 +861,49 @@ describe("a write naming a source", () => {
     ).toBe(folder);
   });
 
+  it("refuses a key moving a natural key under a source it does not write under", async () => {
+    const owner = await claimingKey("nk-owner", []);
+    const other = await claimingKey("nk-other", []);
+    const created = await owner.client.createItem(
+      createNote({ source_id: `nk-${ctx.runId}` }),
+    );
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    trackItem(ctx, created.data.item.id);
+    const id = created.data.item.id;
+
+    const patched = await other.client.updateItem(id, {
+      source_id: `nk-moved-${ctx.runId}`,
+      version: created.data.item.version,
+    });
+    expect(patched.status).toBe(403);
+    expect(patched.error?.error.code).toBe("forbidden");
+    expect(patched.error?.error.details?.source).toBe(owner.source);
+
+    const entry = await other.client.bulkItems({
+      atomic: false,
+      items: [
+        {
+          type: "core.note",
+          id,
+          properties: { body: "moved" },
+          source_id: `nk-moved-${ctx.runId}`,
+        },
+      ],
+    });
+    expect(entry.status).toBe(200);
+    expect(entry.data.results[0]?.outcome).toBe("errored");
+    expect(entry.data.results[0]?.error?.code).toBe("forbidden");
+    expect(entry.data.results[0]?.error?.details?.source).toBe(owner.source);
+
+    // The witness: the key whose source it is moves it.
+    const own = await owner.client.updateItem(id, {
+      source_id: `nk-moved-${ctx.runId}`,
+      version: created.data.item.version,
+    });
+    expect(own.status, JSON.stringify(own.error)).toBe(200);
+    expect(own.data.item.source_id).toBe(`nk-moved-${ctx.runId}`);
+  });
+
   it("stops a narrowed key writing under a source it no longer claims, and leaves its rows there editable", async () => {
     const writer = await claimingKey("narrowed", [folder]);
     const sourceId = `narrowed-${ctx.runId}`;

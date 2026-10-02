@@ -4,6 +4,7 @@
  * before it reaches `listTags`, so only a test here holds the store's own
  * reading of an empty allow-list.
  */
+import { itemWrites } from "../item-writes.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,11 +18,11 @@ let storage: Storage | undefined;
 async function tagged(): Promise<Storage> {
   tmpDir = mkdtempSync(join(tmpdir(), "marfa-metadata-"));
   storage = await createSqliteStorage(join(tmpDir, "marfa.db"));
-  const note = await storage.items.create({
+  const note = await itemWrites(storage).create({
     type: "core.note",
     properties: { body: "a note" },
   });
-  const task = await storage.items.create({
+  const task = await itemWrites(storage).create({
     type: "core.task",
     properties: { title: "a task" },
   });

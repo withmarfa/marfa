@@ -15,6 +15,7 @@
  * threw `INVALID_TRANSITION` for a non-trashed row, so a code-only assertion
  * passes with the new `validateTransition` call deleted.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { createGzip } from "node:zlib";
 import { describe, expect, it, afterEach } from "vitest";
 import * as tar from "tar-stream";
@@ -58,7 +59,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     // create route refuses this exact state for this exact type. The store
     // stays permissive so the archive restore can replay it, so it is the
     // only way to reach the row shape the restore gate exists for.
-    const trashed = await c.storage.items.create({
+    const trashed = await itemWrites(c.storage).create({
       type: SYSTEM_TYPE,
       state: "trashed",
       properties: systemProperties(),
@@ -74,10 +75,12 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     // `invalid_transition` for a row that is not trashed, so a code-only
     // assertion stays green with the graph check deleted — this row IS
     // trashed, and only the transition check can refuse it.
-    const error = await c.storage.items.restore(trashed.id).then(
-      () => null,
-      (err: unknown) => err as { code: string; message: string },
-    );
+    const error = await itemWrites(c.storage)
+      .restore(trashed.id)
+      .then(
+        () => null,
+        (err: unknown) => err as { code: string; message: string },
+      );
     expect(error?.code).toBe("invalid_transition");
     expect(error?.message).toContain('Transition from "trashed" to "active"');
     expect(error?.message).not.toBe("Item is not trashed");

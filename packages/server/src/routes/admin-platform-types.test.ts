@@ -6,6 +6,7 @@
  * uncovered is one line at warmup; the derivation itself is
  * tested against real storage in `storage/platform-drift.test.ts`.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -76,7 +77,7 @@ describe("GET /admin/platform-types/drift", () => {
   it("reports a row as not removable while items carry it", async () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       type: id,
       properties: { name: "still here" },
       source: "test",
@@ -280,7 +281,7 @@ describe("DELETE /admin/platform-types/{id}", () => {
     // row is what makes those items resolve.
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
-    await ctx.storage.items.create({
+    await itemWrites(ctx.storage).create({
       type: id,
       properties: { name: "still here" },
       source: "test",

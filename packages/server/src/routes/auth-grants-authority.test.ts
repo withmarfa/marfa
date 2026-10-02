@@ -19,6 +19,7 @@
  * own grants — and is unaffected.
  */
 
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -36,7 +37,7 @@ afterEach(async () => {
 
 /** One active app grant, plus keys holding different permissions. */
 async function seedGrant() {
-  const grant = await ctx.storage.items.create({
+  const grant = await itemWrites(ctx.storage).create({
     type: "system.connection",
     tier: "library",
     state: "active",

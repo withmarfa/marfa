@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import { createHmac } from "node:crypto";
 import type { Edge, Item } from "@withmarfa/shared";
 import {
@@ -569,14 +570,14 @@ describe("what a delivery carries", () => {
   });
 
   it("sends an edge only where its kind and its source's type are readable", async () => {
-    const readable = await ctx.storage.items.create({
+    const readable = await itemWrites(ctx.storage).create({
       type: "core.note",
       tier: "library",
       state: "active",
       properties: { body: "readable source" },
       source: "test/webhook-edges",
     });
-    const hidden = await ctx.storage.items.create({
+    const hidden = await itemWrites(ctx.storage).create({
       type: "core.task",
       tier: "library",
       state: "active",

@@ -24,6 +24,7 @@
  * one has to reach the projection anyway, and rotating one has to be refused
  * rather than answered with another token nothing accepts.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
@@ -513,8 +514,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
 
     // The shape a hand-deleted record leaves: plugin rows, no projection.
     const grant = await onlyGrant(ctx);
-    await ctx.storage.items.transition(grant.id, "revoked");
-    await ctx.storage.items.purge(grant.id);
+    await itemWrites(ctx.storage).transition(grant.id, "revoked");
+    await itemWrites(ctx.storage).purge(grant.id);
 
     const res = await revoke(ctx, tokens.refresh_token as string, clientId);
     expect(res.status).toBe(200);

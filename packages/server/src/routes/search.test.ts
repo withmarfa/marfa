@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -290,7 +291,7 @@ describe("GET /search?include=system", () => {
     // store indexes it for search on the way in, which is all this pair needs
     // — the claim under test is what the read surface does with the row, not
     // how it got there.
-    const folder = await ctx.storage.items.create({
+    const folder = await itemWrites(ctx.storage).create({
       type: "system.folder",
       properties: { title: word },
     });

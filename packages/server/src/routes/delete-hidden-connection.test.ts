@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import { createTestContext, mintWorkingKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -17,11 +18,11 @@ async function parentOfLiveConnection(): Promise<{
   note: string;
   connection: string;
 }> {
-  const note = await ctx.storage.items.create({
+  const note = await itemWrites(ctx.storage).create({
     type: "core.note",
     properties: { body: "parent" },
   });
-  const connection = await ctx.storage.items.create({
+  const connection = await itemWrites(ctx.storage).create({
     type: "system.connection",
     properties: {
       kind: "app",

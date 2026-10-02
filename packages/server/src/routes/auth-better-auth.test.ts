@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   createTestAccount,
@@ -374,7 +375,7 @@ describe("better-auth /auth/* surface", () => {
     // the projection row with a fake client_id string. The /grants
     // listing doesn't validate against the client table.
     const fakeClientId = `client_${Math.random().toString(36).slice(2, 8)}`;
-    const grant = await ctx.storage.items.create({
+    const grant = await itemWrites(ctx.storage).create({
       type: "system.connection",
       state: "active",
       tier: "library",

@@ -1,4 +1,5 @@
 import { PERMISSIONS } from "@withmarfa/shared";
+import { itemWrites } from "./storage/item-writes.js";
 import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { ensureInstanceId } from "./storage/instance-id.js";
@@ -270,7 +271,7 @@ export async function seedOauthBearer(
   });
   await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
 
-  const grant = await storage.items.create({
+  const grant = await itemWrites(storage).create({
     type: "system.connection",
     tier: "library",
     state: "active",

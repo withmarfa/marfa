@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { itemWrites } from "../storage/item-writes.js";
 import {
   createTestContext,
   request,
@@ -2870,7 +2871,7 @@ describe("GET /items?include=system", () => {
     // The system row goes in through the storage layer, because the reserved
     // namespace refuses a write to every credential. What this block is about
     // is who reads one back; the seed is not the claim.
-    const folder = await ctx.storage.items.create({
+    const folder = await itemWrites(ctx.storage).create({
       type: "system.folder",
       properties: { title: `include-system-${marker}` },
     });

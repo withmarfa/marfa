@@ -54,6 +54,7 @@
  * would take the breakage on that one, never reach its real write, and pass
  * for the wrong reason.
  */
+import { itemWrites } from "../storage/item-writes.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
@@ -604,7 +605,7 @@ const doors: Door[] = [
     name: "POST /items/{id}/transition moves an item's state",
     family: "item",
     transactions: 1,
-    breakage: () => breakWrite(ctx.storage.items, "transition"),
+    breakage: () => breakWrite(itemWrites(ctx.storage), "transition"),
     setup: async () => ({ item: await makeNote("transitioning") }),
     act: async (s) => {
       const res = await request(
@@ -628,7 +629,7 @@ const doors: Door[] = [
     name: "POST /items/{id}/restore brings an item back",
     family: "item",
     transactions: 1,
-    breakage: () => breakWrite(ctx.storage.items, "restore"),
+    breakage: () => breakWrite(itemWrites(ctx.storage), "restore"),
     setup: async () => {
       const item = await makeNote("to restore");
       await request(ctx.app, "DELETE", `/items/${item}`, {
