@@ -3112,18 +3112,20 @@ export interface InboundStore {
   }): Promise<number>;
 }
 
-/** The item store's methods that write an item row. */
-export type ItemWriteMethod =
+/** The item store's methods that write an item row. Taken through `Pick`,
+ *  so a name the store no longer has fails to compile. */
+export type ItemWriteMethod = keyof Pick<
+  ItemStore,
   | "create"
   | "update"
   | "delete"
   | "purge"
-  | "bulkPurge"
   | "restore"
   | "restoreBeneath"
   | "transition"
   | "purgeTrashedOlderThan"
-  | "purgeRevokedAppGrantsOlderThan";
+  | "purgeRevokedAppGrantsOlderThan"
+>;
 
 /**
  * The item store as everything outside the write path holds it: its reads,

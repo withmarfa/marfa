@@ -5,7 +5,7 @@
  * trashed. The runner's pre-fetch used `items.getMany`, which excludes trashed
  * rows because every read surface treats a soft-deleted item as gone — so the
  * map came back empty, every id fell into the "not found at purge time"
- * branch, and `bulkPurge` deleted them regardless.
+ * branch, and the purge deleted them regardless.
  *
  * The result was the worst available shape: an operator saw `succeeded: 0,
  * errored: 4100` and concluded nothing had happened, on a job that had removed
