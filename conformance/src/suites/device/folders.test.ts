@@ -17350,6 +17350,22 @@ describe("a folder that cannot reach the server", () => {
     expect(watching.stdout).toMatch(/naming no contract/);
   });
 
+  it("says why a push's drain stopped", async () => {
+    harness = await folderHarness("folder-push-stopped");
+    harness.server.answer("POST", "/items", answers.unauthorized());
+    scriptFolderWrites(harness);
+    put(harness, "stopped.md", "---\ntitle: Stopped\n---\nthe key is gone\n");
+    const pushed = await harness.folder.pushText();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      pushed.value,
+      `a push whose drain stopped did not say why: ${pushed.value}`,
+    ).toMatch(/refused the credential.*drain stopped/);
+    // The witness: the create met the refusal.
+    expect(sentTitles(harness)).toEqual(["Stopped"]);
+  });
+
   it("stops a watch whose credential is refused, with the credential's exit", async () => {
     harness = await folderHarness("folder-watch-refused");
     // Before the folder's own doors, so the first create meets it.
@@ -17374,6 +17390,10 @@ describe("a folder that cannot reach the server", () => {
       `a watch stopped on a refused credential with another exit than a one-off command's: ${watching.stderr}`,
     ).toBe(5);
     expect(watching.stderr).toMatch(/refused this watch's credential/);
+    expect(
+      watching.stdout,
+      `the watch did not say in its own lines why its drain stopped: ${watching.stdout}`,
+    ).toMatch(/the drain stopped: .*refused the credential/);
     // The witness: it was the create that met the refusal.
     expect(sentTitles(harness)).toEqual(["Refused"]);
   });
