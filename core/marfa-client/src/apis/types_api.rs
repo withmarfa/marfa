@@ -135,7 +135,7 @@ pub enum AdminRemovePlatformTypeError {
 #[serde(untagged)]
 pub enum DeleteTypeError {
     Status401(models::UnauthorizedRefusal),
-    Status403(models::CoreTypeImmutableOrForbiddenRefusal),
+    Status403(models::CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal),
     Status404(models::TypeNotFoundRefusal),
     Status409(models::TypeHasSubtypesOrTypeInUseRefusal),
     Status413(models::RequestTooLargeRefusal),
@@ -189,7 +189,7 @@ pub enum UpdateTypeError {
         models::InheritanceViolationOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal,
     ),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::CoreTypeImmutableOrForbiddenRefusal),
+    Status403(models::CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal),
     Status404(models::TypeNotFoundRefusal),
     Status409(models::LinkTakenRefusal),
     Status413(models::RequestTooLargeRefusal),
@@ -285,7 +285,7 @@ pub fn admin_remove_platform_type(
     }
 }
 
-/// Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.  Rejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.  Rejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).  The tombstones purges left under the type go with it.
+/// Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.  Rejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.  Rejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).  The tombstones purges left under the type go with it.
 pub fn delete_type(
     configuration: &configuration::Configuration,
     params: DeleteTypeParams,
@@ -456,7 +456,7 @@ pub fn register_type(
     }
 }
 
-/// Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
+/// Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
 pub fn update_type(
     configuration: &configuration::Configuration,
     params: UpdateTypeParams,

@@ -12,7 +12,7 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CoreTypeImmutableOrForbiddenRefusalError {
+pub struct CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusalError {
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,9 +21,12 @@ pub struct CoreTypeImmutableOrForbiddenRefusalError {
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl CoreTypeImmutableOrForbiddenRefusalError {
-    pub fn new(code: Code, message: String) -> CoreTypeImmutableOrForbiddenRefusalError {
-        CoreTypeImmutableOrForbiddenRefusalError {
+impl CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusalError {
+    pub fn new(
+        code: Code,
+        message: String,
+    ) -> CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusalError {
+        CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusalError {
             code,
             message,
             details: None,
@@ -37,6 +40,8 @@ pub enum Code {
     CoreTypeImmutable,
     #[serde(rename = "forbidden")]
     Forbidden,
+    #[serde(rename = "type_not_permitted")]
+    TypeNotPermitted,
 }
 
 impl Default for Code {

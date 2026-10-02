@@ -103,8 +103,8 @@ src/models/connector_run_page.rs
 src/models/connector_state.rs
 src/models/copies_below_minimum_refusal.rs
 src/models/copies_below_minimum_refusal_error.rs
-src/models/core_type_immutable_or_forbidden_refusal.rs
-src/models/core_type_immutable_or_forbidden_refusal_error.rs
+src/models/core_type_immutable_or_forbidden_or_type_not_permitted_refusal.rs
+src/models/core_type_immutable_or_forbidden_or_type_not_permitted_refusal_error.rs
 src/models/create_edge_200_response.rs
 src/models/create_edge_409_response.rs
 src/models/create_edge_request.rs
