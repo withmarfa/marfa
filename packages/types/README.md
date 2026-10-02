@@ -45,7 +45,7 @@ pnpm build         # bundle src/ to dist/ for downstream consumers
 pnpm typecheck
 ```
 
-CI runs `pnpm validate` and a codegen-freshness check on every push: it empties `generated/`, regenerates it, and refuses any difference, a file the generator did not write included.
+CI runs `pnpm validate` and a codegen-freshness check on every push to `main` and every pull request that can affect them: it empties `generated/`, regenerates it, and refuses any difference, a file the generator did not write included.
 
 ## Adding a new type
 
