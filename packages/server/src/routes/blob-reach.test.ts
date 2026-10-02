@@ -465,6 +465,53 @@ describe("what proves holding the bytes", () => {
     expect(await read(planter, hash)).toBe(404);
   });
 
+  it("credits a stale write only for digests its base version lacked", async () => {
+    const victim = await sent(ctx.workingKey, "a secret a stale edit echoes");
+    await json(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: victim.hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    const planter = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+    });
+    const { item } = await note(planter, {
+      body: `a typo ![x](${victim.hash})`,
+    });
+    // The owner's device holds this version. The planter then takes the
+    // hash out again.
+    const removed = await json<Written>(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: planter,
+        body: { properties: { body: "nothing here" }, version: item.version },
+      }),
+      200,
+    );
+    expect(removed.item.version).toBeGreaterThan(item.version);
+
+    // The device's edit, made on the old version, still carries the hash.
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}?conflict=auto`, {
+        key: ctx.workingKey,
+        body: {
+          properties: { body: `a fixed typo ![x](${victim.hash})` },
+          version: item.version,
+        },
+      }),
+      200,
+    );
+    const holding = (await ctx.storage.items.list({ limit: 1000 })).data.filter(
+      (row) => JSON.stringify(row.properties).includes(victim.hash.slice(7)),
+    );
+    expect(holding.some((row) => row.type === "core.note")).toBe(true);
+    expect(await read(planter, victim.hash)).toBe(404);
+  });
+
   it("keeps a server-made write's digest dead after a full key rewrites the row", async () => {
     // Lent through a note, which the attacker may not read.
     const victim = await sent(ctx.workingKey, "a private file");

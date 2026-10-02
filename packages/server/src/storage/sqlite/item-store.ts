@@ -237,8 +237,8 @@ async function insertConflictedSibling(
     now: string;
     properties: Record<string, unknown>;
     proof: BlobProof;
-    /** The properties the losing write sent, whose digests are its own. */
-    sent: Record<string, unknown>;
+    /** The digests the losing write sent that its base version lacked. */
+    carried: ReadonlySet<string>;
     mayCopyEdge?: (
       edgeType: string,
       sourceType: string,
@@ -281,7 +281,7 @@ async function insertConflictedSibling(
   // lends as it lent there; only one new to it is the losing writer's.
   const inherited = await blobLending(tx, row.id);
   await syncBlobReferences(tx, { id: siblingId, properties }, args.proof, {
-    carried: digestsIn(args.sent),
+    carried: args.carried,
     inherited,
   });
 
@@ -845,12 +845,10 @@ export class SqliteItemStore implements ItemStore {
     before: { type: string; source: string | null; source_id: string | null },
     sourceId: string | undefined,
     proof: BlobProof,
-    sent: Record<string, unknown> | undefined,
+    carried: ReadonlySet<string>,
   ): Promise<void> {
     await syncLink(tx, after, before.type);
-    await syncBlobReferences(tx, after, proof, {
-      carried: digestsIn(sent ?? {}),
-    });
+    await syncBlobReferences(tx, after, proof, { carried });
     if (before.source && sourceId && sourceId !== before.source_id) {
       await forgetNaturalKey(tx, before.source, sourceId);
     }
@@ -1172,7 +1170,7 @@ export class SqliteItemStore implements ItemStore {
           row,
           input.source_id,
           input.blob_proof ?? null,
-          incomingProps,
+          digestsIn(incomingProps ?? {}),
         );
 
         await this.searchStore.remove(id);
@@ -1220,6 +1218,16 @@ export class SqliteItemStore implements ItemStore {
           snapshotFields,
         );
       }
+
+      // A stale write is credited only for digests its own base version
+      // lacked: one the base already held came from whoever wrote it there,
+      // and may since have been removed, so echoing it back is not sending it.
+      const baseDigests = digestsIn(ancestor.properties);
+      const staleCarried = new Set(
+        [...digestsIn(incomingProps ?? {})].filter(
+          (hash) => !baseDigests.has(hash),
+        ),
+      );
 
       // Only the item fields this write names. A field it is silent about
       // is not a change and cannot collide, so a write that touches
@@ -1358,7 +1366,7 @@ export class SqliteItemStore implements ItemStore {
             row,
             now,
             proof: input.blob_proof ?? null,
-            sent: clientProps,
+            carried: staleCarried,
             properties: conflictedSiblingProperties({
               clientProperties: clientProps,
               currentProperties: currentProps,
@@ -1451,7 +1459,7 @@ export class SqliteItemStore implements ItemStore {
         row,
         resolvedFields.source_id ?? undefined,
         input.blob_proof ?? null,
-        incomingProps,
+        staleCarried,
       );
 
       await this.searchStore.remove(id);
