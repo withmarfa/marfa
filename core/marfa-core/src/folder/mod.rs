@@ -1522,8 +1522,10 @@ impl Folder {
             }
         }
         // A file that cannot carry an id and that no record here names, the
-        // folder added again over its own files say, is the item placed where
-        // it sits whose bytes it holds.
+        // folder added again over its own files say, is the item this folder
+        // holds that is placed where it sits and whose bytes it holds. An item
+        // the search no longer holds, one another folder took in or one that
+        // left by state, has a file elsewhere or none, and a copy of it is new.
         let mut placed: Option<HashMap<String, Vec<crate::model::Edge>>> = None;
         for (at, file) in files.iter().enumerate() {
             if claims[at].is_some()
@@ -1541,7 +1543,9 @@ impl Folder {
                 continue;
             };
             for edge in candidates {
-                if by_item.contains_key(edge.source_id.as_str()) || taken.contains(&edge.source_id)
+                if by_item.contains_key(edge.source_id.as_str())
+                    || taken.contains(&edge.source_id)
+                    || !self.holds(&edge.source_id, settings, &members)
                 {
                     continue;
                 }
@@ -1559,7 +1563,9 @@ impl Folder {
                         item_id: item.id,
                         identity: None,
                         content_hash: file.hash.clone(),
-                        written_hash: None,
+                        // The item's own bytes, as a pull would have written
+                        // them, so the file is the folder's to take away.
+                        written_hash: Some(file.hash.clone()),
                         links: Vec::new(),
                         lines: Vec::new(),
                         edit_line: None,

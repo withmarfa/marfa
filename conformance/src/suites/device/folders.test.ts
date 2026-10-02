@@ -9096,6 +9096,7 @@ describe("where a file sits", () => {
     properties?: Record<string, unknown>;
     path?: string;
     tags?: string[];
+    state?: string;
   }
 
   /**
@@ -9117,6 +9118,7 @@ describe("where a file sits", () => {
           title: note.title,
           body: `${note.title}\n`,
         },
+        ...(note.state === undefined ? {} : { state: note.state }),
       } as WireItemOptions,
       tags: note.tags,
     }));
@@ -9425,6 +9427,85 @@ describe("where a file sits", () => {
     ).toEqual(["new.png", "photo.png"]);
     expect(existsSync(join(harness.dir, "words (2).txt"))).toBe(false);
     expect(existsSync(join(harness.dir, "paper (2).pdf"))).toBe(false);
+
+    // Taken back, a file holds its item's own bytes, so it goes with the
+    // item when another device trashes it.
+    for (const [id, title, properties] of [
+      [
+        photo,
+        "photo.png",
+        { blob_ref: hashOf(photoBytes), mime_type: "image/png" },
+      ],
+      [words, "words", { body: "plain words\n" }],
+    ] as const) {
+      placed.edges.events.push(
+        itemEvent(
+          String(placed.edges.events.length + 2),
+          "item.deleted",
+          wireItem({
+            id,
+            type: id === photo ? "core.file.image" : "core.note",
+            state: "trashed",
+            properties: { title, ...properties },
+          }),
+        ),
+      );
+    }
+    const trashed = await harness.folder.push();
+    expect(trashed.ok, JSON.stringify(trashed)).toBe(true);
+    if (!trashed.ok) return;
+    expect(
+      [trashed.value.pull?.removed, trashed.value.pull?.kept],
+      "a file taken back by its bytes was kept as the person's when its item was trashed",
+    ).toEqual([2, 0]);
+    expect(existsSync(join(harness.dir, "Pictures", "photo.png"))).toBe(false);
+    expect(existsSync(join(harness.dir, "words.txt"))).toBe(false);
+  });
+
+  it("takes back by placement and bytes only an item its search holds", async () => {
+    const [archived, kept] = [
+      "01a00000-0000-7000-8000-0000000016f5",
+      "01a00000-0000-7000-8000-0000000016f6",
+    ];
+    const placed = await placedHarness(
+      "placement-added-again-left",
+      [
+        {
+          id: archived,
+          title: "gone",
+          properties: { title: "gone", body: "" },
+          path: "gone.txt",
+          state: "archived",
+        },
+        {
+          id: kept,
+          title: "kept",
+          properties: { title: "kept", body: "" },
+          path: "kept.txt",
+        },
+      ],
+      { search: { types: ["core.note"], state: ["active"] } },
+    );
+    harness = placed.harness;
+    // An empty text file at each placement, which is each item's body: the
+    // witness is taken back, and the one whose item left by state is new.
+    put(harness, "gone.txt", "");
+    put(harness, "kept.txt", "");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(
+      sentCreates(harness).length,
+      "a file was taken as the file of an item its folder no longer holds",
+    ).toBe(1);
+    expect(sentUpdates(harness)).toEqual([]);
+    const status = await harness.folder.status();
+    expect(
+      status.ok &&
+        status.value.files
+          .filter((file) => file.path !== "gone.txt")
+          .map((file) => [file.path, file.item_id]),
+    ).toEqual([["kept.txt", kept]]);
   });
 
   it("places a file whose placement another item holds beside it, and writes none where its placement is unsafe", async () => {
@@ -14947,6 +15028,72 @@ describe("folders on one Mac", () => {
     expect(
       later.value.scan.created,
       "a later copy at the path the item was taken from took the item over",
+    ).toBe(1);
+  });
+
+  it("takes no file back by its bytes for an item another folder on the Mac took in", async () => {
+    const bytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x23, 0xc1,
+    ]);
+    const photo = {
+      id: "01a00000-0000-7000-8000-0000000023c1",
+      type: "core.file.image",
+      properties: {
+        title: "photo.png",
+        blob_ref: hashOf(bytes),
+        mime_type: "image/png",
+      },
+    };
+    const { a, b, edges } = await onOneMac(
+      "bytes-moved",
+      { search: { types: ["core.file.image"], filter: 'tags contains "a"' } },
+      { search: { types: ["core.file.image"], filter: 'tags contains "b"' } },
+      { "core.file.image": [{ item: photo, tags: ["a"] }] },
+      (server) => {
+        scriptBlob(server, bytes);
+        acceptUploads(server);
+      },
+    );
+    expect((await a.folder.pull()).ok).toBe(true);
+    expect(readFileSync(join(a.dir, "photo.png"))).toEqual(bytes);
+    expect((await a.folder.push()).ok).toBe(true);
+    expect(edges.placements(a.settings.id).get(photo.id)).toBe("photo.png");
+
+    // Retagged elsewhere: the other folder takes the file in.
+    edges.events.push(
+      itemEvent(
+        String(edges.events.length + 2),
+        "metadata.changed",
+        wireItem(photo),
+        { tags: ["b"] },
+      ),
+    );
+    expect((await a.folder.push()).ok).toBe(true);
+    const took = await b.folder.push();
+    expect(took.ok && took.value.pull?.taken, JSON.stringify(took)).toBe(1);
+    expect(existsSync(join(a.dir, "photo.png"))).toBe(false);
+    // The first folder finds its file moved, past the grace, and lets its
+    // binding go.
+    expect((await a.folder.push()).ok).toBe(true);
+    await pastTheGrace();
+    const swept = await a.folder.push();
+    expect(swept.ok && swept.value.scan.moved_away).toBe(1);
+    expect(
+      edges.placements(a.settings.id).get(photo.id),
+      "the first folder no longer places the item where its file sat, so nothing below tries the rule",
+    ).toBe("photo.png");
+    const creates = sentCreates(a).length;
+
+    // A copy put back where the file sat in the first folder, which still
+    // places the item there, is a new item: one item is never edited from
+    // two places.
+    copyFileSync(join(b.dir, "photo.png"), join(a.dir, "photo.png"));
+    const copied = await a.folder.push();
+    expect(copied.ok, JSON.stringify(copied)).toBe(true);
+    if (!copied.ok) return;
+    expect(
+      sentCreates(a).length - creates,
+      "a copy of another folder's file was taken as that item's file here",
     ).toBe(1);
   });
 
