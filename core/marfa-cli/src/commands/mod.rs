@@ -1,11 +1,3 @@
-//! The direct surface: one root per area of the API, each leaf one
-//! published operation (or, for the few composites, a short sequence).
-//!
-//! Every leaf builds a `Request` in a function of its own, so the shape a
-//! command sends is testable without a server, and runs it through the
-//! `Remote`. Nothing here mirrors the document's schemas: a command builds
-//! the request from its arguments and prints the answer as it came.
-
 pub mod audit;
 pub mod blobs;
 pub mod config;
@@ -39,7 +31,6 @@ use serde_json::{Map, Value};
 
 use crate::error::CliError;
 
-/// A tier filter on a listing, which admits `all` where a write does not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum TierFilter {
     Library,
@@ -57,8 +48,6 @@ impl TierFilter {
     }
 }
 
-/// A state filter on a listing or a search: one state, or `any` to widen
-/// past the active default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum StateFilter {
     Active,
@@ -80,7 +69,6 @@ impl StateFilter {
     }
 }
 
-/// A page of a listing: how many, and where the last page stopped.
 #[derive(Debug, Default, Args)]
 pub struct PageArgs {
     /// How many at most.
@@ -91,7 +79,6 @@ pub struct PageArgs {
     pub cursor: Option<String>,
 }
 
-/// A JSON body from a file, from stdin as `-`, or inline.
 #[derive(Debug, Default, Args)]
 pub struct BodySource {
     /// A file holding the JSON body; `-` reads stdin.
@@ -112,8 +99,7 @@ impl BodySource {
         let text = match (&self.file, &self.body) {
             (Some(path), _) => read_text(path)?,
             (None, Some(body)) => body.clone(),
-            // clap refuses this combination, so reaching it means the
-            // argument rules and this branch have drifted apart.
+            // clap refuses this; reached only if the argument rules drift.
             (None, None) => {
                 return Err(CliError::Invalid(
                     "a body is needed: --file PATH, --file - for stdin, or --body JSON".into(),
@@ -125,7 +111,6 @@ impl BodySource {
     }
 }
 
-/// The text of a file, or of stdin for `-`.
 pub fn read_text(path: &PathBuf) -> Result<String, CliError> {
     if path.as_os_str() == "-" {
         let mut text = String::new();
@@ -136,12 +121,6 @@ pub fn read_text(path: &PathBuf) -> Result<String, CliError> {
         .map_err(|error| CliError::Invalid(format!("cannot read {}: {error}", path.display())))
 }
 
-/// The properties of an item, as a command takes them.
-///
-/// `--properties` is the JSON object whole; `--prop key=value` is one string
-/// property at a time, for a person at a terminal. A key given both ways is
-/// refused rather than resolved, because whichever won, the other was typed
-/// for a reason.
 #[derive(Debug, Default, Args)]
 pub struct PropertyArgs {
     /// The properties, as a JSON object.
@@ -179,8 +158,6 @@ impl PropertyArgs {
     }
 }
 
-/// A JSON object from an argument, refused here rather than by the server so
-/// the person hears about their argument rather than about a field.
 pub fn object(text: &str, flag: &str) -> Result<Map<String, Value>, CliError> {
     match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(map)) => Ok(map),
@@ -189,7 +166,6 @@ pub fn object(text: &str, flag: &str) -> Result<Map<String, Value>, CliError> {
     }
 }
 
-/// `key=value` pairs into a JSON object of strings, for the permission maps.
 pub fn pairs(values: &[String], flag: &str) -> Result<Map<String, Value>, CliError> {
     let mut map = Map::new();
     for pair in values {
@@ -203,7 +179,6 @@ pub fn pairs(values: &[String], flag: &str) -> Result<Map<String, Value>, CliErr
     Ok(map)
 }
 
-/// Inserts into a body only the fields that were given.
 pub fn insert_opt(body: &mut Map<String, Value>, key: &str, value: Option<impl Into<Value>>) {
     if let Some(value) = value {
         body.insert(key.to_string(), value.into());

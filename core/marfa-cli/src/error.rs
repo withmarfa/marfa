@@ -2,12 +2,8 @@ use std::io;
 
 use marfa_core::CoreError;
 
-/// Every way the binary can refuse or fail, and how each one leaves.
-///
-/// The exit code is one of six and the code string is from a closed set,
-/// both documented in the root's help. An agent reads the exit code to decide
-/// what to do next and the code string to say why, so neither may be one
-/// thing here and another in the help.
+/// Agents read the exit code and the code string, which `EXIT_CODES_HELP`
+/// documents by hand: change them together.
 #[derive(Debug, thiserror::Error)]
 pub enum CliError {
     #[error(transparent)]
@@ -18,11 +14,10 @@ pub enum CliError {
     NotHeld(String),
     #[error("{0}")]
     Watch(String),
-    /// The reader went away (a closed pipe); nothing is wrong.
     #[error("output closed")]
     ClosedOutput,
-    /// The server refused a call from the direct surface. The status and the
-    /// server's own code are both kept, because neither classifies alone.
+    /// The status and the server's own code are both kept, because neither
+    /// classifies alone.
     #[error(
         "the server refused ({status} {code}): {message}{}",
         details_suffix(details)
@@ -32,18 +27,12 @@ pub enum CliError {
         code: String,
         message: String,
         retry_after_seconds: Option<u64>,
-        /// The envelope's `details`, carried whole: a bulk door names the
-        /// entry that failed there, and a validation names the field.
         details: Option<Box<serde_json::Value>>,
     },
-    /// A command line the binary does not take, as the argument parser
-    /// read it.
     #[error("{0}")]
     Usage(String),
     #[error("no working copy named: pass --db or set MARFA_DB")]
     NoStoreNamed,
-    /// A path where no store has been made, named to a command that does
-    /// not make one.
     #[error(
         "no working copy at {}: `device hydrate` or `device status` makes one there",
         .0.display()
@@ -57,35 +46,23 @@ pub enum CliError {
     NoCredential { origin: String },
     #[error("no keychain on this system: {0}")]
     NoKeychain(String),
-    /// The kept token could not be refreshed, so the sign-in is over.
     #[error("signed out of {origin}: run `marfa login`")]
     SignedOut { origin: String },
-    /// An argument the binary judged wrong before anything was sent.
     #[error("{0}")]
     Invalid(String),
-    /// The server speaks a contract this binary was not built for, so its
-    /// answers may be shaped in ways this binary cannot read. The answer
-    /// that said so was not read.
     #[error(
         "{origin} {served}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
         if *write_sent { ". The write was sent, and may have taken effect before its answer was refused" } else { "" }
     )]
     ContractMismatch {
         origin: String,
-        /// What the server said about its contract, as a phrase: "answers
-        /// contract" and the number it named, or "answered 200 naming no
-        /// contract".
         served: String,
         expected: u64,
-        /// Whether the refused answer was to a write, which the server acted
-        /// on before the answer could say it speaks another contract.
         write_sent: bool,
-        /// The refused answer's status, when there was one: for a write, a
-        /// 201 and a 409 say different things about whether it took effect.
+        /// For a write, a 201 and a 409 say different things about whether
+        /// it took effect.
         status: Option<u16>,
     },
-    /// The server answered with a redirect, which the binary does not follow:
-    /// the credential stays with the address it was given for.
     #[error(
         "{origin} answered {status}, a redirect to {}: name that address instead",
         location.as_deref().unwrap_or("nowhere it named")
@@ -97,28 +74,17 @@ pub enum CliError {
     },
 }
 
-/// The six ways out, and what each means to a caller.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Exit {
-    /// Done.
     Done = 0,
-    /// The request was refused: by the server, by the binary before sending,
-    /// or for an answer on another contract, and a retry does not change it.
     Refused = 1,
-    /// The command line was wrong: one the argument parser refused, or one
-    /// the binary refused as incomplete.
     Usage = 2,
-    /// The environment failed: unreachable, timed out, a 5xx, a 429. Try
-    /// again; `retry_after_seconds` says when, if the server said.
     Environment = 3,
-    /// The working copy or the queue refused under the device rules.
     Local = 4,
-    /// No credential, or the credential was refused.
     Credential = 5,
 }
 
 impl CliError {
-    /// The closed set a caller reads.
     pub fn code(&self) -> &'static str {
         match self {
             CliError::Core(core) => match core {
@@ -216,21 +182,17 @@ impl CliError {
         }
     }
 
-    /// The server's answer, where there was one: its status, and its own code
-    /// and details where its body was read.
     fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
             CliError::Core(core) => match core {
                 CoreError::NotFound { code, .. } => Some((Some(404), Some(code), None)),
                 CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
                 CoreError::Forbidden { code, .. } => Some((Some(403), Some(code), None)),
-                // The variant folds 400 and 422 together, so the status is
-                // not known here and is not invented.
+                // The variant folds 400 and 422 together, so no status.
                 CoreError::Validation { code, .. } => Some((None, Some(code), None)),
                 CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
                 CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
                 CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
-                // Its body, and so its code, was not read.
                 CoreError::ContractMismatch { status, .. } => Some((Some(*status), None, None)),
                 _ => None,
             },
@@ -240,8 +202,7 @@ impl CliError {
                 details,
                 ..
             } => Some((Some(*status), Some(code), details.as_deref())),
-            // An answer came back, and its status is the server's; its body,
-            // and so its code, was not read.
+            // The body, and so the code, was not read.
             CliError::ContractMismatch {
                 status: Some(status),
                 ..
@@ -265,7 +226,6 @@ impl CliError {
         }
     }
 
-    /// The one JSON object a refusal prints on stderr under `--json`.
     pub fn envelope(&self) -> serde_json::Value {
         let server = self
             .server()
@@ -282,8 +242,6 @@ impl CliError {
     }
 }
 
-/// The details of a refusal, on the human line, compact: the entry a bulk
-/// door names or the field a validation names is the part a person acts on.
 fn details_suffix(details: &Option<Box<serde_json::Value>>) -> String {
     match details {
         Some(details) => format!(" {details}"),
@@ -338,8 +296,6 @@ mod tests {
         }
     }
 
-    /// Every code the help names is one a variant answers, and the other
-    /// way round, so the closed set is closed in one place.
     #[test]
     fn the_help_names_every_code_and_nothing_else() {
         let listed: Vec<&str> = EXIT_CODES_HELP
@@ -454,9 +410,6 @@ mod tests {
         // binary's, and `closed_output` never leaves the process.
         assert_eq!(CliError::Core(CoreError::NoServer).code(), "no_server");
         assert_eq!(CliError::ClosedOutput.exit(), Exit::Done);
-        // A refusal from the direct surface takes its code from the status;
-        // the ones with a code of their own are listed above, the rest fold
-        // into the six the core also answers.
         for (status, code) in [
             (400, "validation"),
             (422, "validation"),
@@ -492,8 +445,6 @@ mod tests {
         assert!(envelope["error"]["retry_after_seconds"].is_null());
         assert_eq!(envelope["exit"], 4);
 
-        // A validation folds two statuses, so the envelope names none
-        // rather than guessing.
         let validation = CliError::Core(CoreError::Validation {
             code: "invalid_properties".into(),
             message: "body is required".into(),
@@ -501,7 +452,6 @@ mod tests {
         assert!(validation.envelope()["error"]["server"]["status"].is_null());
         assert_eq!(validation.envelope()["exit"], 1);
 
-        // The direct surface keeps the status and the details whole.
         let direct = CliError::Refused {
             status: 422,
             code: "bulk_atomic_rollback".into(),

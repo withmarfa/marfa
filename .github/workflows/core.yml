@@ -1,12 +1,7 @@
 name: Core
 
-# Path-gated, which ci.yml deliberately is not. A pull request runs it when it
-# changes the core, the root `openapi.json` the core is held to, or this
-# workflow. A push to `main` runs it for anything the booted server is built
-# from as well, and the nightly runs it whatever changed, so a server change
-# that breaks the live tests is caught on `main` without holding a macOS
-# runner for every server pull request. The core's own three commands run as
-# `Core checks` in ci.yml.
+# A push to `main` also runs it for the server the live tests boot, so a
+# server pull request does not hold a macOS runner.
 on:
   push:
     branches: [main]
@@ -29,12 +24,9 @@ on:
       - ".github/workflows/core.yml"
   schedule:
     - cron: "47 3 * * *"
-  # A path-gated workflow has no other way to be started by hand.
   workflow_dispatch:
 
-# A newer push to a branch, `main` included, cancels the run before it, since
-# the newer commit's run covers everything the older one would have. The
-# event keeps the nightly and a dispatch out of the push's group.
+# The event keeps the nightly and a dispatch out of a push's group.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -80,41 +72,24 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      # server-up.sh runs the server through tsx, which resolves
-      # @withmarfa/shared through its dist.
+      # tsx resolves @withmarfa/shared through its dist.
       - run: pnpm --filter "@withmarfa/server..." build
 
       - name: Live tests against a booted server
         working-directory: core
         run: |
           set -euo pipefail
-          # **The trap is installed before the boot, not after.** A boot that
-          # fails partway has already started a server, and a trap armed
-          # afterwards never runs for it: the step dies, the server keeps the
-          # port, and every later run on this runner fails to bind against a
-          # process nothing remembers starting.
-          #
-          # `|| true` because a command failing inside an EXIT trap becomes
-          # the shell's status, so cleanup trouble would be reported as a
-          # failing test. server-down.sh says what went wrong on stderr.
-          #
-          # It reads the env file by its path rather than the exported name,
-          # because the export only exists once `eval` has run.
-          # Named before the boot, so the trap can find it whether the boot
-          # succeeded, failed partway, or never got as far as printing.
+          # Named and trapped before the boot, so a boot that fails partway is
+          # still stopped. `|| true`: a failing EXIT trap command would become
+          # the step's status.
           export MARFA_SERVER_ENV="${RUNNER_TEMP:-/tmp}/marfa-core-proof.env"
           trap 'scripts/server-down.sh "${MARFA_SERVER_ENV}" || true' EXIT
-          # Assigned before it is evaluated. `eval "$(scripts/server-up.sh)"`
-          # swallows a failed boot, because evaluating an empty string
-          # succeeds; an assignment carries the script's own status.
+          # Assigned first: `eval "$(…)"` of a failed boot's empty output succeeds.
           server_env="$(scripts/server-up.sh)"
           eval "${server_env}"
           cargo nextest run --locked --workspace --exclude marfa-client --run-ignored only
 
-      # The crate marfa-swift packages with `build.sh` at the commit it
-      # pins, built here for each system that script targets, so a change
-      # that compiles for the Mac and not for the phone is refused before it
-      # merges. The framework, its glue and its consumer are built there.
+      # marfa-swift builds the framework itself, at the commit it pins.
       - name: Build the Swift FFI crate
         working-directory: core/bindings/swift
         run: |
@@ -123,11 +98,7 @@ jobs:
             --target aarch64-apple-ios \
             --target aarch64-apple-ios-sim
 
-      # Outside the pnpm workspace, so every call carries the flag. `check`
-      # holds the Node proof and tests to the declarations the build
-      # generates; `test` drives the held stream, the reading open, and a
-      # drain whose create names a source its key does not claim, against a
-      # server it scripts itself.
+      # Outside the pnpm workspace, so every call carries the flag.
       - name: Build, check and test the Node module
         working-directory: core/bindings/node
         run: |
@@ -136,10 +107,6 @@ jobs:
           pnpm --ignore-workspace run check
           pnpm --ignore-workspace run test
 
-      # The Node binding's consumer, driven against a server stopped and
-      # started again: queued writes answered once it is back, a blob
-      # fetched, and a change the binary makes arriving through a held
-      # stream.
       - name: Prove the Node binding against a booted server
         working-directory: core
         run: |

@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Writes to the server on the proof's behalf. Nothing else under core/ does.
-#
 #   seed.sh note  <title> <body> [tag,tag]   prints the new item's id
 #   seed.sh file  <title> <description>      prints the new item's id
 #   seed.sh trash <id>                       soft-deletes
 #   seed.sh purge <id>                       removes for good
-#   seed.sh demo                             a few notes and files
 #
 # Reads MARFA_TEST_URL and MARFA_TEST_KEY, or MARFA_API_URL and MARFA_API_KEY.
 set -euo pipefail
@@ -81,12 +78,6 @@ elif command == "trash":
     call("DELETE", f"/items/{args[0]}")
 elif command == "purge":
     call("DELETE", f"/items/{args[0]}/purge")
-elif command == "demo":
-    print(note("Reading list", "Three books on the shelf, one about lighthouses.", ["reading"]))
-    print(note("Garden plan", "Move the lavender to the sunny bed before June.", ["garden", "todo"]))
-    print(note("Lighthouse keeper", "The keeper counts the ships and the gulls.", ["reading", "fiction"]))
-    print(file_item("keeper.txt", "A transcript about the lighthouse keeper and the gulls."))
-    print(file_item("seeds.csv", "lavender,rosemary,thyme"))
 else:
     sys.stderr.write(f"seed: unknown command {command!r}\n")
     sys.exit(2)

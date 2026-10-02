@@ -83,16 +83,8 @@ jobs:
           key: tessdata-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
 
-  # The core's three commands, on macOS, for a pull request that touches the
-  # core, the root `openapi.json` its tests read, or the workflows; skipped
-  # otherwise, which satisfies the required check. Every push to `main` and
-  # the nightly run them whatever changed. `core.yml` keeps the expensive
-  # half: the live tests, the Swift FFI crate built for every system it ships
-  # to, and the Node binding and its proof.
-  #
-  # Every crate but the generated `marfa-client`, which is held to its
-  # generator rather than to these: `--no-deps` keeps clippy off it where a
-  # hand-written crate depends on it. Formatting takes the whole workspace,
+  # `marfa-client` is held to its generator, not these: `--no-deps` keeps
+  # clippy off it where a crate depends on it. Formatting still takes it,
   # since the generator formats what it writes.
   core-checks:
     needs: changes
@@ -105,8 +97,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      # nextest, so a test past the budget in `core/.config/nextest.toml` is
-      # killed rather than left running.
+      # nextest kills a test past the budget in `core/.config/nextest.toml`.
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest@0.9
@@ -121,11 +112,7 @@ jobs:
         run: |
           cargo fmt --all --check
           cargo clippy --locked --workspace --exclude marfa-client --all-targets --no-deps -- -D warnings
-          # The tests keep in keychain files of their own; the login
-          # keychain holds after them what it held before.
           scripts/login-keychain-unchanged.sh cargo nextest run --locked --workspace --exclude marfa-client
-      # Its own workspace, so its own three commands: cargo-swift refuses to
-      # name a package inside a multi-crate workspace.
       - name: Check the Swift FFI crate
         working-directory: core/bindings/swift
         run: |
@@ -501,8 +488,6 @@ jobs:
             echo "@withmarfa/client's generated sources are out of date with openapi.json, or hold a file the generator did not write. Run 'pnpm generate' and commit."
             exit 1
           fi
-      # OpenAPI Generator is a Java program. The JDK comes from the action
-      # rather than from the machine, so generation uses the same JDK.
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
@@ -510,11 +495,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      # The whole crate directory is checked, so the generator's manifest,
-      # `.openapi-generator/FILES`, is held to what it wrote as well. Outside
-      # `src/` the crate holds only its generator's configuration, named
-      # here, so a file beside them would ship in the crate unwritten by
-      # anything.
       - name: Regenerate the Rust client and check for drift
         run: |
           rm -rf core/marfa-client/src

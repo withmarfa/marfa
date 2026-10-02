@@ -19,19 +19,14 @@ pub fn stats_request() -> Request {
     Request::get(&["items", "stats"])
 }
 
-/// What the instance says about itself, with counts where a credential
-/// reaches them.
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    // A server on another contract is still described: saying which server
-    // this is, and that it is the wrong one, is what this command is for. The
-    // counts would be read on the contract, so they are not asked for.
+    // Read on any contract: saying the server is the wrong one is this
+    // command's job.
     let instance = remote.root()?;
     let health = remote.health()?;
     let held = speaks_this_contract(&instance);
-    // The counts are narrowed to what the credential can read, and refused
-    // only to one whose type permissions reach no type, as the operator
-    // key's reach none. The description above still stands then; any other
-    // refusal is the credential's and propagates.
+    // The operator key reaches no type, so its counts are refused; the
+    // description still stands.
     let mut stats_refused = None;
     let stats = match (remote.credential(), held) {
         (Some(_), true) => match remote.json(&stats_request()) {
@@ -97,13 +92,10 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     })
 }
 
-/// Whether a root's `contract` is the one this binary was built for.
 pub fn speaks_this_contract(instance: &Value) -> bool {
     instance.get("contract").and_then(Value::as_u64) == Some(marfa_client::CONTRACT_VERSION)
 }
 
-/// The contract a root answered beside the one this binary was built for,
-/// as the report states both.
 pub fn contract_report(instance: &Value) -> Value {
     json!({
         "served": instance.get("contract"),
@@ -111,7 +103,6 @@ pub fn contract_report(instance: &Value) -> Value {
     })
 }
 
-/// What a person reads when the server speaks another contract.
 pub fn contract_line(instance: &Value) -> String {
     let served = match instance.get("contract") {
         Some(Value::String(served)) => served.clone(),

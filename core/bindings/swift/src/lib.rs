@@ -824,9 +824,6 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
     })
 }
 
-/// A property bag from Swift, which crosses as JSON text. Anything but an
-/// object is refused rather than coerced, since a device sends what it was
-/// given.
 fn object(json: &str) -> Result<serde_json::Map<String, serde_json::Value>, MarfaError> {
     match serde_json::from_str::<serde_json::Value>(json) {
         Ok(serde_json::Value::Object(map)) => Ok(map),
@@ -1365,8 +1362,6 @@ mod tests {
         assert_eq!(Verdict::from(O::Dead), Verdict::Dead);
     }
 
-    /// Each of the core's refusals lands on the case of the same name, with
-    /// what it carries.
     #[test]
     fn every_core_error_crosses_as_its_own_case() {
         use marfa_core::CoreError as E;
@@ -1581,8 +1576,6 @@ mod tests {
         );
     }
 
-    /// A server that hydrates an empty `core.note` slice at cursor 10 and
-    /// holds every stream after it open, saying keepalives, until it stops.
     struct Quiet {
         url: String,
         streams: Arc<std::sync::atomic::AtomicUsize>,
@@ -1608,8 +1601,6 @@ mod tests {
                     let path = path.split('?').next().unwrap_or("/").to_string();
                     let resumed = head.to_ascii_lowercase().contains("last-event-id");
                     let mut stream = stream;
-                    // Every answer names the core's contract, as a real
-                    // server's does.
                     let contract = marfa_core::contract::CONTRACT_VERSION;
                     let json = |body: &str| {
                         format!(
@@ -1623,8 +1614,6 @@ mod tests {
                     let _ = match (path.as_str(), resumed) {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
                         ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),
-                        // A create is refused for a source the key does not
-                        // claim; a listing answers an empty slice.
                         ("/items", _) if head.starts_with("POST") => {
                             let body = r#"{"error":{"code":"forbidden","message":"not claimed","details":{"source":"notes"}}}"#;
                             stream.write_all(format!(
@@ -1650,9 +1639,6 @@ mod tests {
         Quiet { url, streams }
     }
 
-    /// The source a create was refused for reaches a Swift caller, which
-    /// would otherwise read `credential_refused` as a key that stopped working
-    /// (`queue-and-verdicts.md` 40).
     #[test]
     fn a_drain_names_a_source_its_key_does_not_claim() {
         let server = quiet();
@@ -1697,7 +1683,6 @@ mod tests {
             .unwrap();
         let (told, ended) = std::sync::mpsc::channel();
         let subscription = Arc::clone(&core).follow(Arc::new(Told(told)));
-        // The witness: the follow is holding a stream.
         let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while server.streams.load(Ordering::SeqCst) == 0 {
             assert!(
@@ -1714,8 +1699,6 @@ mod tests {
         );
     }
 
-    /// Opens the store again the moment it is told the follow ended, as an
-    /// app closing and reopening it would, and says which handle it got.
     struct Reopens {
         path: String,
         handle: std::sync::mpsc::Sender<Handle>,
@@ -1748,7 +1731,6 @@ mod tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        // The app lets go of its own handle, then stops the follow.
         drop(core);
         subscription.stop();
         let handle = reopened

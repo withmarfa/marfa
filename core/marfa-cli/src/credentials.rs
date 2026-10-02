@@ -1,46 +1,29 @@
-//! Where a kept credential lives: a keychain, and nowhere else.
+//! Never a plain file: two processes refreshing one token from a file race
+//! each other into a revoked chain.
 //!
-//! One entry per server origin, holding a key or a token set as JSON, and
-//! one entry naming the origin a bare command talks to. Never a plain file: a file
-//! is readable by anything on the machine, and two processes refreshing one
-//! token from a file race each other into a revoked chain; a process with no
-//! keychain is told so and pointed at `--key`, the environment, or
-//! `login --print-token`.
-//!
-//! `MARFA_KEYCHAIN` names a keychain file to keep entries in instead, on
-//! macOS, for a run nobody is watching: the binary then refuses every
-//! keychain prompt, so a call that would ask a person fails instead. A test
-//! run keeps its entries in a keychain file of its own (`isolated`) the same
-//! way, since the login keychain asks the person before a rebuilt binary may
-//! read an item another build wrote, and a test waiting on that question
-//! waits forever.
+//! The login keychain asks the person before a rebuilt binary may read an
+//! item another build wrote, so a test waiting on it waits forever. Tests
+//! keep their entries in a keychain file of their own (`isolated`), and
+//! `MARFA_KEYCHAIN` lets an unwatched run do the same, with prompts refused.
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::CliError;
 
-/// The keychain service every entry is filed under.
 #[cfg_attr(all(test, not(target_os = "macos")), allow(dead_code))]
 const SERVICE: &str = "marfa";
 
-/// The account that names the origin a command with no `--url` talks to.
 const CURRENT: &str = "current";
 
-/// The account prefix under which an origin's registered client id is
-/// kept: the registration outlives any one sign-in, so it is not part of
-/// the token entry that a sign-out removes.
+/// Apart from the token entry, because the registration outlives a sign-out.
 const CLIENT: &str = "client:";
 
-/// A keychain, read and written by account under `SERVICE`.
 trait Keychain: Sync {
     fn get(&self, account: &str) -> Result<Option<String>, CliError>;
     fn set(&self, account: &str, text: &str) -> Result<(), CliError>;
-    /// Answers whether there was an entry to delete.
     fn delete(&self, account: &str) -> Result<bool, CliError>;
 }
 
-/// The operating system's keychain: the login keychain on macOS, the secret
-/// service on Linux.
 #[cfg(not(test))]
 struct System;
 
@@ -81,7 +64,6 @@ impl Keychain for System {
     }
 }
 
-/// The file `MARFA_KEYCHAIN` names, or the operating system's keychain.
 #[cfg(not(test))]
 fn keychain() -> &'static dyn Keychain {
     static CHOSEN: std::sync::LazyLock<Box<dyn Keychain + Send>> =
@@ -102,7 +84,6 @@ fn named(_: std::path::PathBuf) -> Box<dyn Keychain + Send> {
     Box::new(Unavailable)
 }
 
-/// What `MARFA_KEYCHAIN` reaches where there are no keychain files.
 #[cfg(all(not(test), not(target_os = "macos")))]
 struct Unavailable;
 
@@ -133,19 +114,16 @@ fn keychain() -> &'static dyn Keychain {
     isolated::keychain()
 }
 
-/// What is kept for one origin, tagged by kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Kept {
-    /// A key, as minted.
-    Key { key: String },
-    /// A token set from a sign-in, with the client it was issued to and the
-    /// doors a refresh and a sign-out go through, so neither needs the
-    /// discovery document again.
+    Key {
+        key: String,
+    },
     Token {
         access_token: String,
         refresh_token: Option<String>,
-        /// Seconds since the epoch, when the access token stops working.
+        /// Seconds since the epoch.
         expires_at: Option<u64>,
         client_id: String,
         scope: Option<String>,
@@ -155,7 +133,6 @@ pub enum Kept {
 }
 
 impl Kept {
-    /// The bearer value a call sends.
     pub fn bearer(&self) -> &str {
         match self {
             Kept::Key { key } => key,
@@ -164,7 +141,6 @@ impl Kept {
     }
 }
 
-/// The credential kept for an origin, if any.
 pub fn read(origin: &str) -> Result<Option<Kept>, CliError> {
     match keychain().get(origin)? {
         Some(text) => serde_json::from_str(&text).map(Some).map_err(|error| {
@@ -176,15 +152,12 @@ pub fn read(origin: &str) -> Result<Option<Kept>, CliError> {
     }
 }
 
-/// Keeps a credential for an origin, and makes that origin the current one.
 pub fn keep(origin: &str, kept: &Kept) -> Result<(), CliError> {
     let text = serde_json::to_string(kept)?;
     keychain().set(origin, &text)?;
     keychain().set(CURRENT, origin)
 }
 
-/// Forgets an origin's credential, and that the origin was current.
-/// Answers whether there was one.
 pub fn forget(origin: &str) -> Result<bool, CliError> {
     let had = drop(origin)?;
     if current()?.as_deref() == Some(origin) {
@@ -193,14 +166,12 @@ pub fn forget(origin: &str) -> Result<bool, CliError> {
     Ok(had)
 }
 
-/// Removes an origin's credential and leaves the origin current, for a
-/// sign-in that ended on its own: the next bare command still knows which
-/// server it was talking to, and says what to do about it.
+/// Leaves the origin current, so after a sign-in ends on its own the next
+/// bare command still names the server it lost.
 pub fn drop(origin: &str) -> Result<bool, CliError> {
     keychain().delete(origin)
 }
 
-/// The client id the binary registered at an origin, if it has.
 pub fn client_id(origin: &str) -> Result<Option<String>, CliError> {
     keychain().get(&format!("{CLIENT}{origin}"))
 }
@@ -209,15 +180,12 @@ pub fn keep_client_id(origin: &str, id: &str) -> Result<(), CliError> {
     keychain().set(&format!("{CLIENT}{origin}"), id)
 }
 
-/// The origin a command with no `--url` talks to, if one was kept.
 pub fn current() -> Result<Option<String>, CliError> {
     keychain().get(CURRENT)
 }
 
-/// Holds the test run's keychain for one test's origin: every test that
-/// keeps a credential writes the one `current` entry, so two running at once
-/// read each other's origin back; and the entries the test wrote go when
-/// the hold does, a panic included.
+/// Every test that keeps a credential writes the one `current` entry, so
+/// tests running at once would read each other's origin back.
 #[cfg(test)]
 pub(crate) fn hold(origin: &str) -> Held {
     static KEYCHAIN: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -248,9 +216,8 @@ impl Drop for Held {
     }
 }
 
-/// A keychain file, read and written through Keychain Services by its path,
-/// which is in no search list: a search that names no keychain never finds
-/// what is kept in it.
+/// A keychain file is in no search list: a search that names no keychain
+/// never finds what is kept in it.
 #[cfg(target_os = "macos")]
 mod file {
     use std::path::PathBuf;
@@ -261,25 +228,20 @@ mod file {
     use super::{Keychain, SERVICE};
     use crate::error::CliError;
 
-    /// Keychain Services' answer for an item that is not there.
+    /// `errSecItemNotFound`.
     const NOT_FOUND: i32 = -25300;
 
     pub(super) struct File {
         pub(super) path: PathBuf,
-        /// Its own password, where the process made it: every call unlocks
-        /// it with that first, so one that locked itself is never unlocked
-        /// by asking anyone.
+        /// Unlocks it before every call, so a file that locked itself is
+        /// never unlocked by asking anyone.
         password: Option<String>,
-        /// Whether keychain prompts are refused in this process; where they
-        /// could not be, every call is refused rather than risk one.
         refused: bool,
     }
 
     impl File {
-        /// Refuses keychain prompts for the whole process before its first
-        /// keychain call, since a keychain file named for a run is a run
-        /// nobody is watching: a call that would wait on a person fails
-        /// instead. The refusal is this process's alone.
+        /// A keychain file named for a run is a run nobody is watching, so
+        /// prompts are refused for the whole process before its first call.
         pub(super) fn named(path: PathBuf, password: Option<String>) -> File {
             File {
                 path,
@@ -295,8 +257,8 @@ mod file {
                     self.path.display()
                 )));
             }
-            // Opening a path makes no file of it, and an item added to a
-            // keychain that is not there lands in the person's default one.
+            // An item added to a keychain path with no file there lands in
+            // the person's default keychain.
             if !self.path.is_file() {
                 return Err(CliError::NoKeychain(format!(
                     "{}: no keychain file is there",
@@ -318,7 +280,6 @@ mod file {
         }
     }
 
-    /// Answers whether prompts are refused.
     pub(super) fn refuse_prompts() -> bool {
         static REFUSED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *REFUSED.get_or_init(|| match SecKeychain::disable_user_interaction() {
@@ -347,8 +308,7 @@ mod file {
                 .map_err(|error| self.refused(error))
         }
 
-        /// Found and deleted by attributes, which answers the delete's own
-        /// status and never reads the secret.
+        /// By attributes, so the secret is never read.
         fn delete(&self, account: &str) -> Result<bool, CliError> {
             use security_framework::item::{ItemClass, ItemSearchOptions};
             let keychains = [self.opened()?];
@@ -367,8 +327,6 @@ mod file {
     }
 }
 
-/// The test run's keychain: on macOS a keychain file of the run's own,
-/// removed when the process exits; elsewhere a map in memory.
 #[cfg(test)]
 mod isolated {
     use super::Keychain;
@@ -382,9 +340,8 @@ mod isolated {
     #[cfg(target_os = "macos")]
     static KEYCHAIN: std::sync::LazyLock<super::file::File> = std::sync::LazyLock::new(create);
 
-    /// Named anything but `login`: macOS adds a keychain file of that name
-    /// to the person's search list when it is made, and will not unlock it
-    /// with its own password.
+    /// Named anything but `login`: macOS adds a keychain of that name to the
+    /// person's search list and will not unlock it with its own password.
     #[cfg(target_os = "macos")]
     fn create() -> super::file::File {
         use security_framework::os::macos::keychain::CreateOptions;
@@ -422,7 +379,6 @@ mod isolated {
         }
     }
 
-    /// The test run's keychain file, for a test to look inside it.
     #[cfg(target_os = "macos")]
     pub(super) fn file() -> &'static super::file::File {
         &KEYCHAIN
@@ -459,8 +415,6 @@ mod isolated {
 mod tests {
     use super::*;
 
-    /// A round trip: the credential, the current origin, and the client id
-    /// that outlives both.
     #[test]
     fn keeps_reads_and_forgets_a_credential_for_one_origin() {
         let origin = format!("https://test.invalid:{}", std::process::id());
@@ -494,8 +448,6 @@ mod tests {
         assert_eq!(client_id(&origin).unwrap(), None);
     }
 
-    /// A keychain file that is not there is refused before any call, since
-    /// an item added to one lands in the person's default keychain.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_keychain_file_that_is_not_there_is_refused() {
@@ -511,7 +463,6 @@ mod tests {
         assert!(isolated::file().opened().is_ok());
     }
 
-    /// Forgetting one origin leaves another that was made current since.
     #[test]
     fn forgetting_an_origin_leaves_another_current() {
         let a = format!("https://a.invalid:{}", std::process::id());
@@ -529,10 +480,6 @@ mod tests {
         assert_eq!(current().unwrap(), None);
     }
 
-    /// What a test keeps is in the run's own keychain, under the service
-    /// the binary uses, and in no keychain a search that names none reaches,
-    /// which is where the login keychain is. Asked by attributes alone,
-    /// which never waits on a person, with prompts refused besides.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_test_run_keeps_its_entries_in_a_keychain_of_its_own() {

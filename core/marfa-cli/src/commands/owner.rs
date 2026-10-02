@@ -53,9 +53,6 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
     }
 }
 
-/// The password, from stdin when asked or from the terminal otherwise; a
-/// process with neither is told to use --password-stdin rather than left
-/// hanging on a prompt nobody sees.
 fn read_password(from_stdin: bool) -> Result<String, CliError> {
     let password = if from_stdin {
         let mut line = String::new();

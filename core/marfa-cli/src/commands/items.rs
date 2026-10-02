@@ -167,7 +167,7 @@ pub enum ItemsCommand {
     },
 }
 
-/// The states a caller may move an item to. `revoked` is the server's alone.
+/// No `revoked`: only the server revokes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum TransitionState {
     Active,
@@ -521,10 +521,6 @@ pub enum BulkActionCommand {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Requests
-// ---------------------------------------------------------------------------
-
 pub fn list_request(args: &ListArgs) -> Request {
     Request::get(&["items"])
         .query_opt("type", args.type_.clone())
@@ -696,7 +692,6 @@ pub fn bulk_get_request(ids: &[String], include: &[String]) -> Request {
     Request::post(&["items", "bulk-get"]).json(body)
 }
 
-/// The selector both key doors take: links, or natural keys under a source.
 fn key_selector(
     type_: &str,
     links: &[String],
@@ -891,10 +886,6 @@ pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
     }))
 }
 
-// ---------------------------------------------------------------------------
-// Running
-// ---------------------------------------------------------------------------
-
 pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let done = match &command {
         ItemsCommand::Delete { id, .. } => Some(format!("trashed {id}")),
@@ -951,9 +942,8 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     }
 }
 
-/// An item's edges, each with the item at the other end. The edge page
-/// carries only that item's id, so the plain listing reads what each one is
-/// called; `--json` prints the page as the server answered it.
+/// The edge page carries only the other end's id, so the plain listing
+/// reads each one's title.
 fn edges(
     args: &ItemEdgesArgs,
     inbound: bool,
@@ -984,13 +974,8 @@ fn edges(
 /// The most ids `POST /items/bulk-get` takes in one request.
 const BULK_GET_LIMIT: usize = 100;
 
-/// Upload, then the file item, then the edge: three doors, one command,
-/// because "attach a file" is what a person means and no door does it.
-///
-/// Reported once, at the end, with all three answers. A run that stops at
-/// the second or third step leaves the earlier steps standing, and its
-/// refusal names the door that refused; the blob is addressed by content,
-/// so the next attempt uploads nothing new.
+/// A run that stops partway leaves the earlier steps standing; the blob is
+/// content-addressed, so a retry uploads nothing new.
 fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
     let (blob, hash) = upload(&args.file, &mime_type, remote)?;
@@ -1011,9 +996,6 @@ fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
     )
 }
 
-/// Upload, then the file item: two doors, one command, as `attach` is
-/// without its edge. A run that stops at the file item leaves the upload
-/// standing, and the next attempt uploads nothing new.
 fn add(args: &AddArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
     let (blob, hash) = upload(&args.file, &mime_type, remote)?;
@@ -1029,7 +1011,6 @@ fn add(args: &AddArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     })
 }
 
-/// The upload's answer, and the hash it names the bytes by.
 fn upload(
     file: &std::path::Path,
     mime_type: &str,
@@ -1046,7 +1027,6 @@ fn upload(
     Ok((blob, hash))
 }
 
-/// The file item a create answered, and its id.
 fn file_item_of(answer: &Value) -> Result<(&Value, String), CliError> {
     let file_item = answer.get("item").ok_or_else(|| {
         CliError::Invalid("the file item was created without an item in the answer".into())

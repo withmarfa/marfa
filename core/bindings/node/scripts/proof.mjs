@@ -1,9 +1,4 @@
 // @ts-check
-// Phases, run in order by `scripts/binding-proof.sh`: `hydrate` pulls a
-// slice, `write` queues writes while the server is stopped, `drain` sends
-// them once it is back, `follow` is told of a note made on the server while
-// the stream is held, and `thumbnail` reads what a second store holds of a
-// type with a thumbnail.
 import { readFileSync, writeFileSync } from "node:fs";
 import { MarfaCore, Tier, WriteKind } from "../index.js";
 
@@ -35,8 +30,6 @@ function describe(verdict) {
 const title = (item) => String(item.properties.title ?? "(untitled)");
 
 /**
- * Prints a failed expectation and fails the run, so the proof is a check
- * rather than a transcript someone has to read.
  * @param {boolean} held
  * @param {string} expectation
  */
@@ -156,8 +149,6 @@ if (phase === "hydrate") {
     !notes.some((note) => title(note) === "Node third"),
     "the note deleted offline is still listed",
   );
-  // The bytes, fetched into a store that has never held them, through the
-  // link the server gives.
   const upload = report.verdicts.find((entry) => entry.kind === WriteKind.UploadBlob);
   const hash = core.queue().find((write) => write.id === upload?.id)?.blob;
   expect(hash !== undefined, "no upload was drained");
@@ -174,8 +165,7 @@ if (phase === "hydrate") {
   );
   expect(core.queue().length === 0, "answered writes were left in the queue");
 } else if (phase === "follow") {
-  // Held open while the binary makes a note on the server; the change
-  // arrives here, and a reader on the same store is told the copy saved.
+  // binding-proof.sh makes the note with the binary while this is held.
   const reader = MarfaCore.openReader(path);
   const before = reader.dataVersion();
   /** @type {import("../index.js").Change[]} */
@@ -201,9 +191,8 @@ if (phase === "hydrate") {
   expect(change?.event === "item.created", "the note the binary made did not arrive through follow");
   expect(reader.dataVersion() !== before, "a reader on the same store was not told the copy saved");
 } else if (phase === "thumbnail") {
-  // A store of its own, holding the type the script registered: one item
-  // carrying an image, and one holding a value under the property from
-  // before the type declared it a thumbnail.
+  // "Held before" was written before binding-proof.sh made the property a
+  // thumbnail, so its value is not an image.
   const copy = MarfaCore.open(`${path}.thumbnail`, url, key);
   await copy.hydrate(["user.snapshot"], Tier.Library);
   const snapshots = copy.list({ type: "user.snapshot" });

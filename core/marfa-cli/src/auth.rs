@@ -1,15 +1,3 @@
-//! Signing in: the device code, the token it becomes, and keeping the token
-//! alive.
-//!
-//! The binary is a public native client of the instance's own authorization
-//! server (RFC 8628). It reads the server's discovery document, registers
-//! itself once per origin, asks for a device code, shows the person the code
-//! and the page, and polls the token door until the person has decided. The
-//! token set lives in the keychain (`credentials`), and a refresh is taken
-//! under a lock because the server revokes a chain whose rotated refresh
-//! token is replayed: two processes started in the same second would
-//! otherwise both refresh with one token and sign each other out.
-
 use std::collections::hash_map::DefaultHasher;
 use std::fs::OpenOptions;
 use std::hash::{Hash, Hasher};
@@ -28,12 +16,6 @@ use crate::remote::request::Request;
 
 pub const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
-/// Everything the owner can hold at the terminal: the protocol's own
-/// scopes (the identity claims `whoami` reads, and the refresh token),
-/// every type and edge type either way, metadata, and the seven
-/// permissions the glossary names. Held against the server's
-/// `scopes_supported` at sign-in, so a scope the server does not publish
-/// is not asked for.
 const OWNER_SCOPES: [&str; 17] = [
     "openid",
     "profile",
@@ -54,12 +36,8 @@ const OWNER_SCOPES: [&str; 17] = [
     "grants.manage",
 ];
 
-/// A refresh this close to the access token's end happens before the call
-/// rather than after its 401.
 const REFRESH_AHEAD_SECONDS: u64 = 60;
 
-/// What the authorization server says about itself, reduced to the doors
-/// the binary uses and the scopes it supports.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Discovery {
     pub issuer: String,
@@ -68,13 +46,11 @@ pub struct Discovery {
     pub registration_endpoint: String,
     pub revocation_endpoint: Option<String>,
     pub userinfo_endpoint: Option<String>,
-    /// RFC 8414 recommends the list and does not require it; absent, the
-    /// default scope is asked for whole.
+    /// Optional in RFC 8414.
     #[serde(default)]
     pub scopes_supported: Vec<String>,
 }
 
-/// The device code as the server issued it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceCode {
     pub device_code: String,
@@ -90,7 +66,6 @@ fn default_interval() -> u64 {
     5
 }
 
-/// A token set as the token door answers it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TokenSet {
     pub access_token: String,
@@ -106,11 +81,8 @@ pub fn now_seconds() -> u64 {
         .unwrap_or(0)
 }
 
-/// Reads the discovery document at the server's own path and holds it to
-/// the origin it was read from (RFC 8414 section 3.3): the issuer it names
-/// and every door it names are on that origin, or the sign-in is refused.
-/// A document is data from the network, and the binary is about to post a
-/// person's credential to what it names.
+/// The document is held to the origin it was read from (RFC 8414 section
+/// 3.3): the binary is about to post a person's credential to what it names.
 pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
     let value = remote
         .json(&Request::get(&["auth", ".well-known", "oauth-authorization-server"]).public())?;
@@ -144,9 +116,6 @@ pub fn discover(remote: &Remote) -> Result<Discovery, CliError> {
     Ok(discovery)
 }
 
-/// Refuses a URL the server named that is not on the issuer's origin, or
-/// is not a web page at all: the doors of the document, and the pages the
-/// device code points a browser at.
 pub fn on_issuer(discovery: &Discovery, named: &str) -> Result<(), CliError> {
     let issuer = Url::parse(&discovery.issuer)
         .map_err(|error| CliError::Invalid(format!("the issuer is not a URL: {error}")))?;
@@ -161,8 +130,6 @@ pub fn on_issuer(discovery: &Discovery, named: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-/// The pages a device code points a browser at, checked like the doors:
-/// the binary is about to hand one to `open`.
 pub fn pages_on_issuer(discovery: &Discovery, code: &DeviceCode) -> Result<(), CliError> {
     on_issuer(discovery, &code.verification_uri)?;
     if let Some(complete) = &code.verification_uri_complete {
@@ -171,9 +138,8 @@ pub fn pages_on_issuer(discovery: &Discovery, code: &DeviceCode) -> Result<(), C
     Ok(())
 }
 
-/// Everything the owner can tick, narrowed to what the server says it
-/// supports. The consent screen narrows further; asking for less here
-/// would hide a toggle the person may want.
+/// Asks for everything the server supports: the consent screen narrows it,
+/// and asking for less here would hide a toggle the person may want.
 pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
     let scopes: Vec<&str> = OWNER_SCOPES
         .iter()
@@ -195,8 +161,6 @@ pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
     Ok(scopes.join(" "))
 }
 
-/// Registers the binary as a public native client that may use the device
-/// grant and refresh. Answers the client id.
 pub fn register(discovery: &Discovery) -> Result<String, CliError> {
     let door = Remote::public_at(&discovery.registration_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().json(serde_json::json!({
@@ -213,7 +177,6 @@ pub fn register(discovery: &Discovery) -> Result<String, CliError> {
         .ok_or_else(|| CliError::Invalid("the registration answered no client_id".to_string()))
 }
 
-/// Asks for a device code.
 pub fn device_code(
     discovery: &Discovery,
     client_id: &str,
@@ -232,17 +195,13 @@ pub fn device_code(
     })
 }
 
-/// What one poll of the token door said.
 #[derive(Debug)]
 pub enum Poll {
-    /// The person has not decided.
     Pending,
-    /// The server asked for a longer interval.
     SlowDown,
     Token(TokenSet),
 }
 
-/// Polls the token door once.
 pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result<Poll, CliError> {
     let door = Remote::public_at(&discovery.token_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().form(&[
@@ -258,8 +217,6 @@ pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result
     }
 }
 
-/// Polls until the person has decided or the code has expired, honoring the
-/// interval and `slow_down`.
 pub fn wait_for_decision(
     discovery: &Discovery,
     client_id: &str,
@@ -268,8 +225,6 @@ pub fn wait_for_decision(
     let deadline = now_seconds().saturating_add(code.expires_in);
     let mut interval = code.interval.max(1);
     loop {
-        // The wait never outlives the code, whatever interval the server
-        // asked for.
         let remaining = deadline.saturating_sub(now_seconds());
         if remaining == 0 {
             return Err(CliError::Refused {
@@ -298,7 +253,6 @@ fn token_set(value: Value) -> Result<TokenSet, CliError> {
     })
 }
 
-/// The keychain entry a token set becomes.
 pub fn kept(token: &TokenSet, client_id: &str, discovery: &Discovery) -> Kept {
     Kept::Token {
         access_token: token.access_token.clone(),
@@ -313,7 +267,6 @@ pub fn kept(token: &TokenSet, client_id: &str, discovery: &Discovery) -> Kept {
     }
 }
 
-/// Whether a kept token should be refreshed before it is used.
 pub fn is_stale(kept: &Kept) -> bool {
     match kept {
         Kept::Token {
@@ -325,15 +278,12 @@ pub fn is_stale(kept: &Kept) -> bool {
     }
 }
 
-/// Refreshes the token kept for an origin and keeps the new set, under the
-/// lock, re-reading the keychain first: another process may have refreshed
-/// while this one waited, in which case its set is the live one and a second
-/// refresh would replay a rotated token.
+/// The server revokes a chain whose rotated refresh token is replayed, so a
+/// refresh is taken under a lock and the keychain re-read inside it: another
+/// process may already have rotated the set, which is then the live one.
 ///
-/// `refused` is the bearer a call was just answered `401` with. The refresh
-/// then happens only if that bearer is still the kept one; a set already
-/// rotated by another process is answered as it is. Without it, the refresh
-/// happens only for a stale set.
+/// `refused` is the bearer a call was just answered `401` with: the refresh
+/// happens only while it is still the kept one.
 pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     let file = OpenOptions::new()
         .read(true)
@@ -366,9 +316,8 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     if !due {
         return Ok(current);
     }
-    // A refresh rotates the pair, and the answer holding the new one would
-    // not be read from a server on another contract, which would leave the
-    // kept refresh token spent. So the server's root is read first.
+    // An answer on another contract is not read, which would leave the kept
+    // refresh token spent with no new pair, so the root is checked first.
     Remote::public_at(origin)?.hold_root()?;
     let door = Remote::public_at(&token_endpoint)?;
     let answer = door.json(&Request::post(&[]).public().form(&[
@@ -378,12 +327,9 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     ]));
     let token = match answer {
         Ok(value) => token_set(value)?,
-        // The grant is dead: revoked, replayed, expired, or issued to a
-        // client the server has forgotten. The token goes and the origin
-        // stays current, so the next command is refused for want of a
-        // credential and names `marfa login`. Any other refusal, a 429
-        // among them, is the server's answer to this call and leaves the
-        // set alone.
+        // Only a dead grant drops the token; a 429 or any other refusal
+        // leaves it. The origin stays current so the next command names the
+        // server and `marfa login`.
         Err(CliError::Refused { code, .. })
             if code == "invalid_grant" || code == "invalid_client" =>
         {
@@ -399,8 +345,7 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
             ..
         } => Kept::Token {
             access_token: token.access_token,
-            // A server that does not rotate answers no refresh token, and
-            // the one held stays good.
+            // A server that does not rotate sends no refresh token.
             refresh_token: token.refresh_token.or(Some(refresh_token)),
             expires_at: token
                 .expires_in
@@ -413,9 +358,8 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
         Kept::Key { .. } => unreachable!("a key was answered above"),
     };
     if let Err(error) = credentials::keep(origin, &next) {
-        // The server has rotated and the keychain would not take the new
-        // set: the kept refresh token is spent, and replaying it would
-        // revoke the chain, so the entry goes and the reason is the answer.
+        // The kept refresh token is spent and replaying it would revoke the
+        // chain, so the entry goes.
         let _ = credentials::drop(origin);
         return Err(match error {
             CliError::NoKeychain(reason) => CliError::NoKeychain(format!(
@@ -427,11 +371,9 @@ pub fn refresh(origin: &str, refused: Option<&str>) -> Result<Kept, CliError> {
     Ok(next)
 }
 
-/// Where the refresh lock for an origin lives: a directory of this user's
-/// alone under the runtime directory where the system has one, else the
-/// temp directory, made for them and checked to be theirs, because a
-/// shared `/tmp` lets another user plant the file first and hold its lock
-/// against every refresh.
+/// The directory is checked to be this user's alone: on a shared `/tmp`
+/// another user could plant the file first and hold the lock against every
+/// refresh.
 fn lock_path(origin: &str) -> Result<PathBuf, CliError> {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
@@ -479,9 +421,8 @@ fn own_directory(dir: &std::path::Path) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Tells the server the token set is done with: the refresh token where
-/// there is one, since revoking it ends the whole chain, else the access
-/// token. A kept key has nothing to revoke.
+/// Revokes the refresh token where there is one, since that ends the whole
+/// chain.
 pub fn revoke(kept: &Kept) -> Result<(), CliError> {
     if let Kept::Token {
         refresh_token,
@@ -522,9 +463,6 @@ mod tests {
     use super::*;
     use crate::door::{Answer, Door};
 
-    /// A token door with one answer, and the endpoint a kept token names.
-    /// A server that answers its root on this binary's contract, which a
-    /// refresh reads first, and then its token door.
     fn token_door(status: &'static str, body: &str) -> (String, Door) {
         let root = format!(
             r#"{{"name":"marfa","contract":{}}}"#,
@@ -554,9 +492,6 @@ mod tests {
         token(token_endpoint, Some(1), Some("marfa_rt_old"))
     }
 
-    /// A discovery document whose doors sit on `origin`, naming
-    /// `issuer_origin` as its issuer, supporting a few of the owner's
-    /// scopes and one that is nobody's default.
     fn document(origin: &str, issuer_origin: &str) -> String {
         serde_json::json!({
             "issuer": format!("{issuer_origin}/auth"),
@@ -570,8 +505,6 @@ mod tests {
         .to_string()
     }
 
-    /// An origin on the loopback interface that nothing listens on, from a
-    /// door opened and closed for its port.
     fn closed_origin() -> String {
         let door = Door::open(vec![]);
         let origin = door.url.clone();
@@ -602,9 +535,6 @@ mod tests {
         }));
     }
 
-    /// A document read from its own origin is read whole and narrows the
-    /// default scope to what it supports; the same document naming another
-    /// issuer, or one door on another port, is refused.
     #[test]
     fn discovery_is_held_to_the_origin_it_was_read_from() {
         let elsewhere = "https://elsewhere.invalid";
@@ -687,8 +617,6 @@ mod tests {
         );
     }
 
-    /// The token door's two ways of saying "not yet" are read as such, a
-    /// refusal is carried, and a decision is a token.
     #[test]
     fn a_poll_reads_pending_slow_down_a_refusal_and_a_token() {
         let door = Door::open(vec![
@@ -733,9 +661,6 @@ mod tests {
         assert!(sent[0].body.contains("device_code=dc"), "{}", sent[0].body);
     }
 
-    /// The refresh, through the test run's keychain, against a door on a
-    /// local port: the rotated pair is kept, and the refresh token the server
-    /// sent replaces the one that was spent, sent once.
     #[test]
     fn a_refresh_keeps_the_rotated_pair_and_sends_the_spent_token_once() {
         let (endpoint, door) = token_door(
@@ -748,7 +673,6 @@ mod tests {
         let outcome = refresh(&origin, None);
         let received = door.received();
         assert_eq!(received.len(), 2);
-        // The root first, without the spent token, then the token door.
         assert_eq!(received[0].path(), "/");
         assert_eq!(received[0].header("authorization"), None);
         let sent = &received[1];
@@ -784,15 +708,11 @@ mod tests {
         }
     }
 
-    /// A set another process rotated while this one waited on the lock is
-    /// answered as it is: neither a stale check nor a refused bearer sends
-    /// anything when the keychain no longer holds what was seen.
     #[test]
     fn a_set_already_rotated_by_another_process_is_not_refreshed_again() {
         let origin = format!("https://rotated.invalid:{}", std::process::id());
         let _keychain = credentials::hold(&origin);
-        // A token door nothing listens on, so a refresh that should not
-        // happen fails loudly.
+        // Nothing listens here, so a refresh that should not happen fails.
         let endpoint = format!("{}/token", closed_origin());
         let fresh = token(
             &endpoint,
@@ -812,13 +732,8 @@ mod tests {
         );
     }
 
-    /// A door that refuses the grant ends the sign-in: the entry is gone,
-    /// the origin stays current, and the answer is "signed out". A door that
-    /// refuses the call for another reason leaves the set alone, and the
-    /// witness is the same entry surviving a 429.
     #[test]
     fn a_dead_grant_ends_the_sign_in_and_any_other_refusal_leaves_it() {
-        // One server for both refreshes, each reading its root first.
         let root = format!(
             r#"{{"name":"marfa","contract":{}}}"#,
             marfa_client::CONTRACT_VERSION

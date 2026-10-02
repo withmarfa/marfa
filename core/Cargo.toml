@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
 members = ["marfa-core", "marfa-client", "marfa-cli", "bindings/node"]
-# The Swift FFI crate is its own workspace: cargo-swift refuses to name a
-# package inside a multi-crate workspace.
 exclude = ["bindings/swift"]
 
 [workspace.package]
@@ -17,28 +15,13 @@ clap = { version = "4", features = ["derive", "env"] }
 notify = "8"
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-# `preserve_order`, because a folder writes a person's frontmatter back.
-# Without it `Map` is a `BTreeMap` and every pull returns their fields in
-# alphabetical order, which is a change to their file the folder made for
-# no reason and which no scan can tell from one they made.
+# `preserve_order`: without it a folder writes a person's frontmatter back
+# in alphabetical order.
 serde_json = { version = "1", features = ["preserve_order"] }
-# A blob is addressed by the SHA-256 of its bytes, and a device checks the
-# bytes it caches against the name it asked for.
 sha2 = "0.10"
-# A thumbnail travels as a data URI, and a device hands back its bytes.
 base64 = "0.23"
 thiserror = "2"
-# Frontmatter. `serde_yaml` is deprecated by its author and `serde_norway`
-# has not shipped in over a year; this one is current. It parses to its own
-# value type rather than through serde, and the conversion to an item's
-# properties is written out in `folder/document.rs` on purpose: "nothing a
-# file carries is dropped on the way in" (`folders.md` 7) is a rule about
-# exactly that conversion, so it is visible and tested here rather than
-# being a derive nobody reads.
 yaml-rust2 = "0.13"
 ureq = { version = "3", features = ["json", "platform-verifier"] }
-# v7 because a client-minted item id has to be one the server accepts, and
-# the ids it mints itself are time-sortable: a device minting v4 would put
-# every local create at a random point in an ordering the server treats as
-# chronological.
+# v7: the server orders ids as time.
 uuid = { version = "1", features = ["v7"] }

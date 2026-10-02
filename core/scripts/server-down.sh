@@ -1,26 +1,14 @@
 #!/usr/bin/env bash
-# Stops the server server-up.sh started and removes its directory, unless the
-# caller named the directory to keep (MARFA_SERVER_KEEP at boot).
 set -euo pipefail
 
 env_file="${1:-${MARFA_SERVER_ENV:-}}"
 [[ -n "${env_file}" && -f "${env_file}" ]] || { echo "server-down: no env file" >&2; exit 2; }
 # shellcheck disable=SC1090
 source "${env_file}"
-# **The tree, not the pid, and not the process group.** `server-up.sh` records
-# pnpm's pid; pnpm spawns tsx and tsx spawns the node process that holds the
-# port, so signaling the recorded pid alone leaves that grandchild running
-# and the port bound — while reporting success, which is the worst shape of
-# this bug: the next reader sees that cleanup ran and looks elsewhere.
-#
-# A process group would take the tree in one signal, and `set -m` does not
-# reliably give the job one: inside a command substitution the shell has no
-# job control and the job shares the caller's group, so the group signal
-# either misses or, worse, names a group with the caller in it.
-#
-# Walking `pgrep -P` is slower and has no such failure. Children are
-# collected before anything is signaled, because a parent that dies first
-# reparents its children to init and they can no longer be found this way.
+# The recorded pid is pnpm's; the node process holding the port is its
+# grandchild, so the whole tree is signaled. Not by process group: inside a
+# command substitution the job shares the caller's group. Children are
+# collected before any is signaled, since an orphan can no longer be found.
 descendants() {
   local parent="$1" child
   for child in $(pgrep -P "${parent}" 2>/dev/null); do
@@ -45,7 +33,5 @@ if kill -0 "${MARFA_SERVER_PID}" 2>/dev/null; then
   stop KILL
 fi
 [[ -n "${MARFA_SERVER_KEPT:-}" ]] || rm -rf "${MARFA_SERVER_STATE}"
-# The env file too, when the caller placed it outside the state directory. A
-# stale one names a pid that is gone, and the next run to read it would signal
-# whatever the system has since given that number to.
+# A stale env file names a pid the system may since have reused.
 [[ "${env_file}" == "${MARFA_SERVER_STATE}"/* ]] || rm -f "${env_file}"

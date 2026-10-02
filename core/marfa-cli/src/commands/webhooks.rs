@@ -80,7 +80,6 @@ pub fn create_request(args: &WebhookCreateArgs) -> Request {
     body.insert("events".into(), json!(args.events));
     insert_opt(&mut body, "type_filter", args.type_filter.clone());
     insert_opt(&mut body, "secret", args.secret.clone());
-    // The signing secret the server mints is answered this once.
     Request::post(&["webhooks"])
         .json(Value::Object(body))
         .minting()

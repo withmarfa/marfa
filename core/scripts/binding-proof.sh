@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Drives the Node binding through a write made offline and its verdict after
-# the server comes back: the proof hydrates, the server stops, it queues its
-# writes and drains into nothing, the server returns on the same origin with
-# the same data, and it drains again. Then it holds the event stream open
-# while the binary makes a note on the server, and is told of it. Last, it
-# reads the thumbnails of a type the binary registers, from a store of its own.
-#
-# The proof checks what it printed and exits non-zero on anything else, so
-# this script fails when a verdict does.
-#
 #   scripts/binding-proof.sh            # after the Node build and cargo build -p marfa-cli
 set -euo pipefail
 
@@ -50,15 +40,13 @@ wait "${node_follow}"
 
 echo "== thumbnail, read from the copy with no request"
 marfa() { "${core}/target/debug/marfa" --url "${MARFA_API_URL}" --key "${MARFA_API_KEY}" "$@" >/dev/null; }
-# One item holds a value under the property before the type declares it a
-# thumbnail, which the server does not check again once it does, so the copy
-# holds an image and a value that is not one.
+# The server does not recheck a value written before its property became a
+# thumbnail, so the copy holds one value that is not an image.
 marfa types register --body '{"id":"user.snapshot","fields":{"title":{"type":"string"}}}'
 marfa items create --type user.snapshot \
   --properties '{"title":"Held before","thumbnail":"not an image"}'
 marfa types update user.snapshot \
   --body '{"version":2,"fields":{"title":{"type":"string"},"thumbnail":{"type":"thumbnail"}}}'
-# A PNG's signature, then the words the proof looks for.
 marfa items create --type user.snapshot \
   --properties '{"title":"With an image","thumbnail":"data:image/png;base64,iVBORw0KGgpiaW5kaW5nIHByb29m"}'
 node_proof thumbnail

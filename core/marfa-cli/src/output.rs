@@ -20,8 +20,6 @@ pub fn report<T: Serialize>(
     Ok(())
 }
 
-/// One line for a command that runs and reports as it goes: compact JSON,
-/// flushed, so a reader can take each line as it arrives.
 pub fn line_of<T: Serialize>(
     value: &T,
     json: bool,
@@ -66,12 +64,8 @@ pub fn item(item: &Item, json: bool) -> Result<(), CliError> {
     Ok(())
 }
 
-/// One queued write, as the command that queued it reports it.
-///
-/// The id and the kind, because a caller who has just queued something needs
-/// the handle to ask about it again, and nothing about a verdict: this row
-/// has not been sent, and printing a verdict column here would invite reading
-/// "unanswered" as an answer.
+/// No verdict column: the row has not been sent, and "unanswered" here would
+/// read as an answer.
 pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     let mut out = io::stdout().lock();
     if json {
@@ -108,10 +102,8 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
         return Ok(());
     }
     for write in writes {
-        // A row with no verdict is printed as unanswered rather than as a
-        // blank column. It is the absence of an answer, not a seventh
-        // verdict, and a person reading a blank space fills it in with
-        // whichever of the six they were expecting.
+        // Not a blank column: a person fills a blank with whichever verdict
+        // they expected.
         let verdict = write
             .verdict
             .map_or("unanswered", marfa_core::Verdict::as_str);
@@ -125,10 +117,6 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             .or(write.edge_id.as_deref())
             .or(write.blob.as_deref())
             .unwrap_or("-");
-        // The two things a person acts on, and neither is visible from the
-        // verdict alone: how close a row is to the ceiling of five
-        // (`queue-and-verdicts.md` 25), and what is holding it (24). Shown
-        // only when they say something, so an ordinary queue stays readable.
         let refusals = match write.refusals {
             0 => String::new(),
             n => format!("  {n}/{} refused", marfa_core::CEILING),
@@ -138,8 +126,7 @@ pub fn queued(writes: &[QueuedWrite], json: bool) -> Result<(), CliError> {
             1 => format!("  waiting on {}", write.depends_on[0]),
             n => format!("  waiting on {n} writes"),
         };
-        // The write ahead of it to the same row or edge, which it goes out
-        // after (42): a row held with nothing it depends on is held by this.
+        // A row held with nothing it depends on is held by this.
         let after = match &write.follows {
             Some(ahead) => format!("  after {ahead}"),
             None => String::new(),
@@ -197,15 +184,12 @@ fn line(item: &Item) -> String {
     )
 }
 
-/// What a drain did, one line per write it sent.
 pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
     report(drain, json, || {
         let mut lines = Vec::new();
         for verdict in &drain.verdicts {
-            // An unanswered row is a row the drain sent and the server did
-            // not answer. Printed as such rather than left out: a caller
-            // reading only the answered rows would see a short list and no
-            // sign that anything was attempted.
+            // Printed rather than left out, or a short list would hide that
+            // anything was attempted.
             let mut line = format!(
                 "{} {} {}",
                 verdict
@@ -245,10 +229,8 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
     })
 }
 
-/// One line per source the server said this credential's key does not
-/// claim (`queue-and-verdicts.md` 40). The verdicts say `credential_refused`,
-/// which alone reads as a key that has stopped working; this says which
-/// claim is missing and what happens once it is granted.
+/// The verdicts say `credential_refused`, which alone reads as a key that has
+/// stopped working.
 pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
     drain
         .unclaimed_sources
@@ -261,11 +243,6 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
         })
         .collect()
 }
-
-// The direct surface prints the server's answer as it came. Under `--json`
-// it is pretty-printed and nothing else, so an agent reads the same document
-// a client would; without it, a listing is one line per record and a single
-// record is its line and its properties, which is what a person scans.
 
 pub struct Printer {
     pub json: bool,
@@ -282,16 +259,12 @@ impl Printer {
         Ok(())
     }
 
-    /// One line, the same under both modes, for a report that is already a
-    /// sentence.
     pub fn line(&self, text: &str) -> Result<(), CliError> {
         let mut out = io::stdout().lock();
         writeln!(out, "{text}")?;
         Ok(())
     }
 
-    /// A report built by the binary: JSON under `--json`, the sentence
-    /// otherwise.
     pub fn report(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
         if self.json {
             self.value(value)
@@ -300,8 +273,6 @@ impl Printer {
         }
     }
 
-    /// One record of a stream: compact JSON on one line under `--json`, so
-    /// a reader takes the output a line at a time, the sentence otherwise.
     pub fn record(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
         let mut out = io::stdout().lock();
         if self.json {
@@ -317,9 +288,6 @@ impl Printer {
 fn describe(value: &Value) -> Result<String, CliError> {
     match value {
         Value::Object(map) => {
-            // The write and read doors answer `{item, ...}` and `{edge}`;
-            // the record is what a person is looking at, and the rest of
-            // the envelope is named after it where it says something.
             for key in ["item", "edge"] {
                 if let Some(record) = map.get(key) {
                     let mut text = describe(record)?;
@@ -336,8 +304,6 @@ fn describe(value: &Value) -> Result<String, CliError> {
                 }
             }
             if let Some(Value::Array(rows)) = map.get("data") {
-                // A lookup's tombstones are what say a key was purged rather
-                // than never written.
                 let tombstones = map.get("tombstones").and_then(Value::as_array);
                 let all: Vec<Value> = rows
                     .iter()
@@ -346,8 +312,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                     .collect();
                 return lines(&all, map);
             }
-            // A bulk write's per-entry outcomes, `{counts, results}`, and
-            // `items bulk-get`'s `{items, metadata}`.
+            // `{counts, results}` and `{items, metadata}`.
             if map.len() <= 2
                 && let Some((_, Value::Array(rows))) =
                     map.iter().find(|(_, value)| value.is_array())
@@ -382,7 +347,6 @@ fn describe(value: &Value) -> Result<String, CliError> {
     }
 }
 
-/// A listing row: aligned cells, or a line of its own that is not.
 enum Row {
     Cells(Vec<String>),
     Text(String),
@@ -402,7 +366,6 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
                 "tombstone  {key}  purged {purged}  settled {settled}"
             )));
         } else if let (Some(starts), Some(item)) = (row.get("starts_at"), row.get("item")) {
-            // An occurrence: when it falls is the point of the view.
             let ends = row
                 .get("ends_at")
                 .and_then(Value::as_str)
@@ -412,8 +375,6 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
             cells.extend(record_cells(item));
             out.push(Row::Cells(cells));
         } else if let Some(item) = row.get("item") {
-            // A search hit or a listing row carrying its metadata; a hit
-            // leads with its score.
             let mut cells: Vec<String> = row
                 .get("relevance_score")
                 .and_then(Value::as_f64)
@@ -445,8 +406,6 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
     Ok(text.join("\n"))
 }
 
-/// What closes every listing: a word for an empty page, and how to go on
-/// where there is more.
 fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
     if text.is_empty() {
         text.push("(none)".into());
@@ -456,9 +415,6 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
     }
 }
 
-/// Rows of cells as lines, each column as wide as its widest cell. A column
-/// empty in every row is left out, so a record kind with no time or no
-/// kind does not leave a gap where one would be.
 fn table(rows: &[Vec<String>]) -> Vec<String> {
     let width = |cell: &str| cell.chars().count();
     let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -501,8 +457,6 @@ fn field<'a>(record: &'a Value, name: &str) -> &'a str {
     record.get(name).and_then(Value::as_str).unwrap_or("")
 }
 
-/// What a record is called: its title, else its name, which is all a person
-/// has, else the first line of its body.
 fn record_title(record: &Value) -> &str {
     let property = |name: &str| {
         record
@@ -521,8 +475,6 @@ fn record_title(record: &Value) -> &str {
         .unwrap_or("")
 }
 
-/// One record on one line: the id, then what identifies it, then a state
-/// if it is not the ordinary one.
 fn record_line(record: &Value) -> String {
     table(&[record_cells(record)]).remove(0)
 }
@@ -538,8 +490,6 @@ fn record_cells(record: &Value) -> Vec<String> {
         ];
     }
     if record.get("key_id").is_some() && record.get("last_run").is_some() {
-        // A connector registration: whether its last run worked is what a
-        // person lists them to learn.
         let run = record.get("last_run").filter(|run| !run.is_null());
         let outcome = run.map_or("never run", |run| field(run, "outcome"));
         let when = run.map_or("", |run| field(run, "finished_at"));
@@ -585,7 +535,6 @@ fn record_cells(record: &Value) -> Vec<String> {
     ]
 }
 
-/// What a connector run said: its error where it failed, else its summary.
 fn run_note(run: &Value) -> &str {
     match field(run, "error") {
         "" => field(run, "summary"),
@@ -593,8 +542,6 @@ fn run_note(run: &Value) -> &str {
     }
 }
 
-/// An item's edges from one end: each edge's type, then the item at the
-/// other end and, where `titles` holds it, what that item is called.
 pub fn edges_from(
     page: &Value,
     inbound: bool,
@@ -623,12 +570,10 @@ pub fn edges_from(
     text.join("\n")
 }
 
-/// The id at the far end of an edge read from one of its items.
 pub fn other_end(edge: &Value, inbound: bool) -> &str {
     field(edge, if inbound { "source_id" } else { "target_id" })
 }
 
-/// What each item in a `bulk-get` answer is called, by id.
 pub fn titles(answer: &Value) -> impl Iterator<Item = (String, String)> + '_ {
     answer
         .get("items")

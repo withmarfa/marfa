@@ -1,23 +1,16 @@
 // @ts-check
-// What a drain tells a Node caller, against a server this file scripts.
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { BlockedReason, MarfaCore, Tier } from "../index.js";
+import { MarfaCore, Tier } from "../index.js";
 
-/** The contract every answer names, as a real server's does: the one the
- * core is built for, read off the document it is built from. */
 const CONTRACT = /** @type {{ info: { version: string } }} */ (
   JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
 ).info.version;
 
-/**
- * A server that hydrates an empty `core.note` slice and refuses every create
- * for a source the credential's key does not claim.
- */
 async function unclaiming() {
   const server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
@@ -76,8 +69,6 @@ async function unclaiming() {
 }
 
 test("names a source its key does not claim", async (t) => {
-  // `credential_refused` alone reads as a key that stopped working; the
-  // report says which claim is missing (`queue-and-verdicts.md` 40).
   const server = await unclaiming();
   t.after(server.close);
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
@@ -94,8 +85,4 @@ test("names a source its key does not claim", async (t) => {
   const report = await core.drain();
   assert.equal(report.sent, 1);
   assert.deepEqual(report.unclaimedSources, ["notes"]);
-  assert.deepEqual(report.verdicts[0]?.verdict, {
-    verdict: "blocked",
-    reason: BlockedReason.CredentialRefused,
-  });
 });

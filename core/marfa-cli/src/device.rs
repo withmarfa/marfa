@@ -1,6 +1,3 @@
-//! The working copy: a local copy of a slice of one server, in a store
-//! named by `--db`, and the queue of writes it holds for that server.
-
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand};
@@ -481,10 +478,6 @@ pub struct ListArgs {
     #[arg(long = "tag", value_name = "TAG")]
     pub tags: Vec<String>,
     /// Exclusive lower bound on the item's own time, RFC 3339.
-    ///
-    /// Named for the field rather than shortened to `--after`, because the
-    /// binary sorts on three times — `created_at`, `updated_at` and this
-    /// one — so an unqualified `--after` would not say which.
     #[arg(long = "occurred-after", value_name = "TIME")]
     pub occurred_after: Option<String>,
     /// Exclusive upper bound on the item's own time, RFC 3339.
@@ -579,8 +572,6 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             let core = store.open_with_server(named)?;
             let stop = stop_after(r#for);
             stop_on_interrupt();
-            // A line that cannot be written stops the follow and is the
-            // error it ends with, rather than events applied and never told.
             let mut unwritten: Option<CliError> = None;
             let report = core.follow(stop, |change| {
                 if unwritten.is_some() {
@@ -626,9 +617,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             }
             .open(None)?;
             let stop = stop_after(r#for);
-            // Read before it is announced, so a save that lands after the
-            // announcement is always told. Announced on stdout under `--json`,
-            // where stderr carries only a refusal.
+            // Read before announcing, so a save landing just after is told.
             let mut seen = core.data_version()?;
             if json {
                 output::line_of(
@@ -796,9 +785,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 json,
             ),
             BlobsCommand::Get { hash } => {
-                // Held bytes are answered with no server named at all; only
-                // a fetch needs one, and a store with none says the bytes
-                // are absent rather than that the command was misused.
+                // No server is required: held bytes need none, and without
+                // one a missing blob is absent rather than a usage error.
                 let path = store.open(named.session_if_named()?)?.blob(&hash)?;
                 output::report(
                     &serde_json::json!({ "hash": hash, "path": path }),
@@ -891,8 +879,6 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     namespace,
                     body,
                 } => {
-                    // Parsed before it is queued, so a body that is not an
-                    // object is refused here rather than sent and refused.
                     properties(&body)?;
                     core.write_extension(&item, &namespace, &body)?
                 }
@@ -918,8 +904,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             let released = match (&id, &reason) {
                 (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
-                // clap refuses this combination, so reaching it means the
-                // argument rules and this branch have drifted apart.
+                // clap refuses this; reached only if the argument rules drift.
                 (None, None) => {
                     return Err(CliError::Invalid(
                         "name a queued write to release, or a reason to release every write blocked for it".into(),
@@ -992,8 +977,6 @@ fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {
     })
 }
 
-/// The five reasons, read at the flag, so anything else is refused before
-/// the store opens and `--help` lists what may be named.
 fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {
     use clap::builder::TypedValueParser;
     clap::builder::PossibleValuesParser::new(
@@ -1002,16 +985,11 @@ fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::
     .try_map(|reason| reason.parse::<marfa_core::BlockedReason>())
 }
 
-/// How often `changes` asks whether the store moved.
 const CHANGES_POLL: std::time::Duration = std::time::Duration::from_millis(100);
 
-/// A flag set after `seconds`, or never.
-/// What ends a `follow` or a `changes`: its time running out, a line it
-/// could not write, or an interrupt. One flag, because a signal handler can
-/// reach nothing but a static.
+/// A static, because a signal handler can reach nothing else.
 static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The flag, set after `seconds` where they are given.
 fn stop_after(seconds: Option<u64>) -> &'static std::sync::atomic::AtomicBool {
     if let Some(seconds) = seconds {
         std::thread::spawn(move || {
@@ -1026,9 +1004,7 @@ extern "C" fn interrupted(_: libc::c_int) {
     STOP.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// Ctrl-C asks a follow to stop, so it ends as it does when its time is up:
-/// its report printed and the store let go. The handler is spent once it
-/// runs, so a second Ctrl-C ends the process at once.
+/// `SA_RESETHAND`: a second Ctrl-C ends the process at once.
 fn stop_on_interrupt() {
     // SAFETY: the handler only stores to an atomic, which is safe inside a
     // signal handler, and the action is fully initialized before it is
@@ -1042,23 +1018,13 @@ fn stop_on_interrupt() {
     }
 }
 
-/// The store a device command names, and how it is opened.
 struct Store {
     db: Option<PathBuf>,
     reader: bool,
-    /// Whether the command may make the store where none is: only a
-    /// hydration and the state report do (`device.md` 45).
     makes: bool,
 }
 
 impl Store {
-    /// A working copy is named by `--db` or `MARFA_DB` or it does not exist:
-    /// there is no default store, because a store nobody named is one nobody
-    /// can find again. The file is made at the named path by a hydration or
-    /// the state report, so the report is answerable before a hydration
-    /// (`device.md` 5), and by nothing else, so a mistyped path is refused
-    /// rather than answered from a store made for it; opened to read, it is
-    /// never made (`device.md` 41).
     fn open(&self, session: Option<Session>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);
@@ -1081,9 +1047,8 @@ impl Store {
         Ok(core)
     }
 
-    /// For the commands that talk to a server. Opened to read, it resolves
-    /// none: the core refuses each of them on a reading handle, and resolving
-    /// one could refresh a stored token over the network for nothing.
+    /// A reader resolves no server: the core refuses server commands on a
+    /// reading handle, and resolving could refresh a stored token for nothing.
     fn open_with_server(&self, named: &Named) -> Result<Core, CliError> {
         if self.reader {
             return self.open(None);

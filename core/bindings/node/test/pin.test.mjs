@@ -1,6 +1,4 @@
 // @ts-check
-// Edge types held whole and pinned rows, as a Node caller meets them, against
-// a server this file scripts.
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
@@ -9,7 +7,6 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { MarfaCore, Tier } from "../index.js";
 
-/** The contract every answer names, as a real server's does. */
 const CONTRACT = /** @type {{ info: { version: string } }} */ (
   JSON.parse(readFileSync(new URL("../../../../openapi.json", import.meta.url), "utf8"))
 ).info.version;
@@ -47,10 +44,6 @@ function parentOf(id, source, target) {
   };
 }
 
-/**
- * A server holding one note in the slice, a bookmark outside it, and one
- * `parent-of` edge between two rows the copy does not hold.
- */
 async function scripted() {
   const server = createServer((req, res) => {
     const path = (req.url ?? "").split("?")[0];
@@ -128,8 +121,6 @@ test("holds an edge type whole and reports it", async (t) => {
     ["beneath"],
   );
 
-  // The witness: a hydration naming none holds no edge between rows it
-  // does not hold.
   await core.hydrate(["core.note"], Tier.Library);
   assert.deepEqual(core.status().sliceEdgeTypes, []);
   assert.deepEqual(core.edgesFrom("outer"), []);

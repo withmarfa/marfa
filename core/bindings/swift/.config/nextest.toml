@@ -1,5 +1,4 @@
-# The core workspace's budget, here because this crate is its own workspace
-# and nextest reads the configuration at the workspace root. The reason for
-# the number is in `core/.config/nextest.toml`.
+# nextest reads only the workspace root's configuration, and this crate is its
+# own workspace; the reason for the number is in `core/.config/nextest.toml`.
 [profile.default]
 slow-timeout = { period = "30s", terminate-after = 4 }

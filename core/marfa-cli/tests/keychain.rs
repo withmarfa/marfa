@@ -1,7 +1,4 @@
-//! The binary's keychain, end to end: `keys keep` and `keys forget` with
-//! `MARFA_KEYCHAIN` naming a keychain file of the test's own, so the entry
-//! lands there and never in the person's keychain. macOS alone has keychain
-//! files.
+//! macOS alone has keychain files.
 #![cfg(target_os = "macos")]
 
 mod isolated;
@@ -12,9 +9,6 @@ use std::sync::mpsc::{Receiver, channel};
 
 use isolated::Isolated;
 
-/// A server on a local port that answers every request alike, on the
-/// contract this binary was built for, for as long as the test runs, and
-/// hands back the bearer each request carried.
 fn server() -> (String, Receiver<Option<String>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -43,11 +37,8 @@ fn server() -> (String, Receiver<Option<String>>) {
     (url, bearers)
 }
 
-/// Refuses to go on unless the binary keeps where `MARFA_KEYCHAIN` says:
-/// named a file that is not there, it refuses even to forget, where a
-/// binary that ignored the name would answer from the person's keychain.
-/// Nothing is written either way, so a binary that ignores the name fails
-/// here before any test keeps a key.
+/// Writes nothing, so a binary that ignores `MARFA_KEYCHAIN` fails here
+/// before any test keeps a key in the person's keychain.
 fn the_named_keychain_is_the_one_used(keychain: &Isolated, url: &str) {
     let forgot = keychain
         .marfa()
@@ -87,7 +78,6 @@ fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
         "{}",
         String::from_utf8_lossy(&kept.stderr)
     );
-    // The witness: the named keychain holds the entry, asked the same way.
     assert!(
         keychain.holds(&url),
         "keys keep kept nothing in the named keychain"
@@ -112,10 +102,6 @@ fn a_kept_key_lands_in_the_runs_keychain_and_never_the_persons() {
     assert!(!keychain.holds("current"));
 }
 
-/// With the server and the key both in the environment, the key sent is the
-/// environment's, whatever the keychain keeps for that server, and the
-/// server kept as current hears nothing; the witness is the kept key sent
-/// where the environment names only the server.
 #[test]
 fn the_environment_wins_over_a_kept_key() {
     let keychain = Isolated::new("environment");
@@ -161,8 +147,6 @@ fn the_environment_wins_over_a_kept_key() {
         "{sent:?}"
     );
 
-    // Another server named in the environment is the one reached, never the
-    // one the keychain made current.
     let (elsewhere, heard) = server();
     let listed = keychain
         .marfa()

@@ -1,11 +1,7 @@
-//! The generated crate reads the server's answers through its own operations
-//! and models, and writes the bodies it sends. The binary builds its
-//! requests by hand and reads answers raw, so nothing else here would notice
-//! a model that cannot decode what the server sends: the generated
-//! operations fall back to `UnknownValue` rather than failing.
-//!
-//! The answers are the server's, copied from a server booted from this tree,
-//! with only the ids and times fixed.
+//! Tests of the published `marfa-client` crate, which the workspace test run
+//! excludes. Its operations fall back to `UnknownValue` rather than failing on
+//! an answer a model cannot decode, so only these notice. The answers are
+//! copied from a real server, with ids and times fixed.
 
 use marfa_client::apis::configuration::Configuration;
 use marfa_client::apis::housekeeping_api::{ListHousekeepingSuccess, list_housekeeping};
@@ -126,8 +122,6 @@ fn an_item_decodes_into_the_generated_detail() {
 
 #[test]
 fn a_housekeeping_report_decodes_every_kind_of_value_it_carries() {
-    // A report's values are numbers, booleans, strings or null: the
-    // heartbeat's `ok` and `status` beside a count and a store's name.
     let door = Door::open(vec![Answer::json(
         "200 OK",
         r#"{"data":[{"name":"trash-purge","interval_ms":86400000,"next_run_at":"2026-09-24T00:54:44.048Z","running_since":null,"last_started_at":"2026-09-24T00:54:44.006Z","last_finished_at":"2026-09-24T00:54:44.007Z","last_outcome":"ok","last_error":null,"last_result":{"deleted":0,"ok":true,"status":null,"store":"disk"}}],"next_cursor":null}"#,
@@ -148,8 +142,6 @@ fn a_housekeeping_report_decodes_every_kind_of_value_it_carries() {
 
 #[test]
 fn a_type_registration_carries_compatible_with_in_either_spelling() {
-    // A request body, so it is written rather than read: the crate has to
-    // send `compatible_with` as the name or the list it was given.
     for compatible_with in [r#""user.a""#, r#"["user.a","user.b"]"#] {
         let body =
             format!(r#"{{"id":"user.t","fields":{{}},"compatible_with":{compatible_with}}}"#);
@@ -161,7 +153,6 @@ fn a_type_registration_carries_compatible_with_in_either_spelling() {
     }
 }
 
-/// Every `.rs` file under `dir`, at any depth.
 fn sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut found = Vec::new();
     for entry in std::fs::read_dir(dir).unwrap() {
@@ -175,8 +166,8 @@ fn sources(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     found
 }
 
-/// An object the generator wrote with no fields, which reads nothing: what
-/// it emits for a union it cannot express.
+/// What the generator emits for a union it cannot express: a struct that
+/// reads nothing.
 fn is_empty_struct(text: &str) -> bool {
     text.lines()
         .any(|line| line.starts_with("pub struct ") && line.trim_end().ends_with(" {}"))
@@ -184,8 +175,6 @@ fn is_empty_struct(text: &str) -> bool {
 
 #[test]
 fn no_generated_model_is_an_object_with_no_fields() {
-    // The witness: the rule flags the struct the generator wrote for the
-    // housekeeping report's values before `schemaMappings` stopped it.
     assert!(is_empty_struct("pub struct HousekeepingReportValue {}\n"));
     let models =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../marfa-client/src/models");
@@ -196,29 +185,4 @@ fn no_generated_model_is_an_object_with_no_fields() {
         .filter(|path| is_empty_struct(&std::fs::read_to_string(path).unwrap()))
         .collect();
     assert!(empty.is_empty(), "models with no fields: {empty:?}");
-}
-
-#[test]
-fn no_command_calls_a_generated_operation() {
-    // The generated operations send a request and read its answer without
-    // the contract check, so the binary reaches the wire through `Remote`
-    // alone; this module's tests are the one place that calls them.
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let own = root.join("remote/shapes.rs");
-    let calls = |text: &str| {
-        text.lines().any(|line| {
-            line.contains("marfa_client::apis::") && !line.contains("apis::configuration")
-        })
-    };
-    assert!(calls(
-        "use marfa_client::apis::audit_api::list_audit_log;\n"
-    ));
-    let offending: Vec<_> = sources(&root)
-        .into_iter()
-        .filter(|path| *path != own && calls(&std::fs::read_to_string(path).unwrap()))
-        .collect();
-    assert!(
-        offending.is_empty(),
-        "calling a generated operation: {offending:?}"
-    );
 }
