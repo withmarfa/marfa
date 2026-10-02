@@ -82,3 +82,43 @@ describe("the error webhook's debounce", () => {
     expect(debounceEntryCount()).toBe(2);
   });
 });
+
+describe("the Telegram message format", () => {
+  let bodies: string[];
+
+  beforeEach(() => {
+    bodies = [];
+    vi.stubGlobal("fetch", (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  async function bodyFor(url: string): Promise<Record<string, unknown>> {
+    const { notifyError } = await freshNotifier();
+    notifyError(url, notification("boom", "/a"));
+    expect(bodies).toHaveLength(1);
+    return JSON.parse(bodies[0]!) as Record<string, unknown>;
+  }
+
+  it("is used for the Telegram host", async () => {
+    const body = await bodyFor("https://api.telegram.org/bot123/sendMessage");
+    expect(body).toHaveProperty("parse_mode", "Markdown");
+  });
+
+  it.each([
+    "https://example.invalid/hook?next=api.telegram.org",
+    "https://example.invalid/api.telegram.org",
+    "https://api.telegram.org.example.invalid/hook",
+    "https://notapi.telegram.org/hook",
+  ])("is not used for %s, which only mentions the host", async (url) => {
+    const body = await bodyFor(url);
+    expect(body).not.toHaveProperty("parse_mode");
+    expect(body).toHaveProperty("error", "boom");
+  });
+});

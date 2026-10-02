@@ -47,6 +47,15 @@ export interface ErrorNotification {
   method: string;
 }
 
+/** The host itself, not a URL that merely mentions it in a path, query or longer hostname. */
+function isTelegramUrl(webhookUrl: string): boolean {
+  try {
+    return new URL(webhookUrl).hostname === "api.telegram.org";
+  } catch {
+    return false;
+  }
+}
+
 export function notifyError(
   webhookUrl: string,
   notification: ErrorNotification,
@@ -60,7 +69,7 @@ export function notifyError(
   debounceMap.set(errorKey, now);
 
   // Telegram sendMessage API — format as a readable text message
-  if (webhookUrl.includes("api.telegram.org")) {
+  if (isTelegramUrl(webhookUrl)) {
     const env =
       process.env.NODE_ENV === "production" ? "production" : "staging";
     const time = new Date(notification.timestamp)
