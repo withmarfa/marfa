@@ -36,6 +36,7 @@ import { shutdownInOrder } from "./shutdown.js";
 async function main() {
   const config = bootConfig();
   setLogStacks(!config.isProduction);
+  for (const warning of config.settingWarnings ?? []) log("warn", warning);
   log("info", "Server version", {
     sha: config.versionSha ?? "dev",
     deployed_at: config.versionFile?.deployed_at,

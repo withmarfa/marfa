@@ -9,8 +9,8 @@ const REPO = resolve(SRC, "../../..");
 
 /**
  * The files outside `config.ts` that may touch the environment, and why.
- * None of them is the server: each is a test that switches itself on or
- * runs itself under another zone.
+ * None of them is the server: each is a test that switches itself on, runs
+ * itself under another zone, or stubs the process.
  */
 const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "enrichment/ocr.real.test.ts":
@@ -18,6 +18,8 @@ const ENVIRONMENT_EXCEPTIONS: Record<string, string> = {
   "enrichment/extract.test.ts":
     "opts into downloading the real OCR model, a test's own switch",
   "events/expand-recurrence.test.ts": "runs under another TZ",
+  "instrumentation.test.ts":
+    "stubs process.exit to watch a bad setting stop the preload",
 };
 
 /** Names in the docs that look like settings and are not the server's. */
@@ -34,31 +36,175 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** Whether the file's code, comments and strings aside, reads `process.env`. */
+/**
+ * The members of `process` a module may touch. Anything else, `env` above
+ * all, and any use of `process` that is not one of these members (passed
+ * along, aliased, destructured), counts as reaching for the environment.
+ */
+const PROCESS_MEMBERS = new Set([
+  "stdout",
+  "stderr",
+  "exit",
+  "exitCode",
+  "on",
+  "off",
+  "once",
+  "cwd",
+  "chdir",
+  "pid",
+  "platform",
+  "hrtime",
+  "memoryUsage",
+  "uptime",
+  "nextTick",
+]);
+
+const PROCESS_MODULE = /^(node:)?process$/;
+
+/** A wrapper that changes nothing about the value: parentheses, a cast, a `!`. */
+function isOuterExpression(node: ts.Node): boolean {
+  return (
+    ts.isParenthesizedExpression(node) ||
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  );
+}
+
+function unwrap(node: ts.Expression): ts.Expression {
+  let inner = node;
+  while (
+    ts.isParenthesizedExpression(inner) ||
+    ts.isAsExpression(inner) ||
+    ts.isTypeAssertionExpression(inner) ||
+    ts.isNonNullExpression(inner) ||
+    ts.isSatisfiesExpression(inner)
+  ) {
+    inner = inner.expression;
+  }
+  return inner;
+}
+
+/** Whether a declaration in this scope binds the name `process`. */
+function bindsProcess(name: ts.BindingName | undefined): boolean {
+  if (name === undefined) return false;
+  if (ts.isIdentifier(name)) return name.text === "process";
+  return name.elements.some(
+    (element) => !ts.isOmittedExpression(element) && bindsProcess(element.name),
+  );
+}
+
+function declaresProcess(scope: ts.Node): boolean {
+  if (ts.isFunctionLike(scope)) {
+    return scope.parameters.some((p) => bindsProcess(p.name));
+  }
+  if (ts.isCatchClause(scope)) {
+    return bindsProcess(scope.variableDeclaration?.name);
+  }
+  if (
+    (ts.isForStatement(scope) ||
+      ts.isForOfStatement(scope) ||
+      ts.isForInStatement(scope)) &&
+    scope.initializer !== undefined &&
+    ts.isVariableDeclarationList(scope.initializer)
+  ) {
+    return scope.initializer.declarations.some((d) => bindsProcess(d.name));
+  }
+  if (ts.isBlock(scope) || ts.isSourceFile(scope) || ts.isModuleBlock(scope)) {
+    return scope.statements.some(
+      (statement) =>
+        (ts.isVariableStatement(statement) &&
+          statement.declarationList.declarations.some((d) =>
+            bindsProcess(d.name),
+          )) ||
+        ((ts.isFunctionDeclaration(statement) ||
+          ts.isClassDeclaration(statement)) &&
+          statement.name?.text === "process"),
+    );
+  }
+  return false;
+}
+
+/** The global `process`, not a declaration's name or a local of that name. */
+function isGlobalProcess(node: ts.Node): boolean {
+  if (ts.isIdentifier(node)) {
+    if (node.text !== "process") return false;
+    const parent = node.parent;
+    if (
+      (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+      (ts.isPropertyAssignment(parent) && parent.name === node) ||
+      (ts.isBindingElement(parent) && parent.propertyName === node) ||
+      (ts.isQualifiedName(parent) && parent.right === node) ||
+      ((ts.isParameter(parent) ||
+        ts.isVariableDeclaration(parent) ||
+        ts.isBindingElement(parent) ||
+        ts.isPropertySignature(parent) ||
+        ts.isPropertyDeclaration(parent) ||
+        ts.isMethodDeclaration(parent) ||
+        ts.isFunctionDeclaration(parent) ||
+        ts.isClassDeclaration(parent)) &&
+        parent.name === node)
+    ) {
+      return false;
+    }
+    for (let scope: ts.Node = parent; ; scope = scope.parent) {
+      if (ts.isTypeQueryNode(scope)) return false;
+      if (declaresProcess(scope)) return false;
+      if (ts.isSourceFile(scope)) return true;
+    }
+  }
+  const owner = ts.isPropertyAccessExpression(node)
+    ? { object: node.expression, member: node.name.text }
+    : ts.isElementAccessExpression(node) &&
+        ts.isStringLiteralLike(node.argumentExpression)
+      ? { object: node.expression, member: node.argumentExpression.text }
+      : undefined;
+  if (owner?.member !== "process") return false;
+  const object = unwrap(owner.object);
+  return ts.isIdentifier(object) && object.text === "globalThis";
+}
+
+/** Whether a use of `process` is one of the allowed members, and only that. */
+function isAllowedUse(reference: ts.Node): boolean {
+  let outer = reference;
+  while (isOuterExpression(outer.parent)) outer = outer.parent;
+  const parent = outer.parent;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
+    return PROCESS_MEMBERS.has(parent.name.text);
+  }
+  if (
+    ts.isElementAccessExpression(parent) &&
+    parent.expression === outer &&
+    ts.isStringLiteralLike(parent.argumentExpression)
+  ) {
+    return PROCESS_MEMBERS.has(parent.argumentExpression.text);
+  }
+  return false;
+}
+
+/** Whether the file, comments and strings aside, can reach the environment. */
 function readsEnvironment(text: string): boolean {
-  const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest);
-  const isProcess = (node: ts.Node) =>
-    (ts.isIdentifier(node) && node.text === "process") ||
-    (ts.isPropertyAccessExpression(node) && node.name.text === "process");
+  const file = ts.createSourceFile("x.ts", text, ts.ScriptTarget.Latest, true);
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
+    const moduleName =
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier)
+        ? node.moduleSpecifier.text
+        : ts.isCallExpression(node) &&
+            (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+              (ts.isIdentifier(node.expression) &&
+                node.expression.text === "require")) &&
+            node.arguments[0] !== undefined &&
+            ts.isStringLiteralLike(node.arguments[0])
+          ? node.arguments[0].text
+          : undefined;
     if (
-      (ts.isPropertyAccessExpression(node) &&
-        isProcess(node.expression) &&
-        node.name.text === "env") ||
-      (ts.isElementAccessExpression(node) &&
-        isProcess(node.expression) &&
-        ts.isStringLiteralLike(node.argumentExpression) &&
-        node.argumentExpression.text === "env") ||
-      (ts.isVariableDeclaration(node) &&
-        ts.isObjectBindingPattern(node.name) &&
-        node.initializer !== undefined &&
-        isProcess(node.initializer)) ||
-      ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-        node.moduleSpecifier !== undefined &&
-        ts.isStringLiteral(node.moduleSpecifier) &&
-        /^(node:)?process$/.test(node.moduleSpecifier.text))
+      (moduleName !== undefined && PROCESS_MODULE.test(moduleName)) ||
+      (isGlobalProcess(node) && !isAllowedUse(node))
     ) {
       found = true;
       return;
@@ -88,10 +234,30 @@ describe("the settings census", () => {
       "const { env } = process;",
       "const a = globalThis.process.env.X;",
       'import { env } from "node:process";',
+      "const a = (process as any).env;",
+      "const a = (process).env;",
+      "const a = process!.env;",
+      "const p = process;\np.env;",
+      "let env; ({ env } = process);",
+      "function f(p = process) { return p.env; }",
+      'const a = globalThis["process"].env;',
+      'const m = await import("node:process");',
+      'const m = require("process");',
+      'const a = Reflect.get(process, "env");',
     ]) {
       expect(readsEnvironment(spelling), spelling).toBe(true);
     }
-    expect(readsEnvironment("// process.env.X\nconst a = 1;")).toBe(false);
+    for (const spelling of [
+      "// process.env.X\nconst a = 1;",
+      'const a = "process.env";',
+      "process.stdout.write('x');",
+      "function hold(process: string) { return process.length; }",
+      "const { process } = body; use(process);",
+      "const f = { process: 1 }.process;",
+      "type T = typeof process;",
+    ]) {
+      expect(readsEnvironment(spelling), spelling).toBe(false);
+    }
   });
 
   it("lists every setting in .env.example, and nothing else", () => {

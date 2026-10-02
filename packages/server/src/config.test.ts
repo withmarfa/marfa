@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_CONNECTOR_HOLD_MS,
@@ -38,6 +41,8 @@ const FREE_TEXT = [
   "MARFA_PLACEMENT_COUNTRY",
   "MARFA_OTEL_ENVIRONMENT",
   "OTEL_SERVICE_NAME",
+  // Its pair is checked only while telemetry is on.
+  "MARFA_POSTHOG_PROJECT_TOKEN",
 ];
 
 describe("the settings schema", () => {
@@ -98,6 +103,42 @@ describe("the settings schema", () => {
     for (const name of numeric) {
       expect(refusal({ [name]: "-5" }), name).toContain(name);
     }
+  });
+
+  // A daily window shorter than the recent one, or a weekly one shorter
+  // than the daily, sends versions straight past their window to deletion.
+  it("refuses version windows out of order", () => {
+    expect(
+      refusal({ VERSION_RECENT_DAYS: "30", VERSION_DAILY_SNAPSHOT_DAYS: "10" }),
+    ).toContain(
+      "VERSION_DAILY_SNAPSHOT_DAYS must be at least VERSION_RECENT_DAYS",
+    );
+    expect(refusal({ VERSION_WEEKLY_SNAPSHOT_DAYS: "0" })).toContain(
+      "VERSION_WEEKLY_SNAPSHOT_DAYS must be at least VERSION_DAILY_SNAPSHOT_DAYS",
+    );
+    expect(
+      refusal({
+        VERSION_RECENT_DAYS: "7",
+        VERSION_DAILY_SNAPSHOT_DAYS: "7",
+        VERSION_WEEKLY_SNAPSHOT_DAYS: "7",
+      }),
+    ).toBe("");
+  });
+
+  it("warns about an unknown MARFA_ name close to a setting's, and refuses none", () => {
+    const config = loadConfig({
+      MARFA_AUTH_SECRT: "x",
+      MARFA_BLOB_MINCOPIES: "2",
+      MARFA_API_URL: "http://localhost:8600",
+      MARFA_TEST_OCR: "1",
+    });
+    expect(config.settingWarnings).toEqual([
+      "MARFA_AUTH_SECRT is not a setting and is ignored; did you mean MARFA_AUTH_SECRET?",
+      "MARFA_BLOB_MINCOPIES is not a setting and is ignored; did you mean MARFA_BLOB_MIN_COPIES?",
+    ]);
+    expect(loadConfig({ MARFA_AUTH_SECRET: STRONG() }).settingWarnings).toBe(
+      undefined,
+    );
   });
 
   it("names every bad setting at once", () => {
@@ -257,6 +298,21 @@ describe("production boot", () => {
     );
   });
 
+  it("refuses the placeholder however it is spelled", () => {
+    for (const placeholder of [
+      "change_me_run_openssl_rand_hex_32",
+      "change.me.run.openssl.rand.hex.32",
+      "CHANGE ME RUN OPENSSL RAND HEX 32 !",
+      "dev_salt_change_in_production_abcdefg",
+      `${STRONG()}OpenSSL-Rand`,
+    ]) {
+      expect(
+        refusal(production({ API_KEY_SALT: placeholder })),
+        placeholder,
+      ).toContain("API_KEY_SALT is a placeholder anyone can read");
+    }
+  });
+
   it("refuses a secret with too little entropy", () => {
     for (const weak of [
       "a".repeat(64),
@@ -328,6 +384,19 @@ describe("OpenTelemetry settings", () => {
     });
   });
 
+  it("checks the PostHog pair only while telemetry is on", () => {
+    expect(refusal({ MARFA_POSTHOG_HOST: "https://eu.i.posthog.com" })).toBe(
+      "",
+    );
+    expect(
+      refusal({
+        MARFA_OTEL_ENABLED: "true",
+        MARFA_OTEL_ENVIRONMENT: "staging",
+        MARFA_POSTHOG_HOST: "https://eu.i.posthog.com",
+      }),
+    ).toContain("MARFA_POSTHOG_HOST needs MARFA_POSTHOG_PROJECT_TOKEN set too");
+  });
+
   it("refuses malformed headers, an out-of-range ratio and an unnamed environment", () => {
     expect(refusal({ OTEL_EXPORTER_OTLP_HEADERS: "novalue" })).toContain(
       "OTEL_EXPORTER_OTLP_HEADERS must be comma-separated key=value pairs",
@@ -341,8 +410,36 @@ describe("OpenTelemetry settings", () => {
         OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318",
       }),
     ).toContain("MARFA_OTEL_ENVIRONMENT must name the deployment");
-    expect(
-      refusal({ MARFA_POSTHOG_HOST: "https://eu.i.posthog.com" }),
-    ).toContain("MARFA_POSTHOG_HOST needs MARFA_POSTHOG_PROJECT_TOKEN set too");
+  });
+});
+
+describe("version.json", () => {
+  function inDirectoryHolding(text: string, run: () => void): void {
+    const dir = mkdtempSync(join(tmpdir(), "marfa-version-"));
+    const previous = process.cwd();
+    writeFileSync(join(dir, "version.json"), text);
+    process.chdir(dir);
+    try {
+      run();
+    } finally {
+      process.chdir(previous);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("is read with the settings", () => {
+    inDirectoryHolding('{"sha":"abc123","deployed_at":"2026-01-01"}', () => {
+      const config = loadConfig({});
+      expect(config.versionSha).toBe("abc123");
+      expect(config.versionFile?.deployed_at).toBe("2026-01-01");
+    });
+  });
+
+  it("stops boot naming the file when it is not a JSON object", () => {
+    for (const text of ["{not json", "[1]"]) {
+      inDirectoryHolding(text, () => {
+        expect(refusal({}), text).toMatch(/^ {2}version\.json /m);
+      });
+    }
   });
 });

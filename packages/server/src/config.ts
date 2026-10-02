@@ -367,6 +367,9 @@ export interface AppConfig {
    *  memory bound: viewers hold no database connection, so any limit is
    *  a stated choice rather than a pool artifact. */
   sseMaxViewers?: number;
+  /** Names in the environment that look like a misspelled setting; boot
+   *  logs each one. */
+  settingWarnings?: string[];
 }
 
 /** Where the deployment says it runs: free text, set per environment. */
@@ -714,8 +717,8 @@ const settingsShape = {
   MARFA_ENRICHMENT_BATCH_SIZE: count(8),
   MARFA_ENRICHMENT_ITEM_TIMEOUT_MS: count(60_000),
   MARFA_ENRICHMENT_MAX_BLOB_BYTES: count(20 * 1024 * 1024),
-  // The validator's cap, not restated: a text cap above it would extract a
-  // long document onto an item that could never be written to again.
+  // The validator's cap, not restated: above it, the sweeper's validation
+  // parks an over-long extraction rather than storing it.
   MARFA_ENRICHMENT_MAX_TEXT_CHARS: count(DEFAULT_MAX_STRING_LENGTH),
   MARFA_ENRICHMENT_MAX_ATTEMPTS: count(3),
 
@@ -829,13 +832,11 @@ const DEFAULT_SALT = "dev-salt-change-in-production";
 const SECRET_MIN_LENGTH = 32;
 const SECRET_MIN_BITS = 96;
 
-/** Text from `.env.example` and the built-in salt: a secret anyone can read. */
-const PLACEHOLDER_FRAGMENTS = [
-  "change-me",
-  "changeme",
-  "change-in-production",
-  "openssl-rand",
-];
+/**
+ * Text from `.env.example` and the built-in salt, compared with case and
+ * punctuation stripped so `change_me` and `CHANGE ME` are caught too.
+ */
+const PLACEHOLDER_FRAGMENTS = ["changeme", "changeinproduction", "opensslrand"];
 
 /**
  * Bits by the empirical character distribution, which is an upper bound on
@@ -859,8 +860,8 @@ function weakSecret(secret: string | undefined): string | undefined {
   if (secret.length < SECRET_MIN_LENGTH) {
     return `must be at least ${String(SECRET_MIN_LENGTH)} characters`;
   }
-  const lower = secret.toLowerCase();
-  if (PLACEHOLDER_FRAGMENTS.some((fragment) => lower.includes(fragment))) {
+  const letters = secret.toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (PLACEHOLDER_FRAGMENTS.some((fragment) => letters.includes(fragment))) {
     return "is a placeholder anyone can read, not a secret";
   }
   if (estimatedBits(secret) < SECRET_MIN_BITS || /^(.+?)\1+$/.test(secret)) {
@@ -902,6 +903,20 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
       );
     }
   }
+  // A version older than its window and inside no later one is deleted, so
+  // a window shorter than the one before it skips straight to deletion.
+  if (s.VERSION_DAILY_SNAPSHOT_DAYS < s.VERSION_RECENT_DAYS) {
+    refuse(
+      "VERSION_DAILY_SNAPSHOT_DAYS",
+      "must be at least VERSION_RECENT_DAYS",
+    );
+  }
+  if (s.VERSION_WEEKLY_SNAPSHOT_DAYS < s.VERSION_DAILY_SNAPSHOT_DAYS) {
+    refuse(
+      "VERSION_WEEKLY_SNAPSHOT_DAYS",
+      "must be at least VERSION_DAILY_SNAPSHOT_DAYS",
+    );
+  }
   if (
     s.MARFA_BULK_ACTION_POLL_MAX_INTERVAL_MS <
     s.MARFA_BULK_ACTION_POLL_INTERVAL_MS
@@ -911,11 +926,20 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
       "must be at least MARFA_BULK_ACTION_POLL_INTERVAL_MS",
     );
   }
-  // With one alone no exception could be reported.
-  if (s.MARFA_POSTHOG_HOST !== undefined && !s.MARFA_POSTHOG_PROJECT_TOKEN) {
+  // With one alone no exception could be reported; only telemetry reports.
+  const reports = s.MARFA_OTEL_ENABLED;
+  if (
+    reports &&
+    s.MARFA_POSTHOG_HOST !== undefined &&
+    !s.MARFA_POSTHOG_PROJECT_TOKEN
+  ) {
     refuse("MARFA_POSTHOG_HOST", "needs MARFA_POSTHOG_PROJECT_TOKEN set too");
   }
-  if (s.MARFA_POSTHOG_PROJECT_TOKEN !== undefined && !s.MARFA_POSTHOG_HOST) {
+  if (
+    reports &&
+    s.MARFA_POSTHOG_PROJECT_TOKEN !== undefined &&
+    !s.MARFA_POSTHOG_HOST
+  ) {
     refuse("MARFA_POSTHOG_PROJECT_TOKEN", "needs MARFA_POSTHOG_HOST set too");
   }
   // Stated rather than inferred: `NODE_ENV` says how the image was built,
@@ -937,6 +961,45 @@ const settingsSchema = z.object(settingsShape).superRefine((s, ctx) => {
     );
   }
 });
+
+/** Edits (insert, delete, substitute) between two names. */
+function editDistance(a: string, b: string): number {
+  let previous = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j++) {
+      current[j] = Math.min(
+        (previous[j] ?? 0) + 1,
+        (current[j - 1] ?? 0) + 1,
+        (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length] ?? 0;
+}
+
+/**
+ * An unknown `MARFA_*` name close to a setting's, which is most likely that
+ * setting misspelled and so silently left at its default. Warned rather
+ * than refused: test, client and device variables share the prefix.
+ */
+function misspelledSettings(env: Record<string, string | undefined>): string[] {
+  const known = new Set(SETTING_NAMES);
+  const warnings: string[] = [];
+  for (const name of Object.keys(env)) {
+    if (!name.startsWith("MARFA_") || known.has(name)) continue;
+    const near = SETTING_NAMES.find(
+      (setting) => editDistance(name, setting) <= 2,
+    );
+    if (near !== undefined) {
+      warnings.push(
+        `${name} is not a setting and is ignored; did you mean ${near}?`,
+      );
+    }
+  }
+  return warnings;
+}
 
 /** A boot refused over its settings. The message names every bad one. */
 export class SettingsError extends Error {
@@ -975,9 +1038,14 @@ function readVersionFile(): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
-  const parsed: unknown = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new SettingsError(["version.json is not valid JSON"]);
+  }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new SettingsError(["version.json: must hold a JSON object"]);
+    throw new SettingsError(["version.json must hold a JSON object"]);
   }
   return parsed as Record<string, unknown>;
 }
@@ -1003,6 +1071,7 @@ export function loadConfig(
     throw new SettingsError(problems);
   }
   const s = result.data;
+  const warnings = misspelledSettings(env);
   const versionFile = readVersionFile();
   const sha = versionFile?.sha;
   const placement = {
@@ -1131,6 +1200,7 @@ export function loadConfig(
     heartbeatIntervalMs: s.MARFA_HEARTBEAT_INTERVAL_MS,
     housekeepingPollIntervalMs: s.MARFA_HOUSEKEEPING_POLL_INTERVAL_MS,
     sseMaxViewers: s.MARFA_SSE_MAX_VIEWERS,
+    ...(warnings.length > 0 && { settingWarnings: warnings }),
   };
 }
 

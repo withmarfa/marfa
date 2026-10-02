@@ -168,9 +168,10 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
  * stream only what its own process wrote.
  */
 const emitter = new EventEmitter();
-// Every SSE viewer listens here, and `MARFA_SSE_MAX_VIEWERS` is what bounds
-// them, so a listener count past any fixed number is expected rather than
-// a leak worth Node's warning.
+// Each open event stream and the webhook delivery each listen here, so the
+// count grows with the number of viewers, which is uncapped unless
+// `MARFA_SSE_MAX_VIEWERS` caps it. Node's warning at a fixed count would
+// fire on ordinary load rather than on a leak.
 emitter.setMaxListeners(0);
 
 let eventLogStore: EventLogStore | null = null;
