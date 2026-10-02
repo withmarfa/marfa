@@ -265,6 +265,16 @@ describe("clientIpMiddleware", () => {
   }
 
   it("drops a client address header the client sent", async () => {
+    // The witness: without the middleware, the header reaches the route.
+    const bare = new Hono<AppEnv>();
+    bare.get("/", (c) =>
+      c.text(c.req.raw.headers.get(CLIENT_ADDRESS_HEADER) ?? "none"),
+    );
+    const through = await bare.request("/", {
+      headers: { [CLIENT_ADDRESS_HEADER]: "198.51.100.1" },
+    });
+    expect(await through.text()).toBe("198.51.100.1");
+
     const res = await appWith().request("/", {
       headers: { [CLIENT_ADDRESS_HEADER]: "198.51.100.1" },
     });
