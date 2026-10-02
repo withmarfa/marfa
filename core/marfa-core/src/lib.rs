@@ -1567,6 +1567,26 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_edge_write_never_brings_back_an_edge_the_copy_let_go_of() {
+        let core = held_copy();
+        let unlinked = core.delete_edge("link").unwrap();
+        {
+            let conn = core.conn().unwrap();
+            // The witness: while its source is held, a refusal puts it back.
+            assert!(store::beneath_edge(&conn, "link").unwrap().is_some());
+            store::evict_item(&conn, "row", &[]).unwrap();
+        }
+        refuse(&core, &unlinked);
+        let conn = core.conn().unwrap();
+        assert_eq!(
+            store::edge_by_id(&conn, "link").unwrap(),
+            None,
+            "a refused delete put back an edge whose source left the copy"
+        );
+        assert_eq!(store::beneath_edge(&conn, "link").unwrap(), None);
+    }
+
+    #[test]
     fn a_refused_write_with_content_stays_through_a_clearing_until_it_is_discarded() {
         let core = held_copy();
         let edited = core
@@ -2558,10 +2578,10 @@ mod tests {
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
         let older = made(
             "older.sqlite",
-            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '0');"),
+            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '1');"),
         );
         let unversioned = made("unversioned.sqlite", meta);
-        for (path, found) in [(&older, "0"), (&unversioned, "none")] {
+        for (path, found) in [(&older, "1"), (&unversioned, "none")] {
             assert_eq!(
                 refusal(path),
                 CoreError::WrongSchema {

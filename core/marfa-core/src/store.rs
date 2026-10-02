@@ -26,7 +26,7 @@ pub const META_HYDRATE_STATE: &str = "hydrate_state";
 /// held one is told from an instance with no types.
 pub const META_CATALOG_VERSION: &str = "catalog_version";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "1";
+pub const SCHEMA_VERSION: &str = "0";
 
 /// Hashed over `schema.sql` without its comments, so a comment moves no hash.
 #[cfg(test)]
@@ -1560,12 +1560,7 @@ pub fn block_creates_naming(conn: &Connection, source: &str) -> Result<Vec<Strin
 
 pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let unpinned = unpin(conn, id)?;
-    let removed = remove_item(
-        conn,
-        id,
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        &[],
-    )?;
+    let removed = remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
     Ok(removed || unpinned)
 }
 
@@ -1574,15 +1569,18 @@ pub fn purge_item(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 pub fn evict_item(conn: &Connection, id: &str, whole: &[String]) -> Result<bool, CoreError> {
     let kept = vec!["?"; whole.len()].join(", ");
     let edges = if whole.is_empty() {
-        "DELETE FROM edges WHERE source_id = ?1".to_string()
+        "source_id = ?1".to_string()
     } else {
-        format!("DELETE FROM edges WHERE source_id = ?1 AND edge_type NOT IN ({kept})")
+        format!("source_id = ?1 AND edge_type NOT IN ({kept})")
     };
     remove_item(conn, id, &edges, whole)
 }
 
-/// Whether the copy changed: a purge of an item already evicted still takes
-/// the edges held items drew to it.
+/// The one way a row leaves the copy, with the edges `edges` names (a
+/// condition on `edges`, `?1` the row's id, then `kept`): what is kept
+/// beneath them and any read-back owed for them go too, so a refusal cannot
+/// put back what the copy let go of. Whether the copy changed: a purge of an
+/// item already evicted still takes the edges held items drew to it.
 fn remove_item(
     conn: &Connection,
     id: &str,
@@ -1596,11 +1594,18 @@ fn remove_item(
         [id],
     )?;
     conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    let edges = conn.execute(
-        edges,
-        params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
-    )?;
-    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? + edges > 0)
+    let leaving: Vec<String> = conn
+        .prepare(&format!("SELECT id FROM edges WHERE {edges}"))?
+        .query_map(
+            params_from_iter(std::iter::once(id).chain(kept.iter().map(String::as_str))),
+            |row| row.get(0),
+        )?
+        .collect::<Result<_, _>>()?;
+    let mut changed = false;
+    for edge in leaving {
+        changed |= forget_edge(conn, &edge)?;
+    }
+    Ok(conn.execute("DELETE FROM items WHERE id = ?1", [id])? > 0 || changed)
 }
 
 pub fn whole_edge_types(conn: &Connection) -> Result<Vec<String>, CoreError> {
@@ -1633,7 +1638,7 @@ pub fn let_go_of_untaken_edge(conn: &Connection, id: &str) -> Result<bool, CoreE
     {
         return Ok(false);
     }
-    delete_edge(conn, id)
+    forget_edge(conn, id)
 }
 
 /// Whether it was not pinned already.
@@ -1689,11 +1694,15 @@ pub fn upsert_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> 
     Ok(())
 }
 
+/// Takes the edge out of what the copy shows and nothing else: for a write
+/// of this device's laid over it. An edge leaving the copy goes by
+/// `forget_edge`.
 pub fn delete_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn.execute("DELETE FROM edges WHERE id = ?1", [id])? > 0)
 }
 
-/// An edge the server no longer holds.
+/// The one way an edge leaves the copy, with what is kept beneath it and any
+/// read-back owed for it.
 pub fn forget_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     drop_beneath(conn, Subject::Edge, id)?;
     settle_read_back(conn, Subject::Edge, id)?;
@@ -2244,18 +2253,7 @@ pub fn forget_item(conn: &Connection, id: &str) -> Result<(), CoreError> {
 
 /// `forget_item`, keeping a pin.
 fn forget_row(conn: &Connection, id: &str) -> Result<(), CoreError> {
-    drop_beneath(conn, Subject::Item, id)?;
-    settle_read_back(conn, Subject::Item, id)?;
-    conn.execute(
-        "DELETE FROM items_fts WHERE rowid IN (SELECT seq FROM items WHERE id = ?1)",
-        [id],
-    )?;
-    conn.execute("DELETE FROM items WHERE id = ?1", [id])?;
-    conn.execute("DELETE FROM tags WHERE item_id = ?1", [id])?;
-    conn.execute(
-        "DELETE FROM edges WHERE source_id = ?1 OR target_id = ?1",
-        [id],
-    )?;
+    remove_item(conn, id, "source_id = ?1 OR target_id = ?1", &[])?;
     Ok(())
 }
 
@@ -2429,7 +2427,15 @@ pub fn put_back(conn: &Connection, row: &QueuedWrite) -> Result<(), CoreError> {
                 delete_edge(conn, id)?;
                 return drop_beneath(conn, Subject::Edge, id);
             }
-            if let Some(held) = beneath_edge(conn, id)? {
+            // Not where the copy has since let its source go.
+            if let Some(held) = beneath_edge(conn, id)?
+                && takes_edge(
+                    conn,
+                    &held.source_id,
+                    &held.edge_type,
+                    &whole_edge_types(conn)?,
+                )?
+            {
                 upsert_edge(conn, &held.as_wire())?;
             }
             lay_waiting_edge_writes_over(conn, id)?;
@@ -3607,6 +3613,28 @@ mod tests {
             "the write moved onto the row does not follow the row's own write ahead of it"
         );
         assert_eq!(queued_write(&conn, &own.id).unwrap().unwrap().follows, None);
+    }
+
+    #[test]
+    fn a_store_made_before_the_tables_beneath_and_read_backs_opens_and_gains_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("older.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            upsert_item(
+                &conn,
+                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
+                None,
+                &Indexing::default(),
+            )
+            .unwrap();
+            conn.execute_batch("DROP TABLE beneath; DROP TABLE read_backs;")
+                .unwrap();
+        }
+        let conn = open(&path).unwrap();
+        assert!(item_held(&conn, "row").unwrap());
+        assert_eq!(beneath_item(&conn, "row").unwrap(), None);
+        assert!(owed_read_backs(&conn).unwrap().is_empty());
     }
 
     #[test]

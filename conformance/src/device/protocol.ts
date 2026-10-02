@@ -183,7 +183,7 @@ export interface QueuedWrite {
    *  never acts on one (`queue-and-verdicts.md` 15). */
   answer: string | null;
   /** The refusal read into its parts, on `refused` (`queue-and-verdicts.md`
-   *  12). */
+   *  48). */
   refusal: WriteRefusal | null;
   /** The body the write carries, as it goes or went to the server, so a
    *  refused write's content can be read back (`queue-and-verdicts.md`
@@ -196,7 +196,7 @@ export interface QueuedWrite {
 }
 
 /** A refused write's refusal, read from the server's envelope once
- *  (`queue-and-verdicts.md` 12). */
+ *  (`queue-and-verdicts.md` 48). */
 export interface WriteRefusal {
   /** The server's code verbatim, or the drain's sentence for a write it
    *  refused unsent. */
