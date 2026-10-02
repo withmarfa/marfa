@@ -20,6 +20,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
   requireAuth,
+  requireEdgePermission,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -249,7 +250,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
+    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -282,10 +283,14 @@ const createEdgeTypeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "edge_permission_denied",
+          ]),
         },
       },
-      description: "`metadata.edge_types:write` required",
+      description:
+        "`forbidden`: `metadata.edge_types:write` required. `edge_permission_denied`: the credential's edge map does not grant write on the id or on the `reverse_name`, which `details.edge_type` names.",
     },
     409: {
       content: {
@@ -413,6 +418,12 @@ export function edgeTypeRoutes(storage: Storage) {
         ErrorCode.VALIDATION_ERROR,
         "Invalid edge-type identifier",
       );
+    }
+    // The metadata permission says the key may register; its edge map says
+    // which names. A reverse name is claimed as an id is, so it is asked too:
+    // otherwise one key could take a name another key was minted for.
+    for (const name of [body.id, body.reverse_name]) {
+      if (name !== undefined) requireEdgePermission(c, name, "write");
     }
     // A registered edge type does not inherit: pull the raw body and reject
     // `extends` explicitly. Zod's default .strip() would silently drop it —

@@ -172,7 +172,7 @@ pub enum ListTypesError {
 pub enum RegisterTypeError {
     Status400(models::InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenRefusal),
+    Status403(models::ForbiddenOrTypeNotPermittedRefusal),
     Status409(models::LinkTakenOrTypeAlreadyExistsRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status422(models::CompatibleWithViolationRefusal),
@@ -411,7 +411,7 @@ pub fn list_types(
     }
 }
 
-/// Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.
+/// Registers a type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; a reserved root rejects with `403 forbidden`, and ancestor-field redefinitions and property names shadowing first-class `Item` fields reject with `400`, as does a `link_field` naming anything but a string field the type declares or inherits, or one whose name holds a double quote or a backslash (`invalid_schema`). A type registered under an identifier starts with no tombstones, even those the purge of a row a forced delete left under it recorded. Every credential needs the `metadata.types:write` scope, which is off by default, and a type map granting write on the identifier, so a key registers only the types it may write. The operator key is no exception: this door reads the map like any other.
 pub fn register_type(
     configuration: &configuration::Configuration,
     params: RegisterTypeParams,
