@@ -611,14 +611,19 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                 }
                 let written = output::line_of(change, json, || {
                     format!(
-                        "{} {} (cursor {})",
+                        "{} {} (cursor {}){}",
                         change.event,
                         change
                             .item_id
                             .as_deref()
                             .or(change.edge_id.as_deref())
                             .unwrap_or("-"),
-                        change.cursor
+                        change.cursor,
+                        change
+                            .reason
+                            .as_deref()
+                            .map(|reason| format!(": {reason}"))
+                            .unwrap_or_default()
                     )
                 });
                 if let Err(error) = written {

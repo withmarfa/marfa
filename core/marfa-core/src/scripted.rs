@@ -28,6 +28,11 @@ pub enum Answer {
         then: Then,
     },
     Stall,
+    /// `answer`, once `after` has passed, so callers can overlap.
+    Slow {
+        after: Duration,
+        answer: Box<Answer>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -216,11 +221,19 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
         }
     };
     let mut stream = stream;
-    let answer = answer.unwrap_or_else(|| Answer::Json {
+    let mut answer = answer.unwrap_or_else(|| Answer::Json {
         status: 404,
         body: format!(r#"{{"error":{{"code":"not_found","message":"no answer for {path}"}}}}"#),
         headers: Vec::new(),
     });
+    while let Answer::Slow {
+        after,
+        answer: then,
+    } = answer
+    {
+        thread::sleep(after);
+        answer = *then;
+    }
     match answer {
         Answer::Json {
             status,
@@ -309,6 +322,7 @@ fn serve(stream: TcpStream, script: &Mutex<Script>, stopping: &AtomicBool) {
                 thread::sleep(Duration::from_millis(5));
             }
         }
+        Answer::Slow { .. } => unreachable!("taken apart above"),
     }
     let _ = stream.shutdown(Shutdown::Both);
 }

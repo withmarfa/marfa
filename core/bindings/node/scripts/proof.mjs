@@ -100,9 +100,16 @@ if (phase === "hydrate") {
   const offline = await core.drain();
   const answered = offline.verdicts.filter((v) => v.verdict).length;
   console.log(
-    `drain with the server away: sent ${offline.sent}, answered ${answered}`,
+    `drain with the server away: answered ${offline.answered}, not delivered ${offline.undelivered}: ${offline.unavailable ?? "nothing said"}`,
   );
-  expect(answered === 0, "a drain with the server away answered a write");
+  expect(
+    answered === 0 && offline.answered === 0,
+    "a drain with the server away answered a write",
+  );
+  expect(
+    offline.unavailable !== null && offline.unavailable !== undefined,
+    "a drain with the server away did not say it could not reach it",
+  );
   expect(
     core.queue().every((write) => write.refusals === 0),
     "a drain with the server away counted a refusal against a write",
@@ -120,7 +127,7 @@ if (phase === "hydrate") {
   );
 } else if (phase === "drain") {
   const report = await core.drain();
-  console.log(`drain: sent ${report.sent}, held ${report.held}`);
+  console.log(`drain: answered ${report.answered}, held ${report.held}`);
   for (const entry of report.verdicts) {
     console.log(
       `  ${entry.kind}  ${entry.itemId ?? "-"}  ${describe(entry.verdict)}`,

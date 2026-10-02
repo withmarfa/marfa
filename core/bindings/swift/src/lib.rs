@@ -540,10 +540,18 @@ pub struct DrainVerdict {
 /// What a drain did.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct DrainReport {
-    pub sent: u64,
+    /// Writes the server answered this drain, whatever it answered.
+    pub answered: u64,
     pub held: u64,
+    /// Writes it could not deliver, each still waiting, uncounted, for the
+    /// next drain.
+    pub undelivered: u64,
+    /// Why the drain ended before the queue was through: the server could
+    /// not be reached, failed, or asked to be left alone for a while.
+    pub unavailable: Option<String>,
     pub verdicts: Vec<DrainVerdict>,
-    /// Why the drain stopped before the queue was empty, where it did.
+    /// Why the drain stopped: the server refused the credential, and every
+    /// write waits until it is replaced.
     pub stopped: Option<String>,
     /// The sources the server said this credential's key does not claim,
     /// where a create naming one was refused for it: every create naming
@@ -1025,8 +1033,10 @@ fn drained(report: marfa_core::DrainReport) -> Result<DrainReport, MarfaError> {
         });
     }
     Ok(DrainReport {
-        sent: report.sent as u64,
+        answered: report.answered as u64,
         held: report.held as u64,
+        undelivered: report.undelivered as u64,
+        unavailable: report.unavailable,
         verdicts,
         stopped: report.stopped,
         unclaimed_sources: report.unclaimed_sources,
@@ -1060,13 +1070,17 @@ pub struct Thumbnail {
 /// What a held stream changed in the copy: an event it applied, named by the
 /// event's type with the item or edge it was about, or `catalog.changed`,
 /// naming neither, where a stream it opened read a catalog that differs from
-/// the one held. `cursor` is the cursor held after it.
+/// the one held. Or what became of the server: `server.unreachable`, with
+/// `reason`, once when a stream cannot be had, and `server.reachable` once
+/// when one is had again, which is when to drain what waited. `cursor` is
+/// the cursor held after it.
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct Change {
     pub event: String,
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
+    pub reason: Option<String>,
 }
 
 impl From<&marfa_core::Change> for Change {
@@ -1076,6 +1090,7 @@ impl From<&marfa_core::Change> for Change {
             item_id: change.item_id.clone(),
             edge_id: change.edge_id.clone(),
             cursor: change.cursor.clone(),
+            reason: change.reason.clone(),
         }
     }
 }
@@ -1952,13 +1967,6 @@ mod tests {
                         ("/types", _) => stream.write_all(json(r#"{"data":[{"id":"core.note","display_hints":{"title_field":"title"}}],"next_cursor":null}"#).as_bytes()),
                         ("/edge-types", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
                         ("/keys/current", _) => stream.write_all(json(r#"{"type_permissions":{"*":"write"}}"#).as_bytes()),
-                        ("/items", _) if head.starts_with("POST") => {
-                            let body = r#"{"error":{"code":"forbidden","message":"not claimed","details":{"source":"notes"}}}"#;
-                            stream.write_all(format!(
-                                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                                body.len()
-                            ).as_bytes())
-                        }
                         ("/items", _) => stream.write_all(json(r#"{"data":[],"next_cursor":null}"#).as_bytes()),
                         ("/events", false) => stream.write_all(format!("{events}event: stream_cursor\ndata: {{\"type\":\"stream_cursor\",\"cursor\":\"10\"}}\n\n").as_bytes()),
                         ("/events", true) => {
@@ -1977,29 +1985,40 @@ mod tests {
         Quiet { url, streams }
     }
 
+    /// The scenario is the contract's (`queue-and-verdicts.md` 40) and the
+    /// device fixtures drive it through the core; what is this binding's own
+    /// is how the report crosses.
     #[test]
-    fn a_drain_names_a_source_its_key_does_not_claim() {
-        let server = quiet();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite").display().to_string();
-        let core = MarfaCore::open(path, Some(server.url.clone()), Some("k".into())).unwrap();
-        core.hydrate(vec!["core.note".into()], Tier::Library)
-            .unwrap();
-        core.create_item(Draft {
-            r#type: "core.note".into(),
-            id: None,
-            properties_json: r#"{"title":"a"}"#.into(),
-            tags: vec![],
-            tier: None,
-            source: Some("notes".into()),
-            source_id: Some("a.md".into()),
-            occurred_at: None,
-            base_version: Some(0),
+    fn a_drain_report_crosses_with_what_it_answered_and_could_not_deliver() {
+        let report = drained(marfa_core::DrainReport {
+            answered: 2,
+            held: 1,
+            undelivered: 3,
+            unavailable: Some("the server could not be reached".into()),
+            verdicts: Vec::new(),
+            stopped: None,
+            unclaimed_sources: vec!["notes".into()],
+            retry_after_seconds: Some(7),
         })
         .unwrap();
-        let report = core.drain().unwrap();
-        assert_eq!(report.unclaimed_sources, vec!["notes".to_string()]);
-        assert_eq!(report.sent, 1);
+        assert_eq!(
+            (
+                report.answered,
+                report.held,
+                report.undelivered,
+                report.unavailable.as_deref(),
+                report.unclaimed_sources,
+                report.retry_after_seconds,
+            ),
+            (
+                2,
+                1,
+                3,
+                Some("the server could not be reached"),
+                vec!["notes".to_string()],
+                Some(7)
+            )
+        );
     }
 
     struct Told(std::sync::mpsc::Sender<Option<MarfaError>>);

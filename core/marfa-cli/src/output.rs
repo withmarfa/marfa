@@ -219,7 +219,8 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             }
             lines.push(line);
         }
-        lines.push(format!("sent {}, held {}", drain.sent, drain.held));
+        lines.push(format!("answered {}, held {}", drain.answered, drain.held));
+        lines.extend(undelivered(drain));
         if let Some(wait) = drain.retry_after_seconds {
             lines.push(format!(
                 "the server asked for {wait}s before the next drain"
@@ -256,6 +257,20 @@ fn refused(refusal: &marfa_core::Refusal) -> String {
         said.push_str(&format!(" {}: {}", field.field, field.message));
     }
     said
+}
+
+/// Said apart from the answered count, so writes that went nowhere never
+/// read as sent.
+pub fn undelivered(drain: &DrainReport) -> Option<String> {
+    match (drain.undelivered, &drain.unavailable) {
+        (0, None) => None,
+        (count, Some(why)) => Some(format!(
+            "{count} write(s) not delivered, waiting for the next drain: {why}"
+        )),
+        (count, None) => Some(format!(
+            "{count} write(s) not delivered, waiting for the next drain"
+        )),
+    }
 }
 
 /// The verdicts say `credential_refused`, which alone reads as a key that has

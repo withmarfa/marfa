@@ -1,5 +1,6 @@
-//! One pass per call: each sendable row is attempted once. Retrying inside a
-//! drain until the network came back would make it a call with no bound.
+//! One pass per call: each sendable row is attempted once, and the pass ends
+//! at the first failure of the environment. Going on would ask a server that
+//! cannot answer once for every row, a connection timeout each.
 
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -16,8 +17,16 @@ use crate::{Core, Result};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainReport {
-    pub sent: usize,
+    /// Writes the server answered this pass, whatever it answered.
+    pub answered: usize,
     pub held: usize,
+    /// Writes this pass could not deliver: the one the server could not take
+    /// and every write left behind it, and one whose bytes could not be
+    /// opened. Each waits, uncounted, for the next drain.
+    pub undelivered: usize,
+    /// Why the pass ended before the queue was through: the server could not
+    /// be reached, failed, or asked to be left alone for a while.
+    pub unavailable: Option<String>,
     /// Also holds rows settled without being sent, by another write's answer.
     pub verdicts: Vec<DrainVerdict>,
     /// Set when a refused credential parks the queue. An answer on another
@@ -176,17 +185,22 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
         // Looks environmental, but clears only when a person replaces the
         // credential.
         (401, _) => Classified::BlockQueue(BlockedReason::CredentialRefused),
+        (429, _) => Classified::Environmental,
+        (500..=599, _) => Classified::Environmental,
+        // Environmental despite the 4xx: a proxy emits 408 about the
+        // network, and 425 asks for the same request again.
+        (408 | 425, _) => Classified::Environmental,
+        // Not the server's: a proxy or a tunnel in front of it, which says
+        // nothing of the write. Counted rather than refused, so a proxy that
+        // never lets the write through reaches `dead` instead of ending a
+        // write the server never saw.
+        (400..=499, _) if !answer.contract_named => Classified::Counted,
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
         // The server has not finished answering this key, and nothing clears
         // it on its own, so it counts.
         (409, "idempotency_key_in_flight") => Classified::Counted,
-        (429, _) => Classified::Environmental,
-        (500..=599, _) => Classified::Environmental,
-        // Environmental despite the 4xx: a proxy emits 408 about the
-        // network, and 425 asks for the same request again.
-        (408 | 425, _) => Classified::Environmental,
         // Not only 400, 403 and 404: a 405 or 410 read as retryable would
         // loop on a refusal that never changes.
         (400..=499, _) => Classified::Contract,
@@ -448,27 +462,38 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
         body,
         retry_after_seconds: reply.retry_after_seconds,
         replayed: false,
+        contract_named: reply.contract.is_some(),
     })
 }
 
-pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
+pub fn drain(core: &Core) -> Result<DrainReport> {
+    // The handle before the server, so a second opener with no server is
+    // told the real reason it may not write.
     core.lock.refuse_unless_writer()?;
+    let http = core.http()?;
     {
         let conn = core.conn()?;
         // Before anything is read: left blocked, a self-clearing row would
         // make this drain skip a dependency that has since been answered.
         store::unblock_self_clearing(&conn)?;
     }
-    read_owed_backs(core)?;
-
     let mut report = DrainReport {
-        sent: 0,
+        answered: 0,
         held: 0,
+        undelivered: 0,
+        unavailable: None,
         verdicts: Vec::new(),
         stopped: None,
         unclaimed_sources: Vec::new(),
         retry_after_seconds: None,
     };
+
+    // A server that cannot be read cannot be written to either, so nothing
+    // is sent.
+    if let Some(why) = read_owed_backs(core)? {
+        report.unavailable = Some(why.reason);
+        report.retry_after_seconds = why.retry_after_seconds;
+    }
 
     let all = {
         let conn = core.conn()?;
@@ -515,6 +540,14 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
                 report.held += 1;
                 continue;
             }
+            // The server cannot take writes: what is held stays held, so the
+            // queue still says what waits on what, and nothing else is
+            // touched or counted.
+            _ if report.unavailable.is_some() => {
+                waiting.insert(row.id.clone());
+                report.undelivered += 1;
+                continue;
+            }
             Readiness::RefusedWith(reason) => {
                 {
                     let mut conn = core.conn()?;
@@ -524,12 +557,13 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
                     tx.commit()?;
                 }
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
-                reconcile(core, row)?;
+                let unread = reconcile(core, row)?;
                 report.verdicts.push(verdict_of(
                     row,
                     &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
                     None,
                 ));
+                report.unavailable = unread;
                 continue;
             }
             Readiness::Ready => {}
@@ -570,6 +604,7 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
                     // A locked file or a process out of handles is not the
                     // write's fault: unanswered and uncounted.
                     Err(error) => {
+                        report.undelivered += 1;
                         report.verdicts.push(verdict_of(
                             row,
                             &Settled::plain(
@@ -602,7 +637,6 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
             answer => answer,
         };
-        report.sent += 1;
         if let Ok(answer) = &answer
             && let Some(wait) = answer.retry_after_seconds
         {
@@ -614,7 +648,26 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
         }
 
         let class = refine(row, &payload, &answer, classify(&answer));
-        let settled = settle(core, row, &answer, class, shape)?;
+        let settled = match settle(core, row, &answer, class, shape) {
+            Ok(settled) => settled,
+            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
+            // The server answered and the copy could not take the answer: a
+            // further attempt may clear it, nothing clears it on its own.
+            Err(error) => {
+                let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
+                let mut settled = finish_counted(
+                    core,
+                    row,
+                    refusals,
+                    answer.as_ref().ok().map(|answer| answer.body.clone()),
+                )?;
+                settled.reason = Some(format!("the copy could not take the answer: {error}"));
+                settled
+            }
+        };
+        if answer.is_ok() && (settled.unavailable.is_none() || settled.verdict.is_some()) {
+            report.answered += 1;
+        }
         if let Some(wait) = settled.retry_after_seconds {
             report.retry_after_seconds = Some(
                 report
@@ -667,9 +720,54 @@ pub fn drain(core: &Core, http: &Http) -> Result<DrainReport> {
             ));
             break;
         }
+        if settled.unavailable.is_some() {
+            if settled.verdict.is_none() {
+                report.undelivered += 1;
+            }
+            report.unavailable = settled.unavailable;
+        }
     }
 
     Ok(report)
+}
+
+/// Why a request could not get through, in words, where the failure is the
+/// environment's; `None` where the server answered about the write.
+fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String> {
+    match answer {
+        Err(error) => unavailable_by(error),
+        Ok(answer) => match answer.status {
+            429 => Some(format!(
+                "the server is limiting requests (429){}",
+                answer
+                    .retry_after_seconds
+                    .map(|wait| format!(" and asked for {wait}s before the next"))
+                    .unwrap_or_default()
+            )),
+            408 | 425 | 500..=599 => Some(format!(
+                "the server could not take the write now ({}{})",
+                answer.status,
+                if answer.code.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", answer.code)
+                }
+            )),
+            _ => None,
+        },
+    }
+}
+
+fn unavailable_by(error: &CoreError) -> Option<String> {
+    match error {
+        CoreError::Network(reason) => Some(format!("the server could not be reached: {reason}")),
+        CoreError::RateLimited { .. } | CoreError::Server { .. } if error.is_environmental() => {
+            Some(format!(
+                "the server could not take the request now: {error}"
+            ))
+        }
+        _ => None,
+    }
 }
 
 struct AnsweredAt<'a> {
@@ -878,6 +976,9 @@ struct Settled {
     unclaimed: Option<String>,
     /// From the read a landed create makes, besides the answer's own.
     retry_after_seconds: Option<u64>,
+    /// Set where this write, or a read it needed, could not get through: the
+    /// pass ends here.
+    unavailable: Option<String>,
 }
 
 impl Settled {
@@ -893,6 +994,7 @@ impl Settled {
             also: Vec::new(),
             unclaimed: None,
             retry_after_seconds: None,
+            unavailable: None,
         }
     }
 }
@@ -1103,7 +1205,10 @@ fn settle(
                 }
             }
         }
-        Classified::Environmental => Ok(Settled::plain(None, None, row.refusals)),
+        Classified::Environmental => Ok(Settled {
+            unavailable: unavailable(answer),
+            ..Settled::plain(None, None, row.refusals)
+        }),
         Classified::Contract => {
             let code = answer
                 .as_ref()
@@ -1119,12 +1224,11 @@ fn settle(
                 store::record_refusal(&tx, row, &code, envelope.as_deref(), true)?;
                 tx.commit()?;
             }
-            reconcile(core, row)?;
-            Ok(Settled::plain(
-                Some(Verdict::Refused),
-                Some(code),
-                row.refusals,
-            ))
+            let unread = reconcile(core, row)?;
+            Ok(Settled {
+                unavailable: unread,
+                ..Settled::plain(Some(Verdict::Refused), Some(code), row.refusals)
+            })
         }
         Classified::Counted => {
             let conn = core.conn()?;
@@ -1237,18 +1341,16 @@ fn land(
             Ok(Some(found)) => Some(found),
             // The server keeps its answer under the create's key, so the next
             // drain is answered the same way and reads again.
-            Err(CoreError::Network(_) | CoreError::Server { .. }) => {
-                return Ok(Settled::plain(None, None, row.refusals));
-            }
-            Err(CoreError::RateLimited {
-                retry_after_seconds,
-                ..
-            }) => {
+            Err(error) if error.is_environmental() => {
                 return Ok(Settled {
-                    retry_after_seconds,
+                    retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
+                    unavailable: unavailable_by(&error),
                     ..Settled::plain(None, None, row.refusals)
                 });
             }
+            // Not read, as for any answer on another contract: the pass
+            // ends, and the create goes again under its key.
+            Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
             Err(CoreError::Unauthorized { .. }) => {
                 return settle(
                     core,
@@ -1317,35 +1419,50 @@ fn finish_counted(
 /// A read rather than a wait for catch-up: a refused write produces no
 /// event. The verdict and the copy put back are recorded already, and so is
 /// the read owed, so a read that fails is tried by the next drain; only an
-/// answer on another contract fails this, ending the pass.
-fn reconcile(core: &Core, row: &QueuedWrite) -> Result<()> {
+/// answer on another contract fails this, ending the pass. Answers why where
+/// the server could not be read, which ends the pass too.
+fn reconcile(core: &Core, row: &QueuedWrite) -> Result<Option<String>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
-        return Ok(());
+        return Ok(None);
     };
     match read_owed(core, &owed).and_then(|read| apply_owed(core, &owed, &read)) {
         Err(error @ CoreError::ContractMismatch { .. }) => Err(error),
-        Err(_) => {
+        Err(error) => {
             // A refused create's id is the server's only if a read finds it.
             if row.kind == WriteKind::CreateItem {
                 store::unpin(&*core.conn()?, &owed.id)?;
             }
-            Ok(())
+            Ok(unavailable_by(&error))
         }
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(None),
     }
 }
 
+struct Unreadable {
+    reason: String,
+    retry_after_seconds: Option<u64>,
+}
+
 /// Every read-back a refusal left owed, tried before anything is sent. One
-/// that fails again stays owed.
-fn read_owed_backs(core: &Core) -> Result<()> {
+/// that fails again stays owed, and one that cannot get through ends the
+/// pass before anything is sent.
+fn read_owed_backs(core: &Core) -> Result<Option<Unreadable>> {
     let owed = store::owed_read_backs(&*core.conn()?)?;
     for entry in owed {
         match read_owed(core, &entry).and_then(|read| apply_owed(core, &entry, &read)) {
             Err(error @ CoreError::ContractMismatch { .. }) => return Err(error),
-            _ => continue,
+            Err(error) => {
+                if let Some(reason) = unavailable_by(&error) {
+                    return Ok(Some(Unreadable {
+                        reason,
+                        retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
+                    }));
+                }
+            }
+            Ok(()) => {}
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn apply_owed(core: &Core, owed: &store::Owed, read: &ReadBack) -> Result<()> {
@@ -1831,6 +1948,130 @@ mod tests {
             vec![(blocked.id.clone(), Some(3)), (waiting.id.clone(), Some(3))],
             "the edits behind named one queued before the answered one, one already sent, one refused by the drain, or one of another row"
         );
+    }
+
+    /// A copy holding `rows` as the server answered them, each deleted
+    /// locally, so each is one write to a door of its own.
+    fn deleting(server: &crate::scripted::Scripted, rows: &[&str]) -> (tempfile::TempDir, Core) {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(crate::Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"core.note\"]").unwrap();
+            store::meta_set(&conn, store::META_SLICE_TIER, "library").unwrap();
+            for id in rows {
+                let item = store::testing::note(id, id, "", "2026-01-01T00:00:00Z");
+                store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+            }
+        }
+        for id in rows {
+            core.delete_item(id).unwrap();
+        }
+        (dir, core)
+    }
+
+    #[test]
+    fn drains_at_once_send_each_write_once_and_count_only_their_own() {
+        let server = crate::scripted::Scripted::start();
+        let rows = ["a", "b", "c"];
+        for id in rows {
+            server.on(
+                &format!("/items/{id}"),
+                vec![crate::scripted::Answer::Slow {
+                    after: std::time::Duration::from_millis(150),
+                    answer: Box::new(crate::scripted::json(200, r#"{"ok":true}"#)),
+                }],
+            );
+        }
+        let (_dir, core) = deleting(&server, &rows);
+
+        let answered: Vec<usize> = std::thread::scope(|scope| {
+            let drains: Vec<_> = (0..3)
+                .map(|_| scope.spawn(|| core.drain().unwrap().answered))
+                .collect();
+            drains
+                .into_iter()
+                .map(|drain| drain.join().unwrap())
+                .collect()
+        });
+
+        let sent: Vec<usize> = rows
+            .iter()
+            .map(|id| server.seen(&format!("/items/{id}")).len())
+            .collect();
+        assert_eq!(
+            sent,
+            [1, 1, 1],
+            "drains at once sent a write more than once"
+        );
+        assert_eq!(
+            answered.iter().sum::<usize>(),
+            3,
+            "the drains counted writes another drain had answered: {answered:?}"
+        );
+    }
+
+    #[test]
+    fn a_pass_ends_at_the_first_write_the_server_cannot_take() {
+        for (cannot, says) in [
+            (crate::scripted::refusal(503, "unavailable"), "503"),
+            (crate::scripted::refusal(429, "rate_limited"), "429"),
+            (crate::scripted::Answer::Stall, "reached"),
+        ] {
+            let server = crate::scripted::Scripted::start();
+            let rows = ["a", "b", "c"];
+            server.on("/items/a", vec![cannot]);
+            for id in &rows[1..] {
+                server.on(
+                    &format!("/items/{id}"),
+                    vec![crate::scripted::json(200, r#"{"ok":true}"#)],
+                );
+            }
+            let (_dir, core) = deleting(&server, &rows);
+            if says == "reached" {
+                // Gone rather than waited out: a refused connection.
+                drop(server);
+                let report = core.drain().unwrap();
+                assert!(
+                    report
+                        .unavailable
+                        .as_deref()
+                        .is_some_and(|why| why.contains(says)),
+                    "{report:?}"
+                );
+                assert_eq!((report.answered, report.undelivered), (0, 3));
+                continue;
+            }
+            let report = core.drain().unwrap();
+            assert_eq!(
+                (server.seen("/items/b").len(), server.seen("/items/c").len()),
+                (0, 0),
+                "the pass went on to the writes behind one the server could not take"
+            );
+            assert_eq!((report.answered, report.undelivered), (0, 3));
+            assert!(
+                report
+                    .unavailable
+                    .as_deref()
+                    .is_some_and(|why| why.contains(says)),
+                "{report:?}"
+            );
+            assert!(
+                core.queue()
+                    .unwrap()
+                    .iter()
+                    .all(|row| row.verdict.is_none() && row.refusals == 0),
+                "a write left behind was answered or counted"
+            );
+        }
     }
 
     #[test]

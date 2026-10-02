@@ -2313,18 +2313,22 @@ pub struct Drained {
 }
 
 impl Folder {
+    /// Its passes are one drain: another on the store waits for all of them.
     pub fn drain(&self) -> Result<Drained> {
-        let mut report = self.core.drain()?;
+        let one = self.core.one_drain();
+        let mut report = self.core.drain_held(&one)?;
         let mut rebased = 0;
-        while report.stopped.is_none() {
+        while report.stopped.is_none() && report.unavailable.is_none() {
             let now = self.rebase_thinned()? + self.make_edges_gone_before_their_move()?;
             if now == 0 {
                 break;
             }
             rebased += now;
-            let again = self.core.drain()?;
-            report.sent += again.sent;
+            let again = self.core.drain_held(&one)?;
+            report.answered += again.answered;
             report.held = again.held;
+            report.undelivered = again.undelivered;
+            report.unavailable = again.unavailable;
             report.verdicts.extend(again.verdicts);
             report.stopped = again.stopped;
             for source in again.unclaimed_sources {

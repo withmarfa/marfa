@@ -85,8 +85,113 @@ test("names a source its key does not claim", async (t) => {
     baseVersion: 0,
   });
   const report = await core.drain();
-  assert.equal(report.sent, 1);
+  assert.equal(report.answered, 1);
   assert.deepEqual(report.unclaimedSources, ["notes"]);
+});
+
+/** A server that takes every create, slowly, and counts the creates sent. */
+async function slowlyTaking() {
+  const sent = { creates: 0 };
+  const server = createServer((req, res) => {
+    const path = (req.url ?? "").split("?")[0];
+    const json = (
+      /** @type {number} */ status,
+      /** @type {unknown} */ body,
+    ) => {
+      res.writeHead(status, {
+        "content-type": "application/json",
+        "x-marfa-contract": CONTRACT,
+      });
+      res.end(JSON.stringify(body));
+    };
+    if (path === "/types") {
+      json(200, {
+        data: [{ id: "core.note", display_hints: { title_field: "title" } }],
+        next_cursor: null,
+      });
+    } else if (path === "/edge-types") {
+      json(200, { data: [], next_cursor: null });
+    } else if (path === "/keys/current") {
+      json(200, { type_permissions: { "*": "write" } });
+    } else if (path === "/items" && req.method === "POST") {
+      let text = "";
+      req.on("data", (chunk) => (text += chunk));
+      req.on("end", () => {
+        sent.creates += 1;
+        const body = JSON.parse(text);
+        const at = "2026-01-01T00:00:00.000Z";
+        setTimeout(
+          () =>
+            json(201, {
+              item: {
+                id: body.id,
+                type: body.type,
+                properties: body.properties,
+                state: "active",
+                tier: body.tier,
+                version: 1,
+                schema_version: 1,
+                source: "device",
+                source_id: null,
+                occurred_at: at,
+                created_at: at,
+                updated_at: at,
+              },
+            }),
+          20,
+        );
+      });
+    } else if (path === "/items") {
+      json(200, { data: [], next_cursor: null });
+    } else if (path === "/events") {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "x-marfa-contract": CONTRACT,
+      });
+      res.end(
+        ': connected\n\nevent: stream_cursor\ndata: {"type":"stream_cursor","cursor":"10"}\n\n',
+      );
+    } else {
+      res.writeHead(404).end();
+    }
+  });
+  await new Promise((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve(undefined)),
+  );
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("no port");
+  return {
+    url: `http://127.0.0.1:${address.port}`,
+    sent,
+    close: () => {
+      server.closeAllConnections();
+      server.close();
+    },
+  };
+}
+
+test("sends each write once however many drains run at once", async (t) => {
+  const server = await slowlyTaking();
+  t.after(server.close);
+  const dir = mkdtempSync(join(tmpdir(), "marfa-node-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const core = MarfaCore.open(join(dir, "core.sqlite"), server.url, "k");
+  await core.hydrate(["core.note"], Tier.Library);
+  for (let n = 0; n < 6; n += 1) {
+    core.createItem({ type: "core.note", properties: { title: `note ${n}` } });
+  }
+  const reports = await Promise.all([core.drain(), core.drain(), core.drain()]);
+  assert.equal(
+    server.sent.creates,
+    6,
+    "drains run at once sent the same writes more than once",
+  );
+  assert.equal(
+    reports.reduce((sum, report) => sum + report.answered, 0),
+    6,
+    "the drains counted writes they did not have answered",
+  );
 });
 
 /** A server that refuses every create, naming the field it would not take. */

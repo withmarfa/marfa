@@ -70,13 +70,14 @@ pub fn watch(
     stop_after: Option<Duration>,
     json: bool,
 ) -> Result<(), CliError> {
+    let server = session.server.url.clone();
     let folder = folders::opened(dir, Some(session))?;
     let stop = AtomicBool::new(false);
     let (sender, wakes) = mpsc::channel::<Wake>();
     std::thread::scope(|scope| {
         let server_wakes = sender.clone();
         let follower = scope.spawn(|| follow(&folder, &stop, server_wakes));
-        let watched = watch_files(&folder, dir, sender, &wakes, stop_after, json);
+        let watched = watch_files(&folder, dir, &server, sender, &wakes, stop_after, json);
         stop.store(true, Ordering::SeqCst);
         let followed = follower.join().map_err(|_| {
             CliError::Watch("the follow of the server's changes ended in a fault".into())
@@ -88,7 +89,9 @@ pub fn watch(
 enum Wake {
     File(notify::Result<notify::Event>),
     Server,
-    Ended(String),
+    /// Why the server cannot be reached, or `None` where it answers again.
+    Reach(Option<String>),
+    Ended(CoreError),
 }
 
 const RETRY_FIRST: Duration = Duration::from_secs(1);
@@ -102,8 +105,17 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
             if hydrated.is_some() {
                 let _ = wakes.send(Wake::Server);
             }
-            folder.core().follow(stop, |_| {
-                let _ = wakes.send(Wake::Server);
+            folder.core().follow(stop, |change| {
+                let _ = wakes.send(match change.event.as_str() {
+                    marfa_core::SERVER_UNREACHABLE => Wake::Reach(Some(
+                        change
+                            .reason
+                            .clone()
+                            .unwrap_or_else(|| "the event stream could not be opened".into()),
+                    )),
+                    marfa_core::SERVER_REACHABLE => Wake::Reach(None),
+                    _ => Wake::Server,
+                });
             })
         });
         match followed {
@@ -116,7 +128,7 @@ fn follow(folder: &Folder, stop: &AtomicBool, wakes: mpsc::Sender<Wake>) -> Resu
                 retry = next;
             }
             Err(error) => {
-                let _ = wakes.send(Wake::Ended(error.to_string()));
+                let _ = wakes.send(Wake::Ended(error.clone()));
                 return Err(error.into());
             }
         }
@@ -145,6 +157,7 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
 fn watch_files(
     folder: &Folder,
     dir: &Path,
+    server: &str,
     sender: mpsc::Sender<Wake>,
     events: &mpsc::Receiver<Wake>,
     stop_after: Option<Duration>,
@@ -169,6 +182,7 @@ fn watch_files(
     let mut standing: Option<Standing> = None;
     let mut last_full: Option<Instant> = None;
     let mut lists = folder.settings().and_then(|settings| settings.lists()).ok();
+    let mut reach = Reach::default();
     loop {
         if let Some(limit) = stop_after
             && started.elapsed() >= limit
@@ -193,9 +207,13 @@ fn watch_files(
             }
             Ok(Wake::File(Err(error))) => eprintln!("watch error: {error}"),
             Ok(Wake::Server) => {}
-            Ok(Wake::Ended(reason)) => {
+            Ok(Wake::Reach(lost)) => reach.told(server, lost, json)?,
+            Ok(Wake::Ended(error @ CoreError::Unauthorized { .. })) => {
+                return Err(refused_credential(server, &error));
+            }
+            Ok(Wake::Ended(error)) => {
                 return Err(CliError::Watch(format!(
-                    "the server's changes stopped reaching this folder: {reason}"
+                    "the server's changes stopped reaching this folder: {error}"
                 )));
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -210,7 +228,7 @@ fn watch_files(
         if full {
             last_full = Some(Instant::now());
         }
-        match step(folder, json, full, &mut standing) {
+        match step(folder, server, json, full, &mut standing, &mut reach) {
             // The follow is hydrating the copy; a later pass finds it whole.
             Err(CliError::Core(CoreError::HydrationIncomplete)) => {}
             other => other?,
@@ -221,9 +239,58 @@ fn watch_files(
     Ok(())
 }
 
+/// Whether the server could last be reached, so a watch says so once when it
+/// changes rather than at every pass.
+#[derive(Debug, Default)]
+struct Reach {
+    unreachable: bool,
+}
+
+impl Reach {
+    /// `lost` is why the server cannot be reached, or `None` where it answers.
+    fn told(&mut self, server: &str, lost: Option<String>, json: bool) -> Result<(), CliError> {
+        match lost {
+            Some(reason) if !self.unreachable => {
+                self.unreachable = true;
+                output::line_of(
+                    &serde_json::json!({ "server": server, "reachable": false, "reason": reason }),
+                    json,
+                    || {
+                        format!(
+                            "cannot reach the server at {server} ({reason}); edits wait here and go when it answers"
+                        )
+                    },
+                )
+            }
+            None if self.unreachable => {
+                self.unreachable = false;
+                output::line_of(
+                    &serde_json::json!({ "server": server, "reachable": true, "reason": null }),
+                    json,
+                    || format!("the server at {server} answers again"),
+                )
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The exit a one-off command gives a refused credential: nothing this watch
+/// sends can land until a person replaces it.
+fn refused_credential(server: &str, said: &CoreError) -> CliError {
+    CliError::Core(CoreError::Unauthorized {
+        code: "credential_refused".into(),
+        message: format!(
+            "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
+             queued writes wait until a working credential is kept, and the next watch or push sends them"
+        ),
+    })
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 struct Standing {
     root_gone: Option<String>,
+    undelivered: usize,
     lost: usize,
     unreached: usize,
     directories: Vec<String>,
@@ -246,9 +313,11 @@ struct Standing {
 
 fn step(
     folder: &Folder,
+    server: &str,
     json: bool,
     full: bool,
     standing: &mut Option<Standing>,
+    reach: &mut Reach,
 ) -> Result<(), CliError> {
     let settings = folder.send_settings_edit()?;
     let scanned = if full {
@@ -274,6 +343,11 @@ fn step(
         return Ok(());
     }
     let drained = folder.drain()?;
+    match &drained.report.unavailable {
+        Some(why) => reach.told(server, Some(why.clone()), json)?,
+        None if drained.report.answered > 0 => reach.told(server, None, json)?,
+        None => {}
+    }
     let pulled = folder.pull()?;
     let happened = scanned.created
         + scanned.updated
@@ -283,7 +357,7 @@ fn step(
         + scanned.deleted
         + scanned.moved_away
         + scanned.requeued
-        + drained.report.verdicts.len()
+        + drained.report.answered
         + drained.gave_way
         + pulled.written
         + pulled.rewritten
@@ -296,6 +370,7 @@ fn step(
         > 0;
     let now = Standing {
         root_gone: None,
+        undelivered: drained.report.undelivered,
         paused: (scanned.paused, pulled.paused),
         lost: scanned.lost,
         unreached: scanned.unreached,
@@ -363,8 +438,17 @@ fn step(
         .chain(now.embeds.iter().cloned())
         .collect();
     *standing = Some(now);
+    let refused = drained.report.stopped.as_ref().map(|stopped| {
+        refused_credential(
+            server,
+            &CoreError::Unauthorized {
+                code: "unauthorized".into(),
+                message: stopped.clone(),
+            },
+        )
+    });
     if !happened && !changed {
-        return Ok(());
+        return refused.map_or(Ok(()), Err);
     }
     output::report(
         &serde_json::json!({
@@ -382,12 +466,17 @@ fn step(
                     .map(|line| format!("{line}\n"))
                     .collect();
             format!(
-                "{settings}{} created, {} updated, {} renamed, {} deleted; sent {}; {} file(s) written{}{}{}{}",
+                "{settings}{} created, {} updated, {} renamed, {} deleted; answered {}{}; {} file(s) written{}{}{}{}",
                 scanned.created,
                 scanned.updated,
                 scanned.renamed,
                 scanned.deleted,
-                drained.report.sent,
+                drained.report.answered,
+                if drained.report.undelivered > 0 {
+                    format!(", {} waiting", drained.report.undelivered)
+                } else {
+                    String::new()
+                },
                 pulled.written + pulled.rewritten,
                 if held > 0 {
                     format!(", {held} not written")
@@ -429,7 +518,8 @@ fn step(
                 .map(|line| format!("\n{line}"))
                 .collect::<String>()
         },
-    )
+    )?;
+    refused.map_or(Ok(()), Err)
 }
 
 fn settings_file(root: &Path, path: &Path) -> bool {

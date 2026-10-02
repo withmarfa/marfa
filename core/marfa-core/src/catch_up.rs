@@ -107,14 +107,21 @@ fn unexplained(
 /// What a held stream changed in the copy: an event it applied, named by the
 /// event's type with the item or edge it was about, or `catalog.changed`,
 /// naming neither, where a stream it opened read a catalog that differs from
-/// the one held. `cursor` is the cursor held after it.
+/// the one held. Or what became of the server: `server.unreachable`, with
+/// why, once when a stream cannot be had, and `server.reachable` once when
+/// one is had again. `cursor` is the cursor held after it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Change {
     pub event: String,
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub cursor: String,
+    /// Why the server cannot be reached, on `server.unreachable` alone.
+    pub reason: Option<String>,
 }
+
+pub const SERVER_UNREACHABLE: &str = "server.unreachable";
+pub const SERVER_REACHABLE: &str = "server.reachable";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct FollowReport {
@@ -222,6 +229,7 @@ fn take(
         item_id: payload.item.as_ref().map(|item| item.id.clone()),
         edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
         cursor: id.to_string(),
+        reason: None,
     }))
 }
 
@@ -275,6 +283,8 @@ pub(crate) fn catch_up(core: &Core, http: &Http, idle: Duration) -> Result<Catch
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) => match error.kind() {
                 io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock if connected => break,
+                // Read again, the same stream says the same thing.
+                io::ErrorKind::InvalidData => return Err(CoreError::Decoding(error.to_string())),
                 _ => return Err(CoreError::Network(error.to_string())),
             },
             Err(RecvTimeoutError::Timeout) if connected => break,
@@ -383,6 +393,9 @@ fn follow_paced(
     // other end, so the next stream reads again for a property its type has
     // since made its thumbnail.
     let mut refreshed = HashSet::new();
+    // Unknown until the first stream is asked for, so a follow that never
+    // reaches the server says so, and one that does says nothing.
+    let mut reachable: Option<bool> = None;
     while !stop.load(Ordering::Relaxed) {
         let (slice, cursor) = start(core)?;
         report.cursor = cursor.clone();
@@ -401,12 +414,32 @@ fn follow_paced(
                     .retry_after()
                     .map_or(backoff, |named| backoff.max(named));
                 report.last_failure = Some(error.to_string());
+                if reachable != Some(false) {
+                    reachable = Some(false);
+                    on_change(&Change {
+                        event: SERVER_UNREACHABLE.into(),
+                        item_id: None,
+                        edge_id: None,
+                        cursor: report.cursor.clone(),
+                        reason: Some(error.to_string()),
+                    });
+                }
                 pause(wait);
                 backoff = (backoff * 2).min(pace.reconnect_most);
                 continue;
             }
             Err(error) => return Err(error),
         };
+        if reachable == Some(false) {
+            on_change(&Change {
+                event: SERVER_REACHABLE.into(),
+                item_id: None,
+                edge_id: None,
+                cursor: report.cursor.clone(),
+                reason: None,
+            });
+        }
+        reachable = Some(true);
         let (catalog, moved) = adopt(core, &fetched)?;
         if moved {
             on_change(&Change {
@@ -414,6 +447,7 @@ fn follow_paced(
                 item_id: None,
                 edge_id: None,
                 cursor: report.cursor.clone(),
+                reason: None,
             });
         }
         let opened = Instant::now();
@@ -474,6 +508,9 @@ fn read_stream(
         }
         let frame = match frames.recv_timeout(pace.stop_poll) {
             Ok(Ok(frame)) => frame,
+            Ok(Err(error)) if error.kind() == io::ErrorKind::InvalidData => {
+                return Err(CoreError::Decoding(error.to_string()));
+            }
             Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Ok(Ended::Over),
             Err(RecvTimeoutError::Timeout)
                 if now().saturating_duration_since(heard) > pace.silence =>

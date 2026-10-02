@@ -76,6 +76,9 @@ pub struct Answer {
     pub retry_after_seconds: Option<u64>,
     /// The server answered from its idempotency record rather than writing.
     pub replayed: bool,
+    /// The server names its contract on every answer, so a refusal naming
+    /// none came from something in front of it, a proxy or a tunnel.
+    pub contract_named: bool,
 }
 
 impl Answer {
@@ -449,6 +452,7 @@ impl Http {
         })?;
         let status = response.status().as_u16();
         self.hold(&response, status, true)?;
+        let contract_named = header(&response, CONTRACT_HEADER).is_some();
         let retry_after_seconds = retry_after(&response);
         let replayed = response
             .headers()
@@ -470,6 +474,7 @@ impl Http {
             body,
             retry_after_seconds,
             replayed,
+            contract_named,
         })
     }
 
