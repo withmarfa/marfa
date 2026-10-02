@@ -123,3 +123,37 @@ describe("a timed event", () => {
     ).toBe("09:00");
   });
 });
+
+// RFC 5545 section 3.3.5: a reading the clocks skip is read with the offset in
+// force before the gap, which puts it later by the length of the gap, and a
+// reading the clocks repeat names its first occurrence. One rule, so the same
+// local time lands the same way whichever side of Greenwich the zone is.
+describe("a reading a clock change skips or repeats", () => {
+  const at = (wall: string, zone: string): string =>
+    wallClockToInstant(new Date(`${wall}Z`), zone).toISOString();
+
+  it.each([
+    // London springs forward at 01:00 GMT on 29 March 2026: 01:30 does not exist.
+    ["Europe/London", "2026-03-29T01:30:00", "2026-03-29T01:30:00.000Z"],
+    // New York springs forward at 02:00 EST on 8 March 2026: 02:30 does not exist.
+    ["America/New_York", "2026-03-08T02:30:00", "2026-03-08T07:30:00.000Z"],
+    // Sydney springs forward at 02:00 AEST on 4 October 2026.
+    ["Australia/Sydney", "2026-10-04T02:30:00", "2026-10-03T16:30:00.000Z"],
+  ])("moves a skipped reading forward by the gap in %s", (zone, wall, want) => {
+    expect(at(wall, zone)).toBe(want);
+  });
+
+  it.each([
+    // London falls back at 02:00 BST on 25 October 2026: 01:30 happens twice,
+    // first at 00:30Z (BST) and again at 01:30Z (GMT).
+    ["Europe/London", "2026-10-25T01:30:00", "2026-10-25T00:30:00.000Z"],
+    // New York falls back at 02:00 EDT on 1 November 2026: 01:30 is first
+    // read at 05:30Z (EDT) and again at 06:30Z (EST).
+    ["America/New_York", "2026-11-01T01:30:00", "2026-11-01T05:30:00.000Z"],
+    // Sydney falls back at 03:00 AEDT on 5 April 2026: 02:30 is first read
+    // at 15:30Z (AEDT) on the 4th.
+    ["Australia/Sydney", "2026-04-05T02:30:00", "2026-04-04T15:30:00.000Z"],
+  ])("takes the first of a repeated reading in %s", (zone, wall, want) => {
+    expect(at(wall, zone)).toBe(want);
+  });
+});

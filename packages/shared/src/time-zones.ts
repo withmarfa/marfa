@@ -57,18 +57,26 @@ export function zoneOffsetMinutes(instant: Date, zone: string): number {
  * The instant at which `zone` reads the given wall clock, where the wall
  * clock is carried in a Date's UTC fields.
  *
- * Two passes because the offset depends on the answer: the first guess uses
- * the offset at the wrong moment, the second uses the offset at the guess.
- * They differ only inside a transition, where the reading is either skipped
- * or repeated and no exact answer exists. Both ambiguous cases resolve
- * forward, matching how calendar software presents them.
+ * Inside a clock change there is no single answer, and RFC 5545 (section
+ * 3.3.5) fixes one: a reading the change skips is read with the offset in
+ * force before the gap, so it lands later by the length of the gap, and a
+ * reading the change repeats names its first occurrence. The offsets a day
+ * either side are the two candidates; no zone changes its clocks twice
+ * within a day.
  */
 export function wallClockToInstant(wall: Date, zone: string | undefined): Date {
   if (!zone) return wall;
-  const guess = new Date(
-    wall.getTime() - zoneOffsetMinutes(wall, zone) * 60_000,
-  );
-  return new Date(wall.getTime() - zoneOffsetMinutes(guess, zone) * 60_000);
+  const w = wall.getTime();
+  const before = zoneOffsetMinutes(new Date(w - 86_400_000), zone) * 60_000;
+  const after = zoneOffsetMinutes(new Date(w + 86_400_000), zone) * 60_000;
+  const candidates = [before, after]
+    .filter(
+      (offset) =>
+        zoneOffsetMinutes(new Date(w - offset), zone) * 60_000 === offset,
+    )
+    .map((offset) => w - offset);
+  if (candidates.length === 0) return new Date(w - before);
+  return new Date(Math.min(...candidates));
 }
 
 /**
