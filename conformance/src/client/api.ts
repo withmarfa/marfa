@@ -330,8 +330,15 @@ export class MarfaClient {
 
   async getVersions(
     id: string,
+    page: { limit?: number; cursor?: string } = {},
   ): Promise<ApiResponse<PaginatedResult<MarfaVersion>>> {
-    return this.request<PaginatedResult<MarfaVersion>>(`/items/${id}/versions`);
+    const query = new URLSearchParams();
+    if (page.limit !== undefined) query.set("limit", String(page.limit));
+    if (page.cursor !== undefined) query.set("cursor", page.cursor);
+    const suffix = query.size > 0 ? `?${query.toString()}` : "";
+    return this.request<PaginatedResult<MarfaVersion>>(
+      `/items/${id}/versions${suffix}`,
+    );
   }
 
   async search(
@@ -1140,6 +1147,21 @@ export class MarfaClient {
       metadata: MarfaMetadata;
       backrefs?: Record<string, PaginatedResult<MarfaEdge>>;
     }>(`/items/${id}?include=backrefs`);
+  }
+
+  /** The item read with the first page of its version history beside it. */
+  async getItemWithVersions(id: string): Promise<
+    ApiResponse<{
+      item: MarfaItem;
+      metadata: MarfaMetadata;
+      versions: PaginatedResult<MarfaVersion>;
+    }>
+  > {
+    return this.request<{
+      item: MarfaItem;
+      metadata: MarfaMetadata;
+      versions: PaginatedResult<MarfaVersion>;
+    }>(`/items/${id}?include=versions`);
   }
 
   async getItemExtension(
