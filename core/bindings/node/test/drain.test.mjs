@@ -108,6 +108,8 @@ async function refusing() {
         data: [{ id: "core.note", display_hints: { title_field: "title" } }],
         next_cursor: null,
       });
+    } else if (path === "/edge-types") {
+      json(200, { data: [], next_cursor: null });
     } else if (path === "/keys/current") {
       json(200, { type_permissions: { "*": "write" } });
     } else if (path === "/items" && req.method === "POST") {
