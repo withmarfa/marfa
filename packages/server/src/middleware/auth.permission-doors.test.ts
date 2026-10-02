@@ -350,12 +350,13 @@ describe("DELETE /types/:id — schema.write", () => {
     );
   }
 
-  it("removes a registration for a credential that holds schema.write", async () => {
+  it("removes a registration for a credential that holds schema.write and write on the type", async () => {
     const id = `jonah.gone_${Math.random().toString(36).slice(2, 10)}`;
     await seedType(id);
     const caller = await mintKey(ctx, {
       label: "schema-holder",
       permissions: ["schema.write"],
+      typePermissions: { "jonah.*": "write" },
     });
 
     const res = await request(ctx.app, "DELETE", `/types/${id}`, {

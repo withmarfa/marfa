@@ -582,7 +582,7 @@ export interface paths {
         post?: never;
         /**
          * Delete an edge type
-         * @description Removes a registered edge type. Requires `schema.write`; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds — it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
+         * @description Removes a registered edge type. Requires `schema.write` and an edge map granting write on the id and on any `reverse_name` the type declares, `?force=true` included; core edge types are rejected, and an edge type this instance does not hold resolves as not-found. Refused `409 edge_type_in_use` while any edge of the type is stored, the shape the sibling `DELETE /types/{id}` has for items. `?force=true` deletes the registration anyway and leaves those edges in place, still naming a type the instance no longer holds — it orphans rather than cascades, because deleting rows nobody asked to delete is the worse of the two surprises.
          */
         delete: operations["deleteEdgeType"];
         options?: never;
@@ -630,13 +630,13 @@ export interface paths {
         get: operations["getType"];
         /**
          * Update a registered type
-         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
+         * @description Replaces a registered type's schema, re-running the registration-time correctness rails. Requires `schema.write` and a type map granting write on the identifier, so a key replaces only the types it may write — core types are immutable and return 403. The replacement keeps whatever `version` it is given, 0 when it names none, and demands no bump. When it names, changes or withdraws a `link_field`, the type's rows in every state are held to the new link at once: two holding one value refuse the replacement `409 link_taken`. The old link's tombstones go with it, since they hold another field's values. A change that would leave a type inheriting from this one linking by a field it no longer declares or inherits, or by one no longer a string, is refused `400 invalid_schema`.
          */
         put: operations["updateType"];
         post?: never;
         /**
          * Delete a registered type
-         * @description Removes a type registration. Requires `schema.write` — platform-shipped types are immutable.
+         * @description Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.
          *
          *     Rejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.
          *
@@ -2425,10 +2425,10 @@ export interface components {
                 };
             };
         };
-        CoreTypeImmutableOrForbiddenRefusal: {
+        CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal: {
             error: {
                 /** @enum {string} */
-                code: "core_type_immutable" | "forbidden";
+                code: "core_type_immutable" | "forbidden" | "type_not_permitted";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -8418,7 +8418,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential does not hold `schema.write` */
+            /** @description `forbidden`: the credential does not hold `schema.write`. `edge_permission_denied`: the credential's edge map does not grant write on the id or on the type's `reverse_name`, which `details.edge_type` names. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8430,7 +8430,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
                 };
             };
             /** @description Edge type not found */
@@ -8890,7 +8890,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. */
+            /** @description `forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may replace. `type_not_permitted`: the credential's type map does not grant write on the identifier. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8902,7 +8902,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CoreTypeImmutableOrForbiddenRefusal"];
+                    "application/json": components["schemas"]["CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Type not found */
@@ -9039,7 +9039,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove. */
+            /** @description `forbidden`: the credential does not hold `schema.write`. `core_type_immutable`: the identifier names a platform-shipped type, which no credential may remove. `type_not_permitted`: the credential's type map does not grant write on the identifier. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9051,7 +9051,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CoreTypeImmutableOrForbiddenRefusal"];
+                    "application/json": components["schemas"]["CoreTypeImmutableOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description Type not found */
