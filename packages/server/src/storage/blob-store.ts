@@ -53,10 +53,12 @@ export interface BlobStore {
   delete(hash: string): Promise<void>;
   /**
    * A time-limited link a client fetches the bytes from without a
-   * credential and without the instance in the path. Only a store that can
-   * sign its own links has one; the instance serves a link for the rest.
+   * credential and without the instance in the path, answering them with
+   * `mimeType` as a download (`blobDisposition`), whatever the store holds
+   * the object under. Only a store that can sign its own links has one;
+   * the instance serves a link for the rest.
    */
-  link?(hash: string, ttlSeconds: number): Promise<string>;
+  link?(hash: string, ttlSeconds: number, mimeType: string): Promise<string>;
 }
 
 export type BlobSource =
@@ -94,6 +96,24 @@ export class BlobHashMismatch extends Error {
 export function bareHex(hash: string): string {
   return hash.startsWith("sha256:") ? hash.slice("sha256:".length) : hash;
 }
+
+/**
+ * How every answer carrying a blob's bytes asks to be handled: as a file to
+ * save, never a page to render. The bytes' type is whatever an uploader sent,
+ * so an HTML or SVG blob shown inline would run as a page of whichever
+ * origin served it, the instance's own included. The name is the hex alone,
+ * so nothing an uploader chose reaches the header.
+ */
+export function blobDisposition(hash: string): string {
+  return `attachment; filename="${bareHex(hash)}"`;
+}
+
+/**
+ * The policy the instance's own answers carry with a blob's bytes, so a
+ * browser that renders them anyway, ignoring the disposition, runs them in
+ * an opaque origin with nothing loaded.
+ */
+export const BLOB_CONTENT_SECURITY_POLICY = "sandbox; default-src 'none'";
 
 /**
  * Resolve one `Range` header against a size. `undefined` for no header or

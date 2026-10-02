@@ -13,6 +13,8 @@ import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobLayer } from "../storage/blob-layer.js";
 import {
+  BLOB_CONTENT_SECURITY_POLICY,
+  blobDisposition,
   HashingTransform,
   resolveRange,
   type BlobRead,
@@ -99,6 +101,16 @@ const HashAndStoreParam = z.object({
 
 /** The headers a served blob carries, declared once for both doors. */
 const BYTES_HEADERS = {
+  "Content-Disposition": {
+    description:
+      'Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render.',
+    schema: { type: "string" as const },
+  },
+  "Content-Security-Policy": {
+    description:
+      "Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded.",
+    schema: { type: "string" as const },
+  },
   "Accept-Ranges": {
     description: "Always `bytes`: one range of a blob can be asked for.",
     schema: { type: "string" as const },
@@ -171,7 +183,8 @@ const bytesResponses = {
   200: {
     content: { "application/octet-stream": { schema: BINARY_BODY } },
     headers: BYTES_HEADERS,
-    description: "The bytes, with the content type they were uploaded under.",
+    description:
+      "The bytes, with the content type the blob was first uploaded under, as a download.",
   },
   206: {
     content: { "application/octet-stream": { schema: BINARY_BODY } },
@@ -227,7 +240,8 @@ const uploadBlobRoute = createRoute({
           schema: BlobUploadResponseSchema,
         },
       },
-      description: "Blob stored",
+      description:
+        "Blob stored. `mime_type` is the type the blob is served with: the type sent, or, for bytes already held, the type the upload that first stored them sent.",
     },
     400: {
       content: {
@@ -358,7 +372,8 @@ const getBlobUrlRoute = createRoute({
           schema: BlobUrlResponseSchema,
         },
       },
-      description: "A link and its lifetime",
+      description:
+        "A link and its lifetime. Either link serves the blob's recorded type as a download (`Content-Disposition: attachment`).",
     },
     400: {
       content: {
@@ -599,7 +614,9 @@ export function blobRoutes(
    * The bytes of a registered blob, from the first attached store that has
    * them, as a response. Shared by the bearer door and the link door, which
    * differ only in the credential they took and so in how they came by the
-   * record.
+   * record. Every answer is a download under a sandbox, whatever the type:
+   * the type is the uploader's word, and these answers come from the
+   * instance's own origin.
    */
   async function serveBytes(
     c: Context<AppEnv>,
@@ -621,6 +638,8 @@ export function blobRoutes(
 
     const headers: Record<string, string> = {
       "Content-Type": record.mime_type,
+      "Content-Disposition": blobDisposition(hash),
+      "Content-Security-Policy": BLOB_CONTENT_SECURITY_POLICY,
       "Accept-Ranges": "bytes",
       ETag: `"${hash}"`,
     };
@@ -714,7 +733,7 @@ export function blobRoutes(
     // authoritative: taken across the check, the move and the registration,
     // a request that saw the bytes absent is the one that put them there and
     // the only one that may take them back.
-    await withBlobUploadLock(hash, async () => {
+    const recorded = await withBlobUploadLock(hash, async () => {
       const present = (await disk.has(hash)) !== null;
       if (present) {
         await rm(spool, { force: true });
@@ -722,10 +741,15 @@ export function blobRoutes(
         await disk.put(hash, { path: spool, size_bytes: sizeBytes });
       }
       try {
-        await storage.runInTransaction(async () => {
+        // The first upload fixes the type; a later one under another type
+        // is answered with the type the bytes are served with.
+        return await storage.runInTransaction(async () => {
           await storage.blobs.register(hash, mimeType, sizeBytes);
           await storage.blobs.recordLocation(hash, disk.id);
           await storage.blobs.recordUploader(hash, uploader);
+          const row = await storage.blobs.get(hash);
+          if (!row) throw new Error(`blob ${hash} was not registered`);
+          return row.mime_type;
         });
       } catch (err) {
         // A file no row names is unreachable and nothing sweeps it. A failure
@@ -756,14 +780,14 @@ export function blobRoutes(
       action: "blob.upload",
       resource_type: "blob",
       resource_id: hash,
-      details: { mime_type: mimeType, size_bytes: sizeBytes },
+      details: { mime_type: recorded, size_bytes: sizeBytes },
     });
     // The other stores get their copies at replication's next run, which
     // this brings forward; a wake is a hint, so a scheduler that is not
     // running loses nothing but the hurry.
     await housekeeping.wake("blob-replicate");
 
-    return c.json({ hash, mime_type: mimeType, size_bytes: sizeBytes }, 201);
+    return c.json({ hash, mime_type: recorded, size_bytes: sizeBytes }, 201);
   });
 
   // GET /blobs/orphans — the report the orphan sweep writes. Registered
@@ -793,7 +817,7 @@ export function blobRoutes(
   router.openapi(getBlobUrlRoute, async (c) => {
     refuseUnknownQueryParams(c.req.raw.url, getBlobUrlRoute.request.query);
     const hash = normalizeHash(c.req.valid("param").hash);
-    await requireReadableBlob(c, storage, hash);
+    const record = await requireReadableBlob(c, storage, hash);
 
     const ttl = Math.min(c.req.valid("query").ttl, MAX_BLOB_LINK_TTL_SECONDS);
 
@@ -801,7 +825,7 @@ export function blobRoutes(
     // copy, because its link keeps the bytes off the instance entirely.
     const signing = await signingStoreHolding(hash);
     if (signing?.link) {
-      const url = await signing.link(hash, ttl);
+      const url = await signing.link(hash, ttl, record.mime_type);
       return c.json({ url, expires_in: ttl }, 200);
     }
 

@@ -9460,7 +9460,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Blob stored */
+            /** @description Blob stored. `mime_type` is the type the blob is served with: the type sent, or, for bytes already held, the type the upload that first stored them sent. */
             201: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9740,7 +9740,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The bytes, with the content type they were uploaded under. */
+            /** @description The bytes, with the content type the blob was first uploaded under, as a download. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9748,6 +9748,10 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    /** @description Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render. */
+                    "Content-Disposition"?: string;
+                    /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
+                    "Content-Security-Policy"?: string;
                     /** @description Always `bytes`: one range of a blob can be asked for. */
                     "Accept-Ranges"?: string;
                     /** @description The blob's content hash, so a cached copy is validated by the name it was fetched under. */
@@ -9766,6 +9770,10 @@ export interface operations {
                     "X-RateLimit-Limit": components["headers"]["X-RateLimit-Limit"];
                     "X-RateLimit-Remaining": components["headers"]["X-RateLimit-Remaining"];
                     "X-RateLimit-Reset": components["headers"]["X-RateLimit-Reset"];
+                    /** @description Always `attachment; filename="<hex>"`, whatever the type: the bytes are a file to save, never a page to render. */
+                    "Content-Disposition"?: string;
+                    /** @description Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded. */
+                    "Content-Security-Policy"?: string;
                     /** @description Always `bytes`: one range of a blob can be asked for. */
                     "Accept-Ranges"?: string;
                     /** @description The blob's content hash, so a cached copy is validated by the name it was fetched under. */
@@ -9903,7 +9911,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A link and its lifetime */
+            /** @description A link and its lifetime. Either link serves the blob's recorded type as a download (`Content-Disposition: attachment`). */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

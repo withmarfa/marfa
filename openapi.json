@@ -18621,7 +18621,7 @@
         },
         "responses": {
           "201": {
-            "description": "Blob stored",
+            "description": "Blob stored. `mime_type` is the type the blob is served with: the type sent, or, for bytes already held, the type the upload that first stored them sent.",
             "content": {
               "application/json": {
                 "schema": {
@@ -19180,7 +19180,7 @@
         ],
         "responses": {
           "200": {
-            "description": "The bytes, with the content type they were uploaded under.",
+            "description": "The bytes, with the content type the blob was first uploaded under, as a download.",
             "headers": {
               "X-Marfa-Contract": {
                 "$ref": "#/components/headers/X-Marfa-Contract"
@@ -19196,6 +19196,18 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "Content-Disposition": {
+                "description": "Always `attachment; filename=\"<hex>\"`, whatever the type: the bytes are a file to save, never a page to render.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "description": "Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded.",
+                "schema": {
+                  "type": "string"
+                }
               },
               "Accept-Ranges": {
                 "description": "Always `bytes`: one range of a blob can be asked for.",
@@ -19236,6 +19248,18 @@
               },
               "X-RateLimit-Reset": {
                 "$ref": "#/components/headers/X-RateLimit-Reset"
+              },
+              "Content-Disposition": {
+                "description": "Always `attachment; filename=\"<hex>\"`, whatever the type: the bytes are a file to save, never a page to render.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "description": "Always `sandbox; default-src 'none'`, so bytes a browser renders anyway run in an opaque origin with nothing loaded.",
+                "schema": {
+                  "type": "string"
+                }
               },
               "Accept-Ranges": {
                 "description": "Always `bytes`: one range of a blob can be asked for.",
@@ -19526,7 +19550,7 @@
         ],
         "responses": {
           "200": {
-            "description": "A link and its lifetime",
+            "description": "A link and its lifetime. Either link serves the blob's recorded type as a download (`Content-Disposition: attachment`).",
             "content": {
               "application/json": {
                 "schema": {

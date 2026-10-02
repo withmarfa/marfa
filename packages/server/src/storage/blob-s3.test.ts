@@ -364,7 +364,7 @@ describe("S3BlobStore", () => {
   describe("link", () => {
     it("signs a GET for the object with the lifetime asked for", async () => {
       const store = await attached();
-      const url = await store.link("sha256:abc", 900);
+      const url = await store.link("sha256:abc", 900, "text/plain");
       expect(url).toBe(
         "https://test-bucket.example/blobs/abc?X-Amz-Expires=900",
       );
@@ -374,6 +374,16 @@ describe("S3BlobStore", () => {
       ];
       expect(command.commandName).toBe("GetObject");
       expect(options.expiresIn).toBe(900);
+    });
+
+    it("signs the type and the download the instance's own doors serve", async () => {
+      const store = await attached();
+      await store.link("sha256:abc", 900, "text/html");
+      const [command] = signed.mock.calls[0] as [Record<string, unknown>];
+      expect(command.ResponseContentType).toBe("text/html");
+      expect(command.ResponseContentDisposition).toBe(
+        'attachment; filename="abc"',
+      );
     });
   });
 });
