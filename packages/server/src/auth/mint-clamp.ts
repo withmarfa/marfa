@@ -33,6 +33,7 @@ import {
   grantCoversScope,
   GLOBAL_TYPE_WILDCARD,
   typeMatchesPattern,
+  type ApiKey,
   type EdgePermission,
   type ExtensionPermission,
   type MetadataPermission,
@@ -177,6 +178,25 @@ export function firstUncoveredExtension(
     const mine = held?.[namespace] ?? held?.["*"];
     if (mine === undefined) return namespace;
     if (level === "write" && mine !== "write") return namespace;
+  }
+  return null;
+}
+
+/**
+ * The first source in `requested` that `holder` may not grant: neither its
+ * own source nor one it claims. `null` when it may grant every one.
+ *
+ * Asked in the order the request names them, so a refusal names the first
+ * source past the ceiling rather than the first the caller happens to hold.
+ */
+export function firstUngrantableSource(
+  holder: ApiKey,
+  requested: readonly string[] | undefined,
+): string | null {
+  for (const source of requested ?? []) {
+    if (source === holder.source) continue;
+    if (holder.sources?.includes(source) === true) continue;
+    return source;
   }
   return null;
 }
