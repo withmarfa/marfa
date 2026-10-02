@@ -280,10 +280,10 @@ describe("bulk", () => {
     expect(created.error?.error.details?.code).toBe("validation_error");
   });
 
-  it("keeps a rollback that is not a permission refusal at 400", async () => {
-    // The witness for the case above, and the line the status draws: a
-    // page refused for something the caller can fix stays where a caller
-    // looks for that, and only the permission refusal moves.
+  it("answers a rollback at the status of the refusal inside it", async () => {
+    // A page refused over its own body stays at 400, the witness that the
+    // status follows the inner refusal rather than being moved off 400 for
+    // every rollback.
     const rejected = await client.bulkItems({
       items: [
         {
@@ -296,6 +296,49 @@ describe("bulk", () => {
     expect(rejected.status).toBe(400);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("unknown_type");
+
+    // A missing row is 404: an entry linking to an item nothing holds.
+    const missingTarget = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          properties: { title: "links to nothing", body: "body" },
+          edges: { about: ["00000000-0000-7000-8000-000000000000"] },
+        },
+      ],
+    });
+    expect(missingTarget.status).toBe(404);
+    expect(missingTarget.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(missingTarget.error?.error.details?.code).toBe("item_not_found");
+
+    // A row that moved on is 409: an entry based on a version since
+    // overtaken.
+    const sourceId = `bulk-rollback-status-${ctx.runId}`;
+    const seeded = await client.createItem(
+      createNote({ source: ctx.source, source_id: sourceId }),
+    );
+    expect(seeded.ok).toBe(true);
+    trackItem(ctx, seeded.data.item.id);
+    const stale = seeded.data.item.version;
+    const moved = await client.updateItem(seeded.data.item.id, {
+      properties: { title: "moved on" },
+      version: stale,
+    });
+    expect(moved.ok).toBe(true);
+    const overtaken = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: sourceId,
+          properties: { title: "from a stale writer" },
+          version: stale,
+        },
+      ],
+    });
+    expect(overtaken.status).toBe(409);
+    expect(overtaken.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(overtaken.error?.error.details?.code).toBe("version_conflict");
   });
 
   it("create_only skips a repeated (source, source_id) as duplicate_source", async () => {
@@ -967,7 +1010,7 @@ describe("bulk_action async-job lifecycle", () => {
         },
       ],
     });
-    expect(reusedId.status).toBe(400);
+    expect(reusedId.status).toBe(409);
     expect(reusedId.error?.error.code).toBe("bulk_atomic_rollback");
     expect(reusedId.error?.error.details?.code).toBe("id_reused");
 
@@ -987,7 +1030,7 @@ describe("bulk_action async-job lifecycle", () => {
         },
       ],
     });
-    expect(mistakenDeclaration.status).toBe(400);
+    expect(mistakenDeclaration.status).toBe(409);
     expect(mistakenDeclaration.error?.error.details?.code).toBe(
       "type_mismatch",
     );
