@@ -243,19 +243,33 @@ fn held_types(conn: &Connection) -> Result<HashMap<String, Map<String, Value>>, 
         .collect()
 }
 
+/// Each read sees one catalog: another process may commit a new one between
+/// two statements, and an answer would then mix the two.
+fn in_one_read<T>(
+    conn: &Connection,
+    read: impl FnOnce(&Connection) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    let snapshot = conn.unchecked_transaction()?;
+    read(&snapshot)
+}
+
 /// By id.
 pub fn item_types(conn: &Connection) -> Result<Vec<ItemType>, CoreError> {
-    let held = held_types(conn)?;
-    let hints = Catalog::load(conn)?;
-    let mut ids: Vec<&String> = held.keys().collect();
-    ids.sort();
-    ids.into_iter()
-        .map(|id| resolve(id, &held, &hints))
-        .collect()
+    in_one_read(conn, |conn| {
+        let held = held_types(conn)?;
+        let hints = Catalog::load(conn)?;
+        let mut ids: Vec<&String> = held.keys().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| resolve(id, &held, &hints))
+            .collect()
+    })
 }
 
 pub fn item_type(conn: &Connection, id: &str) -> Result<ItemType, CoreError> {
-    resolve(id, &held_types(conn)?, &Catalog::load(conn)?)
+    in_one_read(conn, |conn| {
+        resolve(id, &held_types(conn)?, &Catalog::load(conn)?)
+    })
 }
 
 fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
@@ -283,25 +297,29 @@ fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
 
 /// By id.
 pub fn edge_types(conn: &Connection) -> Result<Vec<EdgeType>, CoreError> {
-    refuse_unless_held(conn)?;
-    store::edge_type_rows(conn)?
-        .iter()
-        .map(|(id, json)| edge_type_of(id, json))
-        .collect()
+    in_one_read(conn, |conn| {
+        refuse_unless_held(conn)?;
+        store::edge_type_rows(conn)?
+            .iter()
+            .map(|(id, json)| edge_type_of(id, json))
+            .collect()
+    })
 }
 
 pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
-    refuse_unless_held(conn)?;
-    match store::edge_type_rows(conn)?
-        .into_iter()
-        .find(|(held, _)| held == id)
-    {
-        Some((id, json)) => edge_type_of(&id, &json),
-        None => Err(CoreError::NotFound {
-            code: "edge_type_not_found".into(),
-            message: format!("the catalog this copy holds has no edge type {id}"),
-        }),
-    }
+    in_one_read(conn, |conn| {
+        refuse_unless_held(conn)?;
+        match store::edge_type_rows(conn)?
+            .into_iter()
+            .find(|(held, _)| held == id)
+        {
+            Some((id, json)) => edge_type_of(&id, &json),
+            None => Err(CoreError::NotFound {
+                code: "edge_type_not_found".into(),
+                message: format!("the catalog this copy holds has no edge type {id}"),
+            }),
+        }
+    })
 }
 
 /// What the local index reads from an item's properties.
@@ -614,6 +632,28 @@ mod tests {
             (leaf.title_field, leaf.body_field.as_deref()),
             (None, Some("comment"))
         );
+    }
+
+    #[test]
+    fn a_read_sees_one_catalog_though_another_is_committed_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let reading = store::open(&path).unwrap();
+        let writing = store::open(&path).unwrap();
+        let catalog = |id: &str| crate::wire::WireCatalog {
+            types: serde_json::from_value(serde_json::json!([{ "id": id }])).unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&writing, &catalog("acme.old")).unwrap();
+        let (before, during) = in_one_read(&reading, |conn| {
+            let before = store::type_rows(conn)?;
+            store::replace_catalog(&writing, &catalog("acme.new"))?;
+            Ok((before, store::type_rows(conn)?))
+        })
+        .unwrap();
+        assert_eq!(before, during, "one read saw two catalogs");
+        // The witness: the new catalog was committed, and a later read sees it.
+        assert_eq!(store::type_rows(&reading).unwrap()[0].0, "acme.new");
     }
 
     #[test]
