@@ -235,10 +235,16 @@ export async function bootFreshServer(
  * this is the one credential a fixture can hold that an app holds, so a door
  * that treats an app differently from a key is asserted through it.
  *
+ * The app asks for `scopes`, or for every scope the instance supports when
+ * none are named.
+ *
  * The owner is created here, and an instance has one, so this runs once per
  * fresh server: a second call is refused `409 owner_exists` and throws.
  */
-export async function approvedAppToken(server: FreshServer): Promise<string> {
+export async function approvedAppToken(
+  server: FreshServer,
+  scopes?: readonly string[],
+): Promise<string> {
   const owner = { email: "a@example.com", password: "correct horse battery" };
   const created = await fetch(`${server.apiUrl}/owner`, {
     method: "POST",
@@ -285,7 +291,7 @@ export async function approvedAppToken(server: FreshServer): Promise<string> {
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: registered.client_id,
-        scope: discovery.scopes_supported.join(" "),
+        scope: (scopes ?? discovery.scopes_supported).join(" "),
       }),
     })
   ).json()) as {

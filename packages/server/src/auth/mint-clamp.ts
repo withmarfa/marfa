@@ -23,16 +23,16 @@
  * literals it confers loses exactly the denials, which is the escalation
  * `firstReachBeyondCredential` exists to close.
  *
- * **Neither comparison is written by hand.** `scopes.ts` records five earlier
- * hand-rolled comparisons that disagreed with the real rule, and a sixth is
- * recorded in the Raycast extension's own notes. Both of the two here are
- * that file's own functions, over the same resolvers the request path runs.
+ * **Neither comparison is written by hand.** Both are `scopes.ts`'s own
+ * functions, over the same resolvers the request path runs, so the clamp
+ * cannot disagree with what a request is later allowed.
  */
 import {
   firstReachBeyondMap,
   grantCoversScope,
   GLOBAL_TYPE_WILDCARD,
   typeMatchesPattern,
+  type ApiKey,
   type EdgePermission,
   type ExtensionPermission,
   type MetadataPermission,
@@ -91,19 +91,19 @@ export function scopeForEntry(
  * hold, or null when the credential covers all of it.
  *
  * **Projecting a credential's maps into scope literals and reusing
- * `grantCoversScope` was the obvious way to write this, and it is unsound.**
- * A map entry at `none` names no literal, so the projection drops it — and on
- * the requesting side that is correct, because asking for nothing cannot
- * exceed anything. On the *holding* side it is a hole. An exact entry outranks
+ * `grantCoversScope` would be unsound.** A map entry at `none` names no
+ * literal, so the projection drops it — and on the requesting side that is
+ * correct, because asking for nothing cannot exceed anything. On the
+ * *holding* side it is a hole. An exact entry outranks
  * every wildcard, so `{"*":"read","system.folder":"none"}` denies that row
  * rather than omitting it, and that map is what an ordinary `content:read`
  * grant projects to. Reduced to `["*:read"]` the denials are gone, and a child
  * asking for `{"*":"read"}` — which reads as a no-op — resolves `read` on rows
  * its parent was refused.
  *
- * A second failure came free with the same projection: a `type_permissions`
- * key of `metadata` produced the literal `metadata:write`, which parses into
- * the metadata family, so a type entry conferred a metadata grant.
+ * The same projection would also turn a `type_permissions` key of `metadata`
+ * into the literal `metadata:write`, which parses into the metadata family,
+ * so a type entry would confer a metadata grant.
  *
  * `firstReachBeyondMap` compares the two maps by what they resolve to rather
  * than by what either lists, per axis, so neither can happen. Extensions are
@@ -182,13 +182,31 @@ export function firstUncoveredExtension(
 }
 
 /**
+ * The first source in `requested` that `holder` may not grant: neither its
+ * own source nor one it claims. `null` when it may grant every one.
+ *
+ * Asked in the order the request names them, so a refusal names the first
+ * source past the ceiling rather than the first the caller happens to hold.
+ */
+export function firstUngrantableSource(
+  holder: ApiKey,
+  requested: readonly string[] | undefined,
+): string | null {
+  for (const source of requested ?? []) {
+    if (source === holder.source) continue;
+    if (holder.sources?.includes(source) === true) continue;
+    return source;
+  }
+  return null;
+}
+
+/**
  * The first literal the grant does not cover, or null when it covers all of
  * them.
  *
  * Answers with the literal rather than a boolean because the refusal has to
  * name it: a client told only that it asked for too much cannot narrow toward
- * anything, and the whole point of replacing the blanket 403 was to stop
- * sending people to a reason that was not theirs.
+ * anything.
  *
  * `extension_permissions` is not checked here because it cannot be: no scope
  * expresses one, so there is no literal to compare and nothing a grant could
@@ -205,8 +223,8 @@ export function firstUncoveredScope(
     ["type", requested.type_permissions],
     ["edge", requested.edge_permissions],
     ["metadata", requested.metadata_permissions],
-    // Profile is measurable against a grant — `profile:<verb>` and
-    // `profile.<row>:<verb>` are real literals — and was not being measured.
+    // `profile:<verb>` and `profile.<row>:<verb>` are real literals, so
+    // profile is measured against a grant like the others.
     ["profile", requested.profile_permissions],
   ] as const;
   for (const [family, map] of families) {

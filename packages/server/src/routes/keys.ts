@@ -14,9 +14,11 @@ import {
   firstReachBeyondCredential,
   firstUncoveredExtension,
   firstUncoveredScope,
+  firstUngrantableSource,
   refuseUnclampableExtensions,
   type RequestedReach,
 } from "../auth/mint-clamp.js";
+import { keysInReach } from "../auth/key-reach.js";
 import {
   requirePermission,
   requireAuth,
@@ -269,7 +271,7 @@ const listKeysRoute = createRoute({
   tags: ["Keys"],
   summary: "List API keys",
   description:
-    "Returns every API key without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+    "Returns the API keys within the caller's reach, the caller included, without plaintext, which is only ever returned at creation time. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -339,7 +341,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id and a key already revoked are both refused, and the message says which it was.",
+    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `keys.mint`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does, so the answer does not say whether it exists. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key. A revoke that changes no row answers `404 api_key_not_found` rather than success: an unknown id and a key already revoked are both refused, and only the operator key is told which it was, since a revoked key's reach cannot be measured.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -386,7 +388,8 @@ const revokeKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["api_key_not_found"]),
         },
       },
-      description: "No key was revoked: unknown or already revoked",
+      description:
+        "No key was revoked: unknown, already revoked, or beyond the caller's reach",
     },
   },
 });
@@ -438,7 +441,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+    "Updates a key's label, default tier, claimed `sources` or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `keys.mint`. A permission map may not be widened past what the calling credential itself holds, and `sources` may name only the caller's own `source` and what it claims. The operator key is excepted, since running the instance sits outside the permission model, but an operator key holds nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed. A key beyond the caller's reach answers `404 api_key_not_found` exactly as an unknown id does. A key is within the caller's reach when the caller could have minted it: it is not an operator key, and it holds no permission, map entry, extension namespace or claimed source the caller does not hold itself, a signed-in app being measured against its grant's scopes or the maps they project, neither of which names an extension namespace. A key always reaches itself, and the operator key reaches every key.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -491,7 +494,7 @@ const updateKeyRoute = createRoute({
           schema: makeErrorResponseSchema(["api_key_not_found"]),
         },
       },
-      description: "Key not found",
+      description: "No key with this id is within the caller's reach",
     },
   },
 });
@@ -569,8 +572,8 @@ function mintDetails(
  * Shared by the mint and the update, because a clamp on one alone is not a
  * clamp. The permission maps are writable after the fact, so a request refused
  * at `POST` and accepted at `PATCH` a moment later leaves the ceiling exactly
- * where it was — and `PATCH` reaches every key, not only the ones this
- * session minted.
+ * where it was — and `PATCH` reaches every key within the grant, not only
+ * the ones this session minted.
  */
 function refuseSessionReachAboveGrant(
   granted: readonly string[],
@@ -739,25 +742,6 @@ function refuseKeyReachAboveCreator(
 }
 
 /**
- * The first source in `requested` that `holder` may not grant: neither its
- * own source nor one it claims. `null` when it may grant every one.
- *
- * Asked in the order the request names them, so a refusal names the first
- * source past the ceiling rather than the first the caller happens to hold.
- */
-function firstUngrantableSource(
-  holder: ApiKey,
-  requested: readonly string[] | undefined,
-): string | null {
-  for (const source of requested ?? []) {
-    if (source === holder.source) continue;
-    if (holder.sources?.includes(source) === true) continue;
-    return source;
-  }
-  return null;
-}
-
-/**
  * Refuse a key naming a claim its caller does not hold, on a mint and on an
  * edit alike.
  *
@@ -800,12 +784,10 @@ function refuseSourcesAboveCaller(
  * claim could take it in the same request by naming it as the source
  * instead.
  *
- * **It bounds one mint, not a caller holding `keys.mint`.** That permission
- * edits and revokes any key, so its holder can narrow or revoke the
- * claimants first and mint afterwards, as it can give a revoked key's own
- * source to a new key. What this refuses is the single request that would do
- * it silently, which is also the one a device enrolled with its folder's
- * source as its own would make by mistake.
+ * A claimant is beyond this caller's reach for the same reason, since it
+ * claims a source the caller could not grant, so the caller cannot clear the
+ * claimants first either; the operator key can. This is also the request a
+ * device enrolled with its folder's source as its own would make by mistake.
  *
  * Asked only where the caller could not grant the source, so an ordinary
  * mint costs no read. The listing is the live keys, because a revoked or
@@ -1314,7 +1296,7 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(listKeysRoute, async (c) => {
     requireAuth(c);
     requireKeysMintOrOperator(c);
-    const keys = await storage.keys.list();
+    const keys = await keysInReach(storage, c).list();
     return c.json({ data: keys, next_cursor: null }, 200);
   });
 
@@ -1346,15 +1328,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     // **The answer is what happened, not what was asked for.** A door told ok
     // whatever the store did would answer a revoke of the wrong id as a
     // success, and the key meant would stay live with nothing saying so.
-    const outcome = await storage.keys.revoke(id);
-    if (outcome !== "revoked") {
-      throw new MarfaError(
-        ErrorCode.API_KEY_NOT_FOUND,
-        outcome === "already_revoked"
-          ? `Key ${id} was already revoked`
-          : `Key ${id} not found`,
-      );
-    }
+    await keysInReach(storage, c).revoke(id);
 
     // Under the refusal, so the log records revocations rather than
     // attempts. An attempt that changed nothing is not an event in this
@@ -1392,105 +1366,104 @@ export function keyRoutes(storage: Storage, salt: string) {
       body.sources === undefined ? undefined : [...new Set(body.sources)];
     assertUnreservedSources(requestedSources);
 
-    const existing = await storage.keys.get(id);
-    if (!existing) {
-      throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
-    }
+    // Measured, decided and written under one lock, so the reach and the
+    // refusals below see the row the write lands on.
+    const updated = await keysInReach(storage, c).change(id, (existing) => {
+      // **The same ceiling as the mint, because this door reaches further.** A
+      // clamp applied only at `POST` is not a clamp at all: the permission maps
+      // are writable here a moment later, and this route addresses every key
+      // within the caller's reach rather than only the ones it minted. So a
+      // session refused a wide key at the mint could have widened an existing
+      // one instead — including a key it did not create.
+      //
+      // Asked of every editor rather than only of a session, for the reason the
+      // mint states: a key holding `keys.mint` and read on one type is an
+      // ordinary credential, and nothing about holding the permission to
+      // edit says how far what it edits may reach.
+      const requestedReach = {
+        type_permissions: body.type_permissions,
+        edge_permissions: body.edge_permissions,
+        metadata_permissions: body.metadata_permissions,
+        extension_permissions: body.extension_permissions,
+        profile_permissions: body.profile_permissions,
+      };
+      const requestedPermissions = body.permissions?.filter(isPermission);
 
-    // **The same ceiling as the mint, because this door reaches further.** A
-    // clamp applied only at `POST` is not a clamp at all: the permission maps
-    // are writable here a moment later, and this route addresses every key
-    // rather than only the ones the session minted. So a
-    // session refused a wide key at the mint could have widened an existing
-    // one instead — including a key it did not create.
-    //
-    // Asked of every editor rather than only of a session, for the reason the
-    // mint states: a key holding `keys.mint` and read on one type is an
-    // ordinary credential, and nothing about holding the permission to
-    // edit says how far what it edits may reach.
-    const requestedReach = {
-      type_permissions: body.type_permissions,
-      edge_permissions: body.edge_permissions,
-      metadata_permissions: body.metadata_permissions,
-      extension_permissions: body.extension_permissions,
-      profile_permissions: body.profile_permissions,
-    };
-    const requestedPermissions = body.permissions?.filter(isPermission);
-
-    // Before the caller's own ceiling, because it is the more specific answer:
-    // a caller who both lacks the reach and is editing an app's key is better
-    // told that this key can never hold more than told what it does not hold.
-    refuseWideningAnAppsKey(
-      existing,
-      requestedReach,
-      requestedPermissions,
-      requestedSources,
-    );
-
-    if (c.get("authType") === "oauth") {
-      refuseSessionReachAboveGrant(
-        c.get("oauthGrant")?.scopes ?? [],
-        requestedReach,
-      );
-    } else {
-      refuseKeyReachAboveCreator(key, requestedReach);
-    }
-    refuseSourcesAboveCaller(key, requestedSources);
-
-    // An operator row holds nothing, its own row included, which is the
-    // shortest path there is from the instance tier to reach over everything.
-    //
-    // Refused where the body asks for something, and written empty where it
-    // asks for nothing in a non-empty way: `nothingWhereNamed` carries which
-    // bodies take the second path and why the row constraint is not the right
-    // place to find out.
-    const targetHoldsNothing = existing.is_operator;
-    if (targetHoldsNothing) {
-      refuseReachOnAnOperatorKey(
+      // Before the caller's own ceiling, because it is the more specific answer:
+      // a caller who both lacks the reach and is editing an app's key is better
+      // told that this key can never hold more than told what it does not hold.
+      refuseWideningAnAppsKey(
+        existing,
         requestedReach,
         requestedPermissions,
         requestedSources,
       );
-    }
-    const writtenReach = targetHoldsNothing
-      ? nothingWhereNamed(requestedReach)
-      : requestedReach;
 
-    // **The permissions are clamped here too.** They are editable through
-    // this door like any other family, so without it a key holding one
-    // permission could give itself every other one in the set.
-    if (requestedPermissions !== undefined && !key.is_operator) {
-      const held = key.permissions ?? [];
-      const beyond = requestedPermissions.find(
-        (permission) => !held.includes(permission),
-      );
-      if (beyond !== undefined) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
-          { required_scope: beyond },
+      if (c.get("authType") === "oauth") {
+        refuseSessionReachAboveGrant(
+          c.get("oauthGrant")?.scopes ?? [],
+          requestedReach,
+        );
+      } else {
+        refuseKeyReachAboveCreator(key, requestedReach);
+      }
+      refuseSourcesAboveCaller(key, requestedSources);
+
+      // An operator row holds nothing, its own row included, which is the
+      // shortest path there is from the instance tier to reach over everything.
+      //
+      // Refused where the body asks for something, and written empty where it
+      // asks for nothing in a non-empty way: `nothingWhereNamed` carries which
+      // bodies take the second path and why the row constraint is not the right
+      // place to find out.
+      const targetHoldsNothing = existing.is_operator;
+      if (targetHoldsNothing) {
+        refuseReachOnAnOperatorKey(
+          requestedReach,
+          requestedPermissions,
+          requestedSources,
         );
       }
-    }
+      const writtenReach = targetHoldsNothing
+        ? nothingWhereNamed(requestedReach)
+        : requestedReach;
 
-    const updated = await storage.keys.update(id, {
-      label: body.label,
-      default_tier: body.default_tier,
-      // Needs no forcing on an operator row, for the reason the permissions
-      // below need none: a claim is never a denial, so the guard above has
-      // already refused any list but the empty one.
-      sources: requestedSources,
-      type_permissions: writtenReach.type_permissions,
-      extension_permissions: writtenReach.extension_permissions,
-      edge_permissions: writtenReach.edge_permissions,
-      metadata_permissions: writtenReach.metadata_permissions,
-      // The permissions need no forcing: the guard above refuses a
-      // non-empty list outright, because no entry in one is a denial the way a
-      // `none` map entry is, so the only list that reaches an operator row is
-      // already the empty one.
-      permissions: requestedPermissions,
-      profile_permissions: writtenReach.profile_permissions,
-      enforcement_override: body.enforcement_override,
+      // **The permissions are clamped here too.** They are editable through
+      // this door like any other family, so without it a key holding one
+      // permission could give itself every other one in the set.
+      if (requestedPermissions !== undefined && !key.is_operator) {
+        const held = key.permissions ?? [];
+        const beyond = requestedPermissions.find(
+          (permission) => !held.includes(permission),
+        );
+        if (beyond !== undefined) {
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
+            { required_scope: beyond },
+          );
+        }
+      }
+
+      return {
+        label: body.label,
+        default_tier: body.default_tier,
+        // Needs no forcing on an operator row, for the reason the permissions
+        // below need none: a claim is never a denial, so the guard above has
+        // already refused any list but the empty one.
+        sources: requestedSources,
+        type_permissions: writtenReach.type_permissions,
+        extension_permissions: writtenReach.extension_permissions,
+        edge_permissions: writtenReach.edge_permissions,
+        metadata_permissions: writtenReach.metadata_permissions,
+        // The permissions need no forcing: the guard above refuses a
+        // non-empty list outright, because no entry in one is a denial the way a
+        // `none` map entry is, so the only list that reaches an operator row is
+        // already the empty one.
+        permissions: requestedPermissions,
+        profile_permissions: writtenReach.profile_permissions,
+        enforcement_override: body.enforcement_override,
+      };
     });
 
     void storage.audit.log({
