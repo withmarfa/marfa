@@ -339,7 +339,7 @@ A connector is something outside the server that reads or writes on a person's b
 
 **A connector writes items like anything else.** It holds a key, and a row it writes carries that key's own source, or a source the key claims that the write names; a write naming any other source is refused. There is no ownership mark on an item and no door that treats one row as a connector's and another as a person's — a write is refused, or it is not, by the credential's permissions and by nothing else. The `connector:` prefix is reserved as a credential source so that nothing can claim to be the connector registry's, and `POST /admin/restore-archive` refuses an archive that records one for the same reason.
 
-References: `connectors.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23; `search-and-filters.md` 22; `items.md` 4.
+References: `connectors.md` 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22; `search-and-filters.md` 22; `items.md` 4.
 
 ## Inbound webhooks
 
