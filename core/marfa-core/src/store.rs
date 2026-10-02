@@ -732,7 +732,10 @@ pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool,
             Ok(moved)
         }
         Err(error) => {
-            conn.execute_batch("ROLLBACK TO replace_catalog; RELEASE replace_catalog")?;
+            // SQLite may have rolled the whole transaction back already (a
+            // full disk, an I/O error), and then there is no savepoint to
+            // roll back to: the error that caused it is the one to report.
+            let _ = conn.execute_batch("ROLLBACK TO replace_catalog; RELEASE replace_catalog");
             Err(error)
         }
     }
