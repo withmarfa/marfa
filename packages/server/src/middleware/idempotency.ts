@@ -2,6 +2,7 @@ import type { Context, ErrorHandler, MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
+import { credentialHandle } from "./auth.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
@@ -155,27 +156,6 @@ const RELEASED_STATUSES = new Set([401, 403]);
 
 const HEADER = "Idempotency-Key";
 const REPLAY_HEADER = "Idempotency-Replayed";
-
-/**
- * The credential a key belongs to: a key's id, or for a signed-in app its
- * grant, `oauth:<client>:<user>`, the pair a webhook subscription's owner
- * names.
- *
- * **Every key lives inside one credential's keyspace.** Two credentials
- * choosing keys independently will choose the same one sooner or later;
- * shared, the second would be refused for a key it never used, or handed
- * the first's stored answer, a body derived from rows it may not read.
- *
- * **The grant rather than the access token**, because a refresh replaces
- * the token row, and a refresh between a lost response and its retry is the
- * case this feature exists for: keyed on the token, the retry would find no
- * record and write again. A key's id does not rotate under it.
- */
-function credentialHandle(c: Context<AppEnv>): string {
-  const apiKey = c.get("apiKey");
-  if (apiKey === undefined) return "";
-  return c.get("authType") === "oauth" ? apiKey.source : apiKey.id;
-}
 
 /**
  * This request's key as its credential's own, for a write that derives a

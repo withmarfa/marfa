@@ -581,7 +581,12 @@ export const bulkActionJobs = sqliteTable(
   "bulk_action_jobs",
   {
     id: text("id").primaryKey(),
+    /** The credential that queued the job, as it authenticated: a key's id
+     *  or an access-token row, which the worker resolves before each chunk. */
     api_key_id: text("api_key_id"),
+    /** Who owns the job, the reader and canceller it answers: a key's id, or
+     *  for a signed-in app its app and person, so a token refresh keeps it. */
+    credential: text("credential").notNull(),
     status: text("status").notNull(),
     action: text("action").notNull(),
     input: text("input").notNull(),
@@ -1052,8 +1057,10 @@ export const enrichmentState = sqliteTable("enrichment_state", {
  * and none of those is the question a retry is asking.
  *
  * A key belongs to the credential that sent it, named by `credential`: a
- * key's id, or for a signed-in app its grant, so every token of the grant
- * shares one keyspace and two credentials never share one.
+ * key's id, or for a signed-in app its app and person, so every token of the
+ * pair shares one keyspace and two credentials never share one. A replay is
+ * served before the door's authorization runs, so a narrower token of the
+ * same app and person is handed the answer its earlier token was given.
  *
  * `fingerprint` is what makes a repeat a repeat: a digest of the method,
  * path, query and body. A key arriving with a different one is refused

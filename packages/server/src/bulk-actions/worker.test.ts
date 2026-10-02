@@ -19,6 +19,7 @@ function makeRow(): BulkActionJobRow {
   return {
     id: "job_1",
     api_key_id: null,
+    credential: "fixture",
     status: "in_progress",
     action: "transition",
     input: JSON.stringify({ action: "transition", state: "trashed" }),

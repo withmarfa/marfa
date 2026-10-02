@@ -318,6 +318,7 @@ CREATE TABLE IF NOT EXISTS `blobs` (
 CREATE TABLE IF NOT EXISTS `bulk_action_jobs` (
 	`id` text PRIMARY KEY NOT NULL,
 	`api_key_id` text,
+	`credential` text NOT NULL,
 	`status` text NOT NULL,
 	`action` text NOT NULL,
 	`input` text NOT NULL,

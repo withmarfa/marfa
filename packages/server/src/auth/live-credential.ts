@@ -60,8 +60,10 @@ export async function resolveLiveCredential(
   ) {
     return null;
   }
+  const principal = oauthPrincipal(token);
+  if (!principal) return null;
   return {
-    key: oauthPrincipal(token),
+    key: principal,
     kind: "oauth",
     permissions: token.scopes,
   };
@@ -90,16 +92,14 @@ export async function resolveLiveGrant(
     authUserId,
   );
   if (scopes === undefined) return null;
-  return {
-    key: oauthPrincipal({
-      id: `${clientId}:${authUserId}`,
-      clientId,
-      userId: authUserId,
-      scopes: [...scopes],
-      expiresAtMs: null,
-      createdAtMs: null,
-    }),
-    kind: "oauth",
-    permissions: scopes,
-  };
+  const key = oauthPrincipal({
+    id: `${clientId}:${authUserId}`,
+    clientId,
+    userId: authUserId,
+    scopes: [...scopes],
+    expiresAtMs: null,
+    createdAtMs: null,
+  });
+  if (!key) return null;
+  return { key, kind: "oauth", permissions: scopes };
 }

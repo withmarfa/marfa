@@ -38,6 +38,7 @@ export class SqliteBulkActionJobStore implements BulkActionJobStore {
       .values({
         id: input.id,
         api_key_id: input.api_key_id,
+        credential: input.credential,
         status: "queued",
         action: input.action,
         input: input.input,
@@ -200,6 +201,7 @@ function rowToJob(row: typeof bulkActionJobs.$inferSelect): BulkActionJobRow {
   return {
     id: row.id,
     api_key_id: row.api_key_id,
+    credential: row.credential,
     status: row.status as BulkActionJobStatus,
     action: row.action,
     input: row.input,

@@ -27,6 +27,7 @@ async function inProgressJob(
   await jobs.create({
     id,
     api_key_id: apiKeyId,
+    credential: apiKeyId ?? "fixture",
     action: "transition",
     input: JSON.stringify({ action: "transition", state: "archived" }),
     matched_ids: JSON.stringify(["a"]),

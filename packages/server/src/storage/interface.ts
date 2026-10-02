@@ -2648,6 +2648,8 @@ export type BulkActionJobStatus =
 export interface BulkActionJobRow {
   id: string;
   api_key_id: string | null;
+  /** The owner, as `credentialHandle` names it. */
+  credential: string;
   status: BulkActionJobStatus;
   action: string;
   /** Original BulkActionInput, JSON-encoded. */
@@ -2673,6 +2675,7 @@ export interface BulkActionJobRow {
 export interface CreateBulkActionJobInput {
   id: string;
   api_key_id: string | null;
+  credential: string;
   action: string;
   input: string;
   matched_ids: string;

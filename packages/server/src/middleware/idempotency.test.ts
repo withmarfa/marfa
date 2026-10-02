@@ -935,7 +935,7 @@ describe("a claim the store did not grant", () => {
     expect(calls.released).toBe(0);
   });
 
-  it("names an OAuth principal by its grant, not by its access-token row", async () => {
+  it("names an OAuth principal by its app and person, not by its access-token row", async () => {
     // The case the header exists for, arriving from the other side: the
     // write goes out, the response is lost, the token expires inside the
     // same partition, and the client refreshes and retries with the key it
@@ -959,7 +959,7 @@ describe("a claim the store did not grant", () => {
     expect(seenCredentials).toHaveLength(2);
     expect(seenCredentials[0]).toBe(seenCredentials[1]);
 
-    // The control: a different grant is a different keyspace, so this did
+    // The control: a different person is a different keyspace, so this did
     // not simply drop the credential.
     await doorWith([{ claimed: true }], 201, {
       id: "access-token-row-3",
