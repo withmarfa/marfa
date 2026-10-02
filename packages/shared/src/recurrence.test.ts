@@ -412,8 +412,8 @@ describe("how long an occurrence lasts", () => {
   });
 });
 
-// Rules that name no date that exists. Some of these hold a widely used
-// expander inside a single step for as long as it is left running.
+// Rules that name no date that exists, which a step that is not metered can
+// walk forever.
 const NEVER = [
   "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30",
   "FREQ=MONTHLY;BYMONTH=2;BYMONTHDAY=30",
@@ -596,5 +596,104 @@ describe("the schedule fields an event write is held to", () => {
       ).toEqual([]);
     }
     expect(eventScheduleIssues(event({ recurrence: [] }))).toEqual([]);
+  });
+});
+
+describe("BYSETPOS over a series' first period", () => {
+  it("counts positions over the whole period, not from the start date", () => {
+    expect(
+      starts(
+        {
+          starts_at: "2026-01-17T09:00:00Z",
+          recurrence: [
+            "RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1;COUNT=3",
+          ],
+        },
+        "2026-01-01T00:00:00Z",
+        "2026-04-01T00:00:00Z",
+      ).map((s) => s.slice(0, 10)),
+    ).toEqual(["2026-01-17", "2026-02-02", "2026-03-02"]);
+    expect(
+      starts(
+        {
+          starts_at: "2026-01-10T09:00:00Z",
+          recurrence: [
+            "RRULE:FREQ=YEARLY;BYMONTH=1,7;BYMONTHDAY=1,2;BYSETPOS=2;COUNT=2",
+          ],
+        },
+        "2026-01-01T00:00:00Z",
+        "2028-01-01T00:00:00Z",
+      ).map((s) => s.slice(0, 10)),
+    ).toEqual(["2026-01-10", "2027-01-02"]);
+  });
+});
+
+describe("what a rule's text can cost", () => {
+  it("keeps one copy of each numbered weekday however often it is named", () => {
+    const entries = Array.from(
+      { length: 4_000 },
+      (_, i) => `${String((i % 5) + 1)}MO`,
+    );
+    const [rule] = compileSchedule({
+      starts_at: "2026-01-05T09:00:00Z",
+      recurrence: [`RRULE:FREQ=MONTHLY;BYDAY=${entries.join(",")}`],
+    }).rules;
+    expect(rule?.bynweekday).toHaveLength(5);
+  });
+
+  it("refuses a line too long, and more added or removed dates than a series may carry", () => {
+    const dates = (n: number) =>
+      Array.from(
+        { length: n },
+        (_, i) => `2026${String((i % 12) + 1).padStart(2, "0")}01T090000Z`,
+      ).join(",");
+    expect(() =>
+      compileSchedule({
+        starts_at: "2026-01-05T09:00:00Z",
+        recurrence: [`RDATE:${dates(1_001)}`],
+      }),
+    ).toThrow(RecurrenceRuleError);
+    expect(() =>
+      compileSchedule({
+        starts_at: "2026-01-05T09:00:00Z",
+        recurrence: [
+          "RRULE:FREQ=DAILY",
+          `EXDATE:${dates(600)}`,
+          `EXDATE:${dates(600)}`,
+        ],
+      }),
+    ).toThrow(RecurrenceRuleError);
+    expect(() =>
+      compileSchedule({
+        starts_at: "2026-01-05T09:00:00Z",
+        recurrence: [`RRULE:FREQ=MONTHLY;BYMONTHDAY=${"1,".repeat(20_000)}1`],
+      }),
+    ).toThrow(RecurrenceRuleError);
+    expect(
+      compileSchedule({
+        starts_at: "2026-01-05T09:00:00Z",
+        recurrence: [`RDATE:${dates(1_000)}`],
+      }).rdates,
+    ).toHaveLength(1_000);
+  });
+
+  it("refuses a duration no instant can hold, as the rule's own failure", () => {
+    for (const duration of [1e13, -60, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        compileSchedule({
+          starts_at: "2026-01-05T09:00:00Z",
+          duration,
+          timezone: "Europe/Berlin",
+          recurrence: ["RRULE:FREQ=DAILY"],
+        }),
+      ).toThrow(RecurrenceRuleError);
+      expect(
+        eventScheduleIssues({
+          title: "x",
+          starts_at: "2026-01-05T09:00:00Z",
+          duration,
+        }).map((i) => i.field),
+      ).toEqual(["duration"]);
+    }
   });
 });

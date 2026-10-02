@@ -12,7 +12,9 @@
  * meter that runs out stops the walk at that candidate. No single step does
  * more than a bounded amount of work before it charges, so a rule that never
  * produces an occurrence costs at most the meter's limit, however it is
- * written. Web-safe: no Node API is used.
+ * written. Reading the lines is bounded as well: a line is capped in length,
+ * the added and removed dates in number, and every rule part is kept once.
+ * Web-safe: no Node API is used.
  */
 import {
   dateInZoneToInstant,
@@ -44,6 +46,24 @@ export const RECURRENCE_WORK_LIMIT = 100_000;
  * to the candidate count rather than the bound anything ordinary meets.
  */
 export const RECURRENCE_TIME_LIMIT_MS = 1_000;
+
+/** Longest rule line a series may carry, so reading one is bounded too. */
+export const MAX_RECURRENCE_LINE_CHARS = 20_000;
+
+/** Most added and removed dates, together, one series may carry. */
+export const MAX_RECURRENCE_DATES = 1_000;
+
+/** Longest an event may last, in seconds: a century. */
+export const MAX_EVENT_DURATION_SECONDS = 100 * 366 * 86_400;
+
+/** Whether `duration` is a length an occurrence can have. */
+export function isEventDuration(duration: number): boolean {
+  return (
+    Number.isFinite(duration) &&
+    duration >= 0 &&
+    duration <= MAX_EVENT_DURATION_SECONDS
+  );
+}
 
 /** Counts the candidates one walk considers and stops it at its limits. */
 export class RecurrenceMeter {
@@ -383,7 +403,10 @@ function readRule(value: string): Rule {
           } else {
             const n = readInt(m[1], key, -53, 53);
             if (n === 0) fail("BYDAY may not number a weekday 0");
-            (rule.bynweekday ??= []).push({ wd, n });
+            const numbered = (rule.bynweekday ??= []);
+            if (!numbered.some((e) => e.wd === wd && e.n === n)) {
+              numbered.push({ wd, n });
+            }
           }
         }
         break;
@@ -546,9 +569,33 @@ export function compileSchedule(
       : wallMs(value.wall, zone);
   };
 
+  if (
+    typeof schedule.duration === "number" &&
+    !isEventDuration(schedule.duration)
+  ) {
+    fail(
+      `duration must be between 0 and ${String(MAX_EVENT_DURATION_SECONDS)} seconds`,
+    );
+  }
+  let dates = 0;
+  const countDates = (values: string[]): string[] => {
+    dates += values.length;
+    if (dates > MAX_RECURRENCE_DATES) {
+      fail(
+        `a series may add and remove at most ${String(MAX_RECURRENCE_DATES)} dates`,
+      );
+    }
+    return values;
+  };
+
   for (const rawLine of schedule.recurrence) {
     const line = rawLine.trim();
     if (line === "") continue;
+    if (line.length > MAX_RECURRENCE_LINE_CHARS) {
+      fail(
+        `a rule line may be at most ${String(MAX_RECURRENCE_LINE_CHARS)} characters`,
+      );
+    }
     const { name, params, value } = splitLine(line);
     switch (name) {
       case "RRULE": {
@@ -570,11 +617,11 @@ export function compileSchedule(
             "RDATE periods are not applied; give each added start as a date or date-time",
           );
         }
-        for (const v of value.split(","))
+        for (const v of countDates(value.split(",")))
           rdates.push(anchor(readDateValue(v, params)));
         break;
       case "EXDATE":
-        for (const v of value.split(",")) {
+        for (const v of countDates(value.split(","))) {
           const parsed = readDateValue(v, params);
           if (parsed.kind === "date") exDays.add(parsed.day);
           else if (allDay) {
@@ -857,7 +904,9 @@ function* walkRule(
       const marked = markNumbered(rule, ranges);
       const days: number[] = [];
       const scan = (from: number, to: number): void => {
-        for (let day = Math.max(from, startDay); day <= to; day += 1) {
+        // From the period's own first day, not the series' start: BYSETPOS
+        // counts positions over the whole period.
+        for (let day = from; day <= to; day += 1) {
           meter.charge();
           if (dayMatches(rule, day, marked)) days.push(day);
         }
@@ -1121,6 +1170,15 @@ export function eventScheduleIssues(
   properties: Record<string, unknown>,
 ): { field: string; message: string }[] {
   const issues: { field: string; message: string }[] = [];
+  if (
+    typeof properties.duration === "number" &&
+    !isEventDuration(properties.duration)
+  ) {
+    issues.push({
+      field: "duration",
+      message: `Expected a length in seconds from 0 to ${String(MAX_EVENT_DURATION_SECONDS)}`,
+    });
+  }
   for (const field of ["timezone", "end_timezone"]) {
     const zone = properties[field];
     if (zone === undefined || zone === null) continue;
@@ -1143,7 +1201,11 @@ export function eventScheduleIssues(
     });
     return issues;
   }
-  if (issues.some((i) => i.field === "timezone")) return issues;
+  // A schedule the zone or the length already fails is not read further:
+  // the rule would be refused for the same reason under its own name.
+  if (issues.some((i) => i.field === "timezone" || i.field === "duration")) {
+    return issues;
+  }
   const startsAt = properties.starts_at;
   if (typeof startsAt !== "string") {
     issues.push({
