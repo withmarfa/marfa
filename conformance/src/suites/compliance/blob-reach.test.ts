@@ -246,11 +246,38 @@ describe("who may read and upload a blob", () => {
     trackItem(ctx, note.data.item.id);
     expect(await readingDoors(noteWriter.client, hash)).toEqual(UNKNOWN);
 
-    // Sending the bytes proves holding them, which knowing the hash does not.
+    // Sending the bytes proves holding them, which knowing the hash does
+    // not, and the next write sending the digest is what lends it.
     expect(
       (await noteWriter.client.uploadBlob(bytes, "text/plain")).status,
     ).toBe(201);
+    expect(await readingDoors(noteWriter.client, hash)).toEqual(UNKNOWN);
+    const rewritten = await noteWriter.client.updateItem(note.data.item.id, {
+      properties: { body: `![it](${hash}) again` },
+      version: note.data.item.version,
+    });
+    expect(rewritten.ok, JSON.stringify(rewritten.error)).toBe(true);
     expect(await readingDoors(noteWriter.client, hash)).toEqual(SERVED);
+  });
+
+  it("lends through a digest written by a key that could read the blob", async () => {
+    const hash = await upload("an image a second device embeds");
+    await noteSaying(`![it](${hash})`);
+    const device = await keyHolding({
+      "core.note": "write",
+      "core.bookmark": "write",
+    });
+    const bookmarksOnly = await keyHolding({ "core.bookmark": "read" });
+    expect(await readingDoors(device.client, hash)).toEqual(SERVED);
+    expect(await readingDoors(bookmarksOnly.client, hash)).toEqual(UNKNOWN);
+
+    const bookmark = await device.client.createItem({
+      type: "core.bookmark",
+      properties: { url: "https://example.com/embed", title: hash },
+    });
+    expect(bookmark.ok, JSON.stringify(bookmark.error)).toBe(true);
+    trackItem(ctx, bookmark.data.item.id);
+    expect(await readingDoors(bookmarksOnly.client, hash)).toEqual(SERVED);
   });
 
   it("carries in an export archive only the bytes the blob doors would serve", async () => {
@@ -349,14 +376,19 @@ describe("who may read and upload a blob", () => {
     expect((await operator.downloadBlob(sha256(unlent))).status).toBe(200);
   });
 
-  it("refuses an upload to a key that may write no type, and takes one from a key that writes any", async () => {
+  it("refuses an upload to a key that may write no registered type, and takes one from a key that writes one", async () => {
     const reader = await keyHolding({ "*": "read" });
-    const writer = await keyHolding({ "user.nothing-registered": "write" });
+    const unregistered = await keyHolding({
+      "user.nothing-registered": "write",
+    });
+    const writer = await keyHolding({ "core.note": "write" });
     const bytes = new TextEncoder().encode(`an upload ${ctx.runId}`);
 
-    const refused = await reader.client.uploadBlob(bytes, "text/plain");
-    expect(refused.status).toBe(403);
-    expect(refused.error?.error.code).toBe("type_not_permitted");
+    for (const narrow of [reader, unregistered]) {
+      const refused = await narrow.client.uploadBlob(bytes, "text/plain");
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("type_not_permitted");
+    }
 
     const taken = await writer.client.uploadBlob(bytes, "text/plain");
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);

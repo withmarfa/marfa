@@ -579,6 +579,9 @@ async function main(): Promise<void> {
     const copiedB = await replicateToZero(sourceOperator);
     const sourceInstance = await instanceId(source);
     const sourceOverHttp = await blobsOverHttp(sourceOperator, hashes);
+    // And the working key that sent a file's bytes and named them reads
+    // them too, so the drill holds the reference index to what it lends.
+    await blobsOverHttp(source, [small]);
     say(
       `Phase B: ${String(hashes.length - 3)} more blob and 11 more items written, ${String(copiedB)} copies made by replication.`,
     );
@@ -629,6 +632,7 @@ async function main(): Promise<void> {
     const restoredInstance = await instanceId(restored);
     const copiedBack = await replicateToZero(restoredOperator);
     const restoredOverHttp = await blobsOverHttp(restoredOperator, hashes);
+    await blobsOverHttp(restored, [small]);
     await stopServer({ state: restoredState });
     const restoredOnDisk = blobsOnDisk(join(restoredState, "blobs"));
     say(
