@@ -572,6 +572,25 @@ export type ResolvedItem = Item & {
  * read off the header the replay cache already owns; neither is a field a
  * client sets on an update payload.
  */
+/**
+ * The version a write is based on, and whose snapshots its writer may read.
+ * One without the other is not a write the store accepts: a stale write is
+ * merged against the snapshot it names and may be answered with it as
+ * `ancestor`, so a snapshot of a type the writer may not read answers
+ * `ancestor_unavailable`, as one thinned away does.
+ */
+export type BaseVersionInput =
+  | { version?: undefined; may_read_type?: undefined }
+  | { version: number; may_read_type: (type: string) => boolean };
+
+/** The base a write names, where it names one. */
+export function baseVersion(
+  version: number | undefined,
+  mayReadType: (type: string) => boolean,
+): BaseVersionInput {
+  return version === undefined ? {} : { version, may_read_type: mayReadType };
+}
+
 export interface ConflictResolutionInput {
   /** Absent means `manual`: the envelope. */
   conflict_mode?: ConflictMode;
@@ -592,13 +611,6 @@ export interface ConflictResolutionInput {
     sourceType: string,
     targetType: string,
   ) => boolean;
-  /**
-   * Whether the writer may read a snapshot of this type. Required with a
-   * `version`: a stale write is merged against the snapshot it names and may
-   * be answered with it as `ancestor`, so a snapshot of a type the writer may
-   * not read answers `ancestor_unavailable`, as one thinned away does.
-   */
-  may_read_type?: (type: string) => boolean;
 }
 
 /**
@@ -645,7 +657,8 @@ export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
  */
 export type StoredUpdateItemInput = Omit<UpdateItemInput, "version"> &
   ConflictResolutionInput &
-  BlobProofInput & { version?: number };
+  BlobProofInput &
+  BaseVersionInput;
 
 /** What a purge left of a row's link or natural key under its type. `key`
  *  is the link value or the natural key's `source_id`. */
@@ -1000,7 +1013,7 @@ export type VersionedItemFields = Pick<
 /** One page of an item's snapshots, oldest first. */
 export interface VersionPageInput {
   /** Whether the reader may read a snapshot of this type. A snapshot it may
-   *  not read is not on the page, and the page can come back short. */
+   *  not read is not on the page, which is filled past it. */
   reads: (type: string) => boolean;
   limit: number;
   cursor?: string;
@@ -1021,7 +1034,6 @@ export interface VersionStore {
    *  version thinner's. A door reads through `list`. */
   all(itemId: string): Promise<Version[]>;
   getByVersion(itemId: string, version: number): Promise<Version | null>;
-  getLatestTimestamp(itemId: string): Promise<string | null>;
   deleteByIds(ids: string[]): Promise<number>;
   /**
    * Pages over every version snapshot's parsed properties, instance-wide.

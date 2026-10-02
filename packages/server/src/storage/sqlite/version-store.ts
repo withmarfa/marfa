@@ -1,4 +1,4 @@
-import { eq, and, asc, desc, gt, inArray, sql } from "drizzle-orm";
+import { eq, and, asc, gt, inArray, sql } from "drizzle-orm";
 import { ErrorCode, generateId, MarfaError } from "@withmarfa/shared";
 import type { Version } from "@withmarfa/shared";
 import {
@@ -118,17 +118,6 @@ export class SqliteVersionStore implements VersionStore {
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
       .get();
     return row ? rowToVersion(row) : null;
-  }
-
-  async getLatestTimestamp(itemId: string): Promise<string | null> {
-    const row = await this.db
-      .select({ created_at: versions.created_at })
-      .from(versions)
-      .where(eq(versions.item_id, itemId))
-      .orderBy(desc(versions.version))
-      .limit(1)
-      .get();
-    return row?.created_at ?? null;
   }
 
   async deleteByIds(ids: string[]): Promise<number> {

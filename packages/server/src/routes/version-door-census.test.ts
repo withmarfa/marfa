@@ -191,17 +191,40 @@ const OWN_RULE: Record<string, string> = {
 };
 
 /**
- * Every module reading a snapshot without a reader, and why. A door reads
- * through `versions.list`, which takes one.
+ * Every module calling a version store read that takes no reader, and why.
+ * The reads are taken from the `VersionStore` interface itself, so a read
+ * added there is watched here: every method but `list`, which takes the
+ * reader, and the two writes.
  */
-const UNFILTERED_HISTORY: Record<string, string> = {
+const UNFILTERED_READERS: Record<string, string> = {
   "storage/sqlite/item-store.ts":
     "the update, which reads the base snapshot and merges against it only where the writer's may_read_type admits its type",
   "storage/version-thinner.ts":
     "the thinner, which decides what to keep for no credential and answers nobody",
+  "housekeeping/blob-orphans.ts":
+    "the orphan sweep, which reads snapshot properties for the digests they hold, for no credential, and answers nobody",
 };
 
-function unfilteredHistoryReaders(): string[] {
+const READER_TAKING = new Set(["list"]);
+const WRITES = new Set(["create", "deleteByIds"]);
+
+function unfilteredReads(): string[] {
+  const source = readFileSync(
+    join(import.meta.dirname, "../storage/interface.ts"),
+    "utf8",
+  );
+  const body = /export interface VersionStore \{([\s\S]*?)\n\}/.exec(
+    source,
+  )?.[1];
+  expect(body).toBeDefined();
+  const methods = [...(body ?? "").matchAll(/^ {2}(\w+)\(/gm)].map(
+    (m) => m[1] ?? "",
+  );
+  return methods.filter((m) => !READER_TAKING.has(m) && !WRITES.has(m));
+}
+
+function unfilteredReaders(reads: readonly string[]): string[] {
+  const call = new RegExp(`\\bversion(s|Store)\\.(${reads.join("|")})\\(`);
   const root = join(import.meta.dirname, "..");
   const out: string[] = [];
   const walk = (dir: string): void => {
@@ -211,9 +234,7 @@ function unfilteredHistoryReaders(): string[] {
       else if (
         entry.name.endsWith(".ts") &&
         !entry.name.endsWith(".test.ts") &&
-        /\bversion(s|Store)\.(all|getByVersion)\(/.test(
-          readFileSync(join(root, rel), "utf8"),
-        )
+        call.test(readFileSync(join(root, rel), "utf8"))
       ) {
         out.push(rel);
       }
@@ -224,9 +245,19 @@ function unfilteredHistoryReaders(): string[] {
 }
 
 describe("every door answering a snapshot is held to the key's type reach", () => {
-  it("names every module reading a snapshot without a reader", () => {
-    expect(unfilteredHistoryReaders()).toEqual(
-      Object.keys(UNFILTERED_HISTORY).sort(),
+  it("names every module calling a version store read that takes no reader", () => {
+    const reads = unfilteredReads();
+    // The witness that the interface was read: every read it holds today.
+    expect(reads.sort()).toEqual(
+      [
+        "all",
+        "getByVersion",
+        "listThinningCandidates",
+        "scanProperties",
+      ].sort(),
+    );
+    expect(unfilteredReaders(reads)).toEqual(
+      Object.keys(UNFILTERED_READERS).sort(),
     );
   });
 

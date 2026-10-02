@@ -357,7 +357,8 @@ export class TextEnrichmentSweeper {
       const updated = await storage.items.update(candidate.item_id, {
         properties: kept,
         version: fresh.version,
-        // The sweep writes for no credential, so every snapshot is its own.
+        // The sweep acts for no key, so no type restriction applies to the
+        // snapshot it is based on.
         may_read_type: () => true,
       });
       // A conflict response means the item moved between the re-read and

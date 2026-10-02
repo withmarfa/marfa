@@ -1037,10 +1037,6 @@ export class SqliteItemStore implements ItemStore {
     input: StoredUpdateItemInput,
   ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse> {
     const whereClause = eq(items.id, id);
-    const mayReadSnapshot = input.may_read_type;
-    if (input.version !== undefined && mayReadSnapshot === undefined) {
-      throw new Error("A write naming a version names who reads its snapshot");
-    }
 
     return await this.db.transaction(async (tx) => {
       const row = await tx
@@ -1214,9 +1210,7 @@ export class SqliteItemStore implements ItemStore {
         tx,
       );
       const ancestor =
-        stored !== null && mayReadSnapshot?.(stored.type) === true
-          ? stored
-          : null;
+        stored !== null && input.may_read_type(stored.type) ? stored : null;
 
       if (!ancestor) {
         // Its own answer rather than a conflict naming every field. See

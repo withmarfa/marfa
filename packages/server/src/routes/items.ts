@@ -67,7 +67,7 @@ import type {
   ItemSortField,
   ResolvedItem,
 } from "../storage/interface.js";
-import { ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
+import { baseVersion, ITEM_EDGES_CURSOR_KEY } from "../storage/interface.js";
 import { staleVersion } from "../storage/conflict.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
@@ -192,8 +192,9 @@ const StaleVersionSchema = z
   .openapi("ItemStaleVersion");
 
 /**
- * The refusal for a write based on a version whose snapshot has been thinned
- * away. Distinct from `version_conflict` because it cannot be resolved: there
+ * The refusal for a write based on a version with no snapshot it may be
+ * merged against: none is held, or the writer may not read the one that is.
+ * Distinct from `version_conflict` because it cannot be resolved: there
  * is no ancestor, so no field can be shown not to have collided, and a client
  * merging against an empty one spawns siblings holding text nobody typed.
  */
@@ -939,7 +940,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict — a stale `version`, whether the write carried properties to merge or only edges, `ancestor_unavailable` (no snapshot of the base version is held, or it is of a type the credential may not read, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), `link_taken` (the properties the row ends up with, in the type it ends up as, hold a link another item of that type holds in any state, named in `details.existing_id`; judged at a stale version on the merge as it lands), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -1757,10 +1758,7 @@ export function itemRoutes(storage: Storage) {
             ...(body.occurred_at !== undefined && {
               occurred_at: body.occurred_at,
             }),
-            ...(body.version !== undefined && {
-              version: body.version,
-              may_read_type: typeReader(c),
-            }),
+            ...baseVersion(body.version, typeReader(c)),
           });
           if ("error" in updated) {
             // Reachable only when the caller sent a `version`, which is what

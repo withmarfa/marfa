@@ -65,6 +65,7 @@ import {
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
+import { baseVersion } from "../storage/interface.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { sourceAllowlistRefusal } from "./_source-allowlist.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
@@ -1004,10 +1005,7 @@ async function processBulkItem(
         ...(resultingType === existing.type ? {} : { type: resultingType }),
         tier: raw.tier,
         occurred_at: raw.occurred_at,
-        ...(raw.version !== undefined && {
-          version: raw.version,
-          may_read_type: mayReadType,
-        }),
+        ...baseVersion(raw.version, mayReadType),
       });
     } catch (err) {
       if (isEntryVerdict(err)) {
