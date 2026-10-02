@@ -3580,6 +3580,127 @@ describe("an upload is a queued write", () => {
     });
   });
 
+  it("adds a file as an upload and a file item, linked to nothing", async () => {
+    harness = await hydratedHarness("upload-add", { rows: held() });
+    const { device, server } = harness;
+    const bytes = Buffer.from("PK\u0003\u0004 a novel\n");
+    const added = await device.addFile(fileOf("novel.epub", bytes));
+    expect(
+      added.ok,
+      `the device could not add a file: ${JSON.stringify(added)}`,
+    ).toBe(true);
+    if (!added.ok) return;
+    const [upload, item] = added.value;
+    expect(added.value.map((row) => row.kind)).toEqual([
+      "upload_blob",
+      "create_item",
+    ]);
+    expect(
+      item?.depends_on,
+      "the file item does not wait on its upload, so it can reach the server naming bytes the server has never been sent",
+    ).toEqual([upload?.id]);
+
+    const file = await device.get(item?.item_id ?? "");
+    expect(file.ok).toBe(true);
+    if (!file.ok) return;
+    expect(file.value.type).toBe("core.file");
+    expect(
+      file.value.properties,
+      "an EPUB was sent as bytes of no known kind",
+    ).toMatchObject({
+      blob_ref: hashOf(bytes),
+      mime_type: "application/epub+zip",
+      title: "novel.epub",
+    });
+
+    acceptUploads(harness.server);
+    scriptWrites(server, {
+      create: [
+        (request) => {
+          const sent = JSON.parse(request.body) as {
+            id: string;
+            type: string;
+            properties: Record<string, unknown>;
+          };
+          return answers.created(
+            wireItem({
+              id: sent.id,
+              type: sent.type,
+              version: 1,
+              properties: sent.properties,
+            }),
+          );
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      drained.value.verdicts.map((entry) => entry.verdict),
+      `the upload and the file item were not each answered: ${JSON.stringify(drained.value)}`,
+    ).toEqual(["accepted", "accepted"]);
+    expect(
+      server.requests
+        .filter((request) => request.method === "POST")
+        .map((request) => request.pathname),
+      "a file added on its own went out of order, or was linked to something",
+    ).toEqual(["/blobs", "/items"]);
+    // The witness: the same file attached queues an edge, so the device
+    // links a file when asked to and the absence above is the command's.
+    const attached = await device.attach(HELD.id, fileOf("novel.epub", bytes));
+    expect(attached.ok && attached.value.map((row) => row.kind)).toEqual([
+      "upload_blob",
+      "create_item",
+      "create_edge",
+    ]);
+  });
+
+  it("adds a file under the title, type, tier and tags it is given", async () => {
+    harness = await hydratedHarness("upload-add-options", { rows: held() });
+    const { device } = harness;
+    const added = await device.addFile(
+      fileOf("lease.png", Buffer.from([0x89, 0x50, 0x4e, 0x47, 2])),
+      {
+        title: "Lease, scanned",
+        type: "core.file",
+        tier: "feed",
+        tags: ["home", "papers"],
+      },
+    );
+    expect(added.ok, JSON.stringify(added)).toBe(true);
+    if (!added.ok) return;
+    const fileId = added.value[1]?.item_id ?? "";
+    const file = await device.get(fileId);
+    expect(file.ok).toBe(true);
+    if (!file.ok) return;
+    expect(
+      [
+        file.value.type,
+        file.value.properties.title,
+        file.value.tier,
+        file.value.tags,
+      ],
+      "a file added on its own dropped the title, type, tier or tags it was given",
+    ).toEqual(["core.file", "Lease, scanned", "feed", ["home", "papers"]]);
+    // The witness: with nothing given, the same file would be an image
+    // named for itself, so each value above is the one asked for.
+    expect(file.value.properties.mime_type).toBe("image/png");
+    const tags = (await queueOf(device)).filter(
+      (row) => row.kind === "add_tag",
+    );
+    expect(
+      tags.map((row) => row.tag),
+      "the tags were not queued as writes of their own",
+    ).toEqual(["home", "papers"]);
+    for (const row of tags) {
+      expect(
+        row.depends_on,
+        "a tag write does not wait on the file item it belongs to",
+      ).toEqual([added.value[1]?.id]);
+    }
+  });
+
   it("refuses an upload whose bytes are no longer held", async () => {
     harness = await hydratedHarness("upload-gone", { rows: held() });
     const { device, server } = harness;

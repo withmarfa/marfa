@@ -83,6 +83,9 @@ pub enum ItemsCommand {
     Edges(ItemEdgesArgs),
     /// The edges arriving at an item.
     Backrefs(ItemEdgesArgs),
+    /// Add a file as an item of its own: upload its bytes and create a file
+    /// item for them.
+    Add(AddArgs),
     /// Attach a file: upload its bytes, create a file item for them, and link
     /// it to the target with an `attached-to` edge.
     Attach(AttachArgs),
@@ -348,6 +351,28 @@ pub struct ItemEdgesArgs {
     pub type_: Option<String>,
     #[command(flatten)]
     pub page: PageArgs,
+}
+
+#[derive(Debug, Default, Args)]
+pub struct AddArgs {
+    /// The file to add.
+    pub file: PathBuf,
+    /// The file's MIME type. Guessed from the extension when omitted.
+    #[arg(long, value_name = "TYPE")]
+    pub mime_type: Option<String>,
+    /// The file item's title. Defaults to the file's name.
+    #[arg(long)]
+    pub title: Option<String>,
+    /// The file item's type. Defaults to `core.file`, or the image, audio or
+    /// video subtype when the MIME type says.
+    #[arg(long = "type", value_name = "TYPE")]
+    pub type_: Option<String>,
+    /// A tag, repeatable.
+    #[arg(long = "tag", value_name = "TAG")]
+    pub tags: Vec<String>,
+    /// The tier to write it at; the server's default is the library.
+    #[arg(long)]
+    pub tier: Option<Tier>,
 }
 
 #[derive(Debug, Default, Args)]
@@ -812,16 +837,50 @@ pub fn upload_request(path: &std::path::Path, mime_type: &str) -> Request {
 }
 
 pub fn file_item_request(args: &AttachArgs, mime_type: &str, hash: &str) -> Request {
-    let title = args.title.clone().unwrap_or_else(|| {
-        args.file
-            .file_name()
+    let body = file_item_body(
+        &args.file,
+        args.title.as_deref(),
+        args.type_.as_deref(),
+        mime_type,
+        hash,
+    );
+    Request::post(&["items"]).json(Value::Object(body))
+}
+
+pub fn added_file_request(args: &AddArgs, mime_type: &str, hash: &str) -> Request {
+    let mut body = file_item_body(
+        &args.file,
+        args.title.as_deref(),
+        args.type_.as_deref(),
+        mime_type,
+        hash,
+    );
+    if !args.tags.is_empty() {
+        body.insert("tags".into(), json!(args.tags));
+    }
+    insert_opt(&mut body, "tier", args.tier.map(Tier::as_str));
+    Request::post(&["items"]).json(Value::Object(body))
+}
+
+fn file_item_body(
+    file: &std::path::Path,
+    title: Option<&str>,
+    type_: Option<&str>,
+    mime_type: &str,
+    hash: &str,
+) -> Map<String, Value> {
+    let title = title.map(str::to_string).unwrap_or_else(|| {
+        file.file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| "file".into())
     });
-    Request::post(&["items"]).json(json!({
-        "type": file_type_for(mime_type, args.type_.as_deref()),
-        "properties": { "blob_ref": hash, "mime_type": mime_type, "title": title },
-    }))
+    let mut body = Map::new();
+    body.insert("type".into(), file_type_for(mime_type, type_).into());
+    body.insert(
+        "properties".into(),
+        json!({ "blob_ref": hash, "mime_type": mime_type, "title": title }),
+    );
+    body
 }
 
 pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
@@ -860,6 +919,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ItemsCommand::Untag { id, tag } => untag_request(id, tag),
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
+        ItemsCommand::Add(args) => return add(args, remote, out),
         ItemsCommand::Attach(args) => return attach(args, remote, out),
         ItemsCommand::Stats { by } => stats_request(*by),
         ItemsCommand::Occurrences { from, to, type_ } => {
@@ -933,25 +993,9 @@ const BULK_GET_LIMIT: usize = 100;
 /// so the next attempt uploads nothing new.
 fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
-    let blob = remote.json(&upload_request(&args.file, &mime_type))?;
-    let hash = blob
-        .get("hash")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            CliError::Invalid("the upload answered no hash, so nothing can reference it".into())
-        })?
-        .to_string();
+    let (blob, hash) = upload(&args.file, &mime_type, remote)?;
     let item = remote.json(&file_item_request(args, &mime_type, &hash))?;
-    let file_item = item.get("item").ok_or_else(|| {
-        CliError::Invalid("the file item was created without an item in the answer".into())
-    })?;
-    let file_item_id = file_item
-        .get("id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            CliError::Invalid("the file item was created without an id in the answer".into())
-        })?
-        .to_string();
+    let (file_item, file_item_id) = file_item_of(&item)?;
     let edge = remote.json(&attached_to_request(&file_item_id, &args.id))?;
     out.report(
         &json!({ "blob": blob, "item": file_item, "edge": edge }),
@@ -965,4 +1009,54 @@ fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
             )
         },
     )
+}
+
+/// Upload, then the file item: two doors, one command, as `attach` is
+/// without its edge. A run that stops at the file item leaves the upload
+/// standing, and the next attempt uploads nothing new.
+fn add(args: &AddArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let mime_type = mime_type_for(&args.file, args.mime_type.as_deref());
+    let (blob, hash) = upload(&args.file, &mime_type, remote)?;
+    let item = remote.json(&added_file_request(args, &mime_type, &hash))?;
+    let (file_item, file_item_id) = file_item_of(&item)?;
+    out.report(&json!({ "blob": blob, "item": file_item }), || {
+        format!(
+            "added {} as {} ({})",
+            args.file.display(),
+            file_item_id,
+            hash
+        )
+    })
+}
+
+/// The upload's answer, and the hash it names the bytes by.
+fn upload(
+    file: &std::path::Path,
+    mime_type: &str,
+    remote: &Remote,
+) -> Result<(Value, String), CliError> {
+    let blob = remote.json(&upload_request(file, mime_type))?;
+    let hash = blob
+        .get("hash")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            CliError::Invalid("the upload answered no hash, so nothing can reference it".into())
+        })?
+        .to_string();
+    Ok((blob, hash))
+}
+
+/// The file item a create answered, and its id.
+fn file_item_of(answer: &Value) -> Result<(&Value, String), CliError> {
+    let file_item = answer.get("item").ok_or_else(|| {
+        CliError::Invalid("the file item was created without an item in the answer".into())
+    })?;
+    let id = file_item
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            CliError::Invalid("the file item was created without an id in the answer".into())
+        })?
+        .to_string();
+    Ok((file_item, id))
 }

@@ -22,6 +22,7 @@ interface EdgeType {
   cascade_on_delete: string;
   source_type_constraints: string[];
   target_type_constraints: string[];
+  shipped: boolean;
 }
 
 interface EdgeTypeListResponse {
@@ -163,6 +164,9 @@ describe("GET /edge-types — list", () => {
     expect(ids).toContain("about"); // core
     expect(ids).toContain("parent-of"); // core
     expect(ids).toContain(id); // custom, just created
+    const shipped = Object.fromEntries(data.data.map((t) => [t.id, t.shipped]));
+    expect(shipped.about).toBe(true);
+    expect(shipped[id]).toBe(false);
   });
 });
 

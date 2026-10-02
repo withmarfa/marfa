@@ -74,6 +74,7 @@ export interface EdgeTypeRegistration {
 
 /** Full edge-type definition as returned by the server (core or custom). */
 export interface EdgeTypeDefinition extends EdgeTypeRegistration {
+  shipped: boolean;
   created_at?: string;
   updated_at?: string;
 }
