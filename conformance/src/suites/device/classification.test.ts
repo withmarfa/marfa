@@ -249,6 +249,74 @@ describe("an environmental failure retries and is never counted", () => {
     ]);
   });
 
+  it("passes on the wait a read reconciling a refusal was asked for", async () => {
+    harness = await hydratedHarness("class-read-waits", { rows: held() });
+    const { server, device } = harness;
+    expect(
+      (
+        await device.update(HELD.id, {
+          properties: { title: "edited" },
+          version: HELD.version,
+        })
+      ).ok,
+    ).toBe(true);
+    scriptWrites(server, {
+      update: [refusal(400, "invalid_properties", "not a title")],
+      read: [
+        {
+          kind: "json",
+          status: 429,
+          body: { error: { code: "rate_limited", message: "slow down" } },
+          headers: { "Retry-After": "7" },
+        },
+      ],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(drained.value.unavailable).toMatch(/429|rate/);
+    expect(
+      drained.value.retry_after_seconds,
+      "the wait the server asked for on the read was lost, so a caller asks again at once",
+    ).toBe(7);
+  });
+
+  it("counts the writes it settled without sending apart from those the server answered", async () => {
+    harness = await hydratedHarness("class-unsent", { rows: held() });
+    const { server, device } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "refused" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const edited = await device.update(created.value.item_id ?? "", {
+      properties: { title: "behind it" },
+      version: 0,
+    });
+    expect(edited.ok, JSON.stringify(edited)).toBe(true);
+    scriptWrites(server, {
+      create: [refusal(400, "invalid_properties", "no such property")],
+      read: [refusal(404, "item_not_found", "no such item")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+    expect(
+      {
+        answered: drained.value.answered,
+        unsent: drained.value.unsent,
+        undelivered: drained.value.undelivered,
+        held: drained.value.held,
+      },
+      "the report's counts did not account for every write the pass came to",
+    ).toEqual({ answered: 1, unsent: 1, undelivered: 0, held: 0 });
+    // The witness: the edit was refused by the drain, never sent.
+    expect(
+      server.requests.filter((request) => request.method === "PATCH"),
+    ).toHaveLength(0);
+  });
+
   it("ends the pass at a read the server cannot answer, sending nothing after it", async () => {
     harness = await hydratedHarness("class-read-ends", { rows: held() });
     const { server, device } = harness;

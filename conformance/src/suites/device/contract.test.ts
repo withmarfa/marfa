@@ -1143,7 +1143,7 @@ describe("the contract the working copy was built for", () => {
     }
   });
 
-  it("counts a refusal that names no contract rather than ending the write", async () => {
+  it("takes a refusal that names no contract as the network's, ending the pass uncounted", async () => {
     const held = {
       id: "01a00000-0000-7000-8000-00000000000a",
       version: 3,
@@ -1153,19 +1153,25 @@ describe("the contract the working copy was built for", () => {
       rows: { "core.note": [{ item: held }] },
     });
     const { server: scripted, device } = harness;
+    const unnamed = (status: number, code: string): Answer => ({
+      kind: "json",
+      status,
+      body: { error: { code, message: "answered at the edge" } },
+      contract: null,
+    });
     scriptWrites(scripted, {
       update: [
-        {
-          kind: "json",
-          status: 403,
-          body: {
-            error: { code: "forbidden", message: "blocked at the edge" },
-          },
-          contract: null,
-        },
+        ...Array.from({ length: 6 }, () => unnamed(404, "not_found")),
+        unnamed(401, "access_denied"),
         refused(403, "forbidden", "the key may not write this"),
       ],
       read: [answers.updated(wireItem(held))],
+      create: [
+        (request) =>
+          answers.created(
+            wireItem({ id: (JSON.parse(request.body) as { id: string }).id }),
+          ),
+      ],
     });
     expect(
       (
@@ -1175,21 +1181,41 @@ describe("the contract the working copy was built for", () => {
         })
       ).ok,
     ).toBe(true);
-    const proxied = await device.drain();
-    expect(proxied.ok, JSON.stringify(proxied)).toBe(true);
     expect(
-      proxied.ok && [
-        proxied.value.verdicts[0]?.verdict,
-        proxied.value.verdicts[0]?.refusals,
-      ],
-      "a proxy's refusal ended a write the server never saw",
-    ).toEqual([null, 1]);
-    const reads = () =>
-      scripted.requests.filter(
-        (request) =>
-          request.method === "GET" && request.pathname === `/items/${held.id}`,
-      ).length;
-    expect(reads(), "a proxy's refusal was reconciled as the server's").toBe(0);
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "behind" },
+        })
+      ).ok,
+    ).toBe(true);
+    // A proxy restarting under a watch that drains each second: one past
+    // the ceiling.
+    for (let pass = 0; pass < 7; pass += 1) {
+      const drained = await device.drain();
+      expect(drained.ok, JSON.stringify(drained)).toBe(true);
+      if (!drained.ok) return;
+      expect(
+        [
+          drained.value.answered,
+          drained.value.undelivered,
+          drained.value.stopped,
+        ],
+        "an answer from in front of the server was counted as the server's, or stopped the queue as a refused credential",
+      ).toEqual([0, 2, null]);
+      expect(drained.value.unavailable).toMatch(/naming no contract/);
+      expect(
+        drained.value.verdicts.map((verdict) => [
+          verdict.verdict,
+          verdict.refusals,
+        ]),
+        "a proxy's answer was counted against a write the server never saw",
+      ).toEqual([[null, 0]]);
+    }
+    expect(
+      scripted.requests.filter((request) => request.method === "POST").length,
+      "the pass went on past an answer from in front of the server",
+    ).toBe(0);
 
     // The witness: the server's own refusal, naming its contract, refuses.
     const own = await device.drain();

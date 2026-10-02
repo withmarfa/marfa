@@ -2838,6 +2838,7 @@ describe("files and items", () => {
       harness = await behind("folder-watch-hydration-fails", [
         agedOut,
         answers.serverFault(),
+        answers.serverFault(),
         headRead("900"),
         liveReplay("900", []),
       ]);
@@ -2856,6 +2857,10 @@ describe("files and items", () => {
       } finally {
         await watching.stop();
       }
+      expect(
+        watching.stderr.split("could not hydrate").length - 1,
+        `a watch said it could not hydrate at every attempt rather than once: ${watching.stderr}`,
+      ).toBe(1);
     });
 
     it("waits out a rate limit's Retry-After before hydrating again while watching", async () => {

@@ -237,6 +237,10 @@ export interface DrainReport {
   /** Writes it could not deliver, each waiting for the next drain
    *  (`queue-and-verdicts.md` 17). */
   undelivered: number;
+  /** Writes it settled without the server answering them: refused for a
+   *  write they waited on, settled by another write's answer, or counted for
+   *  a request that could not be made (`queue-and-verdicts.md` 6). */
+  unsent: number;
   /** Why the pass ended before the queue was through, where it did. */
   unavailable: string | null;
   verdicts: DrainVerdict[];

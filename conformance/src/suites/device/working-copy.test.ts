@@ -1553,17 +1553,52 @@ describe("who may read a store", () => {
       Buffer.from("bytes kept beside the store\n"),
     );
     expect((await device.blob(hash)).ok).toBe(true);
-    const mode = (path: string) => statSync(path).mode & 0o777;
+    // Held open by a drain whose write the server never answers, so the
+    // journals SQLite keeps beside an open store are there to read.
     expect(
-      {
-        store: mode(device.store),
-        lock: mode(`${device.store}.writer-lock`),
-        bytes: mode(`${device.store}.blobs`),
-      },
-      "a store holding what a key reads was made readable by other accounts on the machine",
-    ).toEqual({ store: 0o600, lock: 0o600, bytes: 0o700 });
-    for (const journal of [`${device.store}-wal`, `${device.store}-shm`]) {
-      if (existsSync(journal)) expect(mode(journal), journal).toBe(0o600);
+      (
+        await device.create({
+          type: "core.note",
+          properties: { title: "held" },
+        })
+      ).ok,
+    ).toBe(true);
+    server.answer("POST", "/items", { kind: "stall" });
+    const writer = device.hold(["drain"]);
+    const mode = (path: string) => statSync(path).mode & 0o777;
+    try {
+      await vi.waitFor(
+        () => {
+          expect(writer.running(), writer.stderr).toBe(true);
+          expect(
+            server.requests.some((request) => request.method === "POST"),
+          ).toBe(true);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const journals = [`${device.store}-wal`, `${device.store}-shm`];
+      expect(
+        journals.map((journal) => existsSync(journal)),
+        "the store held open has no journals, so their modes below are about nothing",
+      ).toEqual([true, true]);
+      expect(
+        {
+          store: mode(device.store),
+          wal: mode(journals[0] ?? ""),
+          shm: mode(journals[1] ?? ""),
+          lock: mode(`${device.store}.writer-lock`),
+          bytes: mode(`${device.store}.blobs`),
+        },
+        "a store holding what a key reads was made readable by other accounts on the machine",
+      ).toEqual({
+        store: 0o600,
+        wal: 0o600,
+        shm: 0o600,
+        lock: 0o600,
+        bytes: 0o700,
+      });
+    } finally {
+      await writer.stop();
     }
   });
 });
