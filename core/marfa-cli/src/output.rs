@@ -543,16 +543,7 @@ fn record_cells(record: &Value) -> Vec<String> {
         let run = record.get("last_run").filter(|run| !run.is_null());
         let outcome = run.map_or("never run", |run| field(run, "outcome"));
         let when = run.map_or("", |run| field(run, "finished_at"));
-        let said = run
-            .map(|run| {
-                let error = field(run, "error");
-                if error.is_empty() {
-                    field(run, "summary")
-                } else {
-                    error
-                }
-            })
-            .unwrap_or("");
+        let said = run.map_or("", run_note);
         return vec![
             owned("id"),
             owned("source"),
@@ -563,16 +554,11 @@ fn record_cells(record: &Value) -> Vec<String> {
         ];
     }
     if record.get("connector_id").is_some() && record.get("outcome").is_some() {
-        let error = owned("error");
         return vec![
             owned("id"),
             owned("outcome"),
             owned("finished_at"),
-            if error.is_empty() {
-                owned("summary")
-            } else {
-                error
-            },
+            run_note(record).to_string(),
         ];
     }
     let kind = ["type", "action"]
@@ -597,6 +583,14 @@ fn record_cells(record: &Value) -> Vec<String> {
             format!("[{state}]")
         },
     ]
+}
+
+/// What a connector run said: its error where it failed, else its summary.
+fn run_note(run: &Value) -> &str {
+    match field(run, "error") {
+        "" => field(run, "summary"),
+        error => error,
+    }
 }
 
 /// An item's edges from one end: each edge's type, then the item at the
