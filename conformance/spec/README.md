@@ -17,6 +17,7 @@ The specification has two halves.
 - `inbound-webhooks.md`: a connector's webhook endpoints, the door a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
 - `search-and-filters.md`: search, export, occurrences, the lookup by link, natural key or id, and the query grammar every listing shares.
+- `occurrences.md`: how a recurring event unfolds into occurrences across zones and clock changes, what an occurrence window includes, and what a write may store as a rule.
 - `keys-and-oauth.md`: keys, permissions, the operator key and the OAuth provider.
 - `instance.md`: what one deployment says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the fixtures produce.
