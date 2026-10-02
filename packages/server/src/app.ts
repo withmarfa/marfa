@@ -600,7 +600,9 @@ export function createApp(
   // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
-    app.on(["POST", "GET"], "/auth/*", (c) => authInstance.handler(c.req.raw));
+    app.on(["POST", "GET"], "/auth/*", (c) =>
+      authInstance.handler(c.req.raw, c.var.clientIp ?? null),
+    );
   }
 
   app.route(

@@ -430,7 +430,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       ),
       body: JSON.stringify({ email: emailStr, password: passwordStr }),
     });
-    const response = await auth.handler(upstream);
+    const response = await auth.handler(upstream, c.var.clientIp ?? null);
 
     if (response.ok) {
       // Forward every Set-Cookie header from Better Auth onto the redirect
@@ -505,7 +505,7 @@ export function authRoutes(storage: Storage, auth?: MarfaAuth): Hono<AppEnv> {
       method: "GET",
       headers: forwardHeaders(c.req.raw.headers, {}, auth.baseURL),
     });
-    const response = await auth.handler(upstream);
+    const response = await auth.handler(upstream, c.var.clientIp ?? null);
 
     const body = response.status === 200 ? await response.clone().text() : null;
     if (body !== null && body.trim().length === 0) {

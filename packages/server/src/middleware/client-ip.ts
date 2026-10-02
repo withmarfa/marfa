@@ -183,8 +183,9 @@ export type { CidrRange };
  * The header Better Auth reads the client address from. Better Auth resolves
  * an address for its own limiter and its session rows, and left to itself it
  * trusts whatever `X-Forwarded-For` a client sends. So it is told to read this
- * header instead, and `clientIpMiddleware` writes it on every request with the
- * address Marfa resolved, replacing anything the client sent under the name.
+ * header instead, and `MarfaAuth.handler` writes it on every request it hands
+ * over, with the address this middleware resolved, replacing anything the
+ * client sent under the name.
  */
 export const CLIENT_ADDRESS_HEADER = "x-marfa-client-address";
 
@@ -202,28 +203,18 @@ export function addressBucket(ip: string): string {
 }
 
 /**
- * Resolve the client IP once per request, stash it on `c.var.clientIp`, and
- * write it onto the request as {@link CLIENT_ADDRESS_HEADER}, which is how
- * Better Auth learns it.
- *
- * The request itself is rewritten, rather than the header added where each
- * Better Auth call is made, so that every way a request reaches Better Auth
- * (the catch-all, an in-process dispatch, a session lookup on the request's
- * headers) carries the same answer without each having to remember it. Run
- * this BEFORE auth so the resolved IP is available to every later
- * middleware and handler.
+ * Resolve the client IP once per request and stash it on
+ * `c.var.clientIp` for downstream consumers: the audit rows, the rate
+ * limiter, the sign-in and device code limits, and Better Auth, which is
+ * handed it with every request (`MarfaAuth.handler`). Run this BEFORE auth
+ * so the resolved IP is available to every later middleware and handler.
  */
 export function clientIpMiddleware(
   trustedCidrs: CidrRange[],
   trustedHeader: string | null = null,
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    const ip = getClientIp(c, trustedCidrs, trustedHeader);
-    c.set("clientIp", ip);
-    const headers = new Headers(c.req.raw.headers);
-    headers.delete(CLIENT_ADDRESS_HEADER);
-    if (ip !== null) headers.set(CLIENT_ADDRESS_HEADER, ip);
-    c.req.raw = new Request(c.req.raw, { headers });
+    c.set("clientIp", getClientIp(c, trustedCidrs, trustedHeader));
     await next();
   };
 }

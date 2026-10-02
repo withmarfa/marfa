@@ -411,6 +411,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           auth,
           c.req.url,
           c.req.raw.headers,
+          c.var.clientIp ?? null,
           {
             accept: true,
             scope: scopeLiterals.join(" ") || undefined,
@@ -692,6 +693,7 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
           auth,
           c.req.url,
           c.req.raw.headers,
+          c.var.clientIp ?? null,
           {
             accept,
             // Forward the user's narrowed scope set so the plugin issues a
@@ -788,6 +790,7 @@ async function proxyConsentDecision(
   auth: MarfaAuth,
   requestUrl: string,
   requestHeaders: Headers,
+  clientAddress: string | null,
   decision: { accept: boolean; scope?: string; oauthQuery: string },
   fallbackOrigin?: string,
 ): Promise<Response> {
@@ -813,7 +816,7 @@ async function proxyConsentDecision(
     redirect: "manual",
   });
 
-  const proxyResp = await auth.handler(proxyReq);
+  const proxyResp = await auth.handler(proxyReq, clientAddress);
   if (proxyResp.status === 302) {
     return proxyResp;
   }

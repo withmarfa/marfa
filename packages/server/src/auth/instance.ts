@@ -153,7 +153,17 @@ export type DeviceCodeRefusal =
  *  without re-exporting the full Better Auth generic surface (which drags
  *  in zod internal types and breaks portable .d.ts emit). */
 export interface MarfaAuth {
-  handler: (request: Request) => Promise<Response>;
+  /**
+   * Serve a request through Better Auth, as coming from `clientAddress`:
+   * the address `clientIpMiddleware` resolved, which Better Auth keys its
+   * limiter on and records on a session. Taken here rather than read off
+   * the request so that no way of reaching Better Auth can leave it to
+   * trust a header the client set.
+   */
+  handler: (
+    request: Request,
+    clientAddress: string | null,
+  ) => Promise<Response>;
   /**
    * Session lookup over the request's cookies. Returns the active
    * Better Auth session, or `null` if no valid cookie is present. The
@@ -378,9 +388,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       disableOriginCheck: false,
       // Better Auth resolves a client address for its limiter and its
       // session rows, and by default trusts the `X-Forwarded-For` a client
-      // sends. It reads the address Marfa resolved instead, which
-      // `clientIpMiddleware` writes on every request; see
-      // `CLIENT_ADDRESS_HEADER`.
+      // sends. It reads the address Marfa resolved instead, which the
+      // `handler` below writes on every request; see `CLIENT_ADDRESS_HEADER`.
       ipAddress: { ipAddressHeaders: [CLIENT_ADDRESS_HEADER] },
       // Cookies set on /auth/*; the data plane (/items, /edges, etc.)
       // remains bearer-only and does not consume this cookie.
@@ -608,7 +617,16 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   };
 
   return {
-    handler: instance.handler,
+    handler: (request: Request, clientAddress: string | null) => {
+      // Set on the request's own headers rather than on a copy: copying a
+      // request the server received starts reading its body, which is
+      // otherwise read only if Better Auth gets as far as reading it.
+      request.headers.delete(CLIENT_ADDRESS_HEADER);
+      if (clientAddress !== null) {
+        request.headers.set(CLIENT_ADDRESS_HEADER, clientAddress);
+      }
+      return instance.handler(request);
+    },
     api: instance.api,
     getSession: (headers: Headers) => api.getSession({ headers }),
     deviceVerify,

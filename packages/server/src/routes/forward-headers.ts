@@ -4,10 +4,11 @@
  * Several Marfa-owned auth routes wrap a Better Auth endpoint: they take
  * the browser's request, do Marfa-side work, then hand a synthesized
  * `Request` to `auth.handler(...)`. That inner request has to carry the
- * caller's session cookie and the client address Marfa resolved, and it
- * has to satisfy Better Auth's own trusted-origins check.
+ * caller's session cookie, and it has to satisfy Better Auth's own
+ * trusted-origins check. The client address is not forwarded: the handler
+ * takes the one Marfa resolved.
  *
- * Forwarding the browser's headers verbatim does not achieve the last
+ * Forwarding the browser's headers verbatim does not achieve the second
  * part. Better Auth validates `Origin` (falling back to `Referer`) on
  * every cookie-bearing non-GET, and a top-level browser navigation sends
  * no `Origin` at all, so a wrapper reached by navigation would dispatch
@@ -17,15 +18,12 @@
  * foreign origin never reaches a wrapper: the cross-origin guard in front
  * of each refuses it (`_cross-origin.ts`).
  */
-import { CLIENT_ADDRESS_HEADER } from "../middleware/client-ip.js";
-
 /** Headers copied from the inbound request onto the internal dispatch. */
 const PASSTHROUGH_HEADERS = [
   "origin",
   "cookie",
   "user-agent",
   "accept-language",
-  CLIENT_ADDRESS_HEADER,
 ] as const;
 
 /**
