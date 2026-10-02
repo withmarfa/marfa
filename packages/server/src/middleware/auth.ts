@@ -808,13 +808,18 @@ export function mayReadRow(c: Context<AppEnv>, row: { type: string }): boolean {
   return mayReadType(checkAuth(c.get("apiKey")), row.type);
 }
 
+/** Whether the credential may read a type, as a function to hand on. */
+export function typeReader(c: Context<AppEnv>): (type: string) => boolean {
+  const key = checkAuth(c.get("apiKey"));
+  return (type) => mayReadType(key, type);
+}
+
 /**
  * Whether the credential may read an edge end of this type. An edge write
  * answers an end it may not read exactly as a missing one.
  */
 export function mayReadEdgeEnd(c: Context<AppEnv>): (type: string) => boolean {
-  const key = checkAuth(c.get("apiKey"));
-  return (type) => mayReadType(key, type);
+  return typeReader(c);
 }
 
 /**

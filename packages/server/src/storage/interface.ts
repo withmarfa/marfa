@@ -416,6 +416,9 @@ export const ITEM_BACKREFS_CURSOR_KEY = cursorSortKey(
   NEWEST_FIRST,
   "desc",
 );
+/** An item's snapshots page by version, oldest first. */
+export const ITEM_VERSIONS_CURSOR_KEY: CursorSortKey =
+  "item-versions:version:asc";
 export const AUDIT_CURSOR_KEY = cursorSortKey("audit", NEWEST_FIRST, "desc");
 export const WEBHOOK_DELIVERIES_CURSOR_KEY = cursorSortKey(
   "webhook-deliveries",
@@ -589,6 +592,13 @@ export interface ConflictResolutionInput {
     sourceType: string,
     targetType: string,
   ) => boolean;
+  /**
+   * Whether the writer may read a snapshot of this type. Required with a
+   * `version`: a stale write is merged against the snapshot it names and may
+   * be answered with it as `ancestor`, so a snapshot of a type the writer may
+   * not read answers `ancestor_unavailable`, as one thinned away does.
+   */
+  may_read_type?: (type: string) => boolean;
 }
 
 /**
@@ -978,29 +988,22 @@ export interface MetadataStore {
  * The three fields an update may change that are not properties. Without
  * the value at the version the client read, a three-way merge cannot tell
  * the client having changed one from somebody else having changed it since,
- * and the only thing left to do with the client's value is take it — which
- * is a stale write overwriting a newer one with nothing refused.
- *
- * Not part of `Version`, which is what `GET /items/{id}/versions` answers:
- * the history door publishes the properties at each version and nothing
- * else, and this is read on the update path alone.
+ * and the only thing left to do with the client's value is take it, which
+ * is a stale write overwriting a newer one with nothing refused. And the
+ * type: a stale move is judged against it, and a snapshot is read under it.
  */
-export interface VersionedItemFields {
-  tier: string | null;
-  occurred_at: string | null;
-  source_id: string | null;
-  /**
-   * The type the row had at this version. A stale write that moves the
-   * row is judged against it: two writers who read one version and each
-   * moved the row somewhere else would otherwise land one over the other
-   * with nothing refused.
-   */
-  type: string;
-}
+export type VersionedItemFields = Pick<
+  Version,
+  "type" | "tier" | "occurred_at" | "source_id"
+>;
 
-/** A version row as the update path reads it. */
-export interface VersionSnapshot extends Version {
-  item_fields: VersionedItemFields;
+/** One page of an item's snapshots, oldest first. */
+export interface VersionPageInput {
+  /** Whether the reader may read a snapshot of this type. A snapshot it may
+   *  not read is not on the page, and the page can come back short. */
+  reads: (type: string) => boolean;
+  limit: number;
+  cursor?: string;
 }
 
 export interface VersionStore {
@@ -1010,11 +1013,14 @@ export interface VersionStore {
     properties: Record<string, unknown>,
     itemFields: VersionedItemFields,
   ): Promise<Version>;
-  list(itemId: string): Promise<Version[]>;
-  getByVersion(
+  list(
     itemId: string,
-    version: number,
-  ): Promise<VersionSnapshot | null>;
+    page: VersionPageInput,
+  ): Promise<{ data: Version[]; next_cursor: string | null }>;
+  /** Every snapshot of the item, oldest first, read for no credential: the
+   *  version thinner's. A door reads through `list`. */
+  all(itemId: string): Promise<Version[]>;
+  getByVersion(itemId: string, version: number): Promise<Version | null>;
   getLatestTimestamp(itemId: string): Promise<string | null>;
   deleteByIds(ids: string[]): Promise<number>;
   /**

@@ -223,6 +223,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     const again = await ctx.storage.items.update(id, {
       properties: { body: "retried edit" },
       version: base,
+      may_read_type: () => true,
       conflict_mode: "auto",
       idempotency_key: credentialScopedKey(workingKeyId, key),
     });
@@ -276,6 +277,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     const again = await ctx.storage.items.update(id, {
       properties: { body: "retried edit, parented" },
       version: base,
+      may_read_type: () => true,
       conflict_mode: "auto",
       idempotency_key: credentialScopedKey(workingKeyId, key),
       may_copy_edge: () => true,

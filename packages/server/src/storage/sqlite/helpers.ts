@@ -1,6 +1,12 @@
 import { safeJsonParse } from "../json-utils.js";
 import { isTier } from "@withmarfa/shared";
-import type { Item, ItemState, Metadata, Version } from "@withmarfa/shared";
+import type {
+  Item,
+  ItemState,
+  Metadata,
+  Tier,
+  Version,
+} from "@withmarfa/shared";
 import type { items, metadata, versions } from "./schema.js";
 
 /**
@@ -70,6 +76,10 @@ export function rowToVersion(row: VersionRow): Version {
       {},
       `version ${row.id} properties`,
     ),
+    type: row.type,
+    tier: row.tier as Tier,
+    occurred_at: row.occurred_at,
+    source_id: row.source_id,
     created_at: row.created_at,
   };
 }

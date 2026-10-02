@@ -1,9 +1,14 @@
 import { eq, and, asc, desc, gt, inArray, sql } from "drizzle-orm";
-import { generateId } from "@withmarfa/shared";
+import { ErrorCode, generateId, MarfaError } from "@withmarfa/shared";
 import type { Version } from "@withmarfa/shared";
+import {
+  decodeKeyedCursor,
+  encodeKeyedCursor,
+  ITEM_VERSIONS_CURSOR_KEY,
+} from "../interface.js";
 import type {
   VersionedItemFields,
-  VersionSnapshot,
+  VersionPageInput,
   VersionStore,
 } from "../interface.js";
 import { versions } from "./schema.js";
@@ -27,29 +32,71 @@ export class SqliteVersionStore implements VersionStore {
     itemFields: VersionedItemFields,
     db: TxOrDb = this.db,
   ): Promise<Version> {
-    const now = new Date().toISOString();
     const row = {
       id: generateId(),
       item_id: itemId,
       version,
       properties: JSON.stringify(properties),
+      type: itemFields.type,
       tier: itemFields.tier,
       occurred_at: itemFields.occurred_at,
       source_id: itemFields.source_id,
-      type: itemFields.type,
-      created_at: now,
+      created_at: new Date().toISOString(),
     };
     await db.insert(versions).values(row).run();
-    return {
-      id: row.id,
-      item_id: itemId,
-      version,
-      properties,
-      created_at: now,
-    };
+    return { ...row, properties };
   }
 
-  async list(itemId: string): Promise<Version[]> {
+  /**
+   * Reads on past the snapshots the reader may not read until the page is
+   * full or the history ends, so a page is short only at the end.
+   */
+  async list(
+    itemId: string,
+    page: VersionPageInput,
+  ): Promise<{ data: Version[]; next_cursor: string | null }> {
+    let after = page.cursor
+      ? Number(decodeKeyedCursor(page.cursor, ITEM_VERSIONS_CURSOR_KEY).v)
+      : 0;
+    if (!Number.isSafeInteger(after)) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid pagination cursor",
+      );
+    }
+    const data: Version[] = [];
+    for (;;) {
+      const rows = await this.db
+        .select()
+        .from(versions)
+        .where(and(eq(versions.item_id, itemId), gt(versions.version, after)))
+        .orderBy(asc(versions.version))
+        .limit(page.limit + 1)
+        .all();
+      for (const row of rows) {
+        if (!page.reads(row.type)) continue;
+        const last = data.at(-1);
+        if (last !== undefined && data.length === page.limit) {
+          return {
+            data,
+            next_cursor: encodeKeyedCursor(
+              String(last.version),
+              last.id,
+              ITEM_VERSIONS_CURSOR_KEY,
+            ),
+          };
+        }
+        data.push(rowToVersion(row));
+      }
+      const read = rows.at(-1);
+      if (read === undefined || rows.length <= page.limit) {
+        return { data, next_cursor: null };
+      }
+      after = read.version;
+    }
+  }
+
+  async all(itemId: string): Promise<Version[]> {
     const rows = await this.db
       .select()
       .from(versions)
@@ -63,23 +110,14 @@ export class SqliteVersionStore implements VersionStore {
     itemId: string,
     version: number,
     tx?: TxOrDb,
-  ): Promise<VersionSnapshot | null> {
+  ): Promise<Version | null> {
     const executor = tx ?? this.db;
     const row = await executor
       .select()
       .from(versions)
       .where(and(eq(versions.item_id, itemId), eq(versions.version, version)))
       .get();
-    if (!row) return null;
-    return {
-      ...rowToVersion(row),
-      item_fields: {
-        tier: row.tier,
-        occurred_at: row.occurred_at,
-        source_id: row.source_id,
-        type: row.type,
-      },
-    };
+    return row ? rowToVersion(row) : null;
   }
 
   async getLatestTimestamp(itemId: string): Promise<string | null> {

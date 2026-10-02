@@ -233,7 +233,7 @@ describe("a base version that has been thinned away", () => {
 
     // What the version thinner does, done directly: the snapshot for `base`
     // is gone while the item and its later history remain.
-    const snapshots = await ctx.storage.versions.list(item.id);
+    const snapshots = await ctx.storage.versions.all(item.id);
     const doomed = snapshots.filter((v) => v.version === base).map((v) => v.id);
     expect(doomed.length).toBeGreaterThan(0);
     await ctx.storage.versions.deleteByIds(doomed);
@@ -435,7 +435,7 @@ describe("a refusal and its replay describe one conflict", () => {
       expect(moved.status).toBe(200);
       current = ((await moved.json()) as CreatedItem).item.version;
     }
-    const snapshots = await ctx.storage.versions.list(item.id);
+    const snapshots = await ctx.storage.versions.all(item.id);
     await ctx.storage.versions.deleteByIds(
       snapshots.filter((v) => v.version === item.version).map((v) => v.id),
     );

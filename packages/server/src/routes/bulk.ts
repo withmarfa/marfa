@@ -53,7 +53,7 @@ import {
   requireTypeAccess,
   requireResolvedRowWrite,
   mayReadRow,
-  mayReadEdgeEnd,
+  typeReader,
   requireEdgePermission,
   mayWriteReserved,
   requireDeclaredTypeMatches,
@@ -575,8 +575,9 @@ async function processBulkItem(
      * is a delete instruction.
      */
     checkEdgeWrite: (edgeType: string) => void;
-    /** Whether the credential may read an inline edge's target type. */
-    mayReadTarget: (type: string) => boolean;
+    /** Whether the credential may read a type: an inline edge's target's,
+     *  or the one the snapshot a stale entry names was written under. */
+    mayReadType: (type: string) => boolean;
     /**
      * Where this item's inline-edge changes go, for the caller to
      * announce once its transaction has committed. A callback rather
@@ -617,7 +618,7 @@ async function processBulkItem(
     checkUpdate,
     mayRead,
     checkEdgeWrite,
-    mayReadTarget,
+    mayReadType,
     recordEdgeChanges,
   } = options;
 
@@ -641,16 +642,10 @@ async function processBulkItem(
             id,
             edgeSet,
             checkEdgeWrite,
-            mayReadTarget,
+            mayReadType,
           )
         : await storage.runInTransaction(() =>
-            applyInlineEdges(
-              storage,
-              id,
-              edgeSet,
-              checkEdgeWrite,
-              mayReadTarget,
-            ),
+            applyInlineEdges(storage, id, edgeSet, checkEdgeWrite, mayReadType),
           ),
     );
   };
@@ -1009,7 +1004,10 @@ async function processBulkItem(
         ...(resultingType === existing.type ? {} : { type: resultingType }),
         tier: raw.tier,
         occurred_at: raw.occurred_at,
-        ...(raw.version !== undefined && { version: raw.version }),
+        ...(raw.version !== undefined && {
+          version: raw.version,
+          may_read_type: mayReadType,
+        }),
       });
     } catch (err) {
       if (isEntryVerdict(err)) {
@@ -1341,7 +1339,7 @@ export function bulkRoutes(storage: Storage) {
           checkUpdate,
           mayRead: (existing) => mayReadRow(c, existing),
           checkEdgeWrite,
-          mayReadTarget: mayReadEdgeEnd(c),
+          mayReadType: typeReader(c),
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
           enforcement,
         });
