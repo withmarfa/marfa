@@ -841,6 +841,9 @@ pub struct Status {
     pub hydration: Hydration,
     pub items: u64,
     pub edges: u64,
+    /// Moves each time a refresh changes the catalog; `None` where the copy
+    /// has never held one.
+    pub catalog_version: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default)]

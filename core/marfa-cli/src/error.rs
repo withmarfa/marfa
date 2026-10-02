@@ -101,6 +101,7 @@ impl CliError {
                 CoreError::NoServer => "no_server",
                 CoreError::NoCursor => "no_cursor",
                 CoreError::HydrationIncomplete => "hydration_incomplete",
+                CoreError::NoCatalog => "no_catalog",
                 CoreError::ReadingHandle => "reading_handle",
                 CoreError::WrongSchema { .. } => "wrong_schema",
                 CoreError::CatchUpTooOld { .. } => "catch_up_too_old",
@@ -156,6 +157,7 @@ impl CliError {
                 | CoreError::NoServer
                 | CoreError::NoCursor
                 | CoreError::HydrationIncomplete
+                | CoreError::NoCatalog
                 | CoreError::ReadingHandle
                 | CoreError::WrongSchema { .. }
                 | CoreError::CatchUpTooOld { .. }
@@ -279,7 +281,7 @@ With --json a refusal is one JSON object on stderr:
 where error.code is one of: usage, invalid, not_found, unauthorized, forbidden, validation, conflict,
 too_large, unknown_type, rate_limited, server, network, decoding, io, watch, store, no_store,
 no_server, no_credential, no_keychain, signed_out, no_cursor, hydration_incomplete,
-reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
+no_catalog, reading_handle, wrong_schema, catch_up_too_old, stream_incomplete, wrong_server, not_held,
 contract_mismatch, redirect.";
 
 #[cfg(test)]
@@ -365,6 +367,7 @@ mod tests {
             .code(),
             CliError::Core(CoreError::NoCursor).code(),
             CliError::Core(CoreError::HydrationIncomplete).code(),
+            CliError::Core(CoreError::NoCatalog).code(),
             CliError::Core(CoreError::ReadingHandle).code(),
             CliError::Core(CoreError::WrongSchema {
                 expected: String::new(),

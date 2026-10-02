@@ -38,6 +38,8 @@ pub enum CoreError {
     NoCursor,
     #[error("hydration did not complete; hydrate again before reading")]
     HydrationIncomplete,
+    #[error("this working copy has never held the server's type catalog; hydrate first")]
+    NoCatalog,
     #[error(
         "this is a reading handle: another process holds the writer handle for this store, and one store has one writer"
     )]

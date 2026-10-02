@@ -1,8 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::error::CoreError;
+use crate::store;
+use crate::wire::WireEdgeType;
 
 struct Entry {
     parent: Option<String>,
@@ -11,6 +15,286 @@ struct Entry {
     body_field: Option<String>,
     /// The properties the type declares itself, not those it inherits.
     fields: Vec<String>,
+}
+
+/// The end of an edge whose file writes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum End {
+    Source,
+    Target,
+}
+
+impl End {
+    pub fn other(self) -> End {
+        match self {
+            End::Source => End::Target,
+            End::Target => End::Source,
+        }
+    }
+}
+
+/// A field of an item type, or a property of an edge type.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TypeField {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub r#type: String,
+    pub required: bool,
+    pub description: Option<String>,
+    /// The type that declares it: the type itself, or the nearest one it
+    /// inherits the field from.
+    pub declared_by: String,
+    /// The definition whole, as the server answers it.
+    pub definition: Value,
+}
+
+/// An item type as the copy holds it, its inheritance resolved as
+/// `GET /types/{id}` resolves it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ItemType {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub parent: Option<String>,
+    pub version: i64,
+    /// By name.
+    pub fields: Vec<TypeField>,
+    pub title_field: Option<String>,
+    pub body_field: Option<String>,
+    pub link_field: Option<String>,
+    pub roles: Vec<String>,
+    pub compatible_with: Vec<String>,
+}
+
+/// An edge type as the copy holds it, as `GET /edge-types` lists it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct EdgeType {
+    pub id: String,
+    pub label: Option<String>,
+    pub description: Option<String>,
+    pub cardinality: String,
+    /// The name the edge goes by read from its target.
+    pub reverse_name: Option<String>,
+    pub written_at: End,
+    pub source_type_constraints: Vec<String>,
+    pub target_type_constraints: Vec<String>,
+    pub cascade_on_delete: String,
+    /// By name.
+    pub properties: Vec<TypeField>,
+    pub shipped: bool,
+}
+
+impl EdgeType {
+    /// The name a file at `end` writes an edge of this type under, where it
+    /// has one.
+    pub fn name_at(&self, end: End) -> Option<&str> {
+        match end {
+            End::Source => Some(&self.id),
+            End::Target => self.reverse_name.as_deref(),
+        }
+    }
+
+    /// Whether an item at `end` holds at most one edge of this type.
+    pub fn one_at(&self, end: End) -> bool {
+        matches!(
+            (end, self.cardinality.as_str()),
+            (End::Source, "one-to-one" | "many-to-one")
+                | (End::Target, "one-to-one" | "one-to-many")
+        )
+    }
+
+    #[cfg(test)]
+    pub fn of(
+        id: &str,
+        reverse_name: Option<&str>,
+        written_at: End,
+        cardinality: &str,
+    ) -> EdgeType {
+        EdgeType {
+            id: id.into(),
+            label: None,
+            description: None,
+            cardinality: cardinality.into(),
+            reverse_name: reverse_name.map(str::to_string),
+            written_at,
+            source_type_constraints: vec!["*".into()],
+            target_type_constraints: vec!["*".into()],
+            cascade_on_delete: "orphan".into(),
+            properties: Vec::new(),
+            shipped: false,
+        }
+    }
+}
+
+fn refuse_unless_held(conn: &Connection) -> Result<(), CoreError> {
+    match store::catalog_version(conn)? {
+        Some(_) => Ok(()),
+        None => Err(CoreError::NoCatalog),
+    }
+}
+
+fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {
+    match serde_json::from_str(json)? {
+        Value::Object(row) => Ok(row),
+        _ => Err(CoreError::Store(format!(
+            "the held type {id} is not an object"
+        ))),
+    }
+}
+
+fn text(row: &Map<String, Value>, key: &str) -> Option<String> {
+    row.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+fn texts(row: &Map<String, Value>, key: &str) -> Vec<String> {
+    row.get(key)
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn field(name: &str, definition: &Value, declared_by: &str) -> Result<TypeField, CoreError> {
+    let Some(kind) = definition.get("type").and_then(Value::as_str) else {
+        return Err(CoreError::Decoding(format!(
+            "{declared_by} declares {name} with no type"
+        )));
+    };
+    Ok(TypeField {
+        name: name.to_string(),
+        r#type: kind.to_string(),
+        required: definition.get("required").and_then(Value::as_bool) == Some(true),
+        description: definition
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        declared_by: declared_by.to_string(),
+        definition: definition.clone(),
+    })
+}
+
+/// The server's resolution of `GET /types/{id}`: fields merged from the root
+/// down, the nearer declaration winning, and the hints of the nearest type
+/// that has any. The listing already answers `roles` resolved.
+fn resolve(id: &str, held: &HashMap<String, Map<String, Value>>) -> Result<ItemType, CoreError> {
+    let mut chain: Vec<(&str, &Map<String, Value>)> = Vec::new();
+    let mut current = Some(id);
+    while let Some(at) = current {
+        let Some(row) = held.get(at) else { break };
+        if chain.len() >= MAX_PARENT_WALK || chain.iter().any(|(seen, _)| *seen == at) {
+            return Err(CoreError::Decoding(format!(
+                "{id}'s parent chain loops or runs past {MAX_PARENT_WALK} types, so its fields cannot be resolved"
+            )));
+        }
+        chain.push((at, row));
+        current = row.get("parent").and_then(Value::as_str);
+    }
+    let Some((_, own)) = chain.first().copied() else {
+        return Err(type_not_found(id));
+    };
+    let mut fields: BTreeMap<String, TypeField> = BTreeMap::new();
+    for (declaring, row) in chain.iter().rev() {
+        if let Some(declared) = row.get("fields").and_then(Value::as_object) {
+            for (name, definition) in declared {
+                fields.insert(name.clone(), field(name, definition, declaring)?);
+            }
+        }
+    }
+    let hints = chain
+        .iter()
+        .find_map(|(_, row)| row.get("display_hints").and_then(Value::as_object));
+    Ok(ItemType {
+        id: id.to_string(),
+        label: text(own, "label"),
+        description: text(own, "description"),
+        parent: text(own, "parent"),
+        version: own.get("version").and_then(Value::as_f64).unwrap_or(0.0) as i64,
+        fields: fields.into_values().collect(),
+        title_field: hints.and_then(|hints| text(hints, "title_field")),
+        body_field: hints.and_then(|hints| text(hints, "body_field")),
+        link_field: text(own, "link_field"),
+        roles: texts(own, "roles"),
+        compatible_with: texts(own, "compatible_with"),
+    })
+}
+
+fn type_not_found(id: &str) -> CoreError {
+    CoreError::NotFound {
+        code: "type_not_found".into(),
+        message: format!("the catalog this copy holds has no type {id}"),
+    }
+}
+
+fn held_types(conn: &Connection) -> Result<HashMap<String, Map<String, Value>>, CoreError> {
+    refuse_unless_held(conn)?;
+    store::type_rows(conn)?
+        .into_iter()
+        .map(|(id, json)| object(&id, &json).map(|row| (id, row)))
+        .collect()
+}
+
+/// By id.
+pub fn item_types(conn: &Connection) -> Result<Vec<ItemType>, CoreError> {
+    let held = held_types(conn)?;
+    let mut ids: Vec<&String> = held.keys().collect();
+    ids.sort();
+    ids.into_iter().map(|id| resolve(id, &held)).collect()
+}
+
+pub fn item_type(conn: &Connection, id: &str) -> Result<ItemType, CoreError> {
+    resolve(id, &held_types(conn)?)
+}
+
+fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
+    let wire: WireEdgeType = serde_json::from_str(json)
+        .map_err(|error| CoreError::Store(format!("the held edge type {id}: {error}")))?;
+    let properties = wire
+        .property_schema
+        .iter()
+        .map(|(name, definition)| field(name, definition, &wire.id))
+        .collect::<Result<_, _>>()?;
+    Ok(EdgeType {
+        id: wire.id,
+        label: wire.label,
+        description: wire.description,
+        cardinality: wire.cardinality,
+        reverse_name: wire.reverse_name,
+        written_at: wire.written_at,
+        source_type_constraints: wire.source_type_constraints,
+        target_type_constraints: wire.target_type_constraints,
+        cascade_on_delete: wire.cascade_on_delete,
+        properties,
+        shipped: wire.shipped,
+    })
+}
+
+/// By id.
+pub fn edge_types(conn: &Connection) -> Result<Vec<EdgeType>, CoreError> {
+    refuse_unless_held(conn)?;
+    store::edge_type_rows(conn)?
+        .iter()
+        .map(|(id, json)| edge_type_of(id, json))
+        .collect()
+}
+
+pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
+    refuse_unless_held(conn)?;
+    match store::edge_type_rows(conn)?
+        .into_iter()
+        .find(|(held, _)| held == id)
+    {
+        Some((id, json)) => edge_type_of(&id, &json),
+        None => Err(CoreError::NotFound {
+            code: "edge_type_not_found".into(),
+            message: format!("the catalog this copy holds has no edge type {id}"),
+        }),
+    }
 }
 
 /// What the local index reads from an item's properties.
@@ -219,6 +503,113 @@ mod tests {
         assert_eq!(
             catalog.declared_descendants("core.media"),
             vec!["acme.episode".to_string(), "acme.podcast".to_string()]
+        );
+    }
+
+    fn held(types: serde_json::Value, edge_types: serde_json::Value) -> Connection {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = crate::wire::WireCatalog {
+            types: serde_json::from_value(types).unwrap(),
+            edge_types: serde_json::from_value(edge_types).unwrap(),
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_type_is_read_with_its_fields_resolved_as_the_server_resolves_them() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.base", "label": "Base",
+                  "fields": { "name": { "type": "string", "required": true },
+                              "note": { "type": "string" } },
+                  "display_hints": { "title_field": "name", "body_field": "note" } },
+                { "id": "acme.mid", "parent": "acme.base",
+                  "fields": { "name": { "type": "string", "required": true, "description": "again" } },
+                  "display_hints": { "title_field": "name" } },
+                { "id": "acme.leaf", "parent": "acme.mid", "label": "Leaf",
+                  "fields": { "stars": { "type": "number" } } }
+            ]),
+            serde_json::json!([]),
+        );
+        let leaf = item_type(&conn, "acme.leaf").unwrap();
+        let declared: Vec<(&str, &str)> = leaf
+            .fields
+            .iter()
+            .map(|field| (field.name.as_str(), field.declared_by.as_str()))
+            .collect();
+        assert_eq!(
+            declared,
+            [
+                ("name", "acme.mid"),
+                ("note", "acme.base"),
+                ("stars", "acme.leaf")
+            ],
+            "a field declared again nearer the type did not take the place of the one above it"
+        );
+        assert_eq!(leaf.fields[0].description.as_deref(), Some("again"));
+        assert_eq!(
+            (leaf.title_field.as_deref(), leaf.body_field),
+            (Some("name"), None),
+            "the hints were merged field by field, where the server takes the nearest block whole"
+        );
+        assert_eq!(leaf.label.as_deref(), Some("Leaf"));
+        assert_eq!(leaf.parent.as_deref(), Some("acme.mid"));
+        assert_eq!(item_types(&conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_type_whose_parents_loop_is_refused_rather_than_resolved() {
+        let conn = held(
+            serde_json::json!([
+                { "id": "acme.a", "parent": "acme.b", "fields": {} },
+                { "id": "acme.b", "parent": "acme.a", "fields": {} }
+            ]),
+            serde_json::json!([]),
+        );
+        assert!(matches!(
+            item_type(&conn, "acme.a"),
+            Err(CoreError::Decoding(_))
+        ));
+    }
+
+    #[test]
+    fn a_copy_with_no_catalog_refuses_rather_than_answering_none() {
+        let conn = store::open_in_memory().unwrap();
+        assert_eq!(item_types(&conn), Err(CoreError::NoCatalog));
+        assert_eq!(edge_types(&conn), Err(CoreError::NoCatalog));
+        assert_eq!(store::catalog_version(&conn).unwrap(), None);
+        // The witness: an instance with no edge types is a catalog, and answers.
+        let conn = held(serde_json::json!([]), serde_json::json!([]));
+        assert_eq!(edge_types(&conn), Ok(Vec::new()));
+        assert!(matches!(
+            item_type(&conn, "acme.absent"),
+            Err(CoreError::NotFound { code, .. }) if code == "type_not_found"
+        ));
+    }
+
+    #[test]
+    fn the_version_moves_when_either_catalog_changes_and_only_then() {
+        let conn = store::open_in_memory().unwrap();
+        let catalog = |reverse: &str| crate::wire::WireCatalog {
+            types: Vec::new(),
+            edge_types: vec![serde_json::json!({
+                "id": "mentor-of", "cardinality": "one-to-many",
+                "source_type_constraints": ["*"], "target_type_constraints": ["*"],
+                "cascade_on_delete": "orphan", "property_schema": {},
+                "reverse_name": reverse, "written_at": "target", "shipped": false
+            })],
+        };
+        assert!(store::replace_catalog(&conn, &catalog("mentored-by")).unwrap());
+        assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
+        assert!(!store::replace_catalog(&conn, &catalog("mentored-by")).unwrap());
+        assert_eq!(store::catalog_version(&conn).unwrap(), Some(1));
+        assert!(store::replace_catalog(&conn, &catalog("taught-by")).unwrap());
+        assert_eq!(store::catalog_version(&conn).unwrap(), Some(2));
+        let mentor = edge_type(&conn, "mentor-of").unwrap();
+        assert_eq!(
+            (mentor.reverse_name.as_deref(), mentor.written_at),
+            (Some("taught-by"), End::Target)
         );
     }
 

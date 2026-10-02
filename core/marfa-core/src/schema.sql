@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS types (
   json TEXT NOT NULL
 );
 
+-- Each row as `GET /edge-types` lists it.
+CREATE TABLE IF NOT EXISTS edge_types (
+  id TEXT PRIMARY KEY,
+  json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS items (
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,

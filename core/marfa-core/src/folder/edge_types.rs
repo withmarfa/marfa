@@ -1,62 +1,8 @@
 use rusqlite::Connection;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::catalog::{EdgeType, End};
 use crate::error::CoreError;
-use crate::http::Http;
-
-const META_EDGE_TYPES: &str = "folder_edge_types";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum End {
-    Source,
-    Target,
-}
-
-impl End {
-    pub fn other(self) -> End {
-        match self {
-            End::Source => End::Target,
-            End::Target => End::Source,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct EdgeType {
-    pub id: String,
-    #[serde(default)]
-    pub reverse_name: Option<String>,
-    #[serde(default = "source")]
-    pub written_at: End,
-    #[serde(default)]
-    pub cardinality: String,
-}
-
-fn source() -> End {
-    End::Source
-}
-
-impl EdgeType {
-    /// The name a file at `end` writes an edge of this type under, where it
-    /// has one.
-    pub fn name_at(&self, end: End) -> Option<&str> {
-        match end {
-            End::Source => Some(&self.id),
-            End::Target => self.reverse_name.as_deref(),
-        }
-    }
-
-    /// Whether an item at `end` holds at most one edge of this type.
-    pub fn one_at(&self, end: End) -> bool {
-        matches!(
-            (end, self.cardinality.as_str()),
-            (End::Source, "one-to-one" | "many-to-one")
-                | (End::Target, "one-to-one" | "one-to-many")
-        )
-    }
-}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EdgeTypes {
@@ -64,31 +10,11 @@ pub struct EdgeTypes {
 }
 
 impl EdgeTypes {
-    /// The list as the server holds it now, kept for the passes after.
-    pub fn refresh(http: &Http, conn: &Connection) -> Result<EdgeTypes, CoreError> {
-        let listed = http.edge_types()?;
-        let types = listed
-            .into_iter()
-            .map(serde_json::from_value::<EdgeType>)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| {
-                CoreError::Decoding(format!("an edge type the server listed: {error}"))
-            })?;
-        crate::store::meta_set(conn, META_EDGE_TYPES, &serde_json::to_string(&types)?)?;
-        Ok(EdgeTypes { types })
-    }
-
-    /// The list the last refresh kept. A folder refreshes it when it is
-    /// added, so none kept is a folder to add again.
+    /// The edge types the copy holds, which hydration and catch-up keep.
     pub fn load(conn: &Connection) -> Result<EdgeTypes, CoreError> {
-        match crate::store::meta_get(conn, META_EDGE_TYPES)? {
-            Some(json) => Ok(EdgeTypes {
-                types: serde_json::from_str(&json)?,
-            }),
-            None => Err(CoreError::Invalid(
-                "this folder has not read the server's edge types, so it cannot tell an edge's line from a property; hydrate it again".into(),
-            )),
-        }
+        Ok(EdgeTypes {
+            types: crate::catalog::edge_types(conn)?,
+        })
     }
 
     #[cfg(test)]
@@ -217,12 +143,7 @@ mod tests {
 
     #[test]
     fn an_end_holds_one_edge_where_the_cardinality_says() {
-        let parent = EdgeType {
-            id: "parent-of".into(),
-            reverse_name: Some("child-of".into()),
-            written_at: End::Target,
-            cardinality: "one-to-many".into(),
-        };
+        let parent = EdgeType::of("parent-of", Some("child-of"), End::Target, "one-to-many");
         assert!(parent.one_at(End::Target) && !parent.one_at(End::Source));
         assert_eq!(parent.name_at(End::Target), Some("child-of"));
         let types = EdgeTypes::of(vec![parent]);

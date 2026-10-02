@@ -147,6 +147,17 @@ pub enum DeviceCommand {
     },
     /// What the local copy holds and where it came from.
     Status,
+    /// The item types the copy holds, read from it alone.
+    Types {
+        #[command(subcommand)]
+        command: CatalogCommand,
+    },
+    /// The edge types the copy holds, read from it alone.
+    #[command(name = "edge-types")]
+    EdgeTypes {
+        #[command(subcommand)]
+        command: CatalogCommand,
+    },
     /// Edges between items, each its own write.
     Edges {
         #[command(subcommand)]
@@ -332,6 +343,17 @@ pub enum EdgesCommand {
     /// Drop an edge locally and queue the delete.
     Delete {
         /// The edge id.
+        id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CatalogCommand {
+    /// Every one the copy holds, by id.
+    List,
+    /// One by id; a type inherits the fields of the types above it.
+    Get {
+        /// The id, such as `core.note` or `parent-of`.
         id: String,
     },
 }
@@ -943,7 +965,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     }
                 };
                 format!(
-                    "server {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\n{} item(s), {} edge(s)",
+                    "server {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\ncatalog version {}\n{} item(s), {} edge(s)",
                     status.server_origin.as_deref().unwrap_or("(none)"),
                     listed(&status.slice_types),
                     status
@@ -954,12 +976,113 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
                     listed(&status.pinned),
                     status.event_cursor.as_deref().unwrap_or("(none)"),
                     status.hydration.as_str(),
+                    status
+                        .catalog_version
+                        .map_or_else(|| "(none)".into(), |version| version.to_string()),
                     status.items,
                     status.edges
                 )
             })
         }
+        DeviceCommand::Types { command } => {
+            let core = store.open(None)?;
+            match command {
+                CatalogCommand::List => {
+                    let types = core.item_types()?;
+                    output::report(&types, json, || {
+                        types.iter().map(type_line).collect::<Vec<_>>().join("\n")
+                    })
+                }
+                CatalogCommand::Get { id } => {
+                    let held = core.item_type(&id)?;
+                    output::report(&held, json, || {
+                        let mut lines = vec![type_line(&held)];
+                        for (name, value) in [
+                            ("title", &held.title_field),
+                            ("body", &held.body_field),
+                            ("link", &held.link_field),
+                        ] {
+                            if let Some(value) = value {
+                                lines.push(format!("  {name} field {value}"));
+                            }
+                        }
+                        lines.extend(held.fields.iter().map(field_line));
+                        lines.join("\n")
+                    })
+                }
+            }
+        }
+        DeviceCommand::EdgeTypes { command } => {
+            let core = store.open(None)?;
+            match command {
+                CatalogCommand::List => {
+                    let types = core.edge_types()?;
+                    output::report(&types, json, || {
+                        types
+                            .iter()
+                            .map(edge_type_line)
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    })
+                }
+                CatalogCommand::Get { id } => {
+                    let held = core.edge_type(&id)?;
+                    output::report(&held, json, || {
+                        let mut lines = vec![
+                            edge_type_line(&held),
+                            format!(
+                                "  from {} to {}, {} on delete",
+                                held.source_type_constraints.join(","),
+                                held.target_type_constraints.join(","),
+                                held.cascade_on_delete
+                            ),
+                        ];
+                        lines.extend(held.properties.iter().map(field_line));
+                        lines.join("\n")
+                    })
+                }
+            }
+        }
     }
+}
+
+fn type_line(held: &marfa_core::ItemType) -> String {
+    format!(
+        "{}  {}{}  {} field(s)",
+        held.id,
+        held.label.as_deref().unwrap_or("(no label)"),
+        held.parent
+            .as_deref()
+            .map_or(String::new(), |parent| format!("  inherits {parent}")),
+        held.fields.len()
+    )
+}
+
+fn field_line(field: &marfa_core::TypeField) -> String {
+    format!(
+        "  {}  {}{}  from {}",
+        field.name,
+        field.r#type,
+        if field.required { "  required" } else { "" },
+        field.declared_by
+    )
+}
+
+fn edge_type_line(held: &marfa_core::EdgeType) -> String {
+    format!(
+        "{}  {}  {}{}  written at its {}{}",
+        held.id,
+        held.label.as_deref().unwrap_or("(no label)"),
+        held.cardinality,
+        held.reverse_name
+            .as_deref()
+            .map_or(String::new(), |name| format!("  reverse {name}")),
+        match held.written_at {
+            marfa_core::End::Source => "source",
+            marfa_core::End::Target => "target",
+        },
+        if held.shipped { "  shipped" } else { "" }
+    )
 }
 
 fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {

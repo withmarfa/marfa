@@ -11,7 +11,7 @@ use crate::js;
 use crate::model::{
     BlockedReason, Edge, Item, ItemState, QueuedWrite, Subject, Tier, Verdict, WriteKind,
 };
-use crate::wire::{WireEdge, WireItem, WireType};
+use crate::wire::{WireCatalog, WireEdge, WireItem, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
 
@@ -22,12 +22,15 @@ pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 pub const META_HYDRATE_STATE: &str = "hydrate_state";
+/// Absent until a catalog is first held, which is how a copy that has never
+/// held one is told from an instance with no types.
+pub const META_CATALOG_VERSION: &str = "catalog_version";
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 pub const SCHEMA_VERSION: &str = "0";
 
 /// Hashed over `schema.sql` without its comments, so a comment moves no hash.
 #[cfg(test)]
-const SCHEMA_HASH: &str = "26e3a91464d06cd1";
+const SCHEMA_HASH: &str = "3f3fd4d4f3093ab8";
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties";
 const EDGE_COLUMNS: &str =
@@ -706,10 +709,36 @@ fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
+/// Both catalogs, and a new catalog version where either changed or none was
+/// held. Answers whether the version moved.
+pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool, CoreError> {
+    let types = replace_types(conn, &catalog.types)?;
+    let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
+    let held = catalog_version(conn)?;
+    if !types && !edge_types && held.is_some() {
+        return Ok(false);
+    }
+    let next = held.map_or(1, |version| version + 1);
+    meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
+    Ok(true)
+}
+
+pub fn catalog_version(conn: &Connection) -> Result<Option<u64>, CoreError> {
+    meta_get(conn, META_CATALOG_VERSION)?
+        .map(|text| {
+            text.parse().map_err(|_| {
+                CoreError::Store(format!(
+                    "the stored catalog version {text:?} is not a number"
+                ))
+            })
+        })
+        .transpose()
+}
+
 /// Writes nothing where the catalog is unchanged: a follow fetches it on
 /// every stream it opens, and a reader would be told of a save each time.
-/// A change reindexes every held row.
-pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreError> {
+/// A change reindexes every held row. Answers whether it changed.
+pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, CoreError> {
     let mut rows: Vec<TypeRow> = types
         .iter()
         .map(|entry| {
@@ -722,11 +751,17 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
             if let Some(label) = &entry.label {
                 json.insert("label".into(), Value::String(label.clone()));
             }
-            if let Some(body) = &hints.body_field {
-                json.insert(
-                    "display_hints".into(),
-                    serde_json::json!({ "body_field": body }),
-                );
+            // The block whole, present or not: the nearest type that has one
+            // gives a subtype all of its hints.
+            if let Some(declared) = &entry.display_hints {
+                let mut block = Map::new();
+                if let Some(title) = &declared.title_field {
+                    block.insert("title_field".into(), Value::String(title.clone()));
+                }
+                if let Some(body) = &declared.body_field {
+                    block.insert("body_field".into(), Value::String(body.clone()));
+                }
+                json.insert("display_hints".into(), Value::Object(block));
             }
             (
                 entry.id.clone(),
@@ -755,7 +790,7 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
         })?
         .collect::<Result<_, _>>()?;
     if held == rows {
-        return Ok(());
+        return Ok(false);
     }
     conn.execute("DELETE FROM types", [])?;
     {
@@ -767,7 +802,49 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<(), CoreEr
             insert.execute(params![row.0, row.1, row.2, row.3, row.4, row.5])?;
         }
     }
-    reindex(conn)
+    reindex(conn)?;
+    Ok(true)
+}
+
+/// Writes nothing where the catalog is unchanged, as `replace_types` does.
+/// Answers whether it changed.
+pub fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreError> {
+    let mut wanted: Vec<(String, String)> =
+        rows.iter()
+            .map(|row| {
+                let id = row.get("id").and_then(Value::as_str).ok_or_else(|| {
+                    CoreError::Decoding(format!("an edge type with no id: {row}"))
+                })?;
+                Ok((id.to_string(), row.to_string()))
+            })
+            .collect::<Result<_, CoreError>>()?;
+    wanted.sort();
+    if edge_type_rows(conn)? == wanted {
+        return Ok(false);
+    }
+    conn.execute("DELETE FROM edge_types", [])?;
+    let mut insert = conn.prepare("INSERT INTO edge_types (id, json) VALUES (?1, ?2)")?;
+    for (id, json) in wanted {
+        insert.execute(params![id, json])?;
+    }
+    Ok(true)
+}
+
+/// Each type as `(id, json)`, by id.
+pub fn type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    rows_of(conn, "SELECT id, json FROM types ORDER BY id")
+}
+
+/// Each edge type as `(id, json)`, by id.
+pub fn edge_type_rows(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    rows_of(conn, "SELECT id, json FROM edge_types ORDER BY id")
+}
+
+fn rows_of(conn: &Connection, sql: &str) -> Result<Vec<(String, String)>, CoreError> {
+    Ok(conn
+        .prepare(sql)?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<_, _>>()?)
 }
 
 fn reindex(conn: &Connection) -> Result<(), CoreError> {

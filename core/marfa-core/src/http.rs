@@ -9,7 +9,10 @@ use url::Url;
 use crate::contract::CONTRACT_VERSION;
 use crate::error::CoreError;
 use crate::model::Tier;
-use crate::wire::{WireEdge, WireErrorEnvelope, WireItemWithMetadata, WirePage, WireType};
+use crate::wire::{
+    WireCatalog, WireEdge, WireEdgeType, WireErrorEnvelope, WireItemWithMetadata, WirePage,
+    WireType,
+};
 
 pub const PAGE_LIMIT: u32 = 200;
 
@@ -315,8 +318,38 @@ impl Http {
     }
 
     pub fn edge_types(&self) -> Result<Vec<serde_json::Value>, CoreError> {
-        let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &[])?;
-        Ok(page.data)
+        let mut rows = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let params: Vec<(&str, &str)> = cursor
+                .as_deref()
+                .map(|cursor| vec![("cursor", cursor)])
+                .unwrap_or_default();
+            let page: WirePage<serde_json::Value> = self.get_json(&["edge-types"], &params)?;
+            for row in page.data {
+                serde_json::from_value::<WireEdgeType>(row.clone()).map_err(|error| {
+                    CoreError::Decoding(format!("an edge type the server listed: {error}"))
+                })?;
+                rows.push(row);
+            }
+            match page.next_cursor {
+                None => return Ok(rows),
+                Some(next) if Some(&next) == cursor.as_ref() => {
+                    return Err(CoreError::Decoding(
+                        "the server kept answering with the same cursor while reporting more edge types"
+                            .into(),
+                    ));
+                }
+                Some(next) => cursor = Some(next),
+            }
+        }
+    }
+
+    pub fn catalog(&self) -> Result<WireCatalog, CoreError> {
+        Ok(WireCatalog {
+            types: self.types()?,
+            edge_types: self.edge_types()?,
+        })
     }
 
     /// The server matches without regard to ASCII case. The flag says
