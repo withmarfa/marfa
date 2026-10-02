@@ -742,41 +742,6 @@ describe("POST /items — the operator gate", () => {
     expect(body.error.message).toMatch(/system/);
   });
 
-  it("stops the operator key at its own map rather than at the fence", async () => {
-    // The positive arm of the gate, and it reaches no row. `is_operator` is
-    // exactly what the fence asks for, so the operator key clears it — and is
-    // then refused because its own type map, which the one unauthenticated
-    // mint forces empty, reaches no type: the data plane asks that of every
-    // caller before it reads the request. Nothing writes a reserved row
-    // through a credential,
-    // which is why the platform's own machinery writes these rows through the
-    // storage layer instead.
-    //
-    // The two refusals are told apart by what they say: the fence names the
-    // operator key and this one says the map reaches no type. Asserting the
-    // status alone would pass against a gate that had started refusing the
-    // operator tier too.
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.operatorKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          client_id: "platform-write-ok",
-          scopes: [],
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-    });
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as {
-      error: { code: string; message: string };
-    };
-    expect(body.error.message).not.toMatch(/operator key/i);
-    expect(body.error.message).toContain("reach no type");
-  });
-
   it("does not gate reads to system.* (a working credential lists its own system.connection rows)", async () => {
     // Reads to reserved-namespace items are unrestricted (filtered by
     // the caller's type map); only writes need

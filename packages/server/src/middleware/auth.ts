@@ -1093,10 +1093,10 @@ export function requirePermission(
  * credential may not see it. The single-row doors refuse it too, through
  * `requireReadableRow`, so one question gets one answer however many rows.
  *
- * **Only at read level.** `POST /items/bulk-actions` asks at `"write"`,
- * where it narrows a match set rather than refusing a row, and a key
- * holding read across the board matching nothing there is its own settled
- * behavior.
+ * **Only at read level.** `POST /items/bulk-actions` also asks at
+ * `"write"`, where it narrows a match set rather than refusing a row, so a
+ * key that reads every type and writes none matches nothing there. A key
+ * reaching no type at all is refused that door first, by `readsSomeType`.
  *
  * **In the wrapper and not in `computeTypeFilter`**, which stays a pure
  * predicate for the callers that answer an empty reach their own way.

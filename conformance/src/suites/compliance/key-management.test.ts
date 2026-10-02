@@ -644,37 +644,44 @@ describe("key management", () => {
     ).toBe(200);
   });
 
-  it("narrows a bulk action to nothing rather than refusing it, where a read is refused", async () => {
-    // `POST /items/bulk-actions` asks the same filter at `"write"` level,
-    // and the refusal is deliberately read-level only: this door narrows a
-    // match set rather than refusing a row, so a credential that can write
-    // nothing matches nothing and does nothing. Held here because nothing
-    // else holds it, and a later simplification of the level check would
-    // otherwise turn every narrow key's bulk action into a hard refusal
-    // with no test to notice.
+  it("refuses a bulk action to a key reaching no type, and narrows one for a key writing none", async () => {
+    // A key reaching no type at all, the operator key among them, is refused
+    // the bulk action as it is every other door of the data plane: a dry run
+    // answering it `200` with nothing matched said "there is nothing here",
+    // which is not what happened.
     const operator = getOperatorClient();
-    const dryRun = await operator.rawRequest<{ matched: number }>(
+    const dryRunBody = JSON.stringify({
+      action: "transition",
+      filter: { type: "core.note" },
+      state: "archived",
+      dry_run: true,
+    });
+    const refused = await operator.rawRequest<{ matched: number }>(
       "/items/bulk-actions",
       {
         method: "POST",
-        body: JSON.stringify({
-          action: "transition",
-          filter: { type: "core.note" },
-          state: "archived",
-          dry_run: true,
-        }),
+        body: dryRunBody,
         headers: { "Content-Type": "application/json" },
       },
     );
-    expect(dryRun.ok).toBe(true);
-    expect(dryRun.status).toBe(200);
+    expect(refused.status).toBe(403);
 
-    // The witness. The same credential reading the same filter is refused,
-    // so the `200` above is the write level answering its own way and not
-    // the refusal having gone.
-    const read = await operator.listItems({ type: "core.note", limit: 1 });
-    expect(read.ok).toBe(false);
-    expect(read.status).toBe(403);
+    // A key that reads every type and writes none still has the action
+    // narrowed to what it may write, which is nothing, rather than refused.
+    const { client: reader } = await createClientWithoutPermissions(
+      `km-bulk-reader-${ctx.runId}`,
+      { "*": "read" },
+    );
+    const narrowed = await reader.rawRequest<{ matched: number }>(
+      "/items/bulk-actions",
+      {
+        method: "POST",
+        body: dryRunBody,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(narrowed.status).toBe(200);
+    expect(narrowed.data.matched).toBe(0);
   });
 
   it("the operator key mints past its own reach, which is how a run is provisioned", async () => {

@@ -91,6 +91,7 @@ const DATA_PLANE = [
   "POST /items/:id/tags",
   "POST /items/:id/transition",
   "POST /items/bulk",
+  "POST /items/bulk-actions",
   "POST /items/bulk-get",
   "POST /items/lookup",
   "POST /items/tombstones",
@@ -153,45 +154,44 @@ const ASKED_IN_PLACE: Record<string, string> = {
 };
 
 /**
- * Doors open to every credential, by why. What each answers turns on the row
- * the path names and whose it is, so each is driven with three credentials
- * as different as there are, a key holding nothing, a signed-in app's token
- * holding everything and the operator key, and must answer every one alike
- * and never `403`.
+ * Doors whose answer turns on the row the path names: no fixed rule, so
+ * every credential gets past the request, and what it is admitted to is the
+ * row. Each is driven against a real row with four credentials, a key holding
+ * nothing, a signed-in app's token holding every scope, the row's own key and
+ * the operator key: a malformed request must answer all of them alike and
+ * never `403`, and a well-formed one must admit exactly those named here and
+ * refuse the rest `403`.
  */
-const OPEN_TO_EVERY_CREDENTIAL: Record<string, readonly string[]> = {
-  "a connector's doors answer the connector the path names, to its own key or a reader of it":
-    [
-      "DELETE /connectors/:id",
-      "DELETE /connectors/:id/endpoints/:endpoint_id",
-      "DELETE /connectors/:id/hold",
-      "DELETE /connectors/:id/state",
-      "GET /connectors",
-      "GET /connectors/:id",
-      "GET /connectors/:id/agreements",
-      "GET /connectors/:id/deliveries",
-      "GET /connectors/:id/deliveries/:delivery_id/body",
-      "GET /connectors/:id/endpoints",
-      "GET /connectors/:id/runs",
-      "GET /connectors/:id/state",
-      "POST /connectors/:id/agreements",
-      "POST /connectors/:id/agreements/find",
-      "POST /connectors/:id/deliveries/handled",
-      "POST /connectors/:id/endpoints",
-      "POST /connectors/:id/heartbeat",
-      "POST /connectors/:id/hold",
-      "POST /connectors/:id/runs",
-      "PUT /connectors/:id/state",
-    ],
-  "a bulk-action job answers the credential that started it, judged on the job the path names":
-    ["DELETE /items/bulk-actions/jobs/:id", "GET /items/bulk-actions/jobs/:id"],
-  "a bulk action narrows what it matches to what the credential may write, and refuses nothing for it (keys-and-oauth.md 1)":
-    ["POST /items/bulk-actions"],
-  "the registries every credential writes against": [
-    "GET /types",
-    "GET /types/:id",
-    "GET /edge-types",
-  ],
+const EVERYONE = "every credential";
+const OWNER = "the row's own key";
+const OWNER_OR_OPERATOR = "the row's own key, or the operator key";
+
+const OPEN_BY_ROW: Record<string, string> = {
+  "GET /connectors": EVERYONE,
+  "GET /connectors/:id": EVERYONE,
+  "GET /connectors/:id/runs": EVERYONE,
+  "GET /types": EVERYONE,
+  "GET /types/:id": EVERYONE,
+  "GET /edge-types": EVERYONE,
+  "GET /connectors/:id/agreements": OWNER,
+  "POST /connectors/:id/agreements": OWNER,
+  "POST /connectors/:id/agreements/find": OWNER,
+  "GET /connectors/:id/deliveries": OWNER,
+  "GET /connectors/:id/deliveries/:delivery_id/body": OWNER,
+  "POST /connectors/:id/deliveries/handled": OWNER,
+  "GET /connectors/:id/state": OWNER,
+  "PUT /connectors/:id/state": OWNER,
+  "POST /connectors/:id/heartbeat": OWNER,
+  "POST /connectors/:id/hold": OWNER,
+  "DELETE /connectors/:id/hold": OWNER,
+  "POST /connectors/:id/runs": OWNER,
+  "GET /connectors/:id/endpoints": OWNER_OR_OPERATOR,
+  "POST /connectors/:id/endpoints": OWNER_OR_OPERATOR,
+  "DELETE /connectors/:id/endpoints/:endpoint_id": OWNER_OR_OPERATOR,
+  "DELETE /connectors/:id/state": OWNER_OR_OPERATOR,
+  "DELETE /connectors/:id": OWNER_OR_OPERATOR,
+  "GET /items/bulk-actions/jobs/:id": OWNER_OR_OPERATOR,
+  "DELETE /items/bulk-actions/jobs/:id": OWNER_OR_OPERATOR,
 };
 
 /** Doors that take no credential at all, by why. */
@@ -343,7 +343,7 @@ type Schema = Record<string, unknown>;
  * The smallest value a schema in the served document accepts: required
  * properties only, the first of an enum or a union, the shortest array.
  */
-function sample(schema: Schema | undefined, doc: Schema): unknown {
+function sample(schema: Schema | undefined, doc: Schema, name = ""): unknown {
   if (!schema) return undefined;
   const ref = schema.$ref;
   if (typeof ref === "string") {
@@ -363,7 +363,7 @@ function sample(schema: Schema | undefined, doc: Schema): unknown {
       const properties = (schema.properties ?? {}) as Record<string, Schema>;
       const required = (schema.required ?? []) as string[];
       return Object.fromEntries(
-        required.map((name) => [name, sample(properties[name], doc)]),
+        required.map((key) => [key, sample(properties[key], doc, key)]),
       );
     }
     case "array": {
@@ -378,7 +378,9 @@ function sample(schema: Schema | undefined, doc: Schema): unknown {
     case "boolean":
       return false;
     case "string":
-      return schema.format === "date-time"
+      // The document declares no `date-time` format, which the generated
+      // Rust client cannot carry, so an instant is known by its name.
+      return schema.format === "date-time" || name.endsWith("_at")
         ? new Date().toISOString()
         : "x".repeat(
             typeof schema.minLength === "number" ? schema.minLength : 1,
@@ -394,6 +396,65 @@ function sample(schema: Schema | undefined, doc: Schema): unknown {
  * and the smallest body the schema accepts. A door that refuses a credential
  * by rule after reading the request answers this one with the refusal.
  */
+/** Rows the open doors name, so a well-formed request reaches past the
+ *  lookup to whatever the door asks of the row. */
+const ROWS: Record<string, string> = {};
+
+async function seedRows(doc: Schema): Promise<void> {
+  const asOwner = (method: string, path: string, body?: unknown) =>
+    send(
+      method,
+      path,
+      ctx.workingKey,
+      body === undefined ? undefined : JSON.stringify(body),
+    );
+  const connector = (await (
+    await asOwner("POST", "/connectors", { name: "census" })
+  ).json()) as { id: string };
+  ROWS.connector = connector.id;
+  const endpointBody = sample(
+    (
+      (doc.paths as Record<string, Record<string, Schema>>)[
+        "/connectors/{id}/endpoints"
+      ]!.post!.requestBody as { content: Record<string, { schema: Schema }> }
+    ).content["application/json"]!.schema,
+    doc,
+  );
+  const endpoint = (await (
+    await asOwner("POST", `/connectors/${connector.id}/endpoints`, endpointBody)
+  ).json()) as { id: string; path: string };
+  ROWS.endpoint = endpoint.id;
+  const delivered = (await (
+    await ctx.app.request(endpoint.path, { method: "POST", body: "{}" })
+  ).json()) as { id: string };
+  ROWS.delivery = delivered.id;
+  const job = (await (
+    await asOwner("POST", "/items/bulk-actions", {
+      action: "transition",
+      filter: { type: "core.note" },
+      state: "archived",
+    })
+  ).json()) as { id: string };
+  ROWS.job = job.id;
+  ROWS.type = "core.note";
+}
+
+/** Deletes last, and the connector's own delete after its parts'. */
+function rank(door: string): number {
+  if (door === "DELETE /connectors/:id") return 2;
+  return door.startsWith("DELETE") ? 1 : 0;
+}
+
+/** The row a door's path parameter names. */
+function rowFor(path: string, parameter: string): string {
+  if (parameter === "endpoint_id") return ROWS.endpoint!;
+  if (parameter === "delivery_id") return ROWS.delivery!;
+  if (path.startsWith("/connectors/")) return ROWS.connector!;
+  if (path.startsWith("/items/bulk-actions/jobs/")) return ROWS.job!;
+  if (path.startsWith("/types/")) return ROWS.type!;
+  return NO_ROW;
+}
+
 function wellFormed(door: string, doc: Schema, bearer: string) {
   const [method, path] = door.split(" ") as [string, string];
   const template = path.replace(/:([a-z_]+)/g, "{$1}");
@@ -416,7 +477,7 @@ function wellFormed(door: string, doc: Schema, bearer: string) {
   const search = query.size > 0 ? `?${query.toString()}` : "";
   return send(
     method,
-    `${concrete(path, NO_ROW)}${search}`,
+    `${path.replace(/:([a-z_]+)/g, (_, name: string) => rowFor(path, name))}${search}`,
     bearer,
     body === undefined ? undefined : JSON.stringify(sample(body, doc)),
   );
@@ -444,7 +505,7 @@ describe("every door asks what it asks of every caller before anything else", ()
     const named = [
       ...Object.keys(STANDING),
       ...Object.keys(ASKED_IN_PLACE),
-      ...Object.values(OPEN_TO_EVERY_CREDENTIAL).flat(),
+      ...Object.keys(OPEN_BY_ROW),
       ...Object.values(NO_CREDENTIAL).flat(),
     ];
     expect(new Set(named).size).toBe(named.length);
@@ -470,26 +531,44 @@ describe("every door asks what it asks of every caller before anything else", ()
     expect(wrong).toEqual([]);
   });
 
-  it("answers every credential alike on a door open to all of them, and never 403", async () => {
+  it("drives every door open by row against a real row, and admits exactly whom it names", async () => {
     const doc = (await (
       await ctx.app.request("/openapi.json")
     ).json()) as Schema;
-    const credentials = [holdsNothing, appHoldingEverything, ctx.operatorKey];
+    await seedRows(doc);
+    const credentials = {
+      holdsNothing,
+      appHoldingEverything,
+      owner: ctx.workingKey,
+      operator: ctx.operatorKey,
+    };
+    const admitted = (rule: string, who: keyof typeof credentials) =>
+      rule === EVERYONE ||
+      (who === "owner" && rule !== EVERYONE) ||
+      (who === "operator" && rule === OWNER_OR_OPERATOR);
     const wrong: string[] = [];
-    for (const door of Object.values(OPEN_TO_EVERY_CREDENTIAL).flat()) {
-      for (const [shape, drive] of [
-        ["malformed", (bearer: string) => malformed(door, bearer)],
-        ["well-formed", (bearer: string) => wellFormed(door, doc, bearer)],
-      ] as const) {
-        const answers = [];
-        for (const bearer of credentials) {
-          answers.push(await answer(await drive(bearer)));
-        }
-        if (
-          answers.some((got) => got.startsWith("403")) ||
-          new Set(answers).size > 1
-        ) {
-          wrong.push(`${door}, ${shape}: ${answers.join(" | ")}`);
+    const doors = Object.keys(OPEN_BY_ROW).sort((a, b) => rank(a) - rank(b));
+    for (const door of doors) {
+      const malformedAnswers: string[] = [];
+      for (const bearer of Object.values(credentials)) {
+        malformedAnswers.push(await answer(await malformed(door, bearer)));
+      }
+      if (
+        malformedAnswers.some((got) => got.startsWith("403")) ||
+        new Set(malformedAnswers).size > 1
+      ) {
+        wrong.push(`${door}, malformed: ${malformedAnswers.join(" | ")}`);
+      }
+      for (const [who, bearer] of Object.entries(credentials) as [
+        keyof typeof credentials,
+        string,
+      ][]) {
+        const got = await answer(await wellFormed(door, doc, bearer));
+        const refused = got.startsWith("403");
+        if (got.startsWith("400 validation_error")) {
+          wrong.push(`${door}, well-formed, ${who}: ${got}`);
+        } else if (refused === admitted(OPEN_BY_ROW[door]!, who)) {
+          wrong.push(`${door}, well-formed, ${who}: ${got}`);
         }
       }
     }
