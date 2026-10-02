@@ -708,6 +708,59 @@ describe("POST /admin/restore-archive against the orphan sweep", () => {
   });
 });
 
+describe("POST /admin/restore-archive refused after its blobs are stored", () => {
+  it("never takes back bytes an upload was told are stored meanwhile", async () => {
+    // The restore registers the blob, then its rows fail and it undoes
+    // what it wrote. An upload of the same bytes answered 201 in between
+    // must keep them.
+    const blob = makeBlobData(
+      `uploaded during a refused restore ${String(Date.now())}`,
+    );
+    const storage = ctx.storage;
+    const runInTransaction = storage.runInTransaction.bind(storage);
+    let uploading: Promise<Response> | undefined;
+    storage.runInTransaction = async <T>(fn: () => T | Promise<T>) => {
+      if (!uploading && (await storage.blobs.get(blob.hash)) !== null) {
+        uploading = Promise.resolve(
+          ctx.app.request("/blobs", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ctx.workingKey}`,
+              "Content-Type": "text/plain",
+            },
+            body: blob.data,
+          }),
+        );
+        // Long enough for the upload to land when nothing holds it back.
+        await Promise.race([
+          uploading,
+          new Promise((resolve) => setTimeout(resolve, 200)),
+        ]);
+        throw new Error("rows refused");
+      }
+      return runInTransaction(fn);
+    };
+    let res: Response;
+    try {
+      res = await postArchive(
+        await buildArchive(manifestFor(blob), [noteLine(blob)], [blob]),
+      );
+    } finally {
+      storage.runInTransaction = runInTransaction;
+    }
+    expect(res.status).toBe(500);
+    expect(uploading).toBeDefined();
+    const uploaded = await uploading;
+    expect(uploaded?.status).toBe(201);
+    expect(await storage.blobs.get(blob.hash)).not.toBeNull();
+    expect(await ctx.blobs.disk.has(blob.hash)).not.toBeNull();
+    const served = await ctx.app.request(`/blobs/${blob.hash}`, {
+      headers: { Authorization: `Bearer ${ctx.operatorKey}` },
+    });
+    expect(served.status).toBe(200);
+  });
+});
+
 describe("POST /admin/restore-archive — the edges it writes", () => {
   /**
    * A restore is a write like any other from a subscriber's side. A client

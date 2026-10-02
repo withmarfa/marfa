@@ -135,8 +135,23 @@ export class SqliteBlobRegistry implements BlobRegistry {
     await this.db.delete(blobPurges).where(eq(blobPurges.hash, hash)).run();
   }
 
-  async remove(hash: string): Promise<void> {
-    await this.db.delete(blobs).where(eq(blobs.hash, hash)).run();
+  async removeUnclaimed(hash: string, uploader: string): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const other = await tx
+        .select({ one: sql<number>`1` })
+        .from(blobUploaders)
+        .where(
+          and(
+            eq(blobUploaders.hash, hash),
+            not(eq(blobUploaders.uploader, uploader)),
+          ),
+        )
+        .limit(1)
+        .get();
+      if (other || (await referencedIn(tx, hash))) return false;
+      await tx.delete(blobs).where(eq(blobs.hash, hash)).run();
+      return true;
+    });
   }
 
   async count(): Promise<{ count: number; total_size_bytes: number }> {

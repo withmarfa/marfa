@@ -88,3 +88,24 @@ export async function withBlobUploadLocks<T>(
   };
   return take(0);
 }
+
+/**
+ * Take the locks on every hash in `hashes`, as `withBlobUploadLocks` does,
+ * and hold them until the answered function is called. For a request whose
+ * locked span runs through code that is not one callback.
+ */
+export async function holdBlobUploadLocks(
+  hashes: readonly string[],
+): Promise<() => void> {
+  let release: () => void = () => undefined;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await new Promise<void>((acquired) => {
+    void withBlobUploadLocks(hashes, () => {
+      acquired();
+      return released;
+    });
+  });
+  return release;
+}

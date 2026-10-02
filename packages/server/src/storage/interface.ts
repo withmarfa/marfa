@@ -1287,7 +1287,12 @@ export interface BlobRegistry {
    * record, so a purge cut short never finishes on bytes stored again.
    */
   recordUploader(hash: string, uploader: string): Promise<void>;
-  remove(hash: string): Promise<void>;
+  /**
+   * Remove the row a refused restore registered, unless something has
+   * claimed it since: another credential that sent the bytes, or anything
+   * that references the blob. Answers whether it went.
+   */
+  removeUnclaimed(hash: string, uploader: string): Promise<boolean>;
   count(): Promise<{ count: number; total_size_bytes: number }>;
 
   /**

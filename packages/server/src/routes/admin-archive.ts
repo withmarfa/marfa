@@ -51,10 +51,7 @@ import { registerArchiveTypes } from "./admin-archive-types.js";
 import { undeclaredPropertyRefusal } from "./_undeclared-property.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
-import {
-  withBlobUploadLock,
-  withBlobUploadLocks,
-} from "../storage/blob-upload-lock.js";
+import { holdBlobUploadLocks } from "../storage/blob-upload-lock.js";
 import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 import { blobPrincipal } from "./_blob-reach.js";
@@ -248,10 +245,13 @@ interface BlobRestore {
  * Write an archive's blobs, remembering which bytes and which rows this
  * request created.
  *
- * The per-hash lock is the same one `POST /blobs` takes, and for the same
- * reason: content addressing means two requests can be writing identical bytes
- * at once, so `exists` and the write have to be one step or the request that
- * is refused deletes the other's committed blob.
+ * The caller holds the per-hash locks `POST /blobs` takes, from before this
+ * runs until the restore has committed or `undo` has finished, and for the
+ * same reason: content addressing means two requests can be writing
+ * identical bytes at once, so the check of the disk, the write, the rows and
+ * any undo have to be one step, or one request deletes what another was
+ * just told is stored, and a purge cannot delete bytes found already stored
+ * before the row naming them commits.
  */
 async function restoreArchiveBlobs(
   storage: Storage,
@@ -262,96 +262,81 @@ async function restoreArchiveBlobs(
   const wroteBytes: string[] = [];
   const wroteRows: string[] = [];
 
-  /** Delete the bytes this request placed that no row names. `held` says
-   *  the caller already holds their locks. */
-  const undoBytes = async (held: boolean): Promise<void> => {
+  /** Delete the bytes this request placed that no row names: a row that
+   *  was already there when the bytes were missing is not this request's,
+   *  and keeps them. */
+  const undoBytes = async (): Promise<void> => {
     for (const hash of wroteBytes) {
-      const discard = async () => {
-        try {
-          if ((await storage.blobs.get(hash)) !== null) return;
-          await blobs.disk.delete(hash);
-        } catch (err) {
-          log("error", "blob.orphaned_after_refused_restore", {
-            hash,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      };
-      if (held) await discard();
-      else await withBlobUploadLock(hash, discard);
+      try {
+        if ((await storage.blobs.get(hash)) !== null) continue;
+        await blobs.disk.delete(hash);
+      } catch (err) {
+        log("error", "blob.orphaned_after_refused_restore", {
+          hash,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   };
 
-  // Bytes first, rows second, same as `POST /blobs`, and under the same
-  // per-hash locks from the check of the disk through the commit of the
-  // rows: bytes found already present are only kept if no purge can delete
-  // them before the row naming them commits. A rollback cannot reach a
-  // filesystem or an object store, so the bytes stay outside the
+  // Bytes first, rows second, same as `POST /blobs`. A rollback cannot
+  // reach a filesystem or an object store, so the bytes stay outside the
   // transaction and this request takes back what it wrote on refusal. Each
   // spool is moved into place or removed, so past the placing none is left.
-  await withBlobUploadLocks(
-    pending.map((blob) => blob.hash),
-    async () => {
-      let placed = 0;
-      try {
-        for (const blob of pending) {
-          if ((await blobs.disk.has(blob.hash)) === null) {
-            await blobs.disk.put(blob.hash, {
-              path: blob.path,
-              size_bytes: blob.sizeBytes,
-            });
-            wroteBytes.push(blob.hash);
-          } else {
-            await rm(blob.path, { force: true });
-          }
-          placed++;
-        }
-      } catch (err) {
-        for (const blob of pending.slice(placed)) {
-          await rm(blob.path, { force: true });
-        }
-        await undoBytes(true);
-        throw err;
-      }
-
-      // The rows commit as one transaction, so a failure rolls every row
-      // back at once.
-      try {
-        await storage.runInTransaction(async () => {
-          const planned: PendingBlob[] = [];
-          for (const blob of pending) {
-            if ((await storage.blobs.get(blob.hash)) === null) {
-              planned.push(blob);
-            }
-          }
-          for (const blob of planned) {
-            await storage.blobs.register(
-              blob.hash,
-              blob.mimeType,
-              blob.sizeBytes,
-            );
-            await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
-            wroteRows.push(blob.hash);
-          }
-          for (const blob of pending) {
-            await storage.blobs.recordUploader(blob.hash, uploader);
-          }
+  let placed = 0;
+  try {
+    for (const blob of pending) {
+      if ((await blobs.disk.has(blob.hash)) === null) {
+        await blobs.disk.put(blob.hash, {
+          path: blob.path,
+          size_bytes: blob.sizeBytes,
         });
-      } catch (err) {
-        // The transaction rolled the rows back; the bytes are this
-        // function's to take back before the refusal travels on.
-        wroteRows.length = 0;
-        await undoBytes(true);
-        throw err;
+        wroteBytes.push(blob.hash);
+      } else {
+        await rm(blob.path, { force: true });
       }
-    },
-  );
+      placed++;
+    }
+  } catch (err) {
+    for (const blob of pending.slice(placed)) {
+      await rm(blob.path, { force: true });
+    }
+    await undoBytes();
+    throw err;
+  }
+
+  // The rows commit as one transaction, so a failure rolls every row
+  // back at once.
+  try {
+    await storage.runInTransaction(async () => {
+      const planned: PendingBlob[] = [];
+      for (const blob of pending) {
+        if ((await storage.blobs.get(blob.hash)) === null) {
+          planned.push(blob);
+        }
+      }
+      for (const blob of planned) {
+        await storage.blobs.register(blob.hash, blob.mimeType, blob.sizeBytes);
+        await storage.blobs.recordLocation(blob.hash, blobs.disk.id);
+        wroteRows.push(blob.hash);
+      }
+      for (const blob of pending) {
+        await storage.blobs.recordUploader(blob.hash, uploader);
+      }
+    });
+  } catch (err) {
+    // The transaction rolled the rows back; the bytes are this
+    // function's to take back before the refusal travels on.
+    wroteRows.length = 0;
+    await undoBytes();
+    throw err;
+  }
 
   return {
     undo: async () => {
       for (const hash of wroteRows) {
         try {
-          await storage.blobs.remove(hash);
+          await storage.blobs.removeUnclaimed(hash, uploader);
         } catch (err) {
           log("error", "blob.row_orphaned_after_refused_restore", {
             hash,
@@ -359,11 +344,7 @@ async function restoreArchiveBlobs(
           });
         }
       }
-      // Another request may have registered these same bytes in the
-      // meantime, and content addressing means its row describes the file
-      // this request happens to have written; `undoBytes` re-checks under
-      // the per-hash lock before deleting.
-      await undoBytes(false);
+      await undoBytes();
     },
   };
 }
@@ -721,12 +702,25 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
     // this route goes on to reject has not touched the store. They are still
     // outside the transaction, because a rollback cannot reach a filesystem
     // or an object store, and this request takes back exactly what it wrote.
-    const restoredBlobs = await restoreArchiveBlobs(
-      storage,
-      blobs,
-      pendingBlobs,
-      uploader,
+    //
+    // The per-hash locks are held from here until the rows commit or the
+    // undo has run, so no upload of the same bytes, and no purge, lands
+    // between this request's check of the disk and its last word on them.
+    const releaseBlobs = await holdBlobUploadLocks(
+      pendingBlobs.map((blob) => blob.hash),
     );
+    let restoredBlobs: BlobRestore;
+    try {
+      restoredBlobs = await restoreArchiveBlobs(
+        storage,
+        blobs,
+        pendingBlobs,
+        uploader,
+      );
+    } catch (err) {
+      releaseBlobs();
+      throw err;
+    }
 
     // Filled inside the transaction, announced after it commits.
     const restoredItems: { item: Item; metadata: Metadata }[] = [];
@@ -939,6 +933,8 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
       // store permanently larger.
       await restoredBlobs.undo();
       throw err;
+    } finally {
+      releaseBlobs();
     }
 
     // After the transaction committed. A restore is a write like any
