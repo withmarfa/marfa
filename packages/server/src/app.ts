@@ -611,7 +611,12 @@ export function createApp(
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );
-  app.route("/webhooks", webhookRoutes(storage));
+  app.route(
+    "/webhooks",
+    webhookRoutes(storage, {
+      allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
+    }),
+  );
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
   // OpenAPI spec — generated from route definitions

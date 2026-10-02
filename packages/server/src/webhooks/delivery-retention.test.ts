@@ -37,7 +37,6 @@ async function schedule(
     eventType: "item.created",
     payload: '{"event_type":"item.created"}',
     webhookUrl: "https://example.com/hook",
-    webhookSecret: "a".repeat(64),
     nextAttemptAt,
   });
 }
@@ -103,7 +102,7 @@ describe("outbound delivery history", () => {
     );
   });
 
-  it("keeps no payload, address or secret once a delivery is settled", async () => {
+  it("keeps no payload or address once a delivery is settled, cancelled included", async () => {
     const webhookId = "settled-subscription";
     const succeeded = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markSuccess(succeeded, 200, 1);
@@ -117,37 +116,39 @@ describe("outbound delivery history", () => {
     );
     const deadLettered = await schedule(webhookId);
     await ctx.storage.outboundWebhookDeliveries.markDeadLetter(deadLettered);
+    const cancelled = await schedule(webhookId);
+    await ctx.storage.outboundWebhookDeliveries.markCancelled(
+      cancelled,
+      "removed",
+    );
     const retrying = await schedule(
       webhookId,
       new Date(Date.now() + DAY_MS).toISOString(),
     );
 
     const rows = (await raw().all(
-      `SELECT id, payload, webhook_url, webhook_secret FROM outbound_webhook_deliveries WHERE webhook_id = '${webhookId}'`,
+      `SELECT id, payload, webhook_url FROM outbound_webhook_deliveries WHERE webhook_id = '${webhookId}'`,
     )) as {
       id: string;
       payload: string | null;
       webhook_url: string | null;
-      webhook_secret: string | null;
     }[];
     const byId = new Map(rows.map((row) => [row.id, row]));
     expect(byId.get(retrying)).toMatchObject({
       payload: '{"event_type":"item.created"}',
       webhook_url: "https://example.com/hook",
-      webhook_secret: "a".repeat(64),
     });
-    for (const id of [succeeded, failedOut, deadLettered]) {
+    for (const id of [succeeded, failedOut, deadLettered, cancelled]) {
       expect(byId.get(id)).toMatchObject({
         payload: null,
         webhook_url: null,
-        webhook_secret: null,
       });
     }
   });
 });
 
 describe("settling an outbound delivery", () => {
-  it("retries with the payload, address and secret it was scheduled with", async () => {
+  it("retries with the payload and address it was scheduled with", async () => {
     const id = await schedule("retry-subscription");
     await ctx.storage.outboundWebhookDeliveries.markFailed(
       id,
@@ -162,7 +163,6 @@ describe("settling an outbound delivery", () => {
     expect(due.find((row) => row.id === id)).toMatchObject({
       payload: '{"event_type":"item.created"}',
       webhook_url: "https://example.com/hook",
-      webhook_secret: "a".repeat(64),
       attempt: 1,
     });
   });

@@ -475,16 +475,30 @@ export const edgeTypes = sqliteTable("edge_types", {
   updated_at: text("updated_at").notNull(),
 });
 
-export const outboundWebhooks = sqliteTable("outbound_webhooks", {
-  id: text("id").primaryKey(),
-  url: text("url").notNull(),
-  secret: text("secret").notNull(),
-  events: text("events").notNull().default("[]"),
-  type_filter: text("type_filter"),
-  active: integer("active").notNull().default(1),
-  created_at: text("created_at").notNull(),
-  updated_at: text("updated_at").notNull(),
-});
+export const outboundWebhooks = sqliteTable(
+  "outbound_webhooks",
+  {
+    id: text("id").primaryKey(),
+    url: text("url").notNull(),
+    secret: text("secret").notNull(),
+    events: text("events").notNull().default("[]"),
+    type_filter: text("type_filter"),
+    active: integer("active").notNull().default(1),
+    // Who the subscription belongs to: a stored key, or a signed-in app's
+    // grant by app and person. Each delivery is sent for it as it stands then.
+    key_id: text("key_id"),
+    grant_client_id: text("grant_client_id"),
+    grant_user_id: text("grant_user_id"),
+    created_at: text("created_at").notNull(),
+    updated_at: text("updated_at").notNull(),
+  },
+  (table) => [
+    check(
+      "outbound_webhooks_one_owner",
+      sql`(${table.key_id} IS NOT NULL AND ${table.grant_client_id} IS NULL AND ${table.grant_user_id} IS NULL) OR (${table.key_id} IS NULL AND ${table.grant_client_id} IS NOT NULL AND ${table.grant_user_id} IS NOT NULL)`,
+    ),
+  ],
+);
 
 export const outboundWebhookDeliveries = sqliteTable(
   "outbound_webhook_deliveries",
@@ -500,7 +514,6 @@ export const outboundWebhookDeliveries = sqliteTable(
     next_attempt_at: text("next_attempt_at"),
     payload: text("payload"),
     webhook_url: text("webhook_url"),
-    webhook_secret: text("webhook_secret"),
     max_attempts: integer("max_attempts").notNull().default(4),
     status: text("status").notNull().default("pending"),
   },

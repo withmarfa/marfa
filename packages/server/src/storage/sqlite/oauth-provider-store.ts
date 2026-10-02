@@ -21,6 +21,7 @@ import {
   auth_oauth_refresh_token,
   items,
   auth_oauth_device_code,
+  outboundWebhooks,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { WriteTracker } from "../write-tracker.js";
@@ -354,32 +355,45 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     clientId: string,
     authUserId: string,
   ): Promise<void> {
-    // access_token.refresh_id has a nullable FK — delete both explicitly.
-    await this.db
-      .delete(auth_oauth_access_token)
-      .where(
-        and(
-          eq(auth_oauth_access_token.clientId, clientId),
-          eq(auth_oauth_access_token.userId, authUserId),
-        ),
-      );
-    await this.db
-      .delete(auth_oauth_refresh_token)
-      .where(
-        and(
-          eq(auth_oauth_refresh_token.clientId, clientId),
-          eq(auth_oauth_refresh_token.userId, authUserId),
-        ),
-      );
-    await this.db
-      .delete(auth_oauth_consent)
-      .where(
-        and(
-          eq(auth_oauth_consent.clientId, clientId),
-          eq(auth_oauth_consent.userId, authUserId),
-        ),
-      );
-    await this.revokeAuthorizationCodesForGrant(clientId, authUserId);
+    await this.db.transaction(async (tx) => {
+      // access_token.refresh_id has a nullable FK — delete both explicitly.
+      await tx
+        .delete(auth_oauth_access_token)
+        .where(
+          and(
+            eq(auth_oauth_access_token.clientId, clientId),
+            eq(auth_oauth_access_token.userId, authUserId),
+          ),
+        );
+      await tx
+        .delete(auth_oauth_refresh_token)
+        .where(
+          and(
+            eq(auth_oauth_refresh_token.clientId, clientId),
+            eq(auth_oauth_refresh_token.userId, authUserId),
+          ),
+        );
+      await tx
+        .delete(auth_oauth_consent)
+        .where(
+          and(
+            eq(auth_oauth_consent.clientId, clientId),
+            eq(auth_oauth_consent.userId, authUserId),
+          ),
+        );
+      // A grant's webhook subscriptions go with its consent: a subscription
+      // is matched to its grant by app and person, so one left standing
+      // would be the next grant's when the same person reconnects the app.
+      await tx
+        .delete(outboundWebhooks)
+        .where(
+          and(
+            eq(outboundWebhooks.grant_client_id, clientId),
+            eq(outboundWebhooks.grant_user_id, authUserId),
+          ),
+        );
+      await this.revokeAuthorizationCodesForGrant(clientId, authUserId);
+    });
   }
 
   async findAuthorizationCodeGrantKey(codeHash: string): Promise<{
@@ -553,23 +567,30 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     refreshTokens: number;
     consents: number;
   }> {
-    const access = await this.db
-      .delete(auth_oauth_access_token)
-      .where(eq(auth_oauth_access_token.clientId, clientId))
-      .run();
-    const refresh = await this.db
-      .delete(auth_oauth_refresh_token)
-      .where(eq(auth_oauth_refresh_token.clientId, clientId))
-      .run();
-    const consents = await this.db
-      .delete(auth_oauth_consent)
-      .where(eq(auth_oauth_consent.clientId, clientId))
-      .run();
-    return {
-      accessTokens: access.rowsAffected,
-      refreshTokens: refresh.rowsAffected,
-      consents: consents.rowsAffected,
-    };
+    return await this.db.transaction(async (tx) => {
+      const access = await tx
+        .delete(auth_oauth_access_token)
+        .where(eq(auth_oauth_access_token.clientId, clientId))
+        .run();
+      const refresh = await tx
+        .delete(auth_oauth_refresh_token)
+        .where(eq(auth_oauth_refresh_token.clientId, clientId))
+        .run();
+      const consents = await tx
+        .delete(auth_oauth_consent)
+        .where(eq(auth_oauth_consent.clientId, clientId))
+        .run();
+      // Every grant of the app goes, so every grant's subscriptions do.
+      await tx
+        .delete(outboundWebhooks)
+        .where(eq(outboundWebhooks.grant_client_id, clientId))
+        .run();
+      return {
+        accessTokens: access.rowsAffected,
+        refreshTokens: refresh.rowsAffected,
+        consents: consents.rowsAffected,
+      };
+    });
   }
 
   async deleteClient(clientId: string): Promise<boolean> {

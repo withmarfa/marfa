@@ -1452,13 +1452,13 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns every outbound webhook subscription. Secrets are redacted here — the plaintext is only returned at create time.
+         * @description Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.
          */
         get: operations["listWebhooks"];
         put?: never;
         /**
          * Create a webhook
-         * @description Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.
+         * @description Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.
          */
         post: operations["createWebhook"];
         delete?: never;
@@ -1476,21 +1476,21 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns one outbound webhook subscription by id, with its secret redacted.
+         * @description Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.
          */
         get: operations["getWebhook"];
         put?: never;
         post?: never;
         /**
          * Delete a webhook
-         * @description Removes the subscription so no new deliveries are queued. Deliveries already queued still fire and retry on the standard schedule, and delivery history is retained until the audit retention window expires.
+         * @description Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.
          */
         delete: operations["deleteWebhook"];
         options?: never;
         head?: never;
         /**
          * Update a webhook
-         * @description Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. The signing secret cannot be rotated here — delete the subscription and create a new one.
+         * @description Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.
          */
         patch: operations["updateWebhook"];
         trace?: never;
@@ -3066,16 +3066,6 @@ export interface components {
             active: boolean;
             created_at: string;
             updated_at: string;
-        };
-        ForbiddenOrScopedCredentialNotPermittedRefusal: {
-            error: {
-                /** @enum {string} */
-                code: "forbidden" | "scoped_credential_not_permitted";
-                message: string;
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
         };
         WebhookPage: {
             data: components["schemas"]["Webhook"][];
@@ -15369,7 +15359,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may register or re-point one. */
+            /** @description The credential does not hold `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15381,7 +15371,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenOrScopedCredentialNotPermittedRefusal"];
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
@@ -15574,7 +15564,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may create, re-point or destroy one. */
+            /** @description The credential does not hold `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15586,7 +15576,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenOrScopedCredentialNotPermittedRefusal"];
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
             /** @description Webhook not found */
@@ -15714,7 +15704,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the credential does not hold `webhooks.manage`. `scoped_credential_not_permitted`: it does, but its content read does not cover everything stored. A subscription is instance-wide and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read everything may register or re-point one. */
+            /** @description The credential does not hold `webhooks.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15726,7 +15716,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ForbiddenOrScopedCredentialNotPermittedRefusal"];
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
             /** @description Webhook not found */

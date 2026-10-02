@@ -106,7 +106,7 @@ pub enum UpdateWebhookSuccess {
 pub enum CreateWebhookError {
     Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenOrScopedCredentialNotPermittedRefusal),
+    Status403(models::ForbiddenRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
     Status503(models::WriteContentionRefusal),
@@ -118,7 +118,7 @@ pub enum CreateWebhookError {
 #[serde(untagged)]
 pub enum DeleteWebhookError {
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenOrScopedCredentialNotPermittedRefusal),
+    Status403(models::ForbiddenRefusal),
     Status404(models::WebhookNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -167,7 +167,7 @@ pub enum ListWebhooksError {
 pub enum UpdateWebhookError {
     Status400(models::MissingRequiredFieldOrValidationErrorRefusal),
     Status401(models::UnauthorizedRefusal),
-    Status403(models::ForbiddenOrScopedCredentialNotPermittedRefusal),
+    Status403(models::ForbiddenRefusal),
     Status404(models::WebhookNotFoundRefusal),
     Status413(models::RequestTooLargeRefusal),
     Status429(models::RateLimitedRefusal),
@@ -175,7 +175,7 @@ pub enum UpdateWebhookError {
     UnknownValue(serde_json::Value),
 }
 
-/// Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The `secret` is the HMAC-SHA256 signing key, generated server-side when omitted, and returned in plaintext only on creation.
+/// Registers an outbound webhook subscription targeting a URL and one or more event types from the closed vocabulary. The subscription belongs to the credential that registers it, which for a signed-in app is its grant rather than the token: each delivery carries only what that credential may read when it is sent, and the subscription is deleted when the key or the app's grant is revoked, while a key that expires or no longer holds `webhooks.manage` delivers nothing more. The URL must be `http` or `https` and reach a public address. The `secret` is the HMAC-SHA256 signing key, at least 32 characters, generated server-side when omitted, and returned in plaintext only on creation.
 pub fn create_webhook(
     configuration: &configuration::Configuration,
     params: CreateWebhookParams,
@@ -217,7 +217,7 @@ pub fn create_webhook(
     }
 }
 
-/// Removes the subscription so no new deliveries are queued. Deliveries already queued still fire and retry on the standard schedule, and delivery history is retained until the audit retention window expires.
+/// Removes the subscription so no new deliveries are queued, and its pending deliveries are settled unsent rather than retried.
 pub fn delete_webhook(
     configuration: &configuration::Configuration,
     params: DeleteWebhookParams,
@@ -262,7 +262,7 @@ pub fn delete_webhook(
     }
 }
 
-/// Returns one outbound webhook subscription by id, with its secret redacted.
+/// Returns one outbound webhook subscription by id, with its secret redacted. A subscription another credential registered answers as an unknown id.
 pub fn get_webhook(
     configuration: &configuration::Configuration,
     params: GetWebhookParams,
@@ -354,7 +354,7 @@ pub fn list_webhook_deliveries(
     }
 }
 
-/// Returns every outbound webhook subscription. Secrets are redacted here — the plaintext is only returned at create time.
+/// Returns the outbound webhook subscriptions that belong to this credential. Secrets are redacted here — the plaintext is only returned at create time.
 pub fn list_webhooks(
     configuration: &configuration::Configuration,
 ) -> Result<ResponseContent<ListWebhooksSuccess>, Error<ListWebhooksError>> {
@@ -392,7 +392,7 @@ pub fn list_webhooks(
     }
 }
 
-/// Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. The signing secret cannot be rotated here — delete the subscription and create a new one.
+/// Updates mutable fields on an outbound webhook subscription; the body is a partial, so unsupplied fields keep their existing values. Pointing it at another URL or turning it off settles its pending deliveries unsent. The signing secret cannot be rotated here — delete the subscription and create a new one.
 pub fn update_webhook(
     configuration: &configuration::Configuration,
     params: UpdateWebhookParams,

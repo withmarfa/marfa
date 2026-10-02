@@ -38,19 +38,6 @@ export enum ErrorCode {
   UNAUTHORIZED = "unauthorized",
   FORBIDDEN = "forbidden",
   TYPE_NOT_PERMITTED = "type_not_permitted",
-  /**
-   * A credential that cannot read everything stored attempted an operation
-   * only a credential reaching all of it may perform.
-   *
-   * Distinct from the generic `FORBIDDEN` it shares a status with, because
-   * holding more permissions will not help: what the caller may
-   * administer and what it may read are separate axes, and this is a refusal
-   * on the second one. Outbound webhooks are the case this exists for — a
-   * subscription is instance-wide and carries no credential of its own, so
-   * anything it delivers is bounded by what is stored rather than by the
-   * reach of whoever registered it.
-   */
-  SCOPED_CREDENTIAL_NOT_PERMITTED = "scoped_credential_not_permitted",
   INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
   DUPLICATE_SOURCE = "duplicate_source",
@@ -330,7 +317,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
   [ErrorCode.TYPE_NOT_PERMITTED]: 403,
-  [ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED]: 403,
   [ErrorCode.INVALID_TRANSITION]: 400,
   [ErrorCode.TYPE_NOT_FOUND]: 404,
   [ErrorCode.DUPLICATE_SOURCE]: 409,

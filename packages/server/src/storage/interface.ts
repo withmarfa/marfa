@@ -1371,20 +1371,38 @@ export interface BlobOrphanRow {
   reported_at: string;
 }
 
+/**
+ * The credential a subscription belongs to: a stored key, or a signed-in
+ * app's grant, the pair of app and person it was consented between, so that
+ * every token of the grant is the same owner.
+ */
+export type WebhookOwner =
+  | { kind: "key"; keyId: string }
+  | { kind: "grant"; clientId: string; authUserId: string };
+
+/** A subscription as stored: the wire shape and the credential it belongs to. */
+export interface StoredWebhook extends Webhook {
+  owner: WebhookOwner;
+}
+
 export interface WebhookStore {
-  create(input: CreateWebhookInput): Promise<Webhook>;
-  list(): Promise<Webhook[]>;
-  get(id: string): Promise<Webhook | null>;
-  update(id: string, input: UpdateWebhookInput): Promise<Webhook>;
+  create(
+    input: CreateWebhookInput & { owner: WebhookOwner },
+  ): Promise<StoredWebhook>;
+  list(): Promise<StoredWebhook[]>;
+  get(id: string): Promise<StoredWebhook | null>;
+  update(id: string, input: UpdateWebhookInput): Promise<StoredWebhook>;
   delete(id: string): Promise<void>;
-  listActive(): Promise<Webhook[]>;
+  listActive(): Promise<StoredWebhook[]>;
   count(): Promise<number>;
 }
 
 /**
  * Row shape returned by `getPending` and `claimById` — the subset of the
  * delivery row that the poller / direct-dispatcher needs to make an HTTP
- * attempt and write its outcome.
+ * attempt and write its outcome. `payload` is the event as the log stores
+ * it, before it is narrowed to the subscription's credential; the secret is
+ * read from the subscription at the attempt.
  */
 export interface PendingWebhookDelivery {
   id: string;
@@ -1392,7 +1410,6 @@ export interface PendingWebhookDelivery {
   event_type: string;
   payload: string;
   webhook_url: string;
-  webhook_secret: string;
   attempt: number;
   max_attempts: number;
 }
@@ -1408,7 +1425,6 @@ export interface WebhookDeliveryStore {
     eventType: string;
     payload: string;
     webhookUrl: string;
-    webhookSecret: string;
     nextAttemptAt: string;
   }): Promise<string>;
   getPending(now: string, limit?: number): Promise<PendingWebhookDelivery[]>;
@@ -1433,6 +1449,10 @@ export interface WebhookDeliveryStore {
     nextAttemptAt: string | null,
   ): Promise<void>;
   markDeadLetter(id: string): Promise<void>;
+  /** Settles a pending delivery unsent, saying why. */
+  markCancelled(id: string, reason: string): Promise<void>;
+  /** Settles every pending delivery of a subscription unsent, saying why. */
+  cancelPending(webhookId: string, reason: string): Promise<void>;
   /** Removes settled deliveries older than the retention; one still
    *  retrying stays whatever its age, and one no claim can reach does not.
    *  Answers how many went. */

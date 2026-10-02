@@ -23,6 +23,7 @@ import { setBusyBudgetMs } from "./storage/sqlite/connection.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { Storage } from "./storage/interface.js";
 import { WebhookConsumer } from "./webhooks/delivery.js";
+import { createWebhookHttpClient } from "./webhooks/outbound-http.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
 import { registerHousekeepingJobs } from "./housekeeping/registrations.js";
 import { initEventLog } from "./pubsub.js";
@@ -77,10 +78,12 @@ async function main() {
   });
   registerHousekeepingJobs(housekeeping, storage, blobs, config);
 
-  const webhookConsumer = new WebhookConsumer(
-    storage.outboundWebhooks,
-    storage.outboundWebhookDeliveries,
-  );
+  const webhookConsumer = new WebhookConsumer({
+    storage,
+    http: createWebhookHttpClient({
+      allowPrivateAddresses: config.webhookAllowPrivateAddresses ?? false,
+    }),
+  });
   webhookConsumer.start();
 
   const bulkActionWorker = new BulkActionWorker({

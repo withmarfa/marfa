@@ -641,10 +641,7 @@ export function checkTypePermission(
  * open, which is the defect above reintroduced one layer up, and it would do
  * so silently — every suite that does not mint an exclusion-carrying key
  * would still pass. Returning one object makes it unrepresentable: a call
- * site cannot forget a field it has to destructure. (`refuseNarrowCredential`
- * in `routes/webhooks.ts` asks this function directly rather than through
- * `getTypeFilter`: it reads both `allowed` and `excluded`, the pair this
- * reasoning is about, and asks here so that it answers its own code.)
+ * site cannot forget a field it has to destructure.
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.
@@ -995,10 +992,7 @@ export function requirePermission(
  * behavior.
  *
  * **In the wrapper and not in `computeTypeFilter`**, which stays a pure
- * predicate: `refuseNarrowCredential` in `routes/webhooks.ts` asks it
- * whether a credential reaches everything and answers its own
- * `scoped_credential_not_permitted`, and a throw from the shared function
- * would change that door's refusal for the credentials it exists to catch.
+ * predicate for the callers that answer an empty reach their own way.
  */
 export function getTypeFilter(
   c: Context<AppEnv>,

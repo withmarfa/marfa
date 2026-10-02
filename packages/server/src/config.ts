@@ -297,6 +297,12 @@ export interface AppConfig {
   /** Factor the bulk-action worker's empty-poll interval grows by each idle
    *  tick. Default 2; env override `MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER`. */
   bulkActionPollBackoffMultiplier?: number;
+  /** Whether outbound webhooks may reach loopback, private and other
+   *  non-public addresses, for an operator whose receivers run on a private
+   *  network. Off unless `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` is `true`;
+   *  optional on the type so test contexts constructing `AppConfig`
+   *  literals keep the default. */
+  webhookAllowPrivateAddresses?: boolean;
   errorWebhookUrl: string;
   /** Per-fetch timeout (ms) for error-webhook delivery in
    *  `middleware/error-notifier.ts`. Env override
@@ -872,6 +878,8 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_BULK_ACTION_POLL_BACKOFF_MULTIPLIER,
       2,
     ),
+    webhookAllowPrivateAddresses:
+      process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES === "true",
     errorWebhookUrl: process.env.ERROR_WEBHOOK_URL ?? "",
     errorWebhookTimeoutMs: envNumber(
       process.env.MARFA_ERROR_WEBHOOK_TIMEOUT_MS,

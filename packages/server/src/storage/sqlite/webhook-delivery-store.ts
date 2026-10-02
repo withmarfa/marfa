@@ -14,9 +14,9 @@ import { CLAIM_LOCK_TTL_MS } from "../../webhooks/delivery.js";
 import { outboundWebhookDeliveries } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
-// Only a retry reads these, and kept on a settled row the secret and the
+// Only a retry reads these, and kept on a settled row the event and the
 // address would outlive their subscription.
-const SETTLED = { payload: null, webhook_url: null, webhook_secret: null };
+const SETTLED = { payload: null, webhook_url: null };
 
 // The first outcome stands: an attempt whose claim lapsed and was taken
 // again must not reopen, or unsettle, what the other attempt settled.
@@ -91,7 +91,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
     eventType: string;
     payload: string;
     webhookUrl: string;
-    webhookSecret: string;
     nextAttemptAt: string;
   }): Promise<string> {
     const id = generateId();
@@ -109,7 +108,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
         next_attempt_at: entry.nextAttemptAt,
         payload: entry.payload,
         webhook_url: entry.webhookUrl,
-        webhook_secret: entry.webhookSecret,
         max_attempts: 4,
         status: "pending",
       })
@@ -125,7 +123,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       event_type: string;
       payload: string | null;
       webhook_url: string | null;
-      webhook_secret: string | null;
       attempt: number;
       max_attempts: number;
     }>(
@@ -138,7 +135,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
             ORDER BY next_attempt_at
             LIMIT ${limit}
           )
-          RETURNING id, webhook_id, event_type, payload, webhook_url, webhook_secret, attempt, max_attempts
+          RETURNING id, webhook_id, event_type, payload, webhook_url, attempt, max_attempts
         `,
     );
     return rows.map((r) => ({
@@ -147,7 +144,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       event_type: r.event_type,
       payload: r.payload ?? "",
       webhook_url: r.webhook_url ?? "",
-      webhook_secret: r.webhook_secret ?? "",
       attempt: r.attempt,
       max_attempts: r.max_attempts,
     }));
@@ -166,7 +162,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       event_type: string;
       payload: string | null;
       webhook_url: string | null;
-      webhook_secret: string | null;
       attempt: number;
       max_attempts: number;
     }>(
@@ -176,7 +171,7 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
           WHERE id = ${id}
             AND status = 'pending'
             AND next_attempt_at <= ${now}
-          RETURNING id, webhook_id, event_type, payload, webhook_url, webhook_secret, attempt, max_attempts
+          RETURNING id, webhook_id, event_type, payload, webhook_url, attempt, max_attempts
         `,
     );
     const row = rows[0];
@@ -187,7 +182,6 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       event_type: row.event_type,
       payload: row.payload ?? "",
       webhook_url: row.webhook_url ?? "",
-      webhook_secret: row.webhook_secret ?? "",
       attempt: row.attempt,
       max_attempts: row.max_attempts,
     };
@@ -237,6 +231,37 @@ export class SqliteWebhookDeliveryStore implements WebhookDeliveryStore {
       .update(outboundWebhookDeliveries)
       .set({ status: "dead_letter", ...SETTLED })
       .where(stillPending(id))
+      .run();
+  }
+
+  async markCancelled(id: string, reason: string): Promise<void> {
+    await this.db
+      .update(outboundWebhookDeliveries)
+      .set({
+        status: "cancelled",
+        error: reason,
+        next_attempt_at: null,
+        ...SETTLED,
+      })
+      .where(stillPending(id))
+      .run();
+  }
+
+  async cancelPending(webhookId: string, reason: string): Promise<void> {
+    await this.db
+      .update(outboundWebhookDeliveries)
+      .set({
+        status: "cancelled",
+        error: reason,
+        next_attempt_at: null,
+        ...SETTLED,
+      })
+      .where(
+        and(
+          eq(outboundWebhookDeliveries.webhook_id, webhookId),
+          eq(outboundWebhookDeliveries.status, "pending"),
+        ),
+      )
       .run();
   }
 

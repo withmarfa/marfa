@@ -157,8 +157,6 @@ src/models/find_connector_agreements_request.rs
 src/models/folder_defaults.rs
 src/models/folder_removal_threshold.rs
 src/models/folder_search.rs
-src/models/forbidden_or_scoped_credential_not_permitted_refusal.rs
-src/models/forbidden_or_scoped_credential_not_permitted_refusal_error.rs
 src/models/forbidden_or_type_not_permitted_refusal.rs
 src/models/forbidden_or_type_not_permitted_refusal_error.rs
 src/models/forbidden_refusal.rs
