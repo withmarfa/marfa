@@ -308,7 +308,7 @@ describe("DELETE /admin/platform-types/{id} decides in one transaction", () => {
     // itself once the type is gone. Never both written.
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
-    const items = ctx.storage.items;
+    const items = itemWrites(ctx.storage);
     const count = items.countByType.bind(items);
     let creating: Promise<unknown> | undefined;
     items.countByType = async (type: string) => {
