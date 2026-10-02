@@ -111,7 +111,7 @@ export interface paths {
         put?: never;
         /**
          * Transition item state
-         * @description Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
+         * @description Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.
          */
         post: operations["transitionItem"];
         delete?: never;
@@ -640,7 +640,7 @@ export interface paths {
          *
          *     Rejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.
          *
-         *     Rejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).
+         *     Rejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).
          *
          *     The tombstones purges left under the type go with it.
          */
@@ -1912,10 +1912,10 @@ export interface components {
                 };
             };
         };
-        InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
+        EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal: {
             error: {
                 /** @enum {string} */
-                code: "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
+                code: "edge_constraint_violation" | "invalid_id" | "invalid_transition" | "missing_required_field" | "validation_error";
                 message: string;
                 details?: {
                     [key: string]: unknown;
@@ -4371,7 +4371,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemWithMetadata"];
                 };
             };
-            /** @description Invalid transition */
+            /** @description `invalid_transition`: the type's lifecycle does not allow the move. `edge_constraint_violation`: a `block` edge holds a row a move into trashed would take. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4384,7 +4384,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description Unauthorized */

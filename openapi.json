@@ -977,7 +977,7 @@
           "error"
         ]
       },
-      "InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
+      "EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
         "properties": {
           "error": {
@@ -986,6 +986,7 @@
               "code": {
                 "type": "string",
                 "enum": [
+                  "edge_constraint_violation",
                   "invalid_id",
                   "invalid_transition",
                   "missing_required_field",
@@ -7934,7 +7935,7 @@
           "Items"
         ],
         "summary": "Transition item state",
-        "description": "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
+        "description": "Moves the item to the supplied lifecycle state. Going straight from trashed to archived is rejected — restore to active first. A move into trashed is a delete: it takes every row a cascading edge reaches, each announced `item.deleted` with the mark a delete gives it, and is refused `400 edge_constraint_violation` by a `block` edge as a delete is. A move from trashed to active brings back every row the item's trash took through a cascading edge, as a restore does, each announced `item.restored` with `restored_with` naming this item to a subscriber that may read its type.",
         "security": [
           {
             "bearerAuth": []
@@ -8016,11 +8017,11 @@
             }
           },
           "400": {
-            "description": "Invalid transition",
+            "description": "`invalid_transition`: the type's lifecycle does not allow the move. `edge_constraint_violation`: a `block` edge holds a row a move into trashed would take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -17675,7 +17676,7 @@
           "Types"
         ],
         "summary": "Delete a registered type",
-        "description": "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 unknown_type`).\n\nThe tombstones purges left under the type go with it.",
+        "description": "Removes a type registration. Requires `schema.write` and a type map granting write on the identifier, `?force=true` included — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists in any lifecycle state, the bin included, unless `?force=true` orphans those rows (they persist, but new writes against the type, and any write setting a field of one of those rows, return `400 unknown_type` until the type is registered again).\n\nThe tombstones purges left under the type go with it.",
         "security": [
           {
             "bearerAuth": []

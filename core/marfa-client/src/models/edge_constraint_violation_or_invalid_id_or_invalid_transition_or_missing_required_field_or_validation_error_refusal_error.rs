@@ -12,7 +12,8 @@ use crate::models;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
-pub struct InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
+pub struct EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError
+{
     #[serde(rename = "code")]
     pub code: Code,
     #[serde(rename = "message")]
@@ -21,12 +22,9 @@ pub struct InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRe
     pub details: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
-impl InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
-    pub fn new(
-        code: Code,
-        message: String,
-    ) -> InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
-        InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
+impl EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
+    pub fn new(code: Code, message: String) -> EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
+        EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalError {
             code,
             message,
             details: None,
@@ -36,6 +34,8 @@ impl InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusalE
 ///
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum Code {
+    #[serde(rename = "edge_constraint_violation")]
+    EdgeConstraintViolation,
     #[serde(rename = "invalid_id")]
     InvalidId,
     #[serde(rename = "invalid_transition")]
@@ -48,6 +48,6 @@ pub enum Code {
 
 impl Default for Code {
     fn default() -> Code {
-        Self::InvalidId
+        Self::EdgeConstraintViolation
     }
 }
