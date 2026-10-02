@@ -187,7 +187,7 @@ export class SqliteKeyStore implements KeyStore {
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
       .get();
     if (!existing) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Key ${id} not found`);
+      throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
 
     const patch: Partial<typeof apiKeys.$inferInsert> = {};
@@ -228,11 +228,7 @@ export class SqliteKeyStore implements KeyStore {
       .where(eq(apiKeys.id, id))
       .get();
     if (!refreshed) {
-      // Shouldn't happen — existence was confirmed above. Defensive.
-      throw new MarfaError(
-        ErrorCode.NOT_FOUND,
-        `Key ${id} disappeared mid-update`,
-      );
+      throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
     }
     return mapRow(refreshed);
   }

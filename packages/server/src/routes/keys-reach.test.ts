@@ -275,3 +275,95 @@ describe("the keys a working key reaches", () => {
     expect(err.error.message).toMatch(/already revoked/i);
   });
 });
+
+describe("the key an app mints naming no reach", () => {
+  it.each([
+    [["openid", "keys.mint", "content:read"]],
+    [["openid", "keys.mint", "content:write"]],
+    [["openid", "keys.mint", "content:read", "metadata:read", "profile:read"]],
+    [["openid", "keys.mint", "content:write", "edge.about:read"]],
+  ])(
+    "is within the reach of the app that minted it, granted %j",
+    async (scopes) => {
+      const { token } = await seedOauthBearer(ctx.storage, scopes, {});
+      const minted = await request(ctx.app, "POST", "/keys", {
+        key: token,
+        body: {
+          label: "like the app",
+          source: `like-${Math.random().toString(36).slice(2, 12)}`,
+        },
+      });
+      expect(minted.status).toBe(201);
+      const { id, type_permissions } = (await minted.json()) as {
+        id: string;
+        type_permissions: Record<string, string>;
+      };
+      // The witness that the key carries the projection's denials, which no
+      // grant literal names.
+      expect(Object.values(type_permissions)).toContain("none");
+
+      const list = await request(ctx.app, "GET", "/keys", { key: token });
+      const ids = ((await list.json()) as { data: { id: string }[] }).data.map(
+        (k) => k.id,
+      );
+      expect(ids).toContain(id);
+
+      const revoked = await request(ctx.app, "DELETE", `/keys/${id}`, {
+        key: token,
+      });
+      expect(revoked.status).toBe(200);
+    },
+  );
+});
+
+describe("a working key's extension reach", () => {
+  it("does not reach a key holding a namespace it lacks, and reaches it holding one", async () => {
+    const without = await storeKey({
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+    });
+    const holder = await storeKey({
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { acme: "write" },
+    });
+    const refused = await request(ctx.app, "DELETE", `/keys/${holder.id}`, {
+      key: without.raw,
+    });
+    expect(refused.status).toBe(404);
+
+    const reading = await storeKey({
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { acme: "read" },
+    });
+    const stillRefused = await request(
+      ctx.app,
+      "DELETE",
+      `/keys/${holder.id}`,
+      {
+        key: reading.raw,
+      },
+    );
+    expect(stillRefused.status).toBe(404);
+
+    const writing = await storeKey({
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { acme: "write" },
+    });
+    const reached = await request(ctx.app, "DELETE", `/keys/${holder.id}`, {
+      key: writing.raw,
+    });
+    expect(reached.status).toBe(200);
+  });
+});
+
+describe("the key store's update", () => {
+  it("refuses a revoked key as a missing key, not as a generic miss", async () => {
+    const key = await storeKey({ type_permissions: { "core.note": "read" } });
+    expect(await ctx.storage.keys.revoke(key.id)).toBe("revoked");
+    await expect(
+      ctx.storage.keys.update(key.id, { label: "late" }),
+    ).rejects.toMatchObject({ code: "api_key_not_found" });
+  });
+});

@@ -7,6 +7,11 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
+import {
+  approvedAppToken,
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+} from "../../utils/fresh-server.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -196,6 +201,24 @@ describe("a key reaches only the keys it could have minted", () => {
     expect(mine.data.data.map((k) => k.id)).toContain(claimant.id);
   });
 
+  it("does not reach a key holding an extension namespace it lacks", async () => {
+    const minter = await narrowMinter("kr-ext-minter");
+    const holder = await mint("kr-ext-holder", {
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { acme: "read" },
+      permissions: [],
+    });
+    expect((await minter.client.revokeKey(holder.id)).status).toBe(404);
+
+    // The control: a minter holding the namespace reaches the same key.
+    const extended = await mint("kr-ext-extended", {
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+      extension_permissions: { acme: "write" },
+    });
+    expect((await extended.client.revokeKey(holder.id)).ok).toBe(true);
+  });
+
   it("no working key reaches an operator key, and the operator key reaches every key", async () => {
     const operator = getOperatorClient();
     const spare = await operator.createKey({
@@ -229,4 +252,51 @@ describe("a key reaches only the keys it could have minted", () => {
       expect(revoked.ok).toBe(true);
     }
   });
+
+  it(
+    "a signed-in app reaches the key it mints naming no reach, and no wider key",
+    async () => {
+      // On a server of its own, because an app's token needs an owner to
+      // approve it and an instance has one.
+      const server = await bootFreshServer("key-reach-app");
+      try {
+        const token = await approvedAppToken(server, [
+          "content:read",
+          "keys.mint",
+        ]);
+        const app = new MarfaClient({ baseUrl: server.apiUrl, apiKey: token });
+        const working = new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: server.workingKey,
+        });
+
+        // A key like the app: it copies the maps the grant projects, denials
+        // included.
+        const own = await app.createKey({
+          label: "app-own",
+          source: "app-own",
+        });
+        expect(own.ok, JSON.stringify(own.error)).toBe(true);
+        const wider = await working.createKey({
+          label: "app-wider",
+          source: "app-wider",
+          type_permissions: { "*": "write" },
+          permissions: [],
+        });
+        expect(wider.ok).toBe(true);
+
+        const listed = await app.listKeys();
+        expect(listed.ok).toBe(true);
+        const ids = listed.data.data.map((k) => k.id);
+        expect(ids).toContain(own.data.id);
+        expect(ids).not.toContain(wider.data.id);
+
+        expect((await app.revokeKey(wider.data.id)).status).toBe(404);
+        expect((await app.revokeKey(own.data.id)).ok).toBe(true);
+      } finally {
+        await server.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });
