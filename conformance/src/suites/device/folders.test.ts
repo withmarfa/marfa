@@ -16875,6 +16875,15 @@ describe("what a folder never does to a person's text", () => {
     expect(pushed.value.pull?.flagged).toEqual([
       expect.objectContaining({ path: "Held.md", flag: "encoding" }),
     ]);
+    const reasons = new Map(
+      pushed.value.scan.flagged.map((file) => [file.path, file.reason]),
+    );
+    expect(reasons.get("naive.txt")).toContain("not UTF-8");
+    expect(
+      reasons.get("wide.txt"),
+      "a file holding a NUL byte was given the reason of one that is not UTF-8",
+    ).toContain("NUL byte");
+    expect(reasons.get("wide.txt")).not.toContain("not UTF-8");
     // The push's pull met the change made elsewhere and left the file.
     expect(
       [
@@ -17069,13 +17078,15 @@ describe("what a folder never does to a person's text", () => {
       // A note is text the folder renders, never bytes to run.
       expect(marked("Readme.md")).toBe(false);
       // Unmarked, as a file the person made is, before the server says it
-      // runs.
-      execFileSync("xattr", [
-        "-d",
-        "com.apple.quarantine",
-        join(harness.dir, "later.bin"),
-      ]);
-      expect(marked("later.bin")).toBe(false);
+      // runs; and a file the person cleared, which nothing changes.
+      for (const name of ["later.bin", "tool.bin"]) {
+        execFileSync("xattr", [
+          "-d",
+          "com.apple.quarantine",
+          join(harness.dir, name),
+        ]);
+        expect(marked(name)).toBe(false);
+      }
     }
     // The push's catch-up makes the file in place runnable, and marks it.
     expect((await harness.folder.push()).ok).toBe(true);
@@ -17085,6 +17096,10 @@ describe("what a folder never does to a person's text", () => {
         marked("later.bin"),
         "a file a pull made runnable in place carries no quarantine mark",
       ).toBe(true);
+      expect(
+        marked("tool.bin"),
+        "a push put back a quarantine mark the person took off a file it did not change",
+      ).toBe(false);
     }
     expect(sentUpdates(harness)).toEqual([]);
   });
