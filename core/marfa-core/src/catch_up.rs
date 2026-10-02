@@ -104,6 +104,10 @@ fn unexplained(
         .find(|named| !refreshed.contains(named))
 }
 
+/// What a held stream changed in the copy: an event it applied, named by the
+/// event's type with the item or edge it was about, or `catalog.changed`,
+/// naming neither, where a stream it opened read a catalog that differs from
+/// the one held. `cursor` is the cursor held after it.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Change {
     pub event: String,
@@ -151,10 +155,8 @@ fn pinned_row(core: &Core, payload: &EventPayload) -> Result<bool> {
 /// Written only where it differs from the one held, so a reader told of every
 /// save is not told of this. Says whether the catalog version moved.
 fn adopt(core: &Core, catalog: &WireCatalog) -> Result<(Catalog, bool)> {
-    let mut conn = core.conn()?;
-    let tx = conn.transaction()?;
-    let moved = store::replace_catalog(&tx, catalog)?;
-    tx.commit()?;
+    let conn = core.conn()?;
+    let moved = store::replace_catalog(&conn, catalog)?;
     Ok((Catalog::load(&conn)?, moved))
 }
 

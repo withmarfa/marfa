@@ -381,8 +381,8 @@ impl Folder {
         let row = self.row_on_server()?;
         let settings = Settings::of_wire(&row.item)?;
         self.core.lock.refuse_unless_writer()?;
-        let catalog = self.core.http()?.catalog()?;
-        crate::store::replace_catalog(&*self.core.conn()?, &catalog)?;
+        let fetched = self.core.http()?.catalog()?;
+        crate::store::replace_catalog(&*self.core.conn()?, &fetched)?;
         let edge_types = EdgeTypes::load(&*self.core.conn()?)?;
         crate::store::pin(&*self.core.conn()?, &self.folder)?;
         let catalog = Catalog::load(&*self.core.conn()?)?;
@@ -667,7 +667,7 @@ impl Folder {
             ..ScanReport::default()
         };
         let settings = self.settings()?;
-        let (catalog, mut edge_types) = {
+        let (mut catalog, mut edge_types) = {
             let conn = self.core.conn()?;
             (Catalog::load(&conn)?, EdgeTypes::load(&conn)?)
         };
@@ -878,8 +878,10 @@ impl Folder {
             && let Ok(http) = self.core.http()
             && let Ok(fresh) = http.catalog()
         {
-            crate::store::replace_catalog(&*self.core.conn()?, &fresh)?;
-            edge_types = EdgeTypes::load(&*self.core.conn()?)?;
+            let conn = self.core.conn()?;
+            crate::store::replace_catalog(&conn, &fresh)?;
+            catalog = Catalog::load(&conn)?;
+            edge_types = EdgeTypes::load(&conn)?;
         }
         let peers = Peers::of(self, doubt);
         let (claims, mut waiting) = self.claim(&files, &snapshot, &settings, &catalog, &peers)?;

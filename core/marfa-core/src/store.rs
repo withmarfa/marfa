@@ -709,18 +709,33 @@ fn thumbnail_field_of(declared: &Map<String, Value>) -> Option<String> {
         .map(|(name, _)| name.clone())
 }
 
-/// Both catalogs, and a new catalog version where either changed or none was
-/// held. Answers whether the version moved.
+/// The one way a catalog the server answered is written: both catalogs and
+/// a new catalog version where either changed or none was held, all or
+/// nothing. A savepoint rather than a transaction, so it holds alone and
+/// inside a hydration's. Answers whether the version moved.
 pub fn replace_catalog(conn: &Connection, catalog: &WireCatalog) -> Result<bool, CoreError> {
-    let types = replace_types(conn, &catalog.types)?;
-    let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
-    let held = catalog_version(conn)?;
-    if !types && !edge_types && held.is_some() {
-        return Ok(false);
+    conn.execute_batch("SAVEPOINT replace_catalog")?;
+    let written = (|| {
+        let types = replace_types(conn, &catalog.types)?;
+        let edge_types = replace_edge_types(conn, &catalog.edge_types)?;
+        let held = catalog_version(conn)?;
+        if !types && !edge_types && held.is_some() {
+            return Ok(false);
+        }
+        let next = held.map_or(1, |version| version + 1);
+        meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
+        Ok(true)
+    })();
+    match written {
+        Ok(moved) => {
+            conn.execute_batch("RELEASE replace_catalog")?;
+            Ok(moved)
+        }
+        Err(error) => {
+            conn.execute_batch("ROLLBACK TO replace_catalog; RELEASE replace_catalog")?;
+            Err(error)
+        }
     }
-    let next = held.map_or(1, |version| version + 1);
-    meta_set(conn, META_CATALOG_VERSION, &next.to_string())?;
-    Ok(true)
 }
 
 pub fn catalog_version(conn: &Connection) -> Result<Option<u64>, CoreError> {
@@ -737,7 +752,8 @@ pub fn catalog_version(conn: &Connection) -> Result<Option<u64>, CoreError> {
 
 /// Writes nothing where the catalog is unchanged: a follow fetches it on
 /// every stream it opens, and a reader would be told of a save each time.
-/// A change reindexes every held row. Answers whether it changed.
+/// A change reindexes every held row. Answers whether it changed. Outside
+/// tests, only `replace_catalog` calls it.
 pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, CoreError> {
     let mut rows: Vec<TypeRow> = types
         .iter()
@@ -808,7 +824,7 @@ pub fn replace_types(conn: &Connection, types: &[WireType]) -> Result<bool, Core
 
 /// Writes nothing where the catalog is unchanged, as `replace_types` does.
 /// Answers whether it changed.
-pub fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreError> {
+fn replace_edge_types(conn: &Connection, rows: &[Value]) -> Result<bool, CoreError> {
     let mut wanted: Vec<(String, String)> =
         rows.iter()
             .map(|row| {
