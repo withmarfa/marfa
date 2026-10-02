@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+// Configuration only: the generated operations skip the contract check.
 use marfa_client::apis::configuration::Configuration;
 use marfa_core::CoreError;
 use marfa_core::http::{

@@ -904,6 +904,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<(), CliError> 
             let released = match (&id, &reason) {
                 (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
+                // clap refuses this; reached only if the argument rules drift.
                 (None, None) => {
                     return Err(CliError::Invalid(
                         "name a queued write to release, or a reason to release every write blocked for it".into(),

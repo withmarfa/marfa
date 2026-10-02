@@ -297,6 +297,134 @@ mod tests {
     }
 
     #[test]
+    fn the_help_names_every_code_and_nothing_else() {
+        let listed: Vec<&str> = EXIT_CODES_HELP
+            .split("one of:")
+            .nth(1)
+            .unwrap()
+            .trim_end_matches('.')
+            .split(',')
+            .map(str::trim)
+            .collect();
+        let answered = [
+            CliError::Usage(String::new()).code(),
+            CliError::Invalid(String::new()).code(),
+            CliError::Core(CoreError::NotFound {
+                code: String::new(),
+                message: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::Unauthorized {
+                code: String::new(),
+                message: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::Forbidden {
+                code: String::new(),
+                message: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::Validation {
+                code: String::new(),
+                message: String::new(),
+            })
+            .code(),
+            refused(409).code(),
+            refused(413).code(),
+            CliError::Core(CoreError::UnknownType {
+                message: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::RateLimited {
+                code: String::new(),
+                message: String::new(),
+                retry_after_seconds: None,
+            })
+            .code(),
+            CliError::Core(CoreError::Server {
+                status: 500,
+                code: String::new(),
+                message: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::Network(String::new())).code(),
+            CliError::Core(CoreError::Decoding(String::new())).code(),
+            CliError::Io(io::Error::other("x")).code(),
+            CliError::Watch(String::new()).code(),
+            CliError::Core(CoreError::Store(String::new())).code(),
+            CliError::NoStoreNamed.code(),
+            CliError::NoServerNamed.code(),
+            CliError::NoCredential {
+                origin: String::new(),
+            }
+            .code(),
+            CliError::NoKeychain(String::new()).code(),
+            CliError::SignedOut {
+                origin: String::new(),
+            }
+            .code(),
+            CliError::Core(CoreError::NoCursor).code(),
+            CliError::Core(CoreError::HydrationIncomplete).code(),
+            CliError::Core(CoreError::ReadingHandle).code(),
+            CliError::Core(CoreError::WrongSchema {
+                expected: String::new(),
+                found: String::new(),
+                path: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::CatchUpTooOld {
+                min_retained_id: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::StreamIncomplete {
+                reason: String::new(),
+            })
+            .code(),
+            CliError::Core(CoreError::WrongServer {
+                expected: String::new(),
+                got: String::new(),
+            })
+            .code(),
+            CliError::NotHeld(String::new()).code(),
+            CliError::ContractMismatch {
+                origin: String::new(),
+                served: String::new(),
+                expected: 1,
+                write_sent: false,
+                status: None,
+            }
+            .code(),
+            CliError::Redirected {
+                origin: String::new(),
+                status: 302,
+                location: None,
+            }
+            .code(),
+        ];
+        let mut sorted_listed = listed.clone();
+        sorted_listed.sort_unstable();
+        let mut sorted_answered = answered.to_vec();
+        sorted_answered.sort_unstable();
+        assert_eq!(sorted_listed, sorted_answered);
+        // `no_server` is answered twice, by the core's variant and the
+        // binary's, and `closed_output` never leaves the process.
+        assert_eq!(CliError::Core(CoreError::NoServer).code(), "no_server");
+        assert_eq!(CliError::ClosedOutput.exit(), Exit::Done);
+        for (status, code) in [
+            (400, "validation"),
+            (422, "validation"),
+            (401, "unauthorized"),
+            (403, "forbidden"),
+            (404, "not_found"),
+            (429, "rate_limited"),
+            (500, "server"),
+            (503, "server"),
+        ] {
+            assert_eq!(refused(status).code(), code, "{status}");
+        }
+    }
+
+    #[test]
     fn a_refusal_from_the_server_carries_its_status_and_code_in_the_envelope() {
         let error = CliError::Core(CoreError::RateLimited {
             code: "rate_limited".into(),

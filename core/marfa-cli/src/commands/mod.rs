@@ -99,6 +99,7 @@ impl BodySource {
         let text = match (&self.file, &self.body) {
             (Some(path), _) => read_text(path)?,
             (None, Some(body)) => body.clone(),
+            // clap refuses this; reached only if the argument rules drift.
             (None, None) => {
                 return Err(CliError::Invalid(
                     "a body is needed: --file PATH, --file - for stdin, or --body JSON".into(),
