@@ -57,6 +57,20 @@ export interface ItemEvent extends FanoutControl {
 export interface EdgeEvent extends FanoutControl {
   type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
+  /**
+   * The source item's type when the edge was written, which is what decides
+   * who may be told about it (`edges.md` 23). Carried rather than looked up
+   * by a subscriber, because a purge announces the edges it took after the
+   * source row has gone, and a subscriber cannot look up a type nobody holds.
+   *
+   * Every door that publishes names it (`edge-events-every-door.test.ts`
+   * holds them to it). Optional because a door announcing after its commit
+   * can find the source already purged by a concurrent request: the event
+   * is still logged and delivered to webhooks, and the stream withholds it
+   * from every subscriber, since a source it cannot classify is not one it
+   * may read.
+   */
+  sourceType?: string;
   /** On `edge_deleted` alone: the item whose purge took the edge. */
   purgedWith?: string;
 }
@@ -72,6 +86,7 @@ export function storedFrame(event: PubsubEvent): Record<string, unknown> {
     return {
       type: wireEventName(event.type),
       edge: event.edge,
+      ...(event.sourceType !== undefined && { source_type: event.sourceType }),
       ...(event.purgedWith !== undefined && { purged_with: event.purgedWith }),
     };
   }
@@ -436,7 +451,11 @@ export type LiveFrame =
 
 /**
  * Both kinds of event in one sequence, in the order they were published,
- * which is the order of their ids.
+ * which is the order of their ids, handed on as batches: each take is
+ * every frame queued since the last one, so a consumer that has to ask
+ * something before delivering (the stream re-reads its credential) asks it
+ * once per batch, and every frame in the batch was published before the
+ * question was asked.
  *
  * One generator per kind cannot keep that order: each hands its next event
  * on through its own chain of promise jobs, so a burst of item events
@@ -454,7 +473,7 @@ export type LiveFrame =
  */
 export async function* subscribeAll(
   options?: SubscribeOptions,
-): AsyncGenerator<LiveFrame> {
+): AsyncGenerator<LiveFrame[]> {
   const queue: LiveFrame[] = [];
   let wake: (() => void) | undefined;
   let ended = options?.signal?.aborted === true;
@@ -480,15 +499,14 @@ export async function* subscribeAll(
   try {
     for (;;) {
       if (ended) return;
-      const frame = queue.shift();
-      if (frame === undefined) {
+      if (queue.length === 0) {
         await new Promise<void>((resolve) => {
           wake = resolve;
         });
         wake = undefined;
         continue;
       }
-      yield frame;
+      yield queue.splice(0);
     }
   } finally {
     emitter.off("ITEM_CHANGED", onItem);

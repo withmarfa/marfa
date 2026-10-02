@@ -39,7 +39,8 @@ import { log } from "../middleware/logger.js";
 import { readInstanceConfig } from "../storage/instance-config.js";
 import { undeclaredPropertyRefusal } from "../routes/_undeclared-property.js";
 import { blobProof } from "../routes/_blob-reach.js";
-import type { JobCredential } from "./credential.js";
+import { sourceTypesFor } from "../routes/_edge-visibility.js";
+import type { LiveCredential } from "../auth/live-credential.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -66,7 +67,7 @@ export interface RunChunkContext {
   /** The credential that queued the job, as the worker resolved it for this
    *  chunk; its enforcement override is resolved against the levers as it
    *  is on the door it called. */
-  credential: JobCredential;
+  credential: LiveCredential;
 }
 
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
@@ -192,6 +193,10 @@ async function runPurgeChunk({
   const removed: Item[] = [];
   // Read with the rows, since the purge takes each mark with its row.
   let marks = new Map<string, CascadeRoot>();
+  // The type of each cascaded edge's source, which its announcement
+  // carries: a purged source's from the rows read here, any other's read
+  // before the transaction ends.
+  const sourceTypes = new Map<string, string>();
   // Set only when the chunk itself failed, so a chunk that committed still
   // announces what it purged. A holder rather than a bare boolean, because
   // the write happens inside the transaction callback where control-flow
@@ -218,6 +223,13 @@ async function runPurgeChunk({
           ...(await storage.edges.deleteBySourceBatch([...taken])),
           ...(await storage.edges.deleteByTargetBatch([...taken])),
         );
+        for (const item of found.values()) sourceTypes.set(item.id, item.type);
+        const others = cascaded
+          .map((edge) => edge.source_id)
+          .filter((id) => !sourceTypes.has(id));
+        for (const [id, type] of await sourceTypesFor(storage, others)) {
+          sourceTypes.set(id, type);
+        }
       }
       for (const item of found.values()) {
         if (taken.has(item.id)) {
@@ -284,6 +296,7 @@ async function runPurgeChunk({
       await publishEdge({
         type: "edge_deleted",
         edge,
+        sourceType: sourceTypes.get(edge.source_id),
         // The source side runs first, taking any edge whose source is purged.
         purgedWith: purgedIds.has(edge.source_id)
           ? edge.source_id

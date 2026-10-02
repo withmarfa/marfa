@@ -280,8 +280,8 @@ describe("what a connector keeps", () => {
     const controller = new AbortController();
     const frames: LiveFrame[] = [];
     const done = (async () => {
-      for await (const frame of subscribeAll({ signal: controller.signal })) {
-        frames.push(frame);
+      for await (const batch of subscribeAll({ signal: controller.signal })) {
+        frames.push(...batch);
       }
     })();
     await settle();

@@ -13,7 +13,7 @@ import type { Stores } from "./housekeeping/blob-delete.js";
 import { Housekeeping } from "./housekeeping/scheduler.js";
 import { hashApiKey } from "./middleware/auth.js";
 import type { PersistedEvent, Storage } from "./storage/interface.js";
-import { Hono } from "hono";
+import { Hono, type MiddlewareHandler } from "hono";
 import type { AppEnv } from "./middleware/auth.js";
 import type { ApiKey } from "@withmarfa/shared";
 import { eventRoutes } from "./routes/events.js";
@@ -1042,31 +1042,51 @@ export function gatedEventLog(base: Storage): {
 }
 
 /**
- * The events route alone, on the given storage, answering to a credential
- * the test shapes. The default is an operator holding every type and no
- * edge permission, so nothing is filtered on the item side and edge frames
- * reach a stream only when the test grants them.
+ * A middleware presenting a key the store holds, minted on the first
+ * request: the event stream reads its credential again as it delivers, so
+ * a principal the store does not hold would end every stream at once.
+ * Reads every type and no edge type unless `maps` says otherwise.
+ */
+export function storedViewerKey(
+  storage: Storage,
+  maps: Partial<CreateKeyInput> = {},
+): MiddlewareHandler<AppEnv> {
+  let minted: Promise<ApiKey> | undefined;
+  return async (c, next) => {
+    minted ??= (async () => {
+      const suffix = Math.random().toString(36).slice(2, 14);
+      return storage.keys.create(
+        {
+          label: `events-viewer-${suffix}`,
+          source: `events-viewer-${suffix}`,
+          type_permissions: { "*": "read" },
+          extension_permissions: {},
+          edge_permissions: {},
+          metadata_permissions: {},
+          permissions: [],
+          ...maps,
+          is_operator: false,
+        },
+        hashApiKey(`marfa_k1_events_viewer_${suffix}`, SALT),
+      );
+    })();
+    c.set("apiKey", await minted);
+    await next();
+  };
+}
+
+/**
+ * The events route alone, on the given storage, answering to a stored
+ * credential the test shapes (`storedViewerKey`), so nothing is filtered
+ * on the item side and edge frames reach a stream only when the test
+ * grants them.
  */
 export function eventsAppWithKey(
   storage: Storage,
-  key: Partial<ApiKey> = {},
+  maps: Partial<CreateKeyInput> = {},
 ): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", async (c, next) => {
-    c.set("apiKey", {
-      id: "key-events-test",
-      name: "events viewer",
-      key_hash: "unused",
-      is_operator: true,
-      type_permissions: { "*": "read" },
-      extension_permissions: {},
-      edge_permissions: {},
-      metadata_permissions: {},
-      created_at: new Date().toISOString(),
-      ...key,
-    } as unknown as ApiKey);
-    await next();
-  });
+  app.use("*", storedViewerKey(storage, maps));
   app.route("/events", eventRoutes(storage));
   return app;
 }

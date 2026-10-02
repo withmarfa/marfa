@@ -6,8 +6,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
 import { MarfaError } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
-import { createTestContext } from "../test-utils.js";
+import { createTestContext, storedViewerKey } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { eventRoutes, type EventRoutesOptions } from "./events.js";
 import type { AppEnv } from "../middleware/auth.js";
@@ -22,30 +21,12 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-function workingKey(): ApiKey {
-  return {
-    id: "key_events_capacity",
-    name: "events capacity",
-    key_hash: "unused",
-    // The rank this fixture used to carry admitted it past its own maps, so
-    // the map has to say what the rank granted silently.
-    type_permissions: { "*": "read" },
-    extension_permissions: {},
-    edge_permissions: {},
-    metadata_permissions: {},
-    created_at: new Date().toISOString(),
-  } as unknown as ApiKey;
-}
-
 /** A bare app around eventRoutes with a synthesized principal, so
  *  the route options are under the test's control rather than the app
  *  factory's. */
 function makeApp(options: EventRoutesOptions): Hono<AppEnv> {
   const app = new Hono<AppEnv>();
-  app.use("*", async (c, next) => {
-    c.set("apiKey", workingKey());
-    await next();
-  });
+  app.use("*", storedViewerKey(ctx.storage));
   app.route("/events", eventRoutes(ctx.storage, options));
   // The real app's error handler maps MarfaError onto its own status;
   // this bare harness needs the same mapping or every refusal reads 500.

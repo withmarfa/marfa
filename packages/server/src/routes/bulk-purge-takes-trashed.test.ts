@@ -13,7 +13,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { BulkActionWorker, runChunk } from "../bulk-actions/index.js";
 import type { BulkActionJob } from "../bulk-actions/types.js";
-import { resolveJobCredential } from "../bulk-actions/credential.js";
+import { resolveLiveCredential } from "../auth/live-credential.js";
 
 let ctx: TestContext;
 
@@ -161,9 +161,10 @@ describe("a bulk purge takes only trashed rows", () => {
     const current = await request(ctx.app, "GET", "/keys/current", {
       key: ctx.workingKey,
     });
-    const credential = await resolveJobCredential(
+    const credential = await resolveLiveCredential(
       ctx.storage,
       ((await current.json()) as { id: string }).id,
+      { tokenOutlivesExpiry: true },
     );
     if (!credential) throw new Error("the working key does not resolve");
     const result = await runChunk({

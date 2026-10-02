@@ -1,17 +1,17 @@
 /**
- * Frames that wait behind an edge frame's send go out in id order, on the
- * live pump and out of the prologue's hold alike, and a send that fails
- * while the hold is released ends the stream naming the last id sent.
+ * Frames that wait behind a credential read go out in id order, on the
+ * live pump and out of the prologue's hold alike, and a read that fails
+ * while the hold is released ends the stream.
  *
- * An edge frame is sent only after a read of its source, and neither path
- * takes another frame until that send has settled. Everything published
- * in the meantime waits: in the subscription's queue on the live pump, in
- * the hold during the prologue. These are the two places a queue holds
- * more than a frame at a time, so they are the two places the order it
- * hands them on in can be seen. The purge test lets every read finish at
- * once; here a read is held open by the test until the later writes have
- * been published, or the prologue is held by a gated log while the writes
- * go in, and only then let go.
+ * A batch of frames is delivered only after the stream reads its
+ * credential again, and neither path takes another frame until that read
+ * has settled. Everything published in the meantime waits: in the
+ * subscription's queue on the live pump, in the hold during the prologue.
+ * These are the two places a queue holds more than a frame at a time, so
+ * they are the two places the order it hands them on in can be seen. Here
+ * a read is held open by the test until the later writes have been
+ * published, or the prologue is held by a gated log while the writes go
+ * in, and only then let go.
  */
 import {
   describe,
@@ -39,7 +39,7 @@ import {
 } from "../pubsub.js";
 
 /**
- * How the next edge frame's source read behaves. `pass` is the real read;
+ * How the stream's next credential read behaves. `pass` is the real read;
  * `hold` waits on the gate before the real read, and `held` settles the
  * moment it is waiting, which is the observation that the send is
  * outstanding; `reject` fails it. Only the first read after a mode is set
@@ -79,25 +79,26 @@ const nextRead = vi.hoisted(() => {
   return state;
 });
 
-vi.mock("./_edge-visibility.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./_edge-visibility.js")>();
+vi.mock("../auth/live-credential.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../auth/live-credential.js")>();
   return {
     ...actual,
     // One read shaped by the test, every other one real, so what is under
-    // test is the order the route keeps around a send that is slow or
+    // test is the order the route keeps around a read that is slow or
     // fails, not the read itself.
-    edgeReadable: async (
-      ...args: Parameters<typeof actual.edgeReadable>
-    ): Promise<boolean> => {
+    resolveLiveCredential: async (
+      ...args: Parameters<typeof actual.resolveLiveCredential>
+    ): ReturnType<typeof actual.resolveLiveCredential> => {
       if (nextRead.mode !== "pass" && !nextRead.used) {
         nextRead.used = true;
         if (nextRead.mode === "reject") {
-          throw new Error("the source read failed");
+          throw new Error("the credential read failed");
         }
         nextRead.take();
         await nextRead.opened;
       }
-      return actual.edgeReadable(...args);
+      return actual.resolveLiveCredential(...args);
     },
   };
 });
@@ -153,7 +154,7 @@ function expectAscending(ids: bigint[]): void {
 const count = (text: string, needle: string): number =>
   text.split(needle).length - 1;
 
-describe("the live pump with an edge send outstanding", () => {
+describe("the live pump with a credential read outstanding", () => {
   it("delivers the frames that queued behind it in id order", async () => {
     const a = await note("live-hold-a");
     const b = await note("live-hold-b");
@@ -176,9 +177,10 @@ describe("the live pump with an edge send outstanding", () => {
       res,
       probe,
       async () => {
-        // The first edge's send is held. Everything after it is published
-        // while the pump waits, so it queues: two items, an edge, an
-        // item, another edge, and a sentinel item to read up to.
+        // The read before the first edge's batch is held. Everything after
+        // it is published while the pump waits, so it queues: two items,
+        // an edge, an item, another edge, and a sentinel item to read up
+        // to.
         await edge(a, b);
         await nextRead.held;
         await note("live-hold-1");
@@ -346,10 +348,10 @@ describe("the prologue's hold", () => {
     expect(text.slice(live)).toContain(`"cursor":"${String(edgeId!)}"`);
   });
 
-  it("keeps holding while the release waits on an edge send", async () => {
+  it("keeps holding while the release waits on a credential read", async () => {
     // The release drains the hold with the flag still up, so a frame
-    // published while it waits on an edge's read joins the back of the
-    // buffer rather than being sent past the edge. A release that
+    // published while it waits on the credential read joins the back of
+    // the buffer rather than being sent past the edge. A release that
     // dropped the flag first would send that frame at once, and it would
     // reach the client ahead of an edge published before it.
     const a = await note("release-wait-a");
@@ -368,7 +370,7 @@ describe("the prologue's hold", () => {
     nextRead.arm("hold");
     await edge(a, b);
     open();
-    // The release is now waiting on the held edge's read.
+    // The release is now waiting on the held credential read.
     await nextRead.held;
     const during = await note("release-wait-during");
     nextRead.release();
@@ -385,7 +387,7 @@ describe("the prologue's hold", () => {
     expectAscending(ids);
   });
 
-  it("ends the stream naming the last id sent when an edge send fails during the release", async () => {
+  it("ends the stream when the credential cannot be read during the release", async () => {
     const a = await note("release-fail-a");
     const b = await note("release-fail-b");
     const cursor = await ctx.storage.eventLog.getMaxId();
@@ -399,20 +401,19 @@ describe("the prologue's hold", () => {
     expect(res.status).toBe(200);
     await reached;
 
-    // The item is sent from the hold first, so the cursor the failure
-    // names has a position to be: the last frame the client received.
+    // Both held frames wait on one read, so a read that fails sends
+    // neither, and the cursor names no position this stream reached.
     const item = await note("release-fail-item");
-    const itemId = await ctx.storage.eventLog.getMaxId();
     nextRead.arm("reject");
     await edge(a, b);
     open();
 
     const { text, closed } = await readSse(res, { untilClosed: true });
     expect(closed).toBe(true);
-    expect(text).toContain(item);
+    expect(text).not.toContain(item);
     expect(text).toContain("event: stream_incomplete");
-    expect(text).toContain('"reason":"edge_delivery_failed"');
-    expect(text).toContain(`"cursor":"${String(itemId)}"`);
+    expect(text).toContain('"reason":"live_delivery_failed"');
+    expect(text).toContain('"cursor":null');
     // A drain that failed never finished the prologue, so the stream is
     // not said to be live; the tests above are the witness that a drain
     // which finishes is followed by the marker.

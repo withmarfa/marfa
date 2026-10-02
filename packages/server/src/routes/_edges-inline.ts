@@ -7,6 +7,7 @@ import {
 import type { Storage } from "../storage/interface.js";
 import type { Edge } from "@withmarfa/shared";
 import { publishEdge } from "../pubsub.js";
+import { sourceTypesFor } from "./_edge-visibility.js";
 
 /** What one `applyInlineEdges` call changed, for the caller to announce
  *  once its transaction has committed. */
@@ -141,16 +142,23 @@ export async function applyInlineEdges(
  * one of them will be missing.
  */
 export async function announceInlineEdges(
+  storage: Storage,
   changes: InlineEdgeChanges,
   /** Whether these edges drive outbound side effects. Defaults to yes, so
    *  the single-item doors read unchanged; the bulk door passes the
    *  batch's own answer, which is off unless asked for. */
   enableFanout = true,
 ): Promise<void> {
+  const sourceTypes = await sourceTypesFor(
+    storage,
+    [...changes.deleted, ...changes.created].map((edge) => edge.source_id),
+  );
   for (const edge of changes.deleted) {
-    await publishEdge({ type: "edge_deleted", edge, enableFanout });
+    const sourceType = sourceTypes.get(edge.source_id);
+    await publishEdge({ type: "edge_deleted", edge, sourceType, enableFanout });
   }
   for (const edge of changes.created) {
-    await publishEdge({ type: "edge_created", edge, enableFanout });
+    const sourceType = sourceTypes.get(edge.source_id);
+    await publishEdge({ type: "edge_created", edge, sourceType, enableFanout });
   }
 }

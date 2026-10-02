@@ -65,8 +65,8 @@ const NOT_A_DOOR: Record<string, string> = {
     "the keys one app minted, swept with its grant; a key an app mints is held to that app's grant, so revoking them reaches no further than revoking the grant, which is what grants.manage is",
   "auth/grant-lifecycle.ts › revokeProjectedGrant › revoke":
     "the same sweep, revoking the keys keysMintedByApp found",
-  "bulk-actions/credential.ts › resolveJobCredential › get":
-    "the worker re-reading the credential that queued a job, as the bearer check does",
+  "auth/live-credential.ts › resolveLiveCredential › get":
+    "long-lived work re-reading the credential it acts for, as the bearer check does: a bulk-action job before each chunk, an event stream before each batch of frames",
 };
 
 /** Files that name the key table itself, each with why. */

@@ -300,40 +300,66 @@ describe("GET /events says when it is live", () => {
     expect(text.split("event: stream_live").length - 1).toBe(1);
   });
 
-  it("names the head, not the cursor, when the client resumes from above the head", async () => {
-    // A client whose cursor came from elsewhere, or from a log since
-    // rebuilt, can ask to resume from an id the log has not reached. The
-    // marker covers what the stream has sent or withheld, and that is the
-    // head: a marker naming the client's own cursor would have it skip
-    // every id up to there on its next replay, and the live frames below
-    // it follow the marker as the proof that they were not covered.
+  it("refuses a cursor past the head with a terminal frame, and replays from the head itself", async () => {
+    // A cursor the log never issued is what a device holds after the
+    // instance is restored behind it. Accepted, it would skip every new
+    // event up to its number without a word.
     await createNote("seed");
     const head = await latestEventId();
 
+    // The witness: the head itself is a cursor the log issued, and a
+    // stream resuming from it goes live.
+    const atHead = await request(ctx.app, "GET", "/events", {
+      key: ctx.workingKey,
+      headers: { "Last-Event-ID": String(head) },
+    });
+    const { text: served } = await readSse(atHead, {
+      until: (seen) => seen.includes("event: stream_live"),
+    });
+    expect(served).not.toContain("cursor_ahead");
+
     const res = await request(ctx.app, "GET", "/events", {
       key: ctx.workingKey,
-      headers: { "Last-Event-ID": String(head + 1000n) },
+      headers: { "Last-Event-ID": String(head + 1n) },
     });
     expect(res.status).toBe(200);
-    let live: string | undefined;
-    const { text } = await readSseWriting(
-      res,
-      "event: stream_live",
-      async () => {
-        live = await createNote("written below the client's cursor");
-      },
-      (seen) => seen.includes("written below the client's cursor"),
-    );
+    const { text, closed } = await readSse(res, { untilClosed: true });
+    expect(closed).toBe(true);
+    const frame = frameNamed(text, "cursor_ahead");
+    expect(frame).not.toBeNull();
+    expect(dataOf(frame ?? "")).toEqual({
+      type: "cursor_ahead",
+      requested: String(head + 1n),
+      head: String(head),
+    });
+    // No `id:`, so a client reconnecting without reading it is refused
+    // again rather than moved; and the stream never says it is live.
+    expect(frame).not.toMatch(/^id:/m);
+    expect(text).not.toContain("event: stream_live");
+  });
 
-    expect(dataOf(frameNamed(text, "stream_live") ?? "").cursor).toBe(
-      String(head),
-    );
-    const at = text.indexOf("event: stream_live");
-    expect(at).toBeLessThan(text.indexOf(live!));
-    const liveId = /^id: (\d+)$/m.exec(text.slice(at))?.[1];
-    expect(liveId).toBeDefined();
-    expect(BigInt(liveId!) > head).toBe(true);
-    expect(BigInt(liveId!) < head + 1000n).toBe(true);
+  it("refuses a cursor that is not a decimal event id", async () => {
+    for (const cursor of [
+      "abc",
+      "0x10",
+      "-1",
+      "+5",
+      "1 2",
+      "007",
+      "1.0",
+      "9223372036854775808",
+    ]) {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: ctx.workingKey,
+        headers: { "Last-Event-ID": cursor },
+      });
+      expect(res.status, `Last-Event-ID ${JSON.stringify(cursor)}`).toBe(400);
+      const body = (await res.json()) as {
+        error: { code: string; details?: { errors?: { path: string }[] } };
+      };
+      expect(body.error.code).toBe("validation_error");
+      expect(body.error.details?.errors?.[0]?.path).toBe("Last-Event-ID");
+    }
   });
 
   it("names the last row the replay walked, past the head, when every row past it was withheld", async () => {
