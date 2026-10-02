@@ -814,7 +814,14 @@ describe("the scripted answers match the server's", () => {
       "an update of a row in the bin",
       [realId, doorId],
       { properties: { title: "binned" }, version: 3 },
-      { same: ["error.code"], shape: ["error.message"] },
+      {
+        same: ["error.code"],
+        shape: ["error.message"],
+        // The server says the row is in the bin (`errors.md` 12). No device
+        // reads it yet; the device change that keeps a refused write where
+        // the person can get it back models it here when it starts to.
+        absent: ["error.details"],
+      },
     );
     await readBoth("a read of a row in the bin", [realId, doorId], {
       same: ["error.code"],
@@ -1328,7 +1335,14 @@ describe("the scripted answers match the server's", () => {
       "a type the key does not hold",
       { status: denied.status, body: denied.error },
       answers.forbidden("type_not_permitted"),
-      { same: ["error.code"], shape: ["error.message"] },
+      {
+        same: ["error.code"],
+        shape: ["error.message"],
+        // The grant the key lacks (`errors.md` 11). No device reads it yet;
+        // the device change that holds a write a narrowed key refused models
+        // it here when it starts to.
+        absent: ["error.details"],
+      },
     );
 
     // A hydration reads a pinned row this way, and keeps the pin over it.
@@ -2061,6 +2075,9 @@ describe("the scripted answers match the server's", () => {
           "error.details.edge_type",
           "error.details.required",
         ],
+        // The grant the key lacks (`errors.md` 11), for the reason the type
+        // refusal above gives.
+        absent: ["error.details.grant"],
       },
     );
   });

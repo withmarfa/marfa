@@ -39,10 +39,11 @@ import type {
 } from "@withmarfa/shared";
 import {
   checkEdgePermission,
+  checkReachesSomeType,
   checkResolvedRowWrite,
+  writableRowOf,
   checkTypeAccess,
   checkTypePermission,
-  computeTypeFilter,
   itemProvenanceSource,
   mayReadType,
   mayWriteEdge,
@@ -356,11 +357,7 @@ function assertEdgeWrite(writer: ItemWriter, edgeType: string): void {
     checkEdgePermission(writer.key, edgeType, "write");
     return;
   }
-  throw new MarfaError(
-    ErrorCode.EDGE_PERMISSION_DENIED,
-    `Missing edge.${edgeType}:write permission`,
-    { edge_type: edgeType, required: "write" },
-  );
+  throw new Error("The platform writes no inline edges");
 }
 
 async function writeEdges(
@@ -440,13 +437,7 @@ function assertCreatableState(
 /** A credential that may read no type at all is refused outright rather
  *  than told a row is missing. */
 function assertReachesSomeType(writer: ItemWriter): void {
-  if (writer.kind !== "credential") return;
-  if (computeTypeFilter(writer.key).allowed?.length === 0) {
-    throw new MarfaError(
-      ErrorCode.TYPE_NOT_PERMITTED,
-      "This credential's type permissions reach no type, so there is nothing on the data plane it may read.",
-    );
-  }
+  if (writer.kind === "credential") checkReachesSomeType(writer.key);
 }
 
 /** What `PATCH /items/{id}` and the other id-addressed writes do. */
@@ -460,8 +451,11 @@ async function updateById(
     write.not_found ??
     (() =>
       new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${write.id} not found`));
-  const row = await storage.items.get(write.id);
-  if (!row || !mayRead(writer, row.type)) throw notFound();
+  const row = writableRow(
+    writer,
+    await storage.items.getIncludingTrashed(write.id),
+    notFound,
+  );
   assertTypeWrite(writer, row.type);
   const retypeTo =
     write.retype === true &&
@@ -858,8 +852,21 @@ async function createPlatformRow(
   };
 }
 
-/** A lifecycle door's row: in the bin included, refused as missing where the
- *  writer may not read its type. */
+/**
+ * The row a write names, refused as missing where it is not there, the
+ * writer may not read its type, or it is in the bin, which the refusal says
+ * to a writer that may read it.
+ */
+function writableRow(
+  writer: ItemWriter,
+  row: Item | null,
+  notFound: () => MarfaError,
+): Item {
+  return writableRowOf(row, (type) => mayRead(writer, type), notFound);
+}
+
+/** A lifecycle door's row, in the bin included where the move starts from
+ *  there. */
 async function lifecycleRow(
   storage: Storage,
   writer: ItemWriter,
@@ -867,12 +874,10 @@ async function lifecycleRow(
   { includeTrashed, message }: { includeTrashed: boolean; message: string },
 ): Promise<Item> {
   assertReachesSomeType(writer);
-  const row = includeTrashed
-    ? await storage.items.getIncludingTrashed(id)
-    : await storage.items.get(id);
-  if (!row || !mayRead(writer, row.type)) {
-    throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, message);
-  }
+  const row = await storage.items.getIncludingTrashed(id);
+  const notFound = () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, message);
+  if (!includeTrashed) return writableRow(writer, row, notFound);
+  if (!row || !mayRead(writer, row.type)) throw notFound();
   return row;
 }
 

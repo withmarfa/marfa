@@ -1,5 +1,6 @@
 import {
   ITEM_NOT_FOUND,
+  ITEM_NOT_FOUND_ON_WRITE,
   READ_REFUSED,
   WRITE_REFUSED,
 } from "./_item-refusals.js";
@@ -26,6 +27,7 @@ import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
+  requireWritableRow,
   checkTypeAccess,
   getTypeFilter,
   typeReader,
@@ -884,7 +886,7 @@ const updateItemRoute = createRoute({
           ]),
         },
       },
-      description: `${ITEM_NOT_FOUND} An inline edge naming an edge type that does not exist answers \`edge_type_not_found\`, and one naming a target that does not exist or whose type the caller may not read answers \`item_not_found\`, the two targets alike.`,
+      description: `${ITEM_NOT_FOUND_ON_WRITE} An inline edge naming an edge type that does not exist answers \`edge_type_not_found\`, and one naming a target that does not exist or whose type the caller may not read answers \`item_not_found\`, the two targets alike.`,
     },
     409: {
       content: {
@@ -917,11 +919,21 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   middleware: readsSomeType,
   request: {
     params: IdParam,
+    query: z.object({
+      version: z.coerce
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          "The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is.",
+        ),
+    }),
   },
   responses: {
     200: {
@@ -941,7 +953,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
+        "`invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter.",
     },
     401: {
       content: {
@@ -965,7 +977,14 @@ const deleteItemRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
+    },
+    409: {
+      content: {
+        "application/json": { schema: StaleVersionSchema },
+      },
+      description:
+        "`version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was trashed. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was trashed, retry.",
     },
   },
 });
@@ -1090,7 +1109,7 @@ const putMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1153,7 +1172,7 @@ const patchMetadataRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1218,7 +1237,7 @@ const addTagsRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -1271,7 +1290,7 @@ const removeTagRoute = createRoute({
           schema: makeErrorResponseSchema(["item_not_found"]),
         },
       },
-      description: ITEM_NOT_FOUND,
+      description: ITEM_NOT_FOUND_ON_WRITE,
     },
   },
 });
@@ -2098,13 +2117,20 @@ export function itemRoutes(storage: Storage) {
     }
 
     const key = requireAuth(c);
+    // A misspelled `version` stripped by the validator would delete
+    // unconditionally, which is the act the parameter exists to guard.
+    refuseUnknownQueryParams(c.req.raw.url, deleteItemRoute.request.query);
+    const { version } = c.req.valid("query");
     const result = await writeItem(
       storage,
       { kind: "credential", key },
-      { op: "delete", id },
+      { op: "delete", id, ...(version !== undefined && { version }) },
     );
     if (result.outcome === "stale") {
-      throw new Error("A delete naming no version cannot be stale");
+      // Returned rather than thrown, so the error handler that sets this
+      // never runs.
+      c.header("X-Error-Code", result.conflict.error.code);
+      return c.json(result.conflict, 409);
     }
     const root = { id, type: result.item.type };
     // After the commit, so a rollback never leaks a `deleted` event. The
@@ -2167,9 +2193,9 @@ export function itemRoutes(storage: Storage) {
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
     const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
@@ -2208,9 +2234,9 @@ export function itemRoutes(storage: Storage) {
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
     const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
@@ -2268,9 +2294,9 @@ export function itemRoutes(storage: Storage) {
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
     const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");
@@ -2372,9 +2398,9 @@ export function itemRoutes(storage: Storage) {
     // The row is read, gated and written in one transaction, so a
     // change to it landing in between cannot slip past the gate.
     const { item, metadata } = await storage.runInTransaction(async () => {
-      const item = requireReadableRow(
+      const item = requireWritableRow(
         c,
-        await storage.items.get(id),
+        await storage.items.getIncludingTrashed(id),
         () => new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`),
       );
       requireTypeAccess(c, item.type, "write");

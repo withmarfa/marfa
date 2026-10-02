@@ -7,10 +7,13 @@
 export const ITEM_NOT_FOUND =
   "No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists.";
 
+/** The 404 of a door that writes the item, which a row in the bin meets too. */
+export const ITEM_NOT_FOUND_ON_WRITE = `${ITEM_NOT_FOUND} An item in the bin answers alike, carrying \`details.trashed: true\` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed.`;
+
 /** The 403 of a door that reads the item. */
 export const READ_REFUSED =
   "The credential's type permissions reach no type, so there is nothing on the data plane it may read. A credential reaching some types is answered 404 for an item of any other.";
 
 /** The 403 of a door that writes the item. */
 export const WRITE_REFUSED =
-  "The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead.";
+  'The credential may read the item\'s type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead.';

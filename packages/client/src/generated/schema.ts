@@ -68,7 +68,7 @@ export interface paths {
         post?: never;
         /**
          * Soft delete an item
-         * @description Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
+         * @description Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. `version` makes the delete conditional on the row being where the caller read it: at any other version it answers `409 version_conflict` with the row as it now stands under `current`, as a stale write carrying nothing to merge does, and trashes nothing. Every row a cascading edge such as `parent-of` takes into the bin with it carries `trashed_by_cascade`, and `trashed_with` naming this item to a caller that may read its type, and its `item.deleted` frame says so too. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.
          */
         delete: operations["deleteItem"];
         options?: never;
@@ -3796,7 +3796,10 @@ export interface operations {
     };
     deleteItem: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description The version the caller read. Where given and the row has moved since, the delete is refused `409 version_conflict` and nothing is trashed. Without it the delete applies to the row as it is. */
+                version?: number;
+            };
             header?: {
                 /** @description A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the credential that sends it, which for a signed-in app is the app and the person it signed in as: another credential using the same key is answered about its own request and never served this one's result. A key replayed with a different request, or with the same one after the instance has moved to another contract version, is refused with `idempotency_key_reused`, since the stored answer is shaped for the contract it was written under. */
                 "Idempotency-Key"?: string;
@@ -3824,7 +3827,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description `invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner. */
+            /** @description `invalid_id` for a malformed id. `edge_constraint_violation` when an edge type the item is an end of declares `cascade_on_delete: block` and such an edge exists. `validation_error` when the item is a live `system.connection`: revoke the app grant through `DELETE /auth/grants/{id}` first, because removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner; or for a `version` that is not a positive whole number, or an unrecognized query parameter. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3855,7 +3858,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3870,7 +3873,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3886,7 +3889,7 @@ export interface operations {
                     "application/json": components["schemas"]["ItemNotFoundRefusal"];
                 };
             };
-            /** @description A request carrying this `Idempotency-Key` is still being processed. Nothing was written; retry. */
+            /** @description `version_conflict`: the request named a `version` and the row is no longer at it. `current` carries the row as it stands; nothing was trashed. `idempotency_key_in_flight`: a request carrying this `Idempotency-Key` is still being processed; nothing was trashed, retry. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -3899,7 +3902,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description The request body is over the cap this deployment sets. Refused by the body-size guard before the handler reads anything, from `Content-Length` when the request declares one and from a streaming counter when it does not. */
@@ -4073,7 +4076,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An inline edge naming an edge type that does not exist answers `edge_type_not_found`, and one naming a target that does not exist or whose type the caller may not read answers `item_not_found`, the two targets alike. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. An inline edge naming an edge type that does not exist answers `edge_type_not_found`, and one naming a target that does not exist or whose type the caller may not read answers `item_not_found`, the two targets alike. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4229,7 +4232,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4407,7 +4410,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4823,7 +4826,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4838,7 +4841,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4960,7 +4963,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -4975,7 +4978,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5097,7 +5100,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5112,7 +5115,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5404,7 +5407,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The credential may read the item's type and does not hold write on it, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
+            /** @description The credential may read the item's type and does not hold write on it, which `details.grant` names as `{ kind: "type", name, level: "write" }`, or its type permissions reach no type. An item of a type it may not read answers 404 instead. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -5419,7 +5422,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6818,7 +6821,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -6951,7 +6954,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. */
+            /** @description No item has this id that the credential may read. An item of a type it may not read answers alike, so the answer says nothing of whether one exists. An item in the bin answers alike, carrying `details.trashed: true` to a credential that may read its type, so a client holding a write to it can tell an item someone deleted from one that never existed. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

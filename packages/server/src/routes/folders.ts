@@ -22,6 +22,7 @@ import {
   itemProvenanceSource,
   requireAuth,
   standingRule,
+  grantRefusal,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { writeItem } from "../storage/item-write.js";
@@ -267,9 +268,10 @@ function assertSettings(settings: Settings): void {
 function requireFolderWrite(c: Context<AppEnv>): void {
   const key = requireAuth(c);
   if (resolveTypePermission(FOLDER_TYPE, key.type_permissions) !== "write") {
-    throw new MarfaError(
+    throw grantRefusal(
       ErrorCode.TYPE_NOT_PERMITTED,
       `Write access to type "${FOLDER_TYPE}" denied`,
+      { kind: "type", name: FOLDER_TYPE, level: "write" },
     );
   }
 }

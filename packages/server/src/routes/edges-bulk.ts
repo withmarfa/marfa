@@ -551,7 +551,7 @@ export function edgesBulkRoutes(storage: Storage) {
           if (isEntryVerdict(err)) {
             throw bulkAtomicRollback(
               i,
-              { code: err.code, message: err.message },
+              { code: err.code, message: err.message, details: err.details },
               "edge",
             );
           }
@@ -595,7 +595,11 @@ export function edgesBulkRoutes(storage: Storage) {
         if (atomic && result.outcome === "errored") {
           throw bulkAtomicRollback(
             i,
-            { code: result.error?.code, message: result.error?.message },
+            {
+              code: result.error?.code,
+              message: result.error?.message,
+              details: result.error?.details,
+            },
             "edge",
           );
         }

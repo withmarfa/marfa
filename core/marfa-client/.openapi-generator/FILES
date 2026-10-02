@@ -116,6 +116,7 @@ src/models/create_item_request.rs
 src/models/create_key_request.rs
 src/models/create_owner_request.rs
 src/models/create_webhook_request.rs
+src/models/delete_item_409_response.rs
 src/models/display_hints.rs
 src/models/drifted_platform_type.rs
 src/models/drifted_platform_type_page.rs
@@ -259,7 +260,6 @@ src/models/owner_not_found_refusal.rs
 src/models/owner_not_found_refusal_error.rs
 src/models/permission.rs
 src/models/permission_level.rs
-src/models/purge_item_409_response.rs
 src/models/range_not_satisfiable_refusal.rs
 src/models/range_not_satisfiable_refusal_error.rs
 src/models/rate_limited_refusal.rs

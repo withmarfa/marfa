@@ -244,8 +244,15 @@ export class MarfaClient {
     });
   }
 
-  async deleteItem(id: string): Promise<ApiResponse<{ ok: boolean }>> {
-    return this.request<{ ok: boolean }>(`/items/${id}`, {
+  async deleteItem(
+    id: string,
+    options?: { version?: number },
+  ): Promise<ApiResponse<{ ok: boolean }>> {
+    const query =
+      options?.version !== undefined
+        ? `?version=${String(options.version)}`
+        : "";
+    return this.request<{ ok: boolean }>(`/items/${id}${query}`, {
       method: "DELETE",
     });
   }
