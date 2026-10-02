@@ -84,6 +84,11 @@ export const items = sqliteTable(
     index("idx_items_starts_at")
       .on(table.starts_at)
       .where(sql`starts_at IS NOT NULL`),
+    // The other half of the window scan: rows that began before the window
+    // and are still running when it opens.
+    index("idx_items_ends_at")
+      .on(table.ends_at)
+      .where(sql`ends_at IS NOT NULL`),
     // No type in the predicate: which types are files is the registry's answer.
     index("idx_items_enrichment_queue")
       .on(table.created_at)

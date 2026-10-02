@@ -6,6 +6,7 @@ import { consentLockDepth } from "./auth/consent-lock.js";
 import type { AppConfig } from "./config.js";
 import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
+import { instantColumnValues } from "./storage/instant-columns.js";
 import { createBlobLayer } from "./storage/blob-layer.js";
 import type { BlobLayer } from "./storage/blob-layer.js";
 import { DiskBlobStore, type BlobStore } from "./storage/blob-store.js";
@@ -105,6 +106,23 @@ function requireSqliteRun(
     );
   }
   return s.__sqliteRun;
+}
+
+/**
+ * Overwrite an item's properties in storage, past every write door's
+ * validation: the shape of a row written before a rule it breaks existed.
+ * The normalized instant columns are kept in step, as a write would keep them.
+ */
+export async function overwritePropertiesUnchecked(
+  storage: Storage,
+  id: string,
+  properties: Record<string, unknown>,
+): Promise<void> {
+  const columns = instantColumnValues(properties);
+  await requireSqliteRun(storage)(
+    "UPDATE items SET properties = jsonb(?), starts_at = ?, ends_at = ? WHERE id = ?",
+    [JSON.stringify(properties), columns.starts_at, columns.ends_at, id],
+  );
 }
 
 /**

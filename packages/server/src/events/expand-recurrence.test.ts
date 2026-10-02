@@ -182,9 +182,8 @@ describe("expandSeries", () => {
   });
 
   it("refuses EXRULE rather than silently not applying it", () => {
-    // ical.js parses EXRULE and then ignores it, so accepting the line
-    // would over-produce occurrences with no error anywhere. Refusing is
-    // the honest answer until something actually applies it.
+    // An EXRULE that was not applied would over-produce occurrences with
+    // no error anywhere, so it is refused rather than ignored.
     expect(() =>
       expandSeries(
         weekly({
@@ -331,8 +330,8 @@ describe("expandSeries", () => {
     ).toThrow(RecurrenceExpansionError);
   });
 
-  // `timezone` is a plain string field on the event types, so each of
-  // these stores with a 201. `Intl` raises a `RangeError` rather than
+  // Refused on write, and a row written before that can still carry one.
+  // `Intl` raises a `RangeError` rather than
   // returning anything, and that raise used to leave this function as
   // something no caller could attribute to a series — which is the whole
   // difference between one bad row and a calendar that will not load.
@@ -369,12 +368,9 @@ describe("expandSeries", () => {
     ]);
   });
 
-  it("still expands a resolvable zone the write-side rule would refuse", () => {
-    // `isValidTimeZone` rejects `Etc/GMT+5` deliberately, as an offset
-    // rather than a zone. `Intl` resolves it, so this series works, and
-    // guarding the read on the stricter rule would have taken a working
-    // meeting off the calendar in the name of fixing a row that is not
-    // broken.
+  it("expands a fixed-offset zone the database names", () => {
+    // `Etc/GMT+5` keeps no daylight saving, but it is a zone the database
+    // resolves, and calendars do send it.
     const occurrences = expandSeries(
       weekly({ timezone: "Etc/GMT+5" }),
       new Date("2026-03-01T00:00:00Z"),
@@ -432,5 +428,181 @@ describe("expansion is anchored to the series zone, not the reader's", () => {
     // transition: the instant moves, the local hour does not.
     expect(auckland[0]).toBe("2026-03-25T08:00:00.000Z");
     expect(auckland[1]).toBe("2026-04-01T07:00:00.000Z");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Values that carry an instant of their own are compared as that instant, and
+// whole days stay whole. Each case here was answered wrongly by an expansion
+// that read every value as a reading of the series' own clock.
+// ---------------------------------------------------------------------------
+
+describe("values carrying their own instant", () => {
+  const tuesdays = (zone: string, start: string, lines: string[]) => ({
+    id: "series-instant",
+    starts_at: start,
+    timezone: zone,
+    recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=TU", ...lines],
+  });
+  it.each([
+    // East of UTC: London in summer and Tokyo, whose third meeting is the
+    // UNTIL's own instant.
+    ["Europe/London", "2026-06-02T08:00:00Z", "20260616T080000Z", 3],
+    ["Asia/Tokyo", "2026-01-06T00:00:00Z", "20260120T000000Z", 3],
+    // West of UTC: an UNTIL a second before the third meeting ends it at two.
+    ["America/New_York", "2026-01-06T14:00:00Z", "20260120T135959Z", 2],
+  ])(
+    "ends a series at a UTC UNTIL's instant in %s",
+    (zone, start, until, count) => {
+      const series = tuesdays(zone, start, []);
+      series.recurrence = [`RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=${until}`];
+      expect(
+        expandSeries(
+          series,
+          new Date("2026-01-01T00:00:00Z"),
+          new Date("2026-07-01T00:00:00Z"),
+        ),
+      ).toHaveLength(count);
+    },
+  );
+
+  it.each([
+    ["in UTC", "EXDATE:20260609T080000Z"],
+    ["in another zone", "EXDATE;TZID=America/New_York:20260609T040000"],
+  ])("cancels the meeting an EXDATE names %s", (_label, line) => {
+    const out = expandSeries(
+      tuesdays("Europe/London", "2026-06-02T09:00:00+01:00", [line]),
+      new Date("2026-06-01T00:00:00Z"),
+      new Date("2026-06-20T00:00:00Z"),
+    );
+    expect(out.map((o) => o.starts_at)).toEqual([
+      "2026-06-02T08:00:00.000Z",
+      "2026-06-16T08:00:00.000Z",
+    ]);
+  });
+
+  it("adds a UTC RDATE at its instant", () => {
+    const out = expandSeries(
+      tuesdays("Europe/London", "2026-06-02T09:00:00+01:00", [
+        "RDATE:20260604T080000Z",
+      ]),
+      new Date("2026-06-03T00:00:00Z"),
+      new Date("2026-06-05T00:00:00Z"),
+    );
+    expect(out.map((o) => o.starts_at)).toEqual(["2026-06-04T08:00:00.000Z"]);
+  });
+});
+
+describe("a whole-day series", () => {
+  it("spans whole local days on both sides of a clock change", () => {
+    const out = expandSeries(
+      {
+        id: "offsite",
+        starts_at: "2026-03-23",
+        ends_at: "2026-03-24",
+        all_day: true,
+        timezone: "Europe/Berlin",
+        recurrence: ["RRULE:FREQ=WEEKLY"],
+      },
+      new Date("2026-03-20T00:00:00Z"),
+      new Date("2026-04-04T00:00:00Z"),
+    );
+    expect(out.map((o) => [o.starts_at, o.ends_at])).toEqual([
+      ["2026-03-22T23:00:00.000Z", "2026-03-23T23:00:00.000Z"],
+      ["2026-03-29T22:00:00.000Z", "2026-03-30T22:00:00.000Z"],
+    ]);
+  });
+
+  it("honors duration when the series has no end", () => {
+    const [first] = expandSeries(
+      weekly({ ends_at: undefined, duration: 1800 }),
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-05T00:00:00Z"),
+    );
+    expect(first?.ends_at).toBe("2026-03-03T08:30:00.000Z");
+  });
+});
+
+describe("a stored rule that names no date that exists", () => {
+  it("produces nothing past its start", () => {
+    expect(
+      expandSeries(
+        weekly({
+          starts_at: "2026-01-15T09:00:00Z",
+          ends_at: "2026-01-15T10:00:00Z",
+          recurrence: ["RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"],
+        }),
+        new Date("2026-02-01T00:00:00Z"),
+        new Date("2027-01-01T00:00:00Z"),
+      ),
+    ).toEqual([]);
+  });
+});
+
+// Rules that hold a widely used expander inside a single step until the
+// process is killed or runs out of memory. A row carrying one may predate
+// the write-time refusal, so the read has to survive it on its own.
+describe("a stored rule that would otherwise hold the read", () => {
+  const window = [
+    new Date("2026-06-01T00:00:00Z"),
+    new Date("2026-06-08T00:00:00Z"),
+  ] as const;
+
+  it.each([
+    "RRULE:FREQ=DAILY;BYMONTH=2;BYMONTHDAY=30",
+    "RRULE:FREQ=HOURLY;BYMONTH=2;BYMONTHDAY=30",
+    "RRULE:FREQ=SECONDLY;BYMONTH=2;BYMONTHDAY=30",
+    "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30",
+  ])("answers within its bound: %s", (line) => {
+    const started = Date.now();
+    let outcome: unknown;
+    try {
+      outcome = expandSeries(
+        weekly({
+          starts_at: "1990-01-15T09:00:00Z",
+          ends_at: undefined,
+          recurrence: [line],
+        }),
+        ...window,
+      );
+    } catch (err) {
+      outcome = err;
+    }
+    // Either nothing, or stopped and saying so: never a hang.
+    if (Array.isArray(outcome)) expect(outcome).toEqual([]);
+    else expect(String(outcome)).toMatch(/was stopped/);
+    expect(Date.now() - started).toBeLessThan(3_000);
+  });
+
+  it("stops a rule too costly to reach the window inside the walk", () => {
+    const work = { iterations: 0 };
+    expect(() =>
+      expandSeries(
+        weekly({
+          starts_at: "2019-01-01T00:00:00Z",
+          recurrence: ["RRULE:FREQ=SECONDLY"],
+        }),
+        ...window,
+        [],
+        work,
+        { iterations: 5_000 },
+      ),
+    ).toThrow(/was stopped/);
+    expect(work.iterations).toBe(5_001);
+  });
+
+  it("stops a walk at its deadline", () => {
+    expect(() =>
+      expandSeries(
+        weekly({
+          starts_at: "2019-01-01T00:00:00Z",
+          recurrence: ["RRULE:FREQ=SECONDLY"],
+        }),
+        ...window,
+        [],
+        undefined,
+        { iterations: Number.MAX_SAFE_INTEGER, timeMs: 20 },
+      ),
+    ).toThrow(/too long/);
   });
 });

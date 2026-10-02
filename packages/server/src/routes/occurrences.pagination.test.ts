@@ -312,11 +312,12 @@ function syntheticCalendar(
     }
     const startsAt = item.properties.starts_at;
     if (typeof startsAt !== "string") return false;
-    if (filters.startsAtFrom !== undefined && startsAt < filters.startsAtFrom) {
-      return false;
-    }
-    return !(
-      filters.startsAtTo !== undefined && startsAt >= filters.startsAtTo
+    if (filters.spanOverlaps === undefined) return true;
+    const { from, to } = filters.spanOverlaps;
+    const endsAt = item.properties.ends_at;
+    return (
+      (startsAt >= from && startsAt < to) ||
+      (typeof endsAt === "string" && endsAt > from && startsAt < from)
     );
   };
 
@@ -1131,8 +1132,11 @@ describe("the expansion budget bounds the walking that contributes nothing", () 
       return work.iterations;
     };
 
-    expect(walked(far)).toBe(366_000);
-    expect(walked(near)).toBe(900);
+    // One candidate a day, from each rule's anchor to the day after the
+    // window closes, which the walk reads to the end of in case a zone
+    // puts that day's reading inside the window.
+    expect(walked(far)).toBe(100 * 3_661);
+    expect(walked(near)).toBe(100 * 10);
   });
 
   it("says on the refusal that expansion was already truncated", async () => {

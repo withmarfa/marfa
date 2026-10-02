@@ -107,6 +107,7 @@ import {
   expandSeries,
   RecurrenceExpansionError,
 } from "../events/expand-recurrence.js";
+import { instantColumnValues } from "../storage/instant-columns.js";
 import type {
   ExpansionWork,
   Occurrence,
@@ -194,9 +195,8 @@ export const MAX_SERIES_ERRORS = 500;
  * Longest reported expansion-failure message.
  *
  * A count alone does not bound bytes. Most of these messages are this
- * file's own fixed strings, but the malformed-rule ones carry ical.js's
- * error text verbatim, which is as long as whatever it was handed —
- * measured at 4,072 characters from a single long property value. This
+ * file's own fixed strings, but the malformed-rule ones quote the stored
+ * text they could not read, which is as long as whatever was stored. This
  * counts characters rather than bytes, so the byte ceiling on the array
  * is `MAX_SERIES_ERRORS` times four times this plus the item ids: a few
  * hundred kilobytes, against 4.8 MB measured without it. That product,
@@ -228,10 +228,10 @@ const ID_BATCH_SIZE = 500;
  * Series expanded between one yield to the event loop and the next.
  *
  * This bounds the *number of per-series parses* between yields, which
- * the iteration budget below cannot see: building a synthetic VEVENT and
- * parsing it through ical.js happens once per series whatever its rule
- * says, and a rule that ends before it starts costs a parse and zero
- * iterations. Both counters run, and whichever trips first yields.
+ * the iteration budget below cannot see: reading a series' lines happens
+ * once per series whatever its rule says, and a rule that cannot be read
+ * costs a parse and zero iterations. Both counters run, and whichever
+ * trips first yields.
  *
  * It bounds the count and not the cost, and the difference is worth
  * stating rather than glossing. `recurrence` is a caller-written array,
@@ -362,8 +362,8 @@ const ITERATIONS_PER_YIELD = 20_000;
  * iterations to reach the window, it is commoner than one that ended,
  * and because it then contributes, none of that is charged. Counted
  * exactly, through the expander's own accumulator: 100 such rules over
- * a seven-day window walk 366,000 iterations and report
- * `unproductive_iterations` as zero, against 900 for the same hundred
+ * a seven-day window walk 366,100 iterations and report
+ * `unproductive_iterations` as zero, against 1,000 for the same hundred
  * anchored the day before the window, which return the same seven
  * hundred occurrences and the same zero. Five thousand of them — a
  * large calendar, not a contrived one — is 18 million iterations, which
@@ -416,10 +416,7 @@ interface ScanBudget {
 }
 
 /** The storage-side narrowing one pass applies on top of type and state. */
-type EventScanNarrowing = Pick<
-  ItemFilters,
-  "hasProperty" | "startsAtFrom" | "startsAtTo"
->;
+type EventScanNarrowing = Pick<ItemFilters, "hasProperty" | "spanOverlaps">;
 
 /**
  * What the window pass keeps from a row.
@@ -432,6 +429,9 @@ interface WindowSeed {
   id: string;
   starts_at: string;
   ends_at?: string;
+  /** The span the window is matched against, as the normalized columns
+   *  derive it: the stated end, else `duration`, else a whole day. */
+  span: { start: string | null; end: string | null };
 }
 
 /**
@@ -562,6 +562,10 @@ function projectSeries(item: Item): SeriesScanResult | undefined {
       id: item.id,
       starts_at: startsAt,
       ends_at: stringProp(item, "ends_at"),
+      ...(typeof item.properties.duration === "number"
+        ? { duration: item.properties.duration }
+        : {}),
+      ...(item.properties.all_day === true ? { all_day: true } : {}),
       timezone: stringProp(item, "timezone"),
       recurrence,
     },
@@ -593,11 +597,31 @@ function projectWindow(item: Item): WindowSeed | undefined {
   // which is the best answer available for it. It is not a silent one:
   // the series pass reports the unapplied rule in `series_errors`.
   if (recurrenceProp(item).length > 0) return undefined;
+  const span = instantColumnValues(item.properties);
   return {
     id: item.id,
     starts_at: startsAt,
     ends_at: stringProp(item, "ends_at"),
+    span: { start: span.starts_at, end: span.ends_at },
   };
+}
+
+/**
+ * Whether a span overlaps `[from, to)`, as RFC 4791 reads a time range: it
+ * starts before the window ends and ends after it opens. A span with no
+ * length overlaps where it starts.
+ */
+function overlapsWindow(
+  start: string | null,
+  end: string | null,
+  from: Date,
+  to: Date,
+): boolean {
+  if (start === null) return false;
+  const s = Date.parse(start);
+  if (s >= to.getTime()) return false;
+  const e = end === null ? s : Date.parse(end);
+  return e > s ? e > from.getTime() : s >= from.getTime();
 }
 
 /**
@@ -1063,10 +1087,7 @@ export function occurrenceRoutes(
       storage,
       wanted,
       budget,
-      {
-        startsAtFrom: from.toISOString(),
-        startsAtTo: to.toISOString(),
-      },
+      { spanOverlaps: { from: from.toISOString(), to: to.toISOString() } },
       projectWindow,
     );
 
@@ -1296,7 +1317,12 @@ export function occurrenceRoutes(
       // one place the normalized column and the stored value are read
       // against each other, so a column that ever disagreed with its row
       // shows up as a missing event rather than a wrong one.
-      if (Number.isNaN(at.getTime()) || at < from || at >= to) continue;
+      if (
+        Number.isNaN(at.getTime()) ||
+        !overlapsWindow(seed.span.start, seed.span.end, from, to)
+      ) {
+        continue;
+      }
       appendPending({
         starts_at: at.toISOString(),
         ends_at:
@@ -1361,6 +1387,18 @@ export function occurrenceRoutes(
        */
       const itemIsAuthority =
         occurrence.series_id === undefined || occurrence.replaces !== undefined;
+
+      if (itemIsAuthority && occurrence.replaces !== undefined) {
+        // A moved occurrence belongs to the window its own times overlap,
+        // not to the one its old slot sat in. Its slot is still shadowed.
+        const span = instantColumnValues(shown.properties);
+        if (
+          span.starts_at !== null &&
+          !overlapsWindow(span.starts_at, span.ends_at, from, to)
+        ) {
+          continue;
+        }
+      }
 
       if (itemIsAuthority) {
         // The fallback is load-bearing rather than incidental: a row
