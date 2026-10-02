@@ -737,10 +737,13 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           try {
             const created = await storage.items.create({
               // A digest lends here only where it lent in the instance the
-              // archive was taken from; a line naming none lends nothing.
+              // archive was taken from. Any other stands unvouched, so the
+              // owner's next write sending it with the proof repairs it.
               blob_proof: (hash) =>
                 Promise.resolve(
-                  Array.isArray(lending) && lending.includes(hash),
+                  Array.isArray(lending) && lending.includes(hash)
+                    ? "lends"
+                    : "unvouched",
                 ),
               ...(archiveId !== undefined && { id: archiveId }),
               // The row comes back under its archived id, so it comes

@@ -7,11 +7,18 @@ import { item_blob_references } from "./schema.js";
 type Executor = DrizzleDb | SqliteTxContext;
 
 /**
- * Whether the credential a write is made for has proved it holds the bytes
- * a digest names. Null where the write is made for no credential, which
- * proves nothing.
+ * Where a reference stands. `lends`: a write sending the digest proved its
+ * credential held the bytes. `unproven`: a credential wrote it without that
+ * proof, as a plant would be written. `unvouched`: nothing stood behind it,
+ * as with a server-made write or a restored line naming no lending digests.
  */
-export type BlobProof = ((hash: string) => Promise<boolean>) | null;
+export type Standing = "lends" | "unproven" | "unvouched";
+
+/**
+ * What a write says of a digest it sends. Null for a write made for no
+ * credential, which vouches for nothing.
+ */
+export type BlobProof = ((hash: string) => Promise<Standing>) | null;
 
 /**
  * Make the reference index say exactly what `properties` names for this
@@ -19,15 +26,16 @@ export type BlobProof = ((hash: string) => Promise<boolean>) | null;
  * never sees a row whose references disagree with it. A row's purge takes
  * its entries by the foreign key's cascade.
  *
- * A digest lends once a write that carried it was made for a credential
- * holding the proof `proof` asks for, and keeps lending for as long as the
- * row names it: a write that keeps the digest never withdraws it, and one
- * carrying it with the proof upgrades it. A write carries the digests in
- * the properties it sent, `carried`, or every one the row names when that
- * is absent; a digest the row keeps only because a merge left it in place
- * was written by someone else and gains nothing from this writer's proof.
- * `inherited` names digests that lend already wherever the row's
- * properties were copied from.
+ * A digest new to the row takes the standing `proof` gives it when the write
+ * sent it. One the row already names keeps its standing, with one
+ * exception: an `unvouched` digest lends once a write sends it again with
+ * the proof. An `unproven` one stays so while the row names it, whoever
+ * writes the row next, because a credential holding every blob would
+ * otherwise vouch for a hash someone else planted just by editing the row;
+ * only dropping the digest and writing it again, with the proof, lends it.
+ * A write sends the digests in `carried`, the properties it sent, or every
+ * one the row names when that is absent. `inherited` gives the standing of
+ * digests copied from another row.
  */
 export async function syncBlobReferences(
   db: Executor,
@@ -35,13 +43,11 @@ export async function syncBlobReferences(
   proof: BlobProof,
   options: {
     carried?: ReadonlySet<string>;
-    inherited?: ReadonlySet<string>;
+    inherited?: ReadonlyMap<string, Standing>;
   } = {},
 ): Promise<void> {
-  const inherited = options.inherited ?? new Set<string>();
-  const named = new Set<string>();
-  collectBlobHashes(row.properties, named);
-  const held = await blobLending(db, row.id);
+  const named = digestsIn(row.properties);
+  const held = await blobStandings(db, row.id);
   const gone = [...held.keys()].filter((hash) => !named.has(hash));
   if (gone.length > 0) {
     await db
@@ -55,21 +61,26 @@ export async function syncBlobReferences(
       .run();
   }
   for (const hash of named) {
-    const lends = held.get(hash);
-    if (lends === true) continue;
-    const writes = options.carried === undefined || options.carried.has(hash);
-    const proved =
-      inherited.has(hash) || (writes && proof !== null && (await proof(hash)));
-    if (lends === undefined) {
+    const current = held.get(hash) ?? options.inherited?.get(hash);
+    const sent = options.carried === undefined || options.carried.has(hash);
+    let standing: Standing;
+    if (current === undefined) {
+      standing = sent && proof !== null ? await proof(hash) : "unvouched";
+    } else if (current === "unvouched" && sent && proof !== null) {
+      standing = (await proof(hash)) === "lends" ? "lends" : "unvouched";
+    } else {
+      standing = current;
+    }
+    if (!held.has(hash)) {
       await db
         .insert(item_blob_references)
-        .values({ hash, item_id: row.id, lends: proved })
+        .values({ hash, item_id: row.id, standing })
         .onConflictDoNothing()
         .run();
-    } else if (proved) {
+    } else if (standing !== current) {
       await db
         .update(item_blob_references)
-        .set({ lends: true })
+        .set({ standing })
         .where(
           and(
             eq(item_blob_references.item_id, row.id),
@@ -81,20 +92,20 @@ export async function syncBlobReferences(
   }
 }
 
-/** Each digest an item's index holds, and whether it lends. */
-export async function blobLending(
+/** Each digest an item's index holds, and where it stands. */
+export async function blobStandings(
   db: Executor,
   itemId: string,
-): Promise<Map<string, boolean>> {
+): Promise<Map<string, Standing>> {
   const rows = await db
     .select({
       hash: item_blob_references.hash,
-      lends: item_blob_references.lends,
+      standing: item_blob_references.standing,
     })
     .from(item_blob_references)
     .where(eq(item_blob_references.item_id, itemId))
     .all();
-  return new Map(rows.map((r) => [r.hash, r.lends]));
+  return new Map(rows.map((r) => [r.hash, r.standing]));
 }
 
 /** The digests a set of properties names, as the index counts them. */

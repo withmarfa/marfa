@@ -75,18 +75,20 @@ export function blobProof(
   storage: Storage,
   key: ApiKey,
   kind: CredentialKind,
-): (hash: string) => Promise<boolean> {
+): (hash: string) => Promise<"lends" | "unproven"> {
   const principal = blobPrincipal(key, kind);
   return async (hash) =>
     (await storage.blobs.uploadedBy(hash, principal)) ||
-    (await mayReadBlob(key, storage, hash));
+    (await mayReadBlob(key, storage, hash))
+      ? "lends"
+      : "unproven";
 }
 
 /** `blobProof` for the credential this request carries. */
 export function requestBlobProof(
   c: Context<AppEnv>,
   storage: Storage,
-): (hash: string) => Promise<boolean> {
+): (hash: string) => Promise<"lends" | "unproven"> {
   const { key, kind } = requestCredential(c);
   return blobProof(storage, key, kind);
 }

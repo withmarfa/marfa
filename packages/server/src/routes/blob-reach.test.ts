@@ -267,6 +267,53 @@ describe("a door that writes an item's properties credits its caller's proof", (
     expect(await read(reader, hash)).toBe(200);
   });
 
+  it("POST /folders and PATCH /folders/{id}, whose settings are properties", async () => {
+    const owner = await writer();
+    const onCreate = await sent(owner, "named by a folder's title");
+    const onUpdate = await sent(owner, "named by a folder's new title");
+    await note(owner, {
+      body: `![a](${onCreate.hash}) ![b](${onUpdate.hash})`,
+    });
+    // A key whose only write is `system.folder` cannot upload, and lends
+    // through a folder only what it may already read.
+    const folderKey = await mintWorkingKey(ctx, {
+      type_permissions: { "system.folder": "write", "core.note": "read" },
+    });
+    const folderReader = await mintWorkingKey(ctx, {
+      type_permissions: { "system.folder": "read" },
+    });
+    expect(
+      (await sendAs(folderKey, new TextEncoder().encode("refused"))).status,
+    ).toBe(403);
+    expect(await read(folderReader, onCreate.hash)).toBe(404);
+    expect(await read(folderReader, onUpdate.hash)).toBe(404);
+
+    await json(
+      await request(ctx.app, "POST", "/folders", {
+        key: folderKey,
+        body: { title: `![a](${onCreate.hash})` },
+      }),
+      201,
+    );
+    expect(await read(folderReader, onCreate.hash)).toBe(200);
+
+    const plain = await json<Written>(
+      await request(ctx.app, "POST", "/folders", {
+        key: folderKey,
+        body: { title: "plain" },
+      }),
+      201,
+    );
+    await json(
+      await request(ctx.app, "PATCH", `/folders/${plain.item.id}`, {
+        key: folderKey,
+        body: { title: `![b](${onUpdate.hash})`, version: plain.item.version },
+      }),
+      200,
+    );
+    expect(await read(folderReader, onUpdate.hash)).toBe(200);
+  });
+
   it("a signed-in app, through its granted scopes", async () => {
     const { token: app } = await seedOauthBearer(ctx.storage, [
       "core.note:write",
@@ -337,33 +384,97 @@ describe("what proves holding the bytes", () => {
     const { item } = await note(noteKey, { body: `![x](${hash})` });
     expect(await read(noteKey, hash)).toBe(404);
 
-    // Sending the bytes, then rewriting the digest, upgrades the reference:
-    // the repair path for a row whose reference lends nothing. A write that
-    // leaves the digest where it was, sending none, upgrades nothing.
+    // Written without proof, the digest stays dead while the row names it,
+    // even once its writer sends the bytes and writes it again; dropping it
+    // and writing it anew with the proof is what lends it.
     expect((await sendAs(noteKey, bytes)).status).toBe(201);
-    expect(await read(noteKey, hash)).toBe(404);
-    const titled = await json<Written>(
+    const again = await json<Written>(
       await request(ctx.app, "PATCH", `/items/${item.id}`, {
         key: noteKey,
         body: {
-          properties: { title: "untouched body" },
+          properties: { body: `![x](${hash}) again` },
           version: item.version,
         },
       }),
       200,
     );
     expect(await read(noteKey, hash)).toBe(404);
+    const dropped = await json<Written>(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: noteKey,
+        body: { properties: { body: "none" }, version: again.item.version },
+      }),
+      200,
+    );
     await json(
       await request(ctx.app, "PATCH", `/items/${item.id}`, {
         key: noteKey,
         body: {
           properties: { body: `![x](${hash})` },
-          version: titled.item.version,
+          version: dropped.item.version,
         },
       }),
       200,
     );
     expect(await read(noteKey, hash)).toBe(200);
+  });
+
+  it("keeps a planted digest dead when a key holding every blob edits the row", async () => {
+    const hash = (await sent(ctx.workingKey, "a private file")).hash;
+    await json(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    const planter = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+    });
+    const { item } = await note(planter, { body: `a typo ![x](${hash})` });
+    expect(await read(planter, hash)).toBe(404);
+
+    // The full key fixes the typo, sending the body with the hash in it.
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: ctx.workingKey,
+        body: {
+          properties: { body: `a fixed typo ![x](${hash})` },
+          version: item.version,
+        },
+      }),
+      200,
+    );
+    expect(await read(ctx.workingKey, hash)).toBe(200);
+    expect(await read(planter, hash)).toBe(404);
+  });
+
+  it("upgrades an unvouched digest at the first write that sends it with the proof", async () => {
+    const owner = await writer();
+    const { hash } = await sent(owner, "restored without a lending line");
+    const unvouched = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: `![x](${hash})` },
+      tier: "library",
+    });
+    expect((await indexed(unvouched.id)).standing).toEqual({
+      [hash]: "unvouched",
+    });
+    expect(await read(reader, hash)).toBe(404);
+    await json(
+      await request(ctx.app, "PATCH", `/items/${unvouched.id}`, {
+        key: owner,
+        body: {
+          properties: { body: `![x](${hash}) repaired` },
+          version: unvouched.version,
+        },
+      }),
+      200,
+    );
+    expect(await read(reader, hash)).toBe(200);
   });
 
   it("counts reading the blob as the write is made as holding it", async () => {
@@ -552,14 +663,17 @@ describe("the enrichment sweep", () => {
 });
 
 /** The digests the index holds for one item, and which of them lend. */
-async function indexed(
-  id: string,
-): Promise<{ held: string[]; named: string[]; lends: string[] }> {
+async function indexed(id: string): Promise<{
+  held: string[];
+  named: string[];
+  lends: string[];
+  standing: Record<string, string>;
+}> {
   const raw = ctx.storage as unknown as {
-    __sqliteAll: (q: string) => Promise<{ hash: string; lends: number }[]>;
+    __sqliteAll: (q: string) => Promise<{ hash: string; standing: string }[]>;
   };
   const rows = await raw.__sqliteAll(
-    `SELECT hash, lends FROM item_blob_references WHERE item_id = '${id}' ORDER BY hash`,
+    `SELECT hash, standing FROM item_blob_references WHERE item_id = '${id}' ORDER BY hash`,
   );
   const item = await ctx.storage.items.getIncludingTrashed(id);
   const named = new Set<string>();
@@ -567,7 +681,8 @@ async function indexed(
   return {
     held: rows.map((r) => r.hash),
     named: [...named].sort(),
-    lends: rows.filter((r) => r.lends === 1).map((r) => r.hash),
+    lends: rows.filter((r) => r.standing === "lends").map((r) => r.hash),
+    standing: Object.fromEntries(rows.map((r) => [r.hash, r.standing])),
   };
 }
 

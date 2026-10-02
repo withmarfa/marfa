@@ -137,7 +137,7 @@ describe("every blob door is held to the credential's reach", () => {
       join(import.meta.dirname, "../storage/sqlite/enrichment-store.ts"),
       "utf8",
     );
-    expect(candidates).toContain("item_blob_references.lends");
+    expect(candidates).toContain("item_blob_references.standing");
   });
 
   it("classifies every door the app serves under /blobs, and no door it does not", () => {

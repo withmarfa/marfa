@@ -608,14 +608,14 @@ export interface RestoredRowInput {
 }
 
 /**
- * Whether the credential a write is made for has proved it holds the bytes a
- * digest names: it uploaded them, or could read the blob as the write was
- * made. A digest the write leaves in the row's properties lends the row's
- * reach once a write carrying it had this proof. Absent for a write the
- * server makes for no credential, which proves nothing.
+ * What the write says of each blob digest it sends: `lends` where its
+ * credential proved it holds the bytes, by having uploaded them or being
+ * able to read the blob as the write is made; `unproven` where it did not;
+ * `unvouched` where nothing stands behind the digest. Absent for a write the
+ * server makes for no credential, which vouches for nothing.
  */
 export interface BlobProofInput {
-  blob_proof?: (hash: string) => Promise<boolean>;
+  blob_proof?: (hash: string) => Promise<"lends" | "unproven" | "unvouched">;
 }
 
 export type StoredCreateItemInput = CreateItemInput &

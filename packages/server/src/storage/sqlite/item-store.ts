@@ -109,7 +109,7 @@ import {
   syncLink,
 } from "./item-links.js";
 import {
-  blobLending,
+  blobStandings,
   digestsIn,
   syncBlobReferences,
   type BlobProof,
@@ -277,13 +277,9 @@ async function insertConflictedSibling(
   // indexing and the announcing, and doing either again would report a
   // create that did not happen.
   if (inserted.length === 0) return null;
-  // The sibling starts from the row's own properties, so a digest that
-  // lends there lends here; any other needs the losing writer's own proof.
-  const inherited = new Set(
-    [...(await blobLending(tx, row.id))]
-      .filter(([, lends]) => lends)
-      .map(([hash]) => hash),
-  );
+  // The sibling starts from the row's own properties, so a digest it copies
+  // stands as it stood there; one the losing write sent is that writer's.
+  const inherited = await blobStandings(tx, row.id);
   await syncBlobReferences(tx, { id: siblingId, properties }, args.proof, {
     carried: digestsIn(args.sent),
     inherited,
