@@ -39,9 +39,8 @@ pub struct DrainReport {
     pub unavailable: Option<String>,
     /// Also holds rows settled without being sent, by another write's answer.
     pub verdicts: Vec<DrainVerdict>,
-    /// Set when a refused credential parks the queue, or when the server
-    /// could not say which instance it is, so nothing was sent. An answer on
-    /// another contract ends the drain as an error instead.
+    /// Set when a refused credential parks the queue. An answer on another
+    /// contract ends the drain as an error instead.
     pub stopped: Option<String>,
     /// Reported because `credential_refused` alone reads as a key that no
     /// longer works.
@@ -497,8 +496,8 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
     };
     // Confirmed once, and only where the pass talks to the server: a pass
     // with nothing to send or read sends nothing at all, and one that cannot
-    // confirm the instance sends nothing either, since a restart is when
-    // another instance appears.
+    // confirm the instance is a server that cannot take writes, since a
+    // restart is when another instance appears.
     let mut confirmed = false;
     let mut confirm = |report: &mut DrainReport| -> Result<bool> {
         if confirmed {
@@ -510,8 +509,8 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 Ok(true)
             }
             Err(error) if error.is_environmental() => {
-                report.stopped = Some(format!(
-                    "the server could not say which instance it is ({error}), so nothing was sent; the queue waits for the next drain"
+                report.unavailable = Some(format!(
+                    "the server could not say which instance it is, so nothing was sent: {error}"
                 ));
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 Ok(false)
@@ -519,13 +518,11 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
             Err(error) => Err(error),
         }
     };
-    if !store::owed_read_backs(&*core.conn()?)?.is_empty() && !confirm(&mut report)? {
-        return Ok(report);
-    }
-
+    let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty();
     // A server that cannot be read cannot be written to either, so nothing
     // is sent.
-    if let Some(why) = read_owed_backs(core)? {
+    let unconfirmed = owed && !confirm(&mut report)?;
+    if !unconfirmed && let Some(why) = read_owed_backs(core)? {
         report.unavailable = Some(why.reason);
         waited(&mut report, why.retry_after_seconds);
     }
@@ -583,10 +580,12 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 report.undelivered += 1;
                 continue;
             }
+            Readiness::RefusedWith(_) | Readiness::Ready if !confirm(&mut report)? => {
+                waiting.insert(row.id.clone());
+                report.undelivered += 1;
+                continue;
+            }
             Readiness::RefusedWith(reason) => {
-                if !confirm(&mut report)? {
-                    break;
-                }
                 {
                     let mut conn = core.conn()?;
                     let tx = conn.transaction()?;
@@ -608,11 +607,7 @@ pub fn drain(core: &Core) -> Result<DrainReport> {
                 }
                 continue;
             }
-            Readiness::Ready => {
-                if !confirm(&mut report)? {
-                    break;
-                }
-            }
+            Readiness::Ready => {}
         }
 
         let payload = {

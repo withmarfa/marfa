@@ -1746,8 +1746,9 @@ describe("offline, reconnect and re-hydration", () => {
     if (!drained.ok) return;
     // An unreachable server cannot say which instance it is, so the pass
     // ends before anything is sent, and says why (`device.md` 2).
-    expect(drained.value.sent).toBe(0);
-    expect(drained.value.stopped).toContain("which instance");
+    expect(drained.value.answered).toBe(0);
+    expect(drained.value.undelivered).toBe(1);
+    expect(drained.value.unavailable).toContain("which instance");
     expect(
       drained.value.verdicts.filter((entry) => entry.verdict !== null),
       "a write the network refused was given a verdict, and a device that could not ask has not been answered",
@@ -1884,8 +1885,9 @@ describe("offline, reconnect and re-hydration", () => {
     const waited = await device.drain();
     expect(waited.ok, JSON.stringify(waited)).toBe(true);
     if (waited.ok) {
-      expect(waited.value.sent).toBe(0);
-      expect(waited.value.stopped).toContain("which instance");
+      expect(waited.value.answered).toBe(0);
+      expect(waited.value.undelivered).toBe(1);
+      expect(waited.value.unavailable).toContain("which instance");
     }
     expect(
       creates(harness),
@@ -4439,19 +4441,19 @@ describe("an edit behind an edit of the same row", () => {
     harness = await hydratedHarness("edit-behind-unanswered", {
       rows: rows(),
     });
-    const { device, server } = harness;
+    const { device } = harness;
     await edit(device, HELD.id, { body: "first" }, HELD.version);
     await edit(device, HELD.id, { body: "second" }, HELD.version);
     await editEdge(device, { weight: 2 }, 1);
     await editEdge(device, { weight: 3 }, 1);
 
-    // The first edit of each goes out and its connection dies, so it has no
-    // answer. An unreachable server would see none go out: the drain cannot
+    // The row's first edit goes out and its connection dies, so it has no
+    // answer, and the pass ends there, leaving the edge's first edit waiting
+    // unsent. An unreachable server would see none go out: the drain cannot
     // confirm its instance.
     const door = scriptDoor(harness, {
       refuse: (_id, nth) => (nth === 1 ? { kind: "drop" } : undefined),
     });
-    server.answer("PATCH", /^\/edges\/[^/]+$/, { kind: "drop" });
     scriptEdgeDoor(harness);
     expect((await device.drain()).ok).toBe(true);
     const waiting = (await queueOf(device)).filter(
@@ -4477,7 +4479,7 @@ describe("an edit behind an edit of the same row", () => {
       "accepted",
     ]);
     expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
-    expect(sentOn(harness, `/edges/${EDGE}`).slice(1)).toEqual([1, 2]);
+    expect(sentOn(harness, `/edges/${EDGE}`)).toEqual([1, 2]);
     expect(verdictsOf(report, "update_edge", HELD.id)).toEqual([
       "accepted",
       "accepted",
