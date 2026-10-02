@@ -122,6 +122,124 @@ describe("bulk", () => {
     }
   });
 
+  it("takes properties_mode on an entry as PATCH takes it, stale versions included", async () => {
+    const seed = async (sourceId: string): Promise<string> => {
+      const created = await client.createItem(
+        createNote({
+          source: ctx.source,
+          source_id: sourceId,
+          properties: { title: "Whole", body: "Original", notes: "Set" },
+        }),
+      );
+      expect(created.ok).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      return created.data.item.id;
+    };
+    const entry = (
+      sourceId: string,
+      properties: Record<string, unknown>,
+      extra: { properties_mode?: "merge" | "replace"; version?: number },
+    ) => ({
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: sourceId,
+          properties,
+          ...extra,
+        },
+      ],
+      atomic: false,
+    });
+
+    // The witness: without the mode, a field the entry leaves out stays.
+    const merged = `bulk-mode-merge-${ctx.runId}`;
+    const mergedId = await seed(merged);
+    const merge = await client.bulkItems(
+      entry(merged, { body: "Original" }, {}),
+    );
+    expect(merge.data.results[0]!.outcome).toBe("updated");
+    expect((await client.getItem(mergedId)).data.item.properties).toEqual({
+      title: "Whole",
+      body: "Original",
+      notes: "Set",
+    });
+
+    // At the current version, `replace` takes the entry's properties whole.
+    const current = `bulk-mode-current-${ctx.runId}`;
+    const currentId = await seed(current);
+    const replaced = await client.bulkItems(
+      entry(
+        current,
+        { body: "Original" },
+        { properties_mode: "replace", version: 1 },
+      ),
+    );
+    expect(
+      replaced.data.results[0]!.outcome,
+      JSON.stringify(replaced.data),
+    ).toBe("updated");
+    expect((await client.getItem(currentId)).data.item.properties).toEqual({
+      body: "Original",
+    });
+
+    // And refuses one that drops a field the type requires.
+    const dropped = await client.bulkItems(
+      entry(
+        current,
+        { title: "No body" },
+        { properties_mode: "replace", version: 2 },
+      ),
+    );
+    expect(dropped.data.results[0]!.outcome).toBe("errored");
+    expect(dropped.data.results[0]!.error?.code).toBe("invalid_properties");
+
+    // Stale, it clears a field nobody changed since.
+    const untouched = `bulk-mode-untouched-${ctx.runId}`;
+    const untouchedId = await seed(untouched);
+    const moved = await client.updateItem(untouchedId, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(moved.ok).toBe(true);
+    const cleared = await client.bulkItems(
+      entry(
+        untouched,
+        { title: "Whole", body: "Original" },
+        { properties_mode: "replace", version: 1 },
+      ),
+    );
+    expect(cleared.data.results[0]!.outcome, JSON.stringify(cleared.data)).toBe(
+      "updated",
+    );
+    expect((await client.getItem(untouchedId)).data.item.properties).toEqual({
+      title: "Server title",
+      body: "Original",
+    });
+
+    // And collides on one the other writer changed since, a field the type
+    // requires among them, as `PATCH` answers it.
+    const changed = `bulk-mode-changed-${ctx.runId}`;
+    const changedId = await seed(changed);
+    const other = await client.updateItem(changedId, {
+      properties: { body: "Changed since" },
+      version: 1,
+    });
+    expect(other.ok).toBe(true);
+    const collided = await client.bulkItems(
+      entry(
+        changed,
+        { title: "Whole" },
+        { properties_mode: "replace", version: 1 },
+      ),
+    );
+    expect(collided.data.results[0]!.outcome).toBe("errored");
+    expect(collided.data.results[0]!.error?.code).toBe("version_conflict");
+    expect((await client.getItem(changedId)).data.item.properties.body).toBe(
+      "Changed since",
+    );
+  });
+
   it("upsert mode updates an existing (source, source_id) row in place", async () => {
     const sourceId = `upsert-${ctx.runId}`;
     const first = await client.bulkItems({
@@ -280,10 +398,10 @@ describe("bulk", () => {
     expect(created.error?.error.details?.code).toBe("validation_error");
   });
 
-  it("keeps a rollback that is not a permission refusal at 400", async () => {
-    // The witness for the case above, and the line the status draws: a
-    // page refused for something the caller can fix stays where a caller
-    // looks for that, and only the permission refusal moves.
+  it("answers a rollback at the status of the refusal inside it", async () => {
+    // A page refused over its own body stays at 400, the witness that the
+    // status follows the inner refusal rather than being moved off 400 for
+    // every rollback.
     const rejected = await client.bulkItems({
       items: [
         {
@@ -296,6 +414,49 @@ describe("bulk", () => {
     expect(rejected.status).toBe(400);
     expect(rejected.error?.error.code).toBe("bulk_atomic_rollback");
     expect(rejected.error?.error.details?.code).toBe("unknown_type");
+
+    // A missing row is 404: an entry linking to an item nothing holds.
+    const missingTarget = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          properties: { title: "links to nothing", body: "body" },
+          edges: { about: ["00000000-0000-7000-8000-000000000000"] },
+        },
+      ],
+    });
+    expect(missingTarget.status).toBe(404);
+    expect(missingTarget.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(missingTarget.error?.error.details?.code).toBe("item_not_found");
+
+    // A row that moved on is 409: an entry based on a version since
+    // overtaken.
+    const sourceId = `bulk-rollback-status-${ctx.runId}`;
+    const seeded = await client.createItem(
+      createNote({ source: ctx.source, source_id: sourceId }),
+    );
+    expect(seeded.ok).toBe(true);
+    trackItem(ctx, seeded.data.item.id);
+    const stale = seeded.data.item.version;
+    const moved = await client.updateItem(seeded.data.item.id, {
+      properties: { title: "moved on" },
+      version: stale,
+    });
+    expect(moved.ok).toBe(true);
+    const overtaken = await client.bulkItems({
+      items: [
+        {
+          type: "core.note",
+          source: ctx.source,
+          source_id: sourceId,
+          properties: { title: "from a stale writer" },
+          version: stale,
+        },
+      ],
+    });
+    expect(overtaken.status).toBe(409);
+    expect(overtaken.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(overtaken.error?.error.details?.code).toBe("version_conflict");
   });
 
   it("create_only skips a repeated (source, source_id) as duplicate_source", async () => {
@@ -967,7 +1128,7 @@ describe("bulk_action async-job lifecycle", () => {
         },
       ],
     });
-    expect(reusedId.status).toBe(400);
+    expect(reusedId.status).toBe(409);
     expect(reusedId.error?.error.code).toBe("bulk_atomic_rollback");
     expect(reusedId.error?.error.details?.code).toBe("id_reused");
 
@@ -987,7 +1148,7 @@ describe("bulk_action async-job lifecycle", () => {
         },
       ],
     });
-    expect(mistakenDeclaration.status).toBe(400);
+    expect(mistakenDeclaration.status).toBe(409);
     expect(mistakenDeclaration.error?.error.details?.code).toBe(
       "type_mismatch",
     );

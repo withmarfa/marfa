@@ -110,8 +110,9 @@ export interface FieldDefinition {
   maxItems?: number;
   /**
    * A refinement of a string: `url`, `email`, `datetime`, `date` and
-   * `thumbnail` are stored as the field type of the same name, while
-   * `bcp47` and `iso3166` annotate the string and are stored as `format`.
+   * `thumbnail` are stored as the field type of the same name, or as the
+   * `items_type` of an array of strings, while `bcp47` and `iso3166`
+   * annotate the string and are stored as `format`.
    */
   format?: string;
 }
@@ -183,6 +184,13 @@ export interface PaginatedResult<T> {
   next_cursor: string | null;
 }
 
+/** A key's own enforcement levers, each replacing the instance's for it. */
+export interface EnforcementOverride {
+  strict_mode?: { types: string[] };
+  source_allowlist?: { types: string[]; sources: string[] };
+  source_filter?: { types: string[]; sources: string[] };
+}
+
 export interface ApiKeyRequest {
   label: string;
   source: string;
@@ -200,6 +208,8 @@ export interface ApiKeyRequest {
   /** The sources the key may name on a write besides its own; omitted
    *  takes the creator's when no map is named either. */
   sources?: readonly string[];
+  /** `null` clears a key's levers on an update. */
+  enforcement_override?: EnforcementOverride | null;
 }
 
 /** The one account behind the instance's sign-in surface. */
@@ -225,6 +235,7 @@ export interface ApiKeyResponse {
   is_operator?: boolean;
   sources?: string[];
   oauth_client_id?: string;
+  enforcement_override?: EnforcementOverride;
   created_at: string;
   last_used_at?: string | null;
 }
@@ -315,6 +326,7 @@ export interface ConnectorRow {
 
 export interface ConnectorHoldTaken {
   expires_at: string;
+  ttl_ms: number;
   renewed: boolean;
 }
 
@@ -460,6 +472,7 @@ export interface BulkItemInput {
   id?: string;
   type: string;
   properties?: Record<string, unknown>;
+  properties_mode?: "merge" | "replace";
   state?: string;
   tags?: string[];
   tier?: "library" | "feed";

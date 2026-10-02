@@ -13,12 +13,14 @@ import {
   roleFromConstraint,
   TYPE_ROLES,
   ROLE_CONSTRAINT_PREFIX,
+  FIELD_TYPES,
 } from "@withmarfa/shared";
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requirePermission,
   requireAuth,
+  requireEdgePermission,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -63,7 +65,7 @@ const EdgePropertyTypeSchema = z
     message: "An edge never carries a thumbnail",
   })
   .describe(
-    "A field type's name, stored as given rather than checked against the ones a type's `fields` take, and never `thumbnail`: an edge carries no thumbnail.",
+    "A field type's name, and never `thumbnail`: an edge carries no thumbnail. As a property's `type` it is one of the field types a type's `fields` take, and any other name is refused `400 invalid_schema`, as a type's field would be.",
   );
 
 /** Declared so the format that stands for a thumbnail on a type's field is
@@ -190,6 +192,22 @@ export function edgeTypeFromRequest(
   body: z.infer<typeof EdgeTypeRequestSchema>,
   taken: ReadonlyMap<string, string> = new Map(),
 ): EdgeTypeSchema {
+  const unknownTypes = Object.entries(body.property_schema ?? {})
+    .filter(
+      ([, property]) =>
+        !(FIELD_TYPES as readonly string[]).includes(property.type),
+    )
+    .map(([name, property]) => ({
+      field: `property_schema.${name}.type`,
+      expected: `one of: ${FIELD_TYPES.join(", ")}`,
+      actual: property.type,
+      message: `"${property.type}" is not a field type`,
+    }));
+  if (unknownTypes.length > 0) {
+    throw new MarfaError(ErrorCode.INVALID_SCHEMA, "Invalid edge type schema", {
+      errors: unknownTypes,
+    });
+  }
   const reverse = body.reverse_name;
   if (reverse !== undefined && !isValidEdgeTypeIdentifier(reverse)) {
     throw new MarfaError(
@@ -241,7 +259,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
+    "Registers an edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`, and an edge map granting write on the id and on any `reverse_name`, so a key registers only the names it may write. The shipped edge-type names are reserved and reject with a conflict, as does an id or a `reverse_name` another edge type already holds as either, and a registered edge type is flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -265,6 +283,7 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "invalid_schema",
           ]),
         },
       },
@@ -273,10 +292,14 @@ const createEdgeTypeRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "edge_permission_denied",
+          ]),
         },
       },
-      description: "`metadata.edge_types:write` required",
+      description:
+        "`forbidden`: `metadata.edge_types:write` required. `edge_permission_denied`: the credential's edge map does not grant write on the id or on the `reverse_name`, which `details.edge_type` names.",
     },
     409: {
       content: {
@@ -404,6 +427,12 @@ export function edgeTypeRoutes(storage: Storage) {
         ErrorCode.VALIDATION_ERROR,
         "Invalid edge-type identifier",
       );
+    }
+    // The metadata permission says the key may register; its edge map says
+    // which names. A reverse name is claimed as an id is, so it is asked too:
+    // otherwise one key could take a name another key was minted for.
+    for (const name of [body.id, body.reverse_name]) {
+      if (name !== undefined) requireEdgePermission(c, name, "write");
     }
     // A registered edge type does not inherit: pull the raw body and reject
     // `extends` explicitly. Zod's default .strip() would silently drop it —
