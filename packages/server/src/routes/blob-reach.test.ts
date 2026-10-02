@@ -36,6 +36,19 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
+function sweeper(): TextEnrichmentSweeper {
+  return new TextEnrichmentSweeper({
+    storage: ctx.storage,
+    blobs: ctx.blobs,
+    ocr: null,
+    batchSize: 64,
+    itemTimeoutMs: 60_000,
+    maxBlobBytes: 20 * 1024 * 1024,
+    maxTextChars: DEFAULT_MAX_STRING_LENGTH,
+    maxAttempts: 3,
+  });
+}
+
 function hashOf(bytes: Uint8Array): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -452,29 +465,113 @@ describe("what proves holding the bytes", () => {
     expect(await read(planter, hash)).toBe(404);
   });
 
-  it("upgrades an unvouched digest at the first write that sends it with the proof", async () => {
-    const owner = await writer();
-    const { hash } = await sent(owner, "restored without a lending line");
-    const unvouched = await ctx.storage.items.create({
-      type: "core.note",
-      properties: { body: `![x](${hash})` },
-      tier: "library",
+  it("keeps a server-made write's digest dead after a full key rewrites the row", async () => {
+    // Lent through a note, which the attacker may not read.
+    const victim = await sent(ctx.workingKey, "a private file");
+    await note(ctx.workingKey, { body: `![x](${victim.hash})` });
+    const attacker = await mintWorkingKey(ctx, {
+      type_permissions: { "core.file": "write" },
     });
-    expect((await indexed(unvouched.id)).standing).toEqual({
-      [hash]: "unvouched",
-    });
-    expect(await read(reader, hash)).toBe(404);
-    await json(
-      await request(ctx.app, "PATCH", `/items/${unvouched.id}`, {
-        key: owner,
+    expect(await read(attacker, victim.hash)).toBe(404);
+    // The attacker's own text file holds the victim's digest; the sweep
+    // writes that text into the attacker's row for no credential.
+    const text = await sent(
+      attacker,
+      `notes on ${victim.hash.slice("sha256:".length)}`,
+    );
+    const own = await json<Written>(
+      await request(ctx.app, "POST", "/items", {
+        key: attacker,
         body: {
-          properties: { body: `![x](${hash}) repaired` },
-          version: unvouched.version,
+          type: "core.file",
+          properties: { blob_ref: text.hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    await sweeper().runOnce();
+    const swept = await ctx.storage.items.get(own.item.id);
+    expect(String(swept?.properties.extracted_text)).toContain(
+      victim.hash.slice("sha256:".length),
+    );
+    expect((await indexed(own.item.id)).held).toContain(victim.hash);
+    expect(await read(attacker, victim.hash)).toBe(404);
+
+    // The full key, which reads every blob, rewrites the whole row.
+    await json(
+      await request(ctx.app, "PATCH", `/items/${own.item.id}`, {
+        key: ctx.workingKey,
+        body: {
+          properties: swept?.properties,
+          properties_mode: "replace",
+          version: swept?.version,
         },
       }),
       200,
     );
-    expect(await read(reader, hash)).toBe(200);
+    expect(await read(attacker, victim.hash)).toBe(404);
+  });
+
+  it("keeps a planted digest dead through an export, a purge and a restore", async () => {
+    const victim = await sent(ctx.workingKey, "a private file, archived");
+    await json(
+      await request(ctx.app, "POST", "/items", {
+        key: ctx.workingKey,
+        body: {
+          type: "core.file",
+          properties: { blob_ref: victim.hash, mime_type: "text/plain" },
+        },
+      }),
+      201,
+    );
+    const planter = await mintWorkingKey(ctx, {
+      type_permissions: { "core.note": "write" },
+    });
+    const sourceId = `planted-${String(seq)}`;
+    const { item } = await note(
+      planter,
+      { body: `![x](${victim.hash})` },
+      { source_id: sourceId },
+    );
+    const current = await request(ctx.app, "GET", "/keys/current", {
+      key: planter,
+    });
+    const { source } = (await current.json()) as { source: string };
+    const exported = await request(
+      ctx.app,
+      "GET",
+      `/export?format=archive&type=core.note&state=any&source=${encodeURIComponent(source)}`,
+      { key: ctx.workingKey },
+    );
+    expect(exported.status).toBe(200);
+    const archive = Buffer.from(await exported.arrayBuffer());
+
+    await ctx.storage.items.transition(item.id, "trashed");
+    await ctx.storage.items.purge(item.id);
+    const restored = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: archive,
+    });
+    expect(restored.status, await restored.clone().text()).toBe(200);
+    const back = await ctx.storage.items.get(item.id);
+    expect(back?.properties.body).toBe(`![x](${victim.hash})`);
+    expect(await read(planter, victim.hash)).toBe(404);
+
+    await json(
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: ctx.workingKey,
+        body: {
+          properties: { body: `![x](${victim.hash}) edited` },
+          version: back?.version,
+        },
+      }),
+      200,
+    );
+    expect(await read(planter, victim.hash)).toBe(404);
   });
 
   it("counts reading the blob as the write is made as holding it", async () => {
@@ -644,16 +741,7 @@ describe("the enrichment sweep", () => {
       201,
     );
 
-    await new TextEnrichmentSweeper({
-      storage: ctx.storage,
-      blobs: ctx.blobs,
-      ocr: null,
-      batchSize: 64,
-      itemTimeoutMs: 60_000,
-      maxBlobBytes: 20 * 1024 * 1024,
-      maxTextChars: DEFAULT_MAX_STRING_LENGTH,
-      maxAttempts: 3,
-    }).runOnce();
+    await sweeper().runOnce();
 
     const read_ = async (id: string) =>
       (await ctx.storage.items.get(id))?.properties.extracted_text;
@@ -667,13 +755,12 @@ async function indexed(id: string): Promise<{
   held: string[];
   named: string[];
   lends: string[];
-  standing: Record<string, string>;
 }> {
   const raw = ctx.storage as unknown as {
-    __sqliteAll: (q: string) => Promise<{ hash: string; standing: string }[]>;
+    __sqliteAll: (q: string) => Promise<{ hash: string; lends: number }[]>;
   };
   const rows = await raw.__sqliteAll(
-    `SELECT hash, standing FROM item_blob_references WHERE item_id = '${id}' ORDER BY hash`,
+    `SELECT hash, lends FROM item_blob_references WHERE item_id = '${id}' ORDER BY hash`,
   );
   const item = await ctx.storage.items.getIncludingTrashed(id);
   const named = new Set<string>();
@@ -681,8 +768,7 @@ async function indexed(id: string): Promise<{
   return {
     held: rows.map((r) => r.hash),
     named: [...named].sort(),
-    lends: rows.filter((r) => r.standing === "lends").map((r) => r.hash),
-    standing: Object.fromEntries(rows.map((r) => [r.hash, r.standing])),
+    lends: rows.filter((r) => r.lends === 1).map((r) => r.hash),
   };
 }
 

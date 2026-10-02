@@ -84,7 +84,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .where(
         and(
           eq(item_blob_references.hash, hash),
-          eq(item_blob_references.standing, "lends"),
+          eq(item_blob_references.lends, true),
           admitted,
         ),
       )
@@ -100,7 +100,7 @@ export class SqliteBlobRegistry implements BlobRegistry {
       .where(
         and(
           eq(item_blob_references.item_id, itemId),
-          eq(item_blob_references.standing, "lends"),
+          eq(item_blob_references.lends, true),
         ),
       )
       .orderBy(item_blob_references.hash)

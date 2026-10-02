@@ -736,14 +736,11 @@ export function adminArchiveRoutes(storage: Storage, blobs: BlobLayer) {
           const archiveId = typeof item.id === "string" ? item.id : undefined;
           try {
             const created = await storage.items.create({
-              // A digest lends here only where it lent in the instance the
-              // archive was taken from. Any other stands unvouched, so the
-              // owner's next write sending it with the proof repairs it.
+              // A digest lends here exactly where it lent in the instance the
+              // archive was taken from, and a line naming none lends nothing.
               blob_proof: (hash) =>
                 Promise.resolve(
-                  Array.isArray(lending) && lending.includes(hash)
-                    ? "lends"
-                    : "unvouched",
+                  Array.isArray(lending) && lending.includes(hash),
                 ),
               ...(archiveId !== undefined && { id: archiveId }),
               // The row comes back under its archived id, so it comes

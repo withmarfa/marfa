@@ -487,7 +487,7 @@ async function processBulkItem(
     ) => string | undefined;
     /** The caller's proof of holding the bytes a digest names, which a
      *  digest its entries carry needs to lend (`blobProof`). */
-    blobProof: (hash: string) => Promise<"lends" | "unproven">;
+    blobProof: (hash: string) => Promise<boolean>;
     /**
      * Whether the caller has already opened the batch transaction (atomic
      * mode) or runs each item bare (best-effort mode). `applyInlineEdges`

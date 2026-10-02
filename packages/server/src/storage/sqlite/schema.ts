@@ -139,10 +139,8 @@ export const item_links = sqliteTable(
 
 // The blobs an item's properties name, by the digest rule `collectBlobHashes`
 // applies, so a blob door finds the items that lend it their reach without
-// reading every row. `standing` is `lends`; `unproven`, a credential wrote
-// it without proving it held the bytes, which only removing and rewriting
-// the digest changes; or `unvouched`, nothing stood behind it, which the
-// next write sending it with the proof upgrades.
+// reading every row. `lends` is fixed when the digest enters the row and
+// leaves only with it.
 export const item_blob_references = sqliteTable(
   "item_blob_references",
   {
@@ -150,17 +148,11 @@ export const item_blob_references = sqliteTable(
     item_id: text("item_id")
       .notNull()
       .references(() => items.id, { onDelete: "cascade" }),
-    standing: text("standing", {
-      enum: ["lends", "unproven", "unvouched"],
-    }).notNull(),
+    lends: integer("lends", { mode: "boolean" }).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.hash, table.item_id] }),
     index("idx_item_blob_references_item").on(table.item_id),
-    check(
-      "item_blob_references_standing",
-      sql`${table.standing} IN ('lends', 'unproven', 'unvouched')`,
-    ),
   ],
 );
 

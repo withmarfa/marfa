@@ -46,7 +46,7 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
           // Only bytes the row's own reference lends: reading them for a
           // row that merely names a hash would hand its writer what the
           // blob doors refuse it, as extracted text or dimensions.
-          sql`EXISTS (SELECT 1 FROM ${item_blob_references} WHERE ${item_blob_references.item_id} = ${items.id} AND ${item_blob_references.hash} = ${blobRef} AND ${item_blob_references.standing} = 'lends')`,
+          sql`EXISTS (SELECT 1 FROM ${item_blob_references} WHERE ${item_blob_references.item_id} = ${items.id} AND ${item_blob_references.hash} = ${blobRef} AND ${item_blob_references.lends} = 1)`,
           or(
             isNull(enrichmentState.item_id),
             ne(enrichmentState.blob_ref, blobRef),
