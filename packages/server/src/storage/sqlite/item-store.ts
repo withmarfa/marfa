@@ -586,6 +586,12 @@ export class SqliteItemStore implements ItemStore {
   ) {}
 
   async create(input: StoredCreateItemInput): Promise<Item> {
+    if (input.occurred_at !== undefined) {
+      input = {
+        ...input,
+        occurred_at: normalizeTimeBound(input.occurred_at, "occurred_at"),
+      };
+    }
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -1064,6 +1070,12 @@ export class SqliteItemStore implements ItemStore {
     id: string,
     input: StoredUpdateItemInput,
   ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse> {
+    if (input.occurred_at !== undefined) {
+      input = {
+        ...input,
+        occurred_at: normalizeTimeBound(input.occurred_at, "occurred_at"),
+      };
+    }
     const whereClause = eq(items.id, id);
 
     return await this.db.transaction(async (tx) => {

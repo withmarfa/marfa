@@ -55,6 +55,21 @@ describe("isValidTimestamp", () => {
   it("rejects invalid date (Feb 30)", () => {
     expect(isValidTimestamp("2026-02-30")).toBe(false);
   });
+
+  it.each([
+    "2026-01-01T00:30:00+02:00",
+    "2026-12-31T23:30:00-02:00",
+    "0099-01-01T00:30:00+02:00",
+  ])("accepts an offset crossing a calendar boundary: %s", (value) => {
+    expect(isValidTimestamp(value)).toBe(true);
+  });
+
+  it.each(["2026-02-30T01:00:00+02:00", "2026-02-29T23:00:00-02:00"])(
+    "rejects an impossible local calendar date: %s",
+    (value) => {
+      expect(isValidTimestamp(value)).toBe(false);
+    },
+  );
 });
 
 describe("isValidStrictTimestamp", () => {

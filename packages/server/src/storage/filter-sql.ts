@@ -8,10 +8,13 @@
 
 import { sql, type SQL } from "drizzle-orm";
 import {
+  ErrorCode,
+  MarfaError,
   typeFilterTerms,
   typePatternToSql,
   typeSubtreeToSql,
 } from "@withmarfa/shared";
+import { normalizeTimeBound } from "./interface.js";
 import type {
   FilterExpression,
   FilterCondition,
@@ -160,7 +163,11 @@ function conditionToSql(
 
   if (field.kind === "system") {
     const col = getSystemColumn(table, field.column);
-    return systemFieldSql(col, op, value);
+    return systemFieldSql(
+      col,
+      op,
+      systemComparisonValue(field.column, op, value),
+    );
   }
 
   if (field.kind === "property") {
@@ -262,6 +269,26 @@ function edgeFieldSql(
 function bindable(value: unknown): unknown {
   if (typeof value === "boolean") return value ? 1 : 0;
   return value;
+}
+
+function systemComparisonValue(
+  column: string,
+  op: ComparisonOp,
+  value: unknown,
+): unknown {
+  if (
+    !["created_at", "updated_at", "occurred_at"].includes(column) ||
+    !["eq", "neq", "gt", "gte", "lt", "lte"].includes(op)
+  )
+    return value;
+  if (typeof value !== "string") {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid ${column}: expected a timestamp`,
+      { field: column, value },
+    );
+  }
+  return normalizeTimeBound(value, column);
 }
 
 function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
@@ -390,7 +417,13 @@ function conditionToRawSql(
   const { field, op, value } = condition;
 
   if (field.kind === "system") {
-    return systemFieldRawSql(tableAlias, field.column, op, value, params);
+    return systemFieldRawSql(
+      tableAlias,
+      field.column,
+      op,
+      systemComparisonValue(field.column, op, value),
+      params,
+    );
   }
 
   if (field.kind === "property") {
