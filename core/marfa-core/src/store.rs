@@ -1002,8 +1002,8 @@ pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
 pub fn waiting_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
-        "WHERE verdict IS NULL OR verdict = ?1",
-        [Verdict::Blocked.as_str()],
+        "WHERE verdict IS NULL OR verdict IN (?1, ?2)",
+        [Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
 }
 
@@ -1043,8 +1043,8 @@ pub fn item_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 pub fn waiting_writes_for_item(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
-        "WHERE item_id = ?1 AND (verdict IS NULL OR verdict = ?2)",
-        [id, Verdict::Blocked.as_str()],
+        "WHERE item_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
 }
 
@@ -1055,8 +1055,8 @@ pub fn edge_write_waits(conn: &Connection, id: &str) -> Result<bool, CoreError> 
 fn waiting_writes_for_edge(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
-        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict = ?2)",
-        [id, Verdict::Blocked.as_str()],
+        "WHERE edge_id = ?1 AND (verdict IS NULL OR verdict IN (?2, ?3))",
+        [id, Verdict::Blocked.as_str(), Verdict::Dead.as_str()],
     )
 }
 
@@ -2403,6 +2403,23 @@ fn lay_write(
             .unwrap_or_default()
     };
     match row.kind {
+        WriteKind::CreateItem => {
+            let draft = crate::model::Draft::from_payload(&serde_json::to_string(payload)?)?;
+            item.properties.extend(draft.properties);
+            item.r#type = draft.r#type;
+            if let Some(tier) = draft.tier {
+                item.tier = Some(tier);
+            }
+            if let Some(source) = draft.source {
+                item.source = source;
+            }
+            if let Some(source_id) = draft.source_id {
+                item.source_id = Some(source_id);
+            }
+            if let Some(occurred_at) = draft.occurred_at {
+                item.occurred_at = occurred_at;
+            }
+        }
         WriteKind::UpdateItem => {
             if let Some(Value::Object(properties)) = payload.get("properties") {
                 // Only an edit that read the copy knows which properties it
@@ -2462,8 +2479,7 @@ fn lay_write(
         }
         WriteKind::RemoveTag => tags.retain(|tag| Some(tag) != row.tag.as_ref()),
         WriteKind::ReplaceMetadata => *tags = named_tags(),
-        WriteKind::CreateItem
-        | WriteKind::CreateEdge
+        WriteKind::CreateEdge
         | WriteKind::UpdateEdge
         | WriteKind::DeleteEdge
         | WriteKind::WriteExtension
@@ -2596,6 +2612,14 @@ pub fn lay_waiting_edge_writes_over(conn: &Connection, edge_id: &str) -> Result<
     };
     for row in waiting {
         match row.kind {
+            WriteKind::CreateEdge => {
+                let (_, draft) =
+                    crate::model::EdgeDraft::from_payload(&payload_of(conn, &row.id)?)?;
+                edge.source_id = draft.source_id;
+                edge.target_id = draft.target_id;
+                edge.edge_type = draft.edge_type;
+                edge.properties.extend(draft.properties);
+            }
             WriteKind::UpdateEdge => {
                 let payload: Value = serde_json::from_str(&payload_of(conn, &row.id)?)?;
                 if let Some(Value::Object(properties)) = payload.get("properties") {

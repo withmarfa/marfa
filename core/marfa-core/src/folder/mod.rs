@@ -3186,7 +3186,6 @@ impl Folder {
                 .collect();
         if carries_frontmatter(Path::new(&want)) && !waiting.is_empty() {
             let mut lifted = false;
-            // An answered or dead edit's entry is no edit the file holds unanswered.
             for line in writes
                 .queued
                 .iter_mut()
