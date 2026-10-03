@@ -6,7 +6,7 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import document from "../../../openapi.json" with { type: "json" };
-import { answers } from "./marfa-answers.js";
+import { answers, certifiedRead, SCRIPTED_READ_VIEW } from "./marfa-answers.js";
 
 /**
  * A server the fixture writes the answers for.
@@ -192,6 +192,36 @@ export class ScriptedServer {
     if (existing) existing.responders.push(...responders);
     else this.routes.push({ method, pathname, responders });
     return this;
+  }
+
+  copyAnswer(
+    method: string,
+    pathname: string | RegExp,
+    ...responders: Responder[]
+  ): this {
+    return this.answer(
+      method,
+      pathname,
+      ...responders.map((responder) => (request: RecordedRequest) => {
+        const answer =
+          typeof responder === "function" ? responder(request) : responder;
+        if (
+          method !== "GET" ||
+          request.headers["x-marfa-read-view"] !== SCRIPTED_READ_VIEW ||
+          !/^\/(items(?:\/[^/]+(?:\/edges)?)?|edges(?:\/[^/]+)?|types|edge-types|keys\/current)$/.test(
+            request.pathname,
+          )
+        )
+          return answer;
+        if (
+          answer.kind === "json" &&
+          answer.contract !== undefined &&
+          answer.contract !== BUILT_FOR
+        )
+          return answer;
+        return certifiedRead(answer);
+      }),
+    );
   }
 
   /**

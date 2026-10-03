@@ -476,6 +476,174 @@ export function cursorAhead(requested: string, head: string): SseFrame {
   };
 }
 
+export const SCRIPTED_READ_VIEW = "a".repeat(64);
+
+export function copyFrame(frame: SseFrame): SseFrame {
+  const data = frame.data;
+  if (data === null || typeof data !== "object") return frame;
+  const payload = data as Record<string, unknown>;
+  if (payload.type === "stream_cursor" || payload.type === "stream_live") {
+    return {
+      ...frame,
+      data: {
+        ...payload,
+        instance_id: SCRIPTED_INSTANCE,
+        read_view: SCRIPTED_READ_VIEW,
+      },
+    };
+  }
+  return "item" in payload
+    ? {
+        ...frame,
+        data: {
+          ...payload,
+          listed: "listed" in payload ? payload.listed : true,
+        },
+      }
+    : frame;
+}
+
+export function copyHeadRead(cursor: string): Answer {
+  return {
+    kind: "sse",
+    frames: [
+      connected,
+      copyFrame(streamCursor(cursor)),
+      copyFrame(streamLive(cursor)),
+    ],
+  };
+}
+
+export function copyReplay(head: string, frames: SseFrame[]): Answer {
+  return {
+    kind: "sse",
+    frames: [
+      connected,
+      copyFrame(streamCursor(head)),
+      ...frames.map(copyFrame),
+      copyFrame(streamLive(head)),
+    ],
+  };
+}
+
+export function copyIncompleteReplay(head: string, frames: SseFrame[]): Answer {
+  return {
+    kind: "sse",
+    frames: [
+      connected,
+      copyFrame(streamCursor(head)),
+      ...frames.map(copyFrame),
+    ],
+  };
+}
+
+export function copyLiveReplay(
+  head: string,
+  frames: SseFrame[],
+  live: string | null = head,
+): Answer {
+  return {
+    kind: "sse",
+    hold: true,
+    frames: [
+      connected,
+      copyFrame(streamCursor(head)),
+      ...frames.map(copyFrame),
+      copyFrame(streamLive(live)),
+    ],
+  };
+}
+
+export function copyStreamCursor(cursor: string): SseFrame {
+  return copyFrame(streamCursor(cursor));
+}
+export function copyStreamLive(cursor: string | null): SseFrame {
+  return copyFrame(streamLive(cursor));
+}
+export function copyItemEvent(
+  id: string,
+  kind: string,
+  item: Record<string, unknown>,
+  options: { tags?: string[]; listed?: boolean } = {},
+): SseFrame {
+  const frame = itemEvent(id, kind, item, options);
+  return {
+    ...frame,
+    data: {
+      ...(frame.data as Record<string, unknown>),
+      listed: options.listed ?? true,
+    },
+  };
+}
+
+export function copyHeldLog(
+  frames: SseFrame[],
+): (request: RecordedRequest) => Answer {
+  return (request) => {
+    const after = BigInt(request.headers["last-event-id"] ?? "0");
+    const head = frames
+      .reduce(
+        (last, frame) =>
+          frame.id !== undefined && BigInt(frame.id) > last
+            ? BigInt(frame.id)
+            : last,
+        after,
+      )
+      .toString();
+    return copyLiveReplay(
+      head,
+      frames.filter(
+        (frame) => frame.id !== undefined && BigInt(frame.id) > after,
+      ),
+    );
+  };
+}
+
+export function certifiedRead(answer: Answer): Answer {
+  if (answer.kind === "gated")
+    return { ...answer, then: certifiedRead(answer.then) };
+  if (
+    answer.kind !== "json" ||
+    !(
+      (answer.status >= 200 && answer.status < 300) ||
+      answer.status === 403 ||
+      answer.status === 404
+    )
+  )
+    return answer;
+  const listed = (value: unknown): unknown => {
+    if (value === null || typeof value !== "object" || Array.isArray(value))
+      return value;
+    const row = value as Record<string, unknown>;
+    if (!("item" in row)) return row;
+    return {
+      ...row,
+      listed: "listed" in row ? row.listed : true,
+      ...(Array.isArray(row.neighbors)
+        ? { neighbors: row.neighbors.map(listed) }
+        : {}),
+    };
+  };
+  let body = listed(answer.body);
+  if (
+    body !== null &&
+    typeof body === "object" &&
+    "data" in body &&
+    Array.isArray(body.data)
+  ) {
+    body = { ...body, data: body.data.map(listed) };
+  }
+  return {
+    ...answer,
+    body,
+    headers: {
+      ...answer.headers,
+      "X-Marfa-Read-View": SCRIPTED_READ_VIEW,
+      "Cache-Control": "no-store",
+    },
+  };
+}
+
 /** The head read a hydration performs before it takes its snapshot. */
 export function headRead(cursor: string): Answer {
   return { kind: "sse", frames: [connected, streamCursor(cursor)] };
