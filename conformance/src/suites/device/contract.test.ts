@@ -1247,7 +1247,7 @@ describe("the contract the working copy was built for", () => {
       (
         await device.create({
           type: "core.note",
-          properties: { title: "behind" },
+          properties: { title: "behind", body: "held" },
         })
       ).ok,
     ).toBe(true);
