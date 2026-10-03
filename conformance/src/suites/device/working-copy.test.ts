@@ -1301,7 +1301,7 @@ describe("the working copy belongs to one server", () => {
     expect(nowhere.ok, "a reading open answered for a path with no store").toBe(
       false,
     );
-    if (!nowhere.ok) expect(nowhere.refusal.code).toBe("invalid");
+    if (!nowhere.ok) expect(nowhere.refusal.code).toBe("no_store");
     expect(existsSync(absent)).toBe(false);
 
     // Never writes, even where a writer died with a save still in its
