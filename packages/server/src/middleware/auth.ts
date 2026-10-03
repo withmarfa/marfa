@@ -466,8 +466,8 @@ export function authMiddleware(storage: Storage, salt: string) {
       const now = Date.now();
       const lastTracked = lastUsedCache.get(cacheKey) ?? 0;
       if (now - lastTracked > DEBOUNCE_MS) {
-        touchLastUsedCache(lastUsedCache, cacheKey, now);
         await storage.keys.updateLastUsed(stored.id);
+        touchLastUsedCache(lastUsedCache, cacheKey, now);
       }
 
       return next();
