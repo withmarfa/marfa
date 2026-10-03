@@ -2765,7 +2765,13 @@ describe("catch-up keeps the copy to its slice", () => {
       head: "10",
       rows: {
         "core.note": [
-          { item: { id: "n1", version: 1, properties: { title: "server" } } },
+          {
+            item: {
+              id: "n1",
+              version: 1,
+              properties: { title: "server", body: "held" },
+            },
+          },
         ],
       },
     });
@@ -2773,7 +2779,11 @@ describe("catch-up keeps the copy to its slice", () => {
       "GET",
       "/items/n1",
       answers.updated(
-        wireItem({ id: "n1", version: 2, properties: { title: "elsewhere" } }),
+        wireItem({
+          id: "n1",
+          version: 2,
+          properties: { title: "elsewhere", body: "held" },
+        }),
       ),
     );
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);

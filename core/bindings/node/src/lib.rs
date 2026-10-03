@@ -859,13 +859,32 @@ fn failure(error: marfa_core::CoreError) -> Error {
     }
     let (code, detail) = match &error {
         E::RenewalFailed(_) => unreachable!("renewal cause was unwrapped"),
-        E::NotFound { .. } => ("not_found", error.to_string()),
-        E::Unauthorized { .. } => ("unauthorized", error.to_string()),
-        E::Forbidden { .. } => ("forbidden", error.to_string()),
-        E::Validation { .. } => ("validation", error.to_string()),
-        E::UnknownType { .. } => ("unknown_type", error.to_string()),
-        E::RateLimited { .. } => ("rate_limited", error.to_string()),
-        E::Server { .. } => ("server", error.to_string()),
+        E::NotFound { code, message, .. } => {
+            ("not_found", server_detail("not_found", Some(code), message))
+        }
+        E::Unauthorized { code, message, .. } => (
+            "unauthorized",
+            server_detail("unauthorized", Some(code), message),
+        ),
+        E::Forbidden { code, message, .. } => {
+            ("forbidden", server_detail("forbidden", Some(code), message))
+        }
+        E::Validation { code, message, .. } => (
+            "validation",
+            server_detail("validation", Some(code), message),
+        ),
+        E::UnknownType { message } => {
+            ("unknown_type", server_detail("unknown_type", None, message))
+        }
+        E::RateLimited { code, message, .. } => (
+            "rate_limited",
+            server_detail("rate_limited", Some(code), message),
+        ),
+        E::Server {
+            status,
+            code,
+            message,
+        } => ("server", format!("answered {status} ({code}): {message}")),
         E::Io(message) => ("io", message.clone()),
         E::Network(message) => ("network", message.clone()),
         E::Unnamed { .. } => ("unnamed_answer", error.to_string()),
@@ -889,6 +908,21 @@ fn failure(error: marfa_core::CoreError) -> Error {
         E::Invalid(message) => ("invalid", message.clone()),
     };
     Error::new(napi::Status::GenericFailure, format!("{code}: {detail}"))
+}
+
+fn server_detail(kind: &str, code: Option<&str>, message: &str) -> String {
+    let human = kind.replace('_', " ");
+    let prefix = format!("{human}:");
+    let message = if message.to_lowercase().starts_with(&prefix) {
+        message[prefix.len()..].trim_start()
+    } else {
+        message
+    };
+    match code.filter(|code| *code != kind) {
+        Some(code) if message.is_empty() => format!("({code})"),
+        Some(code) => format!("({code}) {message}"),
+        None => message.into(),
+    }
 }
 
 /// An item's thumbnail: the image's type and its bytes.
@@ -1692,6 +1726,34 @@ impl MarfaCore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn refusal_messages_keep_one_classification_and_distinct_detail_codes() {
+        use marfa_core::CoreError as E;
+        assert_eq!(
+            failure(E::Unauthorized {
+                code: "unauthorized".into(),
+                message: "Authentication required".into()
+            })
+            .reason,
+            "unauthorized: Authentication required"
+        );
+        assert_eq!(
+            failure(E::UnknownType {
+                message: "Unknown type: acme.absent".into()
+            })
+            .reason,
+            "unknown_type: acme.absent"
+        );
+        assert_eq!(
+            failure(E::Validation {
+                code: "invalid_properties".into(),
+                message: "read: Expected boolean".into()
+            })
+            .reason,
+            "validation: (invalid_properties) read: Expected boolean"
+        );
+    }
 
     #[test]
     fn blocked_grant_crosses_without_losing_the_refusal() {

@@ -149,7 +149,7 @@ it("keeps a dead create visible through hydration", async () => {
   const { device, server } = harness;
   const create = await device.create({
     type: "core.note",
-    properties: { title: "still here" },
+    properties: { title: "still here", body: "held" },
   });
   expect(create.ok).toBe(true);
   if (!create.ok) return;

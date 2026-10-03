@@ -891,6 +891,20 @@ pub fn last_write_to(
         .optional()?)
 }
 
+pub fn item_under_key(
+    conn: &Connection,
+    source: &str,
+    source_id: &str,
+) -> Result<Option<Item>, CoreError> {
+    let id: Option<String> = conn.query_row(
+        "SELECT id FROM items WHERE source = ?1 AND source_id = ?2 ORDER BY version DESC, id LIMIT 1",
+        params![source, source_id], |row| row.get(0),
+    ).optional()?;
+    id.map(|id| item_by_id(conn, &id))
+        .transpose()
+        .map(Option::flatten)
+}
+
 /// Orders a create carrying a held row's natural key behind that row's last
 /// unwritten write, since the server lands the create on that row.
 pub fn follow_row_under_key(
@@ -1033,6 +1047,24 @@ pub fn unsent_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
         )?
         .collect::<Result<HashSet<_>, _>>()?;
     Ok(hashes)
+}
+
+/// A keyed create's version-zero row can still name an unseen server target.
+/// A natural key added by a later edit does not change a plain create's origin.
+pub fn unanswered_keyed_create(conn: &Connection, item: &Item) -> Result<bool, CoreError> {
+    if item.version != 0 {
+        return Ok(false);
+    }
+    Ok(waiting_writes_for_item(conn, &item.id)?
+        .iter()
+        .any(|write| {
+            write.kind == WriteKind::CreateItem
+                && write
+                    .body
+                    .get("source_id")
+                    .and_then(Value::as_str)
+                    .is_some()
+        }))
 }
 
 /// Whether a write to the row itself waits, not an edge from it.

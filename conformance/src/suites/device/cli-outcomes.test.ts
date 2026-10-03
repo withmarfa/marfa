@@ -141,7 +141,7 @@ describe("CLI outcomes preserve the result", () => {
       (
         await h.device.create({
           type: "core.note",
-          properties: { title: "later" },
+          properties: { title: "later", body: "later" },
         })
       ).ok,
     ).toBe(true);
