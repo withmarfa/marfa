@@ -44,6 +44,72 @@ interface PushReport {
 }
 
 describe("a folder round trip", () => {
+  it("keeps authored YAML bytes while first push adds metadata and a remote edit changes one value", async () => {
+    const folder = join(dir, "styled");
+    mkdirSync(folder);
+    const settings = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      unique("styled-folder"),
+      "--search",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, settings.item.id);
+    await c.cli.json(["folders", "add", folder, "--folder", settings.item.id]);
+    await c.cli.json(["folders", "hydrate", folder]);
+    const path = join(folder, "authored.md");
+    const title = unique("authored-yaml");
+    const prefix = `---\r\n# Authored café\r\nnumber: 1.10 # precision\r\ninteger: 1.00\r\ntitle: '${title}'\r\nlist: [one, 'two']\r\nnested: {keep: 'é', change: old}\r\ntags: beta, alpha\r\nstate: null\r\nblock: |\r\n  text\r\n`;
+    writeFileSync(path, `${prefix}---\r\nBody\r\n`);
+    const pushed = await c.cli.json<PushReport>(["folders", "push", folder]);
+    expect(pushed.scan.created).toBe(1);
+    const first = readFileSync(path, "utf8");
+    const id = /^marfa_id: (.+)\r?$/m.exec(first)?.[1]?.trim();
+    expect(id).toBeTruthy();
+    trackItem(c.ctx, id!);
+    expect(first.slice(0, prefix.length)).toBe(prefix);
+    expect(first).toContain("marfa_version: 1\r\n");
+    const remote = await c.cli.json<ItemEnvelope>(["items", "get", id!]);
+    expect(remote.item.properties.number).toBe(1.1);
+    await c.cli.json([
+      "items",
+      "update",
+      id!,
+      "--version",
+      String(remote.item.version),
+      "--properties",
+      JSON.stringify({ nested: { keep: "é", change: "new" } }),
+    ]);
+    const store = join(folder, ".marfa", "core.sqlite");
+    await c.cli.json(["device", "--db", store, "catch-up"]);
+    const pull = await c.cli.json<{ rewritten: number }>([
+      "folders",
+      "pull",
+      folder,
+    ]);
+    expect(pull.rewritten).toBeGreaterThanOrEqual(1);
+    const changed = first
+      .replace("change: old", "change: new")
+      .replace("marfa_version: 1", "marfa_version: 2");
+    expect(readFileSync(path, "utf8")).toBe(changed);
+    const styled = changed
+      .replace("number: 1.10 # precision", "number: 1.100 # my precision")
+      .replace("tags: beta, alpha", "tags: ['alpha', beta]")
+      .replace("state: null", "state: active")
+      .replace("marfa_version: 2", 'marfa_version: "2"');
+    writeFileSync(path, styled);
+    const again = await c.cli.json<PushReport>(["folders", "push", folder]);
+    expect(again.scan.updated).toBe(0);
+    expect(readFileSync(path, "utf8")).toBe(styled);
+    const settled = await c.cli.json<{ updated: number }>([
+      "folders",
+      "scan",
+      folder,
+    ]);
+    expect(settled.updated).toBe(0);
+  });
+
   it("pushes a dropped note, takes an agent's change back into the file, and keeps the item's id", async () => {
     // A seed, so the folder hydrates something and the log is not empty.
     const seed = await c.cli.json<ItemEnvelope>([

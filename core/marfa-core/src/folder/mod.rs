@@ -11,6 +11,7 @@ mod lines;
 pub mod lists;
 mod names;
 pub(crate) mod placement;
+mod preserve;
 mod removal;
 pub use removal::{Confirmed, Restored};
 pub mod registry;
@@ -1622,6 +1623,7 @@ impl Folder {
                         item_id: item.id,
                         identity: None,
                         content_hash: file.hash.clone(),
+                        presentation: None,
                         // The item's own bytes, as a pull would have written
                         // them, so the file is the folder's to take away.
                         written_hash: Some(file.hash.clone()),
@@ -2096,9 +2098,11 @@ impl Folder {
                         file.line,
                         catalog,
                         edge_types,
-                        (&names, Some(&document.front), &bound.lines),
+                        (&names, Some(&document), &bound.lines),
                     )?;
-                    state::hash(rendered.text.as_bytes()) == bound.content_hash
+                    bound.presentation.as_ref().is_some_and(|agreed| {
+                        agreed.agrees(&document::read(&rendered.text).presentation(), edge_types)
+                    })
                 }
                 None => false,
             };
@@ -2144,13 +2148,12 @@ impl Folder {
                 }
             }
         }
-        let unchanged = if whole {
-            properties == held.properties
-        } else {
-            properties
-                .iter()
-                .all(|(field, value)| held.properties.get(field) == Some(value))
-        };
+        let unchanged = (!whole || properties.len() == held.properties.len())
+            && properties.iter().all(|(field, value)| {
+                held.properties
+                    .get(field)
+                    .is_some_and(|held| document::same_value(value, held))
+            });
         // A save that changes nothing the item holds, a reformatting or only
         // the id or version line, sends nothing.
         let in_step = unchanged && changes.is_empty()
@@ -2329,6 +2332,10 @@ impl Folder {
                 item_id: item_id.to_string(),
                 identity: file.mark.clone(),
                 content_hash: file.hash.clone(),
+                presentation: file
+                    .unreadable
+                    .is_none()
+                    .then(|| file.document().presentation()),
                 written_hash: None,
                 links,
                 lines,
@@ -3058,7 +3065,7 @@ impl Folder {
                     .as_ref()
                     .filter(|bound| carries_frontmatter(Path::new(&bound.path)))
                     .and_then(|bound| std::fs::read_to_string(self.root.join(&bound.path)).ok())
-                    .map(|text| document::read(&text).front);
+                    .map(|text| document::read(&text));
                 let rendered = self.render(
                     item,
                     &want,
@@ -3075,6 +3082,18 @@ impl Folder {
             }
         };
         let hash = state::hash(&bytes);
+        let presentation = if bytes_of(item, catalog).is_none() {
+            std::str::from_utf8(&bytes).ok().map(|text| {
+                if carries_frontmatter(Path::new(&want)) {
+                    document::read(text)
+                } else {
+                    document::read_body(text)
+                }
+                .presentation()
+            })
+        } else {
+            None
+        };
         let ours = bound.as_ref().is_some_and(|bound| bound.path == want);
         // A file the person deleted whose item moved on in nothing it shows is
         // the scan's, and its journaled delete stands.
@@ -3130,6 +3149,7 @@ impl Folder {
                     item_id: item.id.clone(),
                     identity: None,
                     content_hash: hash.clone(),
+                    presentation: presentation.clone(),
                     written_hash: Some(hash),
                     links: wrote,
                     lines,
@@ -3187,6 +3207,7 @@ impl Folder {
             item_id: item.id.clone(),
             identity,
             content_hash: hash.clone(),
+            presentation: presentation.clone(),
             written_hash: Some(hash.clone()),
             links: wrote.clone(),
             lines: lines.clone(),
@@ -3330,6 +3351,7 @@ impl Folder {
             item_id: item.id.clone(),
             identity,
             content_hash: theirs.content_hash.clone(),
+            presentation: theirs.presentation.clone(),
             written_hash: Some(theirs.content_hash.clone()),
             links: theirs.links.clone(),
             lines: theirs.lines.clone(),
@@ -3561,15 +3583,27 @@ impl Folder {
         let line = carries_frontmatter(Path::new(&bound.path))
             .then(|| bound.own.as_ref().map(|own| own.line))
             .flatten();
+        let previous = bound
+            .presentation
+            .as_ref()
+            .map(document::Presentation::document);
         let rendered = self.render(
             item,
             &bound.path,
             line,
             rendering.catalog,
             rendering.edge_types,
-            (rendering.names, None, &bound.lines),
+            (rendering.names, previous.as_ref(), &bound.lines),
         )?;
-        Ok(state::hash(rendered.text.as_bytes()) == bound.content_hash)
+        let presented = if carries_frontmatter(Path::new(&bound.path)) {
+            document::read(&rendered.text)
+        } else {
+            document::read_body(&rendered.text)
+        };
+        Ok(bound
+            .presentation
+            .as_ref()
+            .is_some_and(|agreed| agreed.agrees(&presented.presentation(), rendering.edge_types)))
     }
 
     /// Whether a file differs from its item's render in its version line
@@ -3586,8 +3620,8 @@ impl Folder {
         let Ok(found) = std::fs::read_to_string(self.root.join(&bound.path)) else {
             return Ok(false);
         };
-        let front = document::read(&found).front;
-        let line = line_of(&front);
+        let document = document::read(&found);
+        let line = line_of(&document.front);
         // A line no newer than the one its own edit spent is rewritten once
         // that edit lands.
         if bound
@@ -3603,9 +3637,14 @@ impl Folder {
             line,
             rendering.catalog,
             rendering.edge_types,
-            (rendering.names, Some(&front), &bound.lines),
+            (rendering.names, Some(&document), &bound.lines),
         )?;
-        Ok(state::hash(rendered.text.as_bytes()) == bound.content_hash)
+        Ok(bound.presentation.as_ref().is_some_and(|agreed| {
+            agreed.agrees(
+                &document::read(&rendered.text).presentation(),
+                rendering.edge_types,
+            )
+        }))
     }
 
     fn path_for(
@@ -3688,7 +3727,7 @@ impl Folder {
             edge_types,
             catalog,
             names,
-            typed,
+            typed.map(|document| &document.front),
             (&links, &embedded),
             recorded,
         )?;
@@ -3697,8 +3736,11 @@ impl Folder {
         if let Some(line) = line {
             front.insert(VERSION_FIELD.into(), Value::from(line));
         }
+        if let Some(typed) = typed {
+            fields::keep_equivalent(&mut front, &typed.front, edge_types);
+        }
         Ok(Rendered {
-            text: document::write(&front, &body)?,
+            text: document::write(&front, &body, typed)?,
             links,
             lines: written,
         })
@@ -3774,7 +3816,7 @@ impl Folder {
 
 /// What a render writes lines by: the copy's names, the file's own lines,
 /// and the edges its record says it carried.
-type LinesBy<'a> = (&'a Names, Option<&'a Map<String, Value>>, &'a [state::Line]);
+type LinesBy<'a> = (&'a Names, Option<&'a document::Document>, &'a [state::Line]);
 
 struct Rendering<'a> {
     catalog: &'a Catalog,

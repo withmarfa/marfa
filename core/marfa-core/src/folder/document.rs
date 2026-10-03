@@ -13,6 +13,53 @@ pub struct Document {
     pub body: String,
     pub links: Vec<String>,
     pub unreadable: Option<String>,
+    source: Option<Source>,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Presentation {
+    front: Map<String, Value>,
+    body: String,
+}
+
+impl Document {
+    pub(super) fn presentation(&self) -> Presentation {
+        Presentation {
+            front: self.front.clone(),
+            body: self.body.clone(),
+        }
+    }
+}
+
+impl Presentation {
+    pub(super) fn document(&self) -> Document {
+        Document {
+            front: self.front.clone(),
+            body: self.body.clone(),
+            links: links(&self.body),
+            unreadable: None,
+            source: None,
+        }
+    }
+
+    pub(super) fn agrees(
+        &self,
+        other: &Presentation,
+        edge_types: &super::edge_types::EdgeTypes,
+    ) -> bool {
+        self.body == other.body
+            && same_value(
+                &Value::Object(super::fields::presentation(&self.front, edge_types)),
+                &Value::Object(super::fields::presentation(&other.front, edge_types)),
+            )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct Source {
+    yaml: String,
+    opening: String,
+    closing: String,
 }
 
 const FENCE: &str = "---";
@@ -20,7 +67,7 @@ const FENCE: &str = "---";
 enum Front<'a> {
     /// No fence pair, or one holding a list or a line of text: Markdown.
     Body,
-    Fields(Map<String, Value>, &'a str),
+    Fields(Map<String, Value>, &'a str, Source),
     Unreadable(String),
 }
 
@@ -84,7 +131,17 @@ fn frontmatter(text: &str) -> Front<'_> {
         // A rule, a list or a setext heading, and a rule: Markdown.
         Some(_) => return Front::Body,
     }
-    Front::Fields(fields, body)
+    let opening_len = text.len() - rest.len();
+    let closing_len = rest.len() - front.len() - body.len();
+    Front::Fields(
+        fields,
+        body,
+        Source {
+            yaml: front.into(),
+            opening: text[..opening_len].into(),
+            closing: rest[front.len()..front.len() + closing_len].into(),
+        },
+    )
 }
 
 /// A UTF-8 byte-order mark, which some editors open every file with: a file
@@ -95,7 +152,8 @@ pub fn read(text: &str) -> Document {
     let text = text.strip_prefix(MARK).unwrap_or(text);
     match frontmatter(text) {
         Front::Body => read_body(text),
-        Front::Fields(front, body) => Document {
+        Front::Fields(front, body, source) => Document {
+            source: Some(source),
             front,
             body: body.to_string(),
             links: links(body),
@@ -123,6 +181,7 @@ pub fn id_line(text: &str) -> Option<String> {
 
 pub fn read_body(text: &str) -> Document {
     Document {
+        source: None,
         front: Map::new(),
         body: text.to_string(),
         links: links(text),
@@ -130,7 +189,81 @@ pub fn read_body(text: &str) -> Document {
     }
 }
 
-pub fn write(front: &Map<String, Value>, body: &str) -> Result<String, CoreError> {
+pub(super) fn same_value(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(a), Value::Number(b)) => {
+            if a == b {
+                return true;
+            }
+            let integer = |n: &serde_json::Number| {
+                n.as_i64()
+                    .map(i128::from)
+                    .or_else(|| n.as_u64().map(i128::from))
+            };
+            let integral_float = |n: &serde_json::Number| {
+                n.as_f64()
+                    .filter(|f| f.is_finite() && f.fract() == 0.0)
+                    .map(|f| f as i128)
+            };
+            match (integer(a), integer(b)) {
+                (Some(a), None) => Some(a) == integral_float(b),
+                (None, Some(b)) => integral_float(a) == Some(b),
+                _ => false,
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| same_value(a, b))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| same_value(a, b)))
+        }
+        _ => left == right,
+    }
+}
+
+pub fn write(
+    front: &Map<String, Value>,
+    body: &str,
+    original: Option<&Document>,
+) -> Result<String, CoreError> {
+    let Some(original) = original else {
+        return canonical(front, body);
+    };
+    if let Some(reason) = &original.unreadable {
+        return Err(CoreError::Invalid(format!(
+            "cannot rewrite unreadable frontmatter: {reason}"
+        )));
+    }
+    let Some(source) = &original.source else {
+        return canonical(front, body);
+    };
+    let newline = if source.opening.ends_with("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let yaml = super::preserve::write(
+        &source.yaml,
+        &Value::Object(original.front.clone()),
+        &Value::Object(front.clone()),
+        newline,
+    )?;
+    let rendered = format!("{}{yaml}{}{body}", source.opening, source.closing);
+    let checked = read(&rendered);
+    if checked.unreadable.is_some()
+        || !same_value(&Value::Object(checked.front), &Value::Object(front.clone()))
+        || checked.body != body
+    {
+        return Err(CoreError::Invalid(
+            "cannot preserve this frontmatter without changing its values".into(),
+        ));
+    }
+    Ok(rendered)
+}
+
+pub fn canonical(front: &Map<String, Value>, body: &str) -> Result<String, CoreError> {
     if front.is_empty() {
         return Ok(body.to_string());
     }
@@ -510,6 +643,171 @@ mod tests {
     use super::*;
 
     #[test]
+    fn metadata_keeps_the_persons_unchanged_frontmatter() {
+        let source = "---\r\n# café\r\nquoted: 'hi' # stay\r\nnumber: 1.10\r\nlist: [a, b]\r\nblock: |\r\n  é\r\n---\r\nBody\r\n";
+        let document = read(source);
+        let mut front = document.front.clone();
+        front.insert("marfa_id".into(), Value::String("id".into()));
+        let rendered = write(&front, &document.body, Some(&document)).unwrap();
+        assert_eq!(read(&rendered).front["marfa_id"], "id");
+        assert!(rendered.starts_with(source.split("---\r\nBody").next().unwrap()));
+    }
+
+    #[test]
+    fn a_changed_value_keeps_unrelated_yaml_syntax() {
+        for source in [
+            "---\r\n# café\r\nquoted: 'hi' # stay\r\nnumber: 1.10\r\nlist: [a, b]\r\nblock: |\r\n  é\r\n---\r\nBody\r\n",
+            "---\n{quoted: 'hi', number: 1.10, list: [a, b]} # stay\n---\nBody\n",
+            "---\nquoted: hi\nnested:\n  keep: 'élan' # keep\n  count: 3\n---\n",
+        ] {
+            let original = read(source);
+            let mut front = original.front.clone();
+            front.insert("quoted".into(), Value::String("bye".into()));
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            let expected = if source.contains("'hi'") {
+                source.replace("'hi'", "bye")
+            } else {
+                source.replace("quoted: hi", "quoted: bye")
+            };
+            assert_eq!(output, expected);
+        }
+    }
+
+    #[test]
+    fn nested_values_and_sequence_children_keep_their_source() {
+        let source = "---\r\nnested:\r\n  keep: 'élan' # keep\r\n  count: 3\r\nsequence: [one, 'two', {keep: 1.10, change: old}]\r\n---\r\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        front["nested"]["count"] = Value::from(4);
+        front["sequence"][2]["change"] = Value::String("new".into());
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert_eq!(
+            output,
+            source
+                .replace("count: 3", "count: 4")
+                .replace("change: old", "change: new")
+        );
+    }
+
+    #[test]
+    fn flow_map_insertions_and_removals_keep_comments() {
+        let source = "---\r\n{a: 1, # keep\r\n b: [x, y], c: 'é'} # last\r\n---\r\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        front.remove("b");
+        front.insert("new".into(), serde_json::json!(["z"]));
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert!(output.contains("a: 1, # keep\r\n"));
+        assert!(output.contains("c: 'é'"));
+        assert!(output.contains("# last\r\n"));
+        assert_eq!(read(&output).front, front);
+    }
+
+    #[test]
+    fn changing_or_removing_an_anchor_expands_only_affected_aliases() {
+        for remove in [false, true] {
+            let source = "---\nbase: &base {keep: 'é', change: old}\ncopy: *base # alias\nother: &other [a, b]\nuntouched: *other\n---\n";
+            let original = read(source);
+            let mut front = original.front.clone();
+            if remove {
+                front.remove("base");
+            } else {
+                front["base"]["change"] = Value::String("new".into());
+            }
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert!(output.contains("other: &other [a, b]\nuntouched: *other\n"));
+            assert!(output.contains("# alias\n"));
+            assert!(!output.contains("copy: *base"));
+            assert_eq!(read(&output).front, front);
+        }
+    }
+
+    #[test]
+    fn literal_and_folded_values_can_change_without_touching_neighbours() {
+        for style in ["|", ">-"] {
+            let source = format!(
+                "---\r\nkeep: 'é' # stay\r\nblock: {style}\r\n  old\r\nnext: [a, b]\r\n---\r\n"
+            );
+            let original = read(&source);
+            let mut front = original.front.clone();
+            front["block"] = Value::String("new\ntext\n".into());
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert!(output.contains("keep: 'é' # stay\r\n"));
+            assert!(output.contains("next: [a, b]\r\n"));
+            assert_eq!(read(&output).front, front);
+        }
+    }
+
+    #[test]
+    fn sequence_insertions_and_removals_keep_unchanged_children() {
+        for source in [
+            "---\nitems: ['one', 'two', 'three',]\n---\n",
+            "---\r\nitems:\r\n  - 'one' # first\r\n  - 'two' # second\r\n  - 'three' # third\r\n---\r\n",
+        ] {
+            let original = read(source);
+            let mut front = original.front.clone();
+            front["items"] = serde_json::json!(["zero", "one", "three", "four"]);
+            let output = write(&front, &original.body, Some(&original)).unwrap();
+            assert!(output.contains("'one'"));
+            assert!(output.contains("'three'"));
+            if source.contains("# first") {
+                assert!(output.contains("'one' # first\r\n"));
+                assert!(output.contains("'three' # third\r\n"));
+            }
+            assert_eq!(read(&output).front, front);
+        }
+    }
+
+    #[test]
+    fn metadata_preserves_supported_yaml_mapping_forms() {
+        for yaml in [
+            "# comment only\n",
+            "",
+            "{}\n",
+            "{a, b}\n",
+            "? 'explicit key'\n: value\n",
+            "nested:\n  last: |\n    café\nnext: [a, b]\n",
+            "a: !!str 42\nb: &value {kept: 'é'}\nc: *value\n",
+            "a: &first same\nb: *first\nc: &first other\nd: *first\n",
+        ] {
+            let source = format!("---\n{yaml}---\nbody\n");
+            let original = read(&source);
+            assert_eq!(original.unreadable, None, "{source}");
+            let mut front = original.front.clone();
+            front.insert("marfa_id".into(), Value::String("id".into()));
+            let output = write(&front, &original.body, Some(&original))
+                .unwrap_or_else(|e| panic!("{source}: {e}"));
+            if !yaml.trim_start().starts_with('{') {
+                assert!(output.starts_with(&format!("---\n{yaml}")), "{output}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_changed_tagged_value_and_nested_append_preserve_other_fields() {
+        let source = "---\r\na: !!str 42 # keep\r\nnested:\r\n  last: |\r\n    café\r\nnext: [a, b]\r\n---\r\n";
+        let original = read(source);
+        let mut front = original.front.clone();
+        front["a"] = Value::from(43);
+        front["nested"]["new"] = Value::Bool(true);
+        let output = write(&front, &original.body, Some(&original)).unwrap();
+        assert!(output.contains("# keep\r\n"));
+        assert!(output.contains("last: |\r\n    café\r\n"));
+        assert!(output.contains("next: [a, b]\r\n"));
+        assert_eq!(read(&output).front, front);
+    }
+
+    #[test]
+    fn duplicate_mapping_keys_stay_unreadable() {
+        assert!(read("---\na: one\na: two\n---\n").unreadable.is_some());
+        assert!(
+            read("---\nnested: {a: one, a: two}\n---\n")
+                .unreadable
+                .is_some()
+        );
+    }
+
+    #[test]
     fn a_body_that_opens_with_a_horizontal_rule_is_a_body() {
         let cases = [
             (
@@ -614,7 +912,7 @@ mod tests {
         );
 
         let document = read(&marked);
-        let written = write(&document.front, &document.body).unwrap();
+        let written = write(&document.front, &document.body, Some(&document)).unwrap();
         assert_eq!(
             written, plain,
             "what the folder writes back carries the mark"
@@ -630,7 +928,7 @@ mod tests {
             "---\n- just\n- a list\n---\nbody\n",
         ] {
             let document = read(text);
-            let written = write(&document.front, &document.body).unwrap();
+            let written = write(&document.front, &document.body, Some(&document)).unwrap();
             assert_eq!(
                 read(&written),
                 document,

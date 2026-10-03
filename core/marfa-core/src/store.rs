@@ -4237,6 +4237,28 @@ mod tests {
     }
 
     #[test]
+    fn a_store_without_folder_presentation_is_refused_without_losing_its_queue() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            conn.execute_batch("ALTER TABLE folder_files DROP COLUMN presentation")
+                .unwrap();
+        }
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(reason.contains("folder_files"), "{reason}");
+        assert_eq!(unsent, Some(1));
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert!(!held_shape(&conn).unwrap()["folder_files"].contains("presentation"));
+    }
+
+    #[test]
     fn a_store_made_before_a_table_this_build_adds_opens_and_gains_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
@@ -4276,7 +4298,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "7fceeb039d327cd2",
+            "65981d99bd9061ff",
             "the shape of a table changed, which refuses every store made before it"
         );
         // The comment strip reads `--` alone, so a block comment would ride

@@ -22,6 +22,8 @@ ureq.workspace = true
 url = "2"
 uuid.workspace = true
 yaml-rust2.workspace = true
+tree-sitter = "0.26"
+tree-sitter-yaml = "0.7"
 
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["hooks"] }
