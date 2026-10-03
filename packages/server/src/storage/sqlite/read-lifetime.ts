@@ -60,7 +60,9 @@ export class ReadLifetime {
       signal.addEventListener("abort", this.abandon, { once: true });
       this.listeners.set(signal, {
         count: 1,
-        remove: () => { signal.removeEventListener("abort", this.abandon); },
+        remove: () => {
+          signal.removeEventListener("abort", this.abandon);
+        },
       });
     }
     return () => {
